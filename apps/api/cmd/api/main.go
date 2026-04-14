@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"schumacher-tur/api/internal/advance_returns"
+	"schumacher-tur/api/internal/affiliate"
 	"schumacher-tur/api/internal/auth"
 	"schumacher-tur/api/internal/bookings"
 	"schumacher-tur/api/internal/buses"
@@ -85,6 +86,9 @@ func main() {
 	paymentsSvc := payments.NewService(payments.NewRepository(pool), cfg)
 	paymentsHandler := payments.NewHandler(paymentsSvc, cfg.AbacatePayPublicKey, cfg.AbacatePayWebhookSecret)
 	paymentsHandler.RegisterWebhooks(r)
+	affiliateSvc := affiliate.NewService(affiliate.NewRepository(pool), cfg)
+	affiliateHandler := affiliate.NewHandler(affiliateSvc)
+	affiliateHandler.RegisterWebhooks(r)
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware.Middleware)
@@ -106,6 +110,7 @@ func main() {
 		tripOperationsHandler.RegisterRoutes(pr)
 		bookingsHandler.RegisterRoutes(pr)
 		paymentsHandler.RegisterRoutes(pr)
+		affiliateHandler.RegisterRoutes(pr)
 		reportsHandler.RegisterRoutes(pr)
 		pricingHandler.RegisterRoutes(pr)
 
@@ -152,7 +157,7 @@ func main() {
 		importsXLSXHandler := imports_xlsx.NewHandler(imports_xlsx.NewService(imports_xlsx.NewRepository(pool)))
 		importsXLSXHandler.RegisterRoutes(pr)
 
-		users.NewHandler().RegisterRoutes(pr)
+		users.NewHandler(pool).RegisterRoutes(pr)
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

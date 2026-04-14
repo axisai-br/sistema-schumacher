@@ -15,6 +15,7 @@ const Reports = lazy(() => import("../pages/Reports"));
 const Pricing = lazy(() => import("../pages/Pricing"));
 const Financial = lazy(() => import("../pages/Financial"));
 const Warehouse = lazy(() => import("../pages/Warehouse"));
+const Saldo = lazy(() => import("../pages/Saldo"));
 
 export default function App() {
   const legacyMode = (import.meta.env.VITE_LEGACY_MODE ?? "false").toLowerCase() === "true";
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/trips" element={<Trips />} />
           <Route path="/routes" element={<RoutesPage />} />
           <Route path="/bookings" element={<Bookings />} />
+          <Route path="/saldo" element={<Saldo />} />
           {legacyMode ? (
             <>
               <Route path="/trips/:tripId/operations" element={<TripOperations />} />

@@ -11,6 +11,7 @@ import {
   Tag,
   BarChart3,
   Wallet,
+  HandCoins,
   Box,
   ChevronDown,
   Moon,
@@ -20,6 +21,7 @@ import { ToastProvider } from "../components/state/ToastProvider";
 import Drawer from "../components/overlay/Drawer";
 import ConfirmDialog from "../components/overlay/ConfirmDialog";
 import { getSupabaseClient } from "../services/supabase";
+import { useCurrentUser } from "../hooks/useCurrentUser";
 
 const baseNavItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -45,7 +47,15 @@ const SIDEBAR_STORAGE_KEY = "sidebar-collapsed";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const legacyMode = (import.meta.env.VITE_LEGACY_MODE ?? "false").toLowerCase() === "true";
-  const navItems = legacyMode ? [...baseNavItems, ...legacyNavItems] : baseNavItems;
+  const currentUserQuery = useCurrentUser();
+  const canAccessSaldo = currentUserQuery.data?.can_access_saldo ?? false;
+  const navItems = useMemo(() => {
+    const items = legacyMode ? [...baseNavItems, ...legacyNavItems] : [...baseNavItems];
+    if (canAccessSaldo) {
+      items.push({ path: "/saldo", label: "Saldo", icon: HandCoins });
+    }
+    return items;
+  }, [legacyMode, canAccessSaldo]);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {

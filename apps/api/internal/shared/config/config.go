@@ -25,6 +25,10 @@ type Config struct {
 	AbacatePayReturnURL string
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
 	AbacatePayCompletionURL string
+	PagarmeSecretKey        string
+	PagarmeAPIBaseURL       string
+	PagarmeWebhookBasicUser string
+	PagarmeWebhookBasicPass string
 }
 
 func Load() (Config, error) {
@@ -45,6 +49,10 @@ func Load() (Config, error) {
 		AbacatePayPublicKey:     os.Getenv("ABACATEPAY_PUBLIC_KEY"),
 		AbacatePayReturnURL:     os.Getenv("ABACATEPAY_RETURN_URL"),
 		AbacatePayCompletionURL: os.Getenv("ABACATEPAY_COMPLETION_URL"),
+		PagarmeSecretKey:        os.Getenv("PAGARME_SECRET_KEY"),
+		PagarmeAPIBaseURL:       getEnv("PAGARME_API_BASE_URL", "https://api.pagar.me/core/v5"),
+		PagarmeWebhookBasicUser: os.Getenv("PAGARME_WEBHOOK_BASIC_USER"),
+		PagarmeWebhookBasicPass: os.Getenv("PAGARME_WEBHOOK_BASIC_PASS"),
 	}
 
 	if cfg.DatabaseURL == "" {
