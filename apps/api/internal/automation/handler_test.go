@@ -125,7 +125,7 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 		"data":{
 			"key":{"remoteJid":"554998208115@s.whatsapp.net","fromMe":false,"id":"MSG-AUDIO-1"},
 			"pushName":"cliente",
-			"message":{"audioMessage":{"mimetype":"audio/ogg","seconds":12,"ptt":true,"url":"https://files.example.test/audio.ogg"}},
+			"message":{"audioMessage":{"mimetype":"audio/ogg; codecs=opus","seconds":12,"ptt":true,"url":"https://files.example.test/audio.ogg"}},
 			"messageType":"audioMessage"
 		}
 	}`))

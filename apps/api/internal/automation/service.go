@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -242,7 +244,8 @@ func (s *Service) transcribeOpenAIAudioFromDataURL(ctx context.Context, dataURL 
 		return "", errors.New("empty audio media")
 	}
 
-	tmpFile, err := os.CreateTemp("", "schumacher-audio-*"+audioFileExtensionForMimeType(mimeType))
+	normalizedMime := normalizeAudioMimeType(mimeType)
+	tmpFile, err := os.CreateTemp("", "schumacher-audio-*"+audioFileExtensionForMimeType(normalizedMime))
 	if err != nil {
 		return "", err
 	}
@@ -258,8 +261,25 @@ func (s *Service) transcribeOpenAIAudioFromDataURL(ctx context.Context, dataURL 
 		return "", err
 	}
 
-	log.Printf("audio_transcription_openai_file_ready path=%s mime=%s bytes=%d", tmpFile.Name(), strings.TrimSpace(mimeType), len(decoded))
-	return s.transcribeOpenAIAudioFile(ctx, tmpFile.Name(), mimeType, model)
+	log.Printf("audio_transcription_openai_file_ready path=%s mime=%s bytes=%d", tmpFile.Name(), normalizedMime, len(decoded))
+	text, err := s.transcribeOpenAIAudioFile(ctx, tmpFile.Name(), normalizedMime, model)
+	if err == nil {
+		return text, nil
+	}
+	if !isOpenAIUnsupportedAudioFormatError(err) || !canUseFFmpegFallback() {
+		return "", err
+	}
+
+	fallbackPath := strings.TrimSuffix(tmpFile.Name(), filepath.Ext(tmpFile.Name())) + ".wav"
+	if convertErr := convertAudioFileWithFFmpeg(ctx, tmpFile.Name(), fallbackPath); convertErr != nil {
+		return "", err
+	}
+	defer func() {
+		_ = os.Remove(fallbackPath)
+	}()
+
+	log.Printf("audio_transcription_openai_file_ready path=%s mime=%s bytes=%d fallback=ffmpeg", fallbackPath, "audio/wav", len(decoded))
+	return s.transcribeOpenAIAudioFile(ctx, fallbackPath, "audio/wav", model)
 }
 
 func (s *Service) transcribeOpenAIAudioFile(ctx context.Context, filePath string, mimeType string, model string) (string, error) {
@@ -316,7 +336,7 @@ func (s *Service) transcribeOpenAIAudioFile(ctx context.Context, filePath string
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if strings.TrimSpace(mimeType) != "" {
-		req.Header.Set("X-Audio-Mime-Type", strings.TrimSpace(mimeType))
+		req.Header.Set("X-Audio-Mime-Type", normalizeAudioMimeType(mimeType))
 	}
 
 	client := &http.Client{Timeout: 45 * time.Second}
@@ -351,18 +371,57 @@ func (s *Service) transcribeOpenAIAudioFile(ctx context.Context, filePath string
 }
 
 func audioFileExtensionForMimeType(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "audio/ogg", "audio/oga", "audio/opus":
+	switch normalizeAudioMimeType(mimeType) {
+	case "audio/ogg", "application/ogg":
 		return ".ogg"
 	case "audio/mpeg":
 		return ".mp3"
 	case "audio/mp4", "audio/m4a", "audio/x-m4a":
 		return ".m4a"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return ".wav"
 	case "audio/webm":
 		return ".webm"
+	case "audio/flac":
+		return ".flac"
 	default:
-		return ".audio"
+		return ".bin"
 	}
+}
+
+func normalizeAudioMimeType(mimeType string) string {
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		return ""
+	}
+	mediaType, _, err := mime.ParseMediaType(mimeType)
+	if err != nil {
+		mediaType = mimeType
+	}
+	return strings.ToLower(strings.TrimSpace(mediaType))
+}
+
+func isOpenAIUnsupportedAudioFormatError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unsupported file format audio") ||
+		strings.Contains(msg, "unsupported file format")
+}
+
+func canUseFFmpegFallback() bool {
+	_, err := exec.LookPath("ffmpeg")
+	return err == nil
+}
+
+func convertAudioFileWithFFmpeg(ctx context.Context, inputPath string, outputPath string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", inputPath, "-ac", "1", "-ar", "16000", outputPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg convert failed: %w: %s", err, truncateForLog(string(output), 500))
+	}
+	return nil
 }
 
 func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (EvolutionWebhookResult, error) {
@@ -463,7 +522,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 			normalized[key] = value
 		}
 
-		audioMime := strings.TrimSpace(stringValue(normalized["audio_mimetype"]))
+		audioMime := normalizeAudioMimeType(stringValue(normalized["audio_mimetype"]))
 		if audioMime == "" {
 			audioMime = "audio/ogg"
 		}
