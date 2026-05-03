@@ -116,6 +116,13 @@ type IngestMessagePayload struct {
 	SentAt            *time.Time             `json:"sent_at"`
 }
 
+type UpdateMessageInput struct {
+	MessageID         string                 `json:"message_id"`
+	Body              string                 `json:"body"`
+	NormalizedPayload map[string]interface{} `json:"normalized_payload"`
+	ProcessingStatus  string                 `json:"processing_status"`
+}
+
 type IngestMessageResult struct {
 	Session    Session `json:"session"`
 	Message    Message `json:"message"`

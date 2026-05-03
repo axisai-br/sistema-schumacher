@@ -4004,6 +4004,80 @@ func TestReprocessUsesTranscribedAudioAsText(t *testing.T) {
 	}
 }
 
+func TestReprocessIgnoresOlderFailedAudioWhenNewAudioIsTranscribed(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Tenho datas disponiveis.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_audio_text_2",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:       "WHATSAPP",
+		ContactKey:    "5511999999999",
+		CustomerPhone: "5511999999999",
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         session.ID,
+		Direction:         "INBOUND",
+		Kind:              "AUDIO",
+		ProviderMessageID: "msg-audio-old-failed",
+		IdempotencyKey:    "idem-audio-old-failed",
+		NormalizedPayload: map[string]interface{}{
+			"transcription_status": "FAILED",
+		},
+		ProcessingStatus: "REVIEW_REQUIRED",
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create failed audio message: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         session.ID,
+		Direction:         "INBOUND",
+		Kind:              "AUDIO",
+		ProviderMessageID: "msg-audio-new-completed",
+		IdempotencyKey:    "idem-audio-new-completed",
+		Body:              "quais datas disponiveis",
+		NormalizedPayload: map[string]interface{}{
+			"transcription_status": "COMPLETED",
+			"transcription_text":   "quais datas disponiveis",
+		},
+		ProcessingStatus: "READY_FOR_AUTOMATION",
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create completed audio message: %v", err)
+	}
+
+	handler := NewHandler(svc)
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/reprocess", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected runner to be called once, got %d", runner.calls)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "quais datas disponiveis") {
+		t.Fatalf("expected runner prompt to include transcribed text, got %q", runner.lastInput.UserPrompt)
+	}
+	if strings.Contains(runner.lastInput.UserPrompt, "msg-audio-old-failed") {
+		t.Fatalf("expected old failed audio not to be part of the prompt, got %q", runner.lastInput.UserPrompt)
+	}
+}
+
 func TestReprocessSkipsRunnerForUntranscribedAudio(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
@@ -6003,6 +6077,25 @@ func (s *fakeStore) CreateMessage(_ context.Context, input CreateMessageInput) (
 		s.byIdempotencyKey[item.IdempotencyKey] = item.ID
 	}
 
+	return item, nil
+}
+
+func (s *fakeStore) UpdateMessage(_ context.Context, input UpdateMessageInput) (Message, error) {
+	item, ok := s.messages[input.MessageID]
+	if !ok {
+		return Message{}, ErrSessionNotFound
+	}
+	if input.Body != "" {
+		item.Body = input.Body
+	}
+	if item.NormalizedPayload == nil {
+		item.NormalizedPayload = map[string]interface{}{}
+	}
+	for key, value := range input.NormalizedPayload {
+		item.NormalizedPayload[key] = value
+	}
+	item.ProcessingStatus = input.ProcessingStatus
+	s.messages[item.ID] = item
 	return item, nil
 }
 

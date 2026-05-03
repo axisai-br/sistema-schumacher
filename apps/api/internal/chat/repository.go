@@ -17,6 +17,7 @@ type Store interface {
 	FindMessageByKeys(ctx context.Context, providerMessageID string, idempotencyKey string) (*Message, error)
 	UpsertSession(ctx context.Context, input UpsertSessionInput) (Session, error)
 	CreateMessage(ctx context.Context, input CreateMessageInput) (Message, error)
+	UpdateMessage(ctx context.Context, input UpdateMessageInput) (Message, error)
 	CreateToolCall(ctx context.Context, input CreateToolCallInput) (ToolCall, error)
 	UpdateSessionBufferState(ctx context.Context, input UpdateSessionBufferStateInput) (Session, error)
 	RequestHandoff(ctx context.Context, input RequestHandoffInput) (RequestHandoffResult, error)
@@ -222,6 +223,39 @@ func (r *Repository) CreateMessage(ctx context.Context, input CreateMessageInput
 			sent_at,
 			created_at
 	`, input.SessionID, input.Direction, input.Kind, input.ProviderMessageID, input.IdempotencyKey, input.SenderName, input.SenderPhone, input.Body, payload, normalized, input.ProcessingStatus, input.ReceivedAt, input.SentAt)
+
+	return scanMessage(row)
+}
+
+func (r *Repository) UpdateMessage(ctx context.Context, input UpdateMessageInput) (Message, error) {
+	normalized, err := encodeMap(input.NormalizedPayload)
+	if err != nil {
+		return Message{}, err
+	}
+
+	row := r.pool.QueryRow(ctx, `
+		update chat_messages
+		set body = nullif($2, ''),
+				normalized_payload = coalesce(normalized_payload, '{}'::jsonb) || $3::jsonb,
+				processing_status = $4
+		where id = $1::uuid
+		returning
+			id::text,
+			session_id::text,
+			direction,
+			kind,
+			coalesce(provider_message_id, ''),
+			coalesce(idempotency_key, ''),
+			coalesce(sender_name, ''),
+			coalesce(sender_phone, ''),
+			coalesce(body, ''),
+			payload,
+			normalized_payload,
+			processing_status,
+			received_at,
+			sent_at,
+			created_at
+	`, input.MessageID, input.Body, normalized, input.ProcessingStatus)
 
 	return scanMessage(row)
 }

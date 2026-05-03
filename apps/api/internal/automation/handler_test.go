@@ -142,6 +142,21 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 	if chatSvc.lastInput.Message.Body != "quais datas disponiveis" {
 		t.Fatalf("unexpected transcribed body: %s", chatSvc.lastInput.Message.Body)
 	}
+	if chatSvc.updateCalls != 1 {
+		t.Fatalf("expected one update call, got %d", chatSvc.updateCalls)
+	}
+	if chatSvc.lastUpdateInput.MessageID == "" {
+		t.Fatal("expected message update to target the persisted message")
+	}
+	if chatSvc.lastUpdateInput.Body != "quais datas disponiveis" {
+		t.Fatalf("unexpected update body: %s", chatSvc.lastUpdateInput.Body)
+	}
+	if got := strings.TrimSpace(asString(chatSvc.lastUpdateInput.NormalizedPayload["current_turn_body"])); got != "quais datas disponiveis" {
+		t.Fatalf("unexpected update current_turn_body: %s", got)
+	}
+	if got := strings.TrimSpace(asString(chatSvc.lastUpdateInput.ProcessingStatus)); got != "READY_FOR_AUTOMATION" {
+		t.Fatalf("unexpected update processing status: %s", got)
+	}
 	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["transcription_status"])); got != "COMPLETED" {
 		t.Fatalf("unexpected transcription status: %s", got)
 	}
@@ -1970,6 +1985,8 @@ func TestRunChatReviewAlertsSkipsWhenNotifierNotConfigured(t *testing.T) {
 type fakeChatIngestor struct {
 	calls             int
 	lastInput         chat.IngestMessageInput
+	updateCalls       int
+	lastUpdateInput   chat.UpdateMessageInput
 	presenceCalls     int
 	lastPresenceInput chat.ApplyPresenceSignalInput
 	listCalls         int
@@ -2024,6 +2041,18 @@ func (f *fakeChatIngestor) Ingest(_ context.Context, input chat.IngestMessageInp
 			CreatedAt:         now,
 		},
 	}, nil
+}
+
+func (f *fakeChatIngestor) UpdateMessage(_ context.Context, input chat.UpdateMessageInput) (chat.Message, error) {
+	f.updateCalls++
+	f.lastUpdateInput = input
+	message := chat.Message{
+		ID:                input.MessageID,
+		Body:              input.Body,
+		NormalizedPayload: input.NormalizedPayload,
+		ProcessingStatus:  input.ProcessingStatus,
+	}
+	return message, nil
 }
 
 func (f *fakeChatIngestor) ApplyPresenceSignal(_ context.Context, input chat.ApplyPresenceSignalInput) (chat.ApplyPresenceSignalResult, error) {

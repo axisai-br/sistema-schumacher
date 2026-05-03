@@ -47,6 +47,12 @@ func selectReprocessCandidateMessages(history []Message) []Message {
 		if message.Direction != "INBOUND" {
 			continue
 		}
+		if isAudioMessageKind(message.Kind) && !hasCompletedAudioTranscription(message) {
+			if len(candidates) == 0 {
+				candidates = append([]Message{message}, candidates...)
+			}
+			break
+		}
 		if !isReprocessableInboundStatus(message.ProcessingStatus) {
 			if len(candidates) > 0 {
 				break
@@ -60,7 +66,7 @@ func selectReprocessCandidateMessages(history []Message) []Message {
 
 func isReprocessableInboundStatus(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "", "RECEIVED", "BUFFERED_PENDING", messageStatusAutomationPending:
+	case "", "RECEIVED", "BUFFERED_PENDING", messageStatusAutomationPending, agentStatusReadyForAutomation:
 		return true
 	default:
 		return false
@@ -86,7 +92,7 @@ func buildReprocessMemory(session Session, history []Message, candidates []Messa
 	lastCustomerMessage := ""
 	lastAssistantMessage := ""
 	for _, message := range recent {
-		body := strings.TrimSpace(message.Body)
+		body := messageTurnText(message)
 		items = append(items, map[string]interface{}{
 			"id":                message.ID,
 			"direction":         message.Direction,
@@ -218,7 +224,7 @@ func candidateMediaMemory(messages []Message) []map[string]interface{} {
 func joinCandidateBodies(messages []Message) string {
 	parts := make([]string, 0, len(messages))
 	for _, message := range messages {
-		body := strings.TrimSpace(message.Body)
+		body := messageTurnText(message)
 		if body == "" {
 			continue
 		}
@@ -356,16 +362,36 @@ func hasBlockingNonTextCandidate(candidates []Message) bool {
 }
 
 func hasBlockingUntranscribedAudioCandidate(candidates []Message) bool {
-	for _, message := range candidates {
-		if !isAudioMessageKind(message.Kind) {
-			continue
-		}
-		if hasCompletedAudioTranscription(message) {
-			continue
-		}
-		return true
+	message, ok := currentTurnUntranscribedAudioCandidate(candidates)
+	return ok && message.ID != ""
+}
+
+func currentTurnUntranscribedAudioCandidate(candidates []Message) (Message, bool) {
+	if len(candidates) == 0 {
+		return Message{}, false
 	}
-	return false
+	message := candidates[len(candidates)-1]
+	if !isAudioMessageKind(message.Kind) {
+		return Message{}, false
+	}
+	if strings.TrimSpace(message.Body) != "" {
+		return Message{}, false
+	}
+	if hasCompletedAudioTranscription(message) {
+		return Message{}, false
+	}
+	return message, true
+}
+
+func messageTurnText(message Message) string {
+	body := strings.TrimSpace(message.Body)
+	if body != "" {
+		return body
+	}
+	if hasCompletedAudioTranscription(message) {
+		return strings.TrimSpace(asString(message.NormalizedPayload["transcription_text"]))
+	}
+	return ""
 }
 
 func buildDraftGeneratedAgentState(metadata map[string]interface{}, candidates []Message, draftID string, run RunAgentResult, toolCalls []ToolCall, autoSend draftAutoSendPolicy, observedAt time.Time) map[string]interface{} {

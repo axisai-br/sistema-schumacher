@@ -43,6 +43,7 @@ var (
 
 type ChatIngestor interface {
 	Ingest(ctx context.Context, input chat.IngestMessageInput) (chat.IngestMessageResult, error)
+	UpdateMessage(ctx context.Context, input chat.UpdateMessageInput) (chat.Message, error)
 	ApplyPresenceSignal(ctx context.Context, input chat.ApplyPresenceSignalInput) (chat.ApplyPresenceSignalResult, error)
 	ListSessions(ctx context.Context, filter chat.ListSessionsFilter) ([]chat.Session, error)
 	Reprocess(ctx context.Context, input chat.ReprocessInput) (chat.ReprocessResult, error)
@@ -478,6 +479,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 		"chatwoot_inbox_id":        payload.Data.ChatwootInboxID,
 		"chatwoot_conversation_id": payload.Data.ChatwootConversationID,
 	}
+	processingStatus := "RECEIVED"
 	for key, value := range extractEvolutionMessageMetadata(payload.Data) {
 		normalized[key] = value
 	}
@@ -545,6 +547,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 			normalized["audio_base64_error"] = mediaErr.Error()
 			normalized["transcription_status"] = "FAILED"
 			normalized["transcription_error"] = mediaErr.Error()
+			processingStatus = "REVIEW_REQUIRED"
 			log.Printf("audio_transcription_failed stage=media_fetch contact_key=%s instance=%s message_id=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, mediaErr)
 		} else {
 			normalized["audio_source"] = "evolution_get_base64"
@@ -568,6 +571,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 					emptyErr := errors.New("empty transcription text")
 					normalized["transcription_status"] = "FAILED"
 					normalized["transcription_error"] = emptyErr.Error()
+					processingStatus = "REVIEW_REQUIRED"
 					log.Printf("audio_transcription_failed stage=openai contact_key=%s instance=%s message_id=%s model=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, model, emptyErr)
 				} else {
 					textBody = transcriptionText
@@ -576,11 +580,14 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 					normalized["transcription_status"] = "COMPLETED"
 					normalized["transcription_text"] = transcriptionText
 					normalized["transcription_model"] = model
+					normalized["current_turn_body"] = transcriptionText
+					processingStatus = "READY_FOR_AUTOMATION"
 					log.Printf("audio_transcription_openai_done contact_key=%s instance=%s message_id=%s model=%s text_len=%d", contactKey, strings.TrimSpace(payload.Instance), keyID, model, len(transcriptionText))
 				}
 			}
 		}
 	}
+	normalized["processing_status"] = processingStatus
 
 	result, err := s.chat.Ingest(ctx, chat.IngestMessageInput{
 		Channel:       "WHATSAPP",
@@ -603,12 +610,36 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 			Body:              textBody,
 			Payload:           payloadMap,
 			NormalizedPayload: normalized,
-			ProcessingStatus:  "RECEIVED",
+			ProcessingStatus:  processingStatus,
 			ReceivedAt:        &receivedAt,
 		},
 	})
 	if err != nil {
 		return EvolutionWebhookResult{}, err
+	}
+
+	if strings.EqualFold(processingStatus, "READY_FOR_AUTOMATION") && strings.TrimSpace(textBody) != "" {
+		providerMessageID := strings.TrimSpace(payload.Data.Key.ID)
+		log.Printf("audio_transcription_message_update_start contact_key=%s instance=%s message_id=%s chat_message_id=%s", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID)
+		updatedMessage, updateErr := s.chat.UpdateMessage(ctx, chat.UpdateMessageInput{
+			MessageID: result.Message.ID,
+			Body:      textBody,
+			NormalizedPayload: map[string]interface{}{
+				"transcription_status":     "COMPLETED",
+				"transcription_text":       textBody,
+				"message_text":             textBody,
+				"current_turn_body":        textBody,
+				"processing_status":        processingStatus,
+				"current_turn_message_ids": []string{result.Message.ID},
+			},
+			ProcessingStatus: processingStatus,
+		})
+		if updateErr != nil {
+			log.Printf("audio_transcription_message_update_failed contact_key=%s instance=%s message_id=%s chat_message_id=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID, updateErr)
+			return EvolutionWebhookResult{}, updateErr
+		}
+		result.Message = updatedMessage
+		log.Printf("audio_transcription_message_update_done contact_key=%s instance=%s message_id=%s chat_message_id=%s text_len=%d", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID, len(textBody))
 	}
 
 	return EvolutionWebhookResult{

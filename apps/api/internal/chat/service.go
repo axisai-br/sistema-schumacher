@@ -275,6 +275,10 @@ func (s *Service) Ingest(ctx context.Context, input IngestMessageInput) (IngestM
 	}, nil
 }
 
+func (s *Service) UpdateMessage(ctx context.Context, input UpdateMessageInput) (Message, error) {
+	return s.store.UpdateMessage(ctx, input)
+}
+
 func (s *Service) QueueAutomationDraft(ctx context.Context, input QueueAutomationDraftInput) (QueueAutomationDraftResult, error) {
 	channel := strings.ToUpper(strings.TrimSpace(input.Channel))
 	if channel == "" {
@@ -614,7 +618,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	memory := buildReprocessMemory(session, history, candidates, observedAt)
 	agentState := buildReprocessAgentState(session, candidates, trigger, observedAt, input.Metadata)
 	buffer := buildReprocessBufferState(session.Metadata, candidates, trigger, observedAt)
-	untranscribedAudio := hasBlockingUntranscribedAudioCandidate(candidates)
+	untranscribedAudioMessage, untranscribedAudio := currentTurnUntranscribedAudioCandidate(candidates)
 
 	messageMetadata := map[string]interface{}{
 		"agent_ready_for_automation": true,
@@ -671,11 +675,16 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		Messages: persisted.Messages,
 	}
 	if untranscribedAudio {
+		bodyPresent := strings.TrimSpace(untranscribedAudioMessage.Body) != ""
+		transcriptionStatus := strings.ToUpper(strings.TrimSpace(asString(untranscribedAudioMessage.NormalizedPayload["transcription_status"])))
 		s.logReprocess(
-			"chat reprocess event=runner_skipped session_id=%s trigger=%s job_run_id=%s reason=untranscribed_audio current_turn_count=%d",
+			"chat reprocess event=runner_skipped session_id=%s trigger=%s job_run_id=%s reason=untranscribed_audio message_id=%s transcription_status=%s body_present=%t current_turn_count=%d",
 			persisted.Session.ID,
 			trigger,
 			jobRunID,
+			untranscribedAudioMessage.ID,
+			transcriptionStatus,
+			bodyPresent,
 			len(candidates),
 		)
 		result.Reason = "review_required"
