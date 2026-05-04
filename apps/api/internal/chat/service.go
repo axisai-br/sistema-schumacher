@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"schumacher-tur/api/internal/shared/config"
 )
 
 var (
@@ -719,6 +718,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
 	passengerCountContext := lastBotAskedPassengerCount(history)
 	passengerCountReplyParsed := false
+
+	var deterministicBookingRun *RunAgentResult
+	var deterministicBookingHandled bool
+	var deterministicBookingAction BookingNextAction
 	if passengerCountContext {
 		s.logReprocess(
 			"chat reprocess event=passenger_count_context_detected session_id=%s trigger=%s job_run_id=%s",
@@ -732,6 +735,52 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			memory["passenger_count_reply_parsed"] = "true"
 			memory["passenger_count"] = passengerCount
 			memory["child_under_5_count"] = childUnder5Count
+			bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+			bookingDraft = mergePassengerReplyIntoBookingDraft(bookingDraft, passengerCount, childUnder5Count)
+
+			memory["booking_draft_context"] = map[string]interface{}{
+				"origin":                         bookingDraft.Origin,
+				"destination":                    bookingDraft.Destination,
+				"selected_option_index":          bookingDraft.SelectedOptionIndex,
+				"trip_id":                        bookingDraft.TripID,
+				"board_stop_id":                  bookingDraft.BoardStopID,
+				"alight_stop_id":                 bookingDraft.AlightStopID,
+				"trip_date":                      bookingDraft.TripDate,
+				"departure_time":                 bookingDraft.DepartureTime,
+				"price":                          bookingDraft.Price,
+				"currency":                       bookingDraft.Currency,
+				"passenger_count":                bookingDraft.PassengerCount,
+				"child_under_5_count":            bookingDraft.ChildUnder5Count,
+				"has_availability_shown":         bookingDraft.HasAvailabilityShown,
+				"asked_passenger_question":       bookingDraft.AskedPassengerQuestion,
+				"passenger_count_context_active": bookingDraft.PassengerCountContextActive,
+			}
+
+			deterministicBookingAction = decideNextBookingStep(bookingDraft)
+
+			s.logReprocess(
+				"chat reprocess event=booking_draft_context_collected session_id=%s trigger=%s job_run_id=%s action=%s origin=%q destination=%q trip_date=%q trip_id_present=%t passenger_count=%d child_under_5_count=%d",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				deterministicBookingAction,
+				bookingDraft.Origin,
+				bookingDraft.Destination,
+				bookingDraft.TripDate,
+				strings.TrimSpace(bookingDraft.TripID) != "",
+				bookingDraft.PassengerCount,
+				bookingDraft.ChildUnder5Count,
+			)
+
+			if deterministicBookingAction != BookingNextCallCreate {
+				reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
+				if strings.TrimSpace(reply) != "" {
+					run := buildBookingContinuationDraftRun(reply)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				}
+			}
+
 			s.logReprocess(
 				"chat reprocess event=passenger_count_reply_parsed session_id=%s trigger=%s job_run_id=%s passenger_count=%d child_under_5_count=%d",
 				persisted.Session.ID,
@@ -765,7 +814,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		unsupportedPackageHandled = false
 	}
 	toolContext := agentToolContext{}
-	if !unsupportedPackageHandled {
+	if !unsupportedPackageHandled && !deterministicBookingHandled {
 		var err error
 		s.logReprocess(
 			"chat reprocess event=resolve_agent_tool_context_start session_id=%s trigger=%s job_run_id=%s",
@@ -800,9 +849,13 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 
 	var run RunAgentResult
 	var userPrompt string
+
 	if unsupportedPackageHandled {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildUnsupportedPackageDraftRun(unsupportedPackage)
+	} else if deterministicBookingHandled && deterministicBookingRun != nil {
+		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
+		run = *deterministicBookingRun
 	} else if passengerCountContext && !passengerCountReplyParsed {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		s.logReprocess(
@@ -951,6 +1004,91 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	result.Draft = &draft.Message
 	result.Reason = "draft_generated"
 	return s.finishReprocessWithAutoSend(ctx, result, trigger, jobRunID)
+}
+
+func isBookingRegressionDraftText(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+
+	fullRouteAgain := strings.Contains(folded, "de qual cidade voce sai") &&
+		strings.Contains(folded, "para qual cidade vai") &&
+		strings.Contains(folded, "data")
+
+	genericRouteAgain := strings.Contains(folded, "origem") &&
+		strings.Contains(folded, "destino") &&
+		strings.Contains(folded, "data")
+
+	return fullRouteAgain || genericRouteAgain
+}
+
+func isOutOfScopeDuringBookingDraftText(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+
+	return strings.Contains(folded, "fora de atendimento") ||
+		strings.Contains(folded, "atendemos apenas") ||
+		strings.Contains(folded, "rota nao esta disponivel") ||
+		strings.Contains(folded, "rota não esta disponivel") ||
+		strings.Contains(folded, "outras rotas")
+}
+
+func detectBookingAutoSendBlockReason(history []Message, draft Message) string {
+	draftContext := collectBookingDraftContext(Session{}, history, "")
+	if !draftContext.IsAdvancedBookingFlow() {
+		return ""
+	}
+
+	body := strings.TrimSpace(draft.Body)
+	if isBookingRegressionDraftText(body) {
+		return draftAutoSendReasonBookingFlowRegression
+	}
+
+	if isOutOfScopeDuringBookingDraftText(body) {
+		return draftAutoSendReasonOutOfScopeDuringBooking
+	}
+
+	return ""
+}
+
+// Generic revisor mark
+func (s *Service) markDraftAutoSendReviewRequired(ctx context.Context, result ReprocessResult, reason string) (ReprocessResult, error) {
+	observedAt := time.Now().UTC()
+
+	updated, err := s.store.UpdateDraftAutoSendState(ctx, UpdateDraftAutoSendStateInput{
+		SessionID:      result.Session.ID,
+		DraftMessageID: result.Draft.ID,
+		AutoSendStatus: draftAutoSendStatusReviewNeeded,
+		AutoSendReasons: mergeDistinctStrings(
+			readDraftAutoSendReasons(*result.Draft),
+			reason,
+		),
+		Payload: map[string]interface{}{
+			"auto_send_status":       draftAutoSendStatusReviewNeeded,
+			"auto_send_blocked":      true,
+			"auto_send_blocked_at":   observedAt.UTC().Format(time.RFC3339Nano),
+			"auto_send_block_reason": reason,
+		},
+		Agent: map[string]interface{}{
+			"status":                 agentStatusDraftGenerated,
+			"auto_send_status":       draftAutoSendStatusReviewNeeded,
+			"auto_send_reasons":      mergeDistinctStrings(readDraftAutoSendReasons(*result.Draft), reason),
+			"auto_send_blocked_at":   observedAt.UTC().Format(time.RFC3339Nano),
+			"auto_send_block_reason": reason,
+		},
+	})
+	if err != nil {
+		return ReprocessResult{}, err
+	}
+
+	result.Session = updated.Session
+	result.Draft = &updated.Message
+	result.Reason = reason
+	result.Idempotent = true
+	return result, nil
 }
 
 func (s *Service) RetryDraftAutoSend(ctx context.Context, input RetryDraftAutoSendInput) (RetryDraftAutoSendResult, error) {
@@ -1693,7 +1831,22 @@ func (s *Service) maybeAutoSendDraft(ctx context.Context, result ReprocessResult
 	if s.shouldBlockDraftAutoSend(currentSession, *result.Draft) {
 		return s.markDraftAutoSendBlocked(ctx, result, currentSession)
 	}
+	messages, err := s.store.ListMessages(ctx, result.Session.ID, normalizeListMessagesFilter(ListMessagesFilter{Limit: 50}))
+	if err != nil {
+		return ReprocessResult{}, err
+	}
 
+	if result.Draft != nil {
+		if reason := detectBookingAutoSendBlockReason(messages, *result.Draft); reason != "" {
+			s.logReprocess(
+				"chat reprocess event=auto_send_blocked_reason=%s session_id=%s draft_message_id=%s",
+				reason,
+				result.Session.ID,
+				result.Draft.ID,
+			)
+			return s.markDraftAutoSendReviewRequired(ctx, result, reason)
+		}
+	}
 	if !s.canAutoSendDraft(result.Session, *result.Draft) {
 		s.logReprocess(
 			"chat reprocess event=maybe_auto_send_skipped session_id=%s draft_message_id=%s reason=can_auto_send_false auto_send_status=%s auto_send_reasons=%v sender_enabled=%t handoff_status=%s current_owner_user_id=%s draft_direction=%s draft_processing_status=%s draft_body_present=%t",

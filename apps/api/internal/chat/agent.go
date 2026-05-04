@@ -26,6 +26,11 @@ const (
 	draftAutoSendReasonHumanHandoff = "human_handoff_active"
 )
 
+const (
+	draftAutoSendReasonBookingFlowRegression   = "booking_flow_regression"
+	draftAutoSendReasonOutOfScopeDuringBooking = "out_of_scope_during_booking_flow"
+)
+
 type draftAutoSendPolicy struct {
 	Status  string
 	Reasons []string
