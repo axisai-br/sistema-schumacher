@@ -3722,12 +3722,71 @@ func TestInferUnsupportedPackageQueryAllowsGenericAndSupportedDestinations(t *te
 	}
 }
 
-func TestReprocessUsesDestinationAvailabilityAfterBroadStateCitySelection(t *testing.T) {
+func TestReprocessDoesNotFallbackUnsupportedForNormalizedSupportedCity(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
-			ReplyText:          "Tenho datas disponiveis para Seara.",
+			ReplyText:          "Você sai de qual cidade do Maranhão?",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-fraiburgo-normalized",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+
+	session, _ := store.seedSessionWithMessage("5511999999999", "oi")
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+		Body:             "Fraiburgo R$ 950; Monte Carlo R$ 950; Videira R$ 950.",
+	}); err != nil {
+		t.Fatalf("create outbound table: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-fraiburgo-city-only",
+			IdempotencyKey:    "idem-fraiburgo-city-only",
+			Body:              "passagem para Fraiburgo",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest message: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected agent runner to be called once, got %d", runner.calls)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected agent draft")
+	}
+	if strings.Contains(out.Draft.Body, "atendemos apenas viagens dos pacotes Santa Catarina e Maranhao") {
+		t.Fatalf("expected supported city flow, got %q", out.Draft.Body)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Fraiburgo/SC") {
+		t.Fatalf("expected prompt to infer Fraiburgo/SC, got %q", runner.lastInput.UserPrompt)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
+		t.Fatalf("expected prompt to ask Maranhao origin, got %q", runner.lastInput.UserPrompt)
+	}
+}
+
+func TestReprocessAsksOriginAfterBroadStateCitySelection(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Você sai de qual cidade do Maranhão?",
 			Model:              "gpt-test",
 			ProviderResponseID: "resp_tool_sc_city_1",
 		},
@@ -3797,33 +3856,21 @@ func TestReprocessUsesDestinationAvailabilityAfterBroadStateCitySelection(t *tes
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(out.ToolCalls) != 1 {
-		t.Fatalf("expected one tool call, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls before origin is known, got %d", len(out.ToolCalls))
 	}
-	if searcher.calls != 1 {
-		t.Fatalf("expected one availability search, got %d", searcher.calls)
-	}
-	if searcher.lastInput.PackageName != packageToSantaCatarina {
-		t.Fatalf("expected package search %q, got %+v", packageToSantaCatarina, searcher.lastInput)
-	}
-	if searcher.lastInput.Destination != "Seara/SC" {
-		t.Fatalf("expected destination Seara/SC, got %+v", searcher.lastInput)
-	}
-	if searcher.lastInput.Origin != "" {
-		t.Fatalf("expected no origin yet for city selection flow, got %+v", searcher.lastInput)
-	}
-	if searcher.lastInput.TripDate != nil {
-		t.Fatalf("expected no trip date yet, got %+v", searcher.lastInput.TripDate)
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search before origin is known, got %d", searcher.calls)
 	}
 	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Seara/SC") {
 		t.Fatalf("expected prompt to include inferred destination, got %q", runner.lastInput.UserPrompt)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "listar ate 5 datas futuras para esse destino") {
-		t.Fatalf("expected prompt to instruct date listing for chosen destination")
+	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
+		t.Fatalf("expected prompt to ask Maranhao origin, got %q", runner.lastInput.UserPrompt)
 	}
 }
 
-func TestReprocessUsesDateSelectionToListOriginsAfterDestinationChoice(t *testing.T) {
+func TestReprocessStillAsksOriginWhenDateArrivesBeforeOrigin(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -3921,26 +3968,17 @@ func TestReprocessUsesDateSelectionToListOriginsAfterDestinationChoice(t *testin
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(out.ToolCalls) != 1 {
-		t.Fatalf("expected one tool call, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls before origin is known, got %d", len(out.ToolCalls))
 	}
-	if searcher.calls != 1 {
-		t.Fatalf("expected one availability search, got %d", searcher.calls)
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search before origin is known, got %d", searcher.calls)
 	}
-	if searcher.lastInput.PackageName != packageToSantaCatarina || searcher.lastInput.Destination != "Seara/SC" {
-		t.Fatalf("expected destination package search for Seara/SC, got %+v", searcher.lastInput)
+	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Seara/SC") {
+		t.Fatalf("expected prompt to keep inferred destination, got %q", runner.lastInput.UserPrompt)
 	}
-	if searcher.lastInput.Origin != "" {
-		t.Fatalf("expected no fixed origin for date choice flow, got %+v", searcher.lastInput)
-	}
-	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-05-10" {
-		t.Fatalf("expected selected date 2026-05-10, got %+v", searcher.lastInput.TripDate)
-	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Data consultada: 2026-05-10") {
-		t.Fatalf("expected prompt to include chosen date, got %q", runner.lastInput.UserPrompt)
-	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "listar as opcoes de saida/origem com horarios para essa data") {
-		t.Fatalf("expected prompt to instruct origin/time listing after date choice")
+	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
+		t.Fatalf("expected prompt to keep asking Maranhao origin, got %q", runner.lastInput.UserPrompt)
 	}
 }
 
@@ -4075,6 +4113,13 @@ func TestReprocessIgnoresOlderFailedAudioWhenNewAudioIsTranscribed(t *testing.T)
 	}
 	if strings.Contains(runner.lastInput.UserPrompt, "msg-audio-old-failed") {
 		t.Fatalf("expected old failed audio not to be part of the prompt, got %q", runner.lastInput.UserPrompt)
+	}
+	var out ReprocessResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got := asString(out.Memory["current_turn_body"]); got != "quais datas disponiveis" {
+		t.Fatalf("expected current_turn_body to ignore failed audio, got %q", got)
 	}
 }
 

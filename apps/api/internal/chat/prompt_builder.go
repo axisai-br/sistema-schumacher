@@ -134,8 +134,12 @@ func buildAgentUserPrompt(session Session, memory map[string]interface{}, tools 
 			builder.WriteString("- Caso atual: follow-up curto sobre datas/disponibilidade. Reutilize o contexto acima e nao volte a perguntar origem ou destino se isso ja estiver implicito.\n")
 		}
 		if context.DestinationChosenNow {
-			builder.WriteString("- Caso atual: o cliente acabou de escolher a cidade de destino dentro do pacote. Proximo passo correto: listar ate 5 datas futuras para esse destino e perguntar se ele deseja alguma dessas opcoes.\n")
-			builder.WriteString("- Guardrail deste turno: nao perguntar ainda a cidade de saida.\n")
+			builder.WriteString("- Caso atual: o cliente acabou de escolher a cidade de destino dentro do pacote.\n")
+			if context.RouteDirection == "TO_SC" {
+				builder.WriteString("- Proximo passo correto: perguntar a cidade de saida no Maranhao.\n")
+			} else if context.RouteDirection == "TO_MA" {
+				builder.WriteString("- Proximo passo correto: perguntar a cidade de saida em Santa Catarina.\n")
+			}
 		}
 		if context.DateChosenForDestination {
 			builder.WriteString("- Caso atual: o cliente escolheu uma data para um destino ja definido. Proximo passo correto: listar as opcoes de saida/origem com horarios para essa data e perguntar qual delas ele deseja.\n")

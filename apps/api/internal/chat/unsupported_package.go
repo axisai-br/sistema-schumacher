@@ -9,6 +9,7 @@ type unsupportedPackageQuery struct {
 }
 
 func inferUnsupportedPackageQuery(text string) (unsupportedPackageQuery, bool) {
+	text = NormalizeIncomingCustomerText(text)
 	if looksLikeRescheduleIntent(text) {
 		return unsupportedPackageQuery{}, false
 	}
@@ -23,7 +24,7 @@ func inferUnsupportedPackageQuery(text string) (unsupportedPackageQuery, bool) {
 }
 
 func inferExplicitTravelDestination(text string) (string, bool) {
-	body := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
 		return "", false
 	}
@@ -104,6 +105,7 @@ func looksLikeBareFromToRoute(folded string) bool {
 }
 
 func isSupportedPackageDestination(destination string) bool {
+	destination = NormalizeIncomingCustomerText(destination)
 	folded := foldChatText(destination)
 	switch detectBroadTravelState(folded) {
 	case "SC", "MA":

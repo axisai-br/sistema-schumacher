@@ -10,7 +10,7 @@ import (
 
 func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) {
 	cases := []struct {
-		name       string
+		name        string
 		currentTurn string
 	}{
 		{name: "quais_datas_disponiveis", currentTurn: "quais datas disponiveis"},
@@ -34,12 +34,12 @@ func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) 
 			session, _ := store.seedSessionWithMessage("5511999999999", "oi")
 			now := time.Now().UTC()
 			if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
-				SessionID:         session.ID,
-				Direction:         "OUTBOUND",
-				Kind:              "TEXT",
-				ProcessingStatus:  messageStatusAutomationSent,
-				ReceivedAt:        now.Add(-2 * time.Minute),
-				Body:              "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
+				SessionID:        session.ID,
+				Direction:        "OUTBOUND",
+				Kind:             "TEXT",
+				ProcessingStatus: messageStatusAutomationSent,
+				ReceivedAt:       now.Add(-2 * time.Minute),
+				Body:             "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
 			}); err != nil {
 				t.Fatalf("create outbound confirmation: %v", err)
 			}
@@ -103,10 +103,10 @@ func TestNormalizeLocationDisplayNameSupportsParentheses(t *testing.T) {
 func TestLastConfirmedRouteFromHistoryParsesBotConfirmation(t *testing.T) {
 	history := []Message{
 		{
-			Direction:         "OUTBOUND",
-			Body:              "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
-			ProcessingStatus:  messageStatusAutomationSent,
-			ReceivedAt:        time.Now().UTC().Add(-2 * time.Minute),
+			Direction:        "OUTBOUND",
+			Body:             "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       time.Now().UTC().Add(-2 * time.Minute),
 		},
 	}
 
@@ -125,10 +125,10 @@ func TestLastConfirmedRouteFromHistoryParsesBotConfirmation(t *testing.T) {
 func TestInferConversationTurnRouteContextCompletesOriginFromHistoryDestination(t *testing.T) {
 	history := []Message{
 		{
-			Direction:         "OUTBOUND",
-			Body:              "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
-			ProcessingStatus:  messageStatusAutomationSent,
-			ReceivedAt:        time.Now().UTC().Add(-2 * time.Minute),
+			Direction:        "OUTBOUND",
+			Body:             "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       time.Now().UTC().Add(-2 * time.Minute),
 		},
 	}
 	base := inferLatestRouteContextFromHistory(history)
@@ -139,5 +139,21 @@ func TestInferConversationTurnRouteContextCompletesOriginFromHistoryDestination(
 	}
 	if context.Destination != "Fraiburgo/SC" {
 		t.Fatalf("expected destination Fraiburgo/SC, got %+v", context)
+	}
+}
+
+func TestNormalizeIncomingCustomerTextRepairsFraiburgoTranscription(t *testing.T) {
+	if got := NormalizeIncomingCustomerText("e passagem para Freiburg."); got != "passagem para Fraiburgo." {
+		t.Fatalf("expected normalized transcription, got %q", got)
+	}
+}
+
+func TestInferRouteContextFromTextNormalizesSupportedDestination(t *testing.T) {
+	context := inferRouteContextFromText("quero passagem para Freiburg")
+	if context.Destination != "Fraiburgo/SC" {
+		t.Fatalf("expected destination Fraiburgo/SC, got %+v", context)
+	}
+	if context.RouteDirection != "TO_SC" {
+		t.Fatalf("expected route direction TO_SC, got %+v", context)
 	}
 }

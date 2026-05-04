@@ -322,6 +322,10 @@ func (s *Service) transcribeOpenAIAudioFile(ctx context.Context, filePath string
 		_ = writer.Close()
 		return "", err
 	}
+	if err := writer.WriteField("prompt", "Português do Brasil. Atendimento Schumacher Tur. Destinos comuns em Santa Catarina: Fraiburgo, Monte Carlo, Videira, Campos Novos, Chapecó, Concórdia, Ipumirim, Petrolândia, Ituporanga, Seara. Origens comuns no Maranhão: Santa Inês, Monção, Igarapé do Meio. Transcreva nomes de cidades conforme essa lista."); err != nil {
+		_ = writer.Close()
+		return "", err
+	}
 	if err := writer.WriteField("response_format", "json"); err != nil {
 		_ = writer.Close()
 		return "", err
@@ -566,7 +570,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 				normalized["transcription_error"] = transcribeErr.Error()
 				log.Printf("audio_transcription_failed stage=openai contact_key=%s instance=%s message_id=%s model=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, model, transcribeErr)
 			} else {
-				transcriptionText = strings.TrimSpace(transcriptionText)
+				transcriptionText = chat.NormalizeIncomingCustomerText(transcriptionText)
 				if transcriptionText == "" {
 					emptyErr := errors.New("empty transcription text")
 					normalized["transcription_status"] = "FAILED"
@@ -580,7 +584,6 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 					normalized["transcription_status"] = "COMPLETED"
 					normalized["transcription_text"] = transcriptionText
 					normalized["transcription_model"] = model
-					normalized["current_turn_body"] = transcriptionText
 					processingStatus = "READY_FOR_AUTOMATION"
 					log.Printf("audio_transcription_openai_done contact_key=%s instance=%s message_id=%s model=%s text_len=%d", contactKey, strings.TrimSpace(payload.Instance), keyID, model, len(transcriptionText))
 				}
@@ -628,7 +631,6 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 				"transcription_status":     "COMPLETED",
 				"transcription_text":       textBody,
 				"message_text":             textBody,
-				"current_turn_body":        textBody,
 				"processing_status":        processingStatus,
 				"current_turn_message_ids": []string{result.Message.ID},
 			},

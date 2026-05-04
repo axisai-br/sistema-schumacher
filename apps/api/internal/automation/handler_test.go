@@ -63,7 +63,7 @@ func TestHandleEvolutionMessagesAcceptsDirectPayload(t *testing.T) {
 	}
 }
 
-func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
+func TestHandleEvolutionMessagesTranscribesAudioAndNormalizesRouteText(t *testing.T) {
 	audioBytes := []byte("fake-audio-bytes")
 	audioBase64 := base64.StdEncoding.EncodeToString(audioBytes)
 
@@ -89,6 +89,9 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 		if got := r.FormValue("language"); got != "pt" {
 			t.Fatalf("unexpected language: %s", got)
 		}
+		if got := r.FormValue("prompt"); !strings.Contains(got, "Fraiburgo") || !strings.Contains(got, "Santa Inês") {
+			t.Fatalf("unexpected prompt: %s", got)
+		}
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			t.Fatalf("form file: %v", err)
@@ -103,7 +106,7 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 			t.Fatal("expected audio file contents")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":"quais datas disponiveis"}`))
+		_, _ = w.Write([]byte(`{"text":"e passagem para Freiburg."}`))
 	}))
 	defer openAIServer.Close()
 
@@ -139,7 +142,7 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 	if chatSvc.lastInput.Message.Kind != "TEXT" {
 		t.Fatalf("expected transcribed audio to be stored as TEXT, got %s", chatSvc.lastInput.Message.Kind)
 	}
-	if chatSvc.lastInput.Message.Body != "quais datas disponiveis" {
+	if chatSvc.lastInput.Message.Body != "passagem para Fraiburgo." {
 		t.Fatalf("unexpected transcribed body: %s", chatSvc.lastInput.Message.Body)
 	}
 	if chatSvc.updateCalls != 1 {
@@ -148,11 +151,11 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 	if chatSvc.lastUpdateInput.MessageID == "" {
 		t.Fatal("expected message update to target the persisted message")
 	}
-	if chatSvc.lastUpdateInput.Body != "quais datas disponiveis" {
+	if chatSvc.lastUpdateInput.Body != "passagem para Fraiburgo." {
 		t.Fatalf("unexpected update body: %s", chatSvc.lastUpdateInput.Body)
 	}
-	if got := strings.TrimSpace(asString(chatSvc.lastUpdateInput.NormalizedPayload["current_turn_body"])); got != "quais datas disponiveis" {
-		t.Fatalf("unexpected update current_turn_body: %s", got)
+	if got := strings.TrimSpace(asString(chatSvc.lastUpdateInput.NormalizedPayload["current_turn_body"])); got != "" {
+		t.Fatalf("expected update current_turn_body to stay empty, got %s", got)
 	}
 	if got := strings.TrimSpace(asString(chatSvc.lastUpdateInput.ProcessingStatus)); got != "READY_FOR_AUTOMATION" {
 		t.Fatalf("unexpected update processing status: %s", got)
@@ -160,8 +163,11 @@ func TestHandleEvolutionMessagesTranscribesAudioAndMarksText(t *testing.T) {
 	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["transcription_status"])); got != "COMPLETED" {
 		t.Fatalf("unexpected transcription status: %s", got)
 	}
-	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["transcription_text"])); got != "quais datas disponiveis" {
+	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["transcription_text"])); got != "passagem para Fraiburgo." {
 		t.Fatalf("unexpected transcription text: %s", got)
+	}
+	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["current_turn_body"])); got != "" {
+		t.Fatalf("expected inbound normalized payload current_turn_body to stay empty, got %s", got)
 	}
 	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["transcription_model"])); got != "gpt-4o-mini-transcribe" {
 		t.Fatalf("unexpected transcription model: %s", got)

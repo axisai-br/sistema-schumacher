@@ -128,7 +128,7 @@ func (s *Service) canCancelBookings() bool {
 }
 
 func (s *Service) resolveAgentToolContext(ctx context.Context, session Session, history []Message, memory map[string]interface{}) (agentToolContext, error) {
-	currentTurn := strings.TrimSpace(asString(memory["current_turn_body"]))
+	currentTurn := NormalizeIncomingCustomerText(asString(memory["current_turn_body"]))
 	context := agentToolContext{}
 	if s.canSearchReschedules() {
 		searchInput, ok := parseRescheduleAssistInput(currentTurn, time.Now().UTC())
@@ -563,7 +563,7 @@ func (s *Service) executeBookingCancelTool(ctx context.Context, session Session,
 }
 
 func parseAvailabilitySearchInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
-	body := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
 		return AvailabilitySearchInput{}, false
 	}
@@ -628,7 +628,7 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 }
 
 func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
-	body := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
 		return AvailabilitySearchInput{}, false
 	}
@@ -638,7 +638,7 @@ func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext,
 	if strings.TrimSpace(merged.PackageName) == "" || strings.TrimSpace(merged.Destination) == "" {
 		return AvailabilitySearchInput{}, false
 	}
-	if strings.TrimSpace(merged.Origin) != "" {
+	if strings.TrimSpace(merged.Origin) == "" {
 		return AvailabilitySearchInput{}, false
 	}
 
@@ -649,6 +649,7 @@ func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext,
 	}
 
 	input := AvailabilitySearchInput{
+		Origin:      merged.Origin,
 		Destination: merged.Destination,
 		PackageName: merged.PackageName,
 		TripDate:    tripDate,
@@ -662,7 +663,7 @@ func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext,
 }
 
 func parseDirectAvailabilitySearchInput(text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
-	body := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
 		return AvailabilitySearchInput{}, false
 	}
@@ -853,6 +854,7 @@ func looksLikePricingQuoteIntent(text string) bool {
 }
 
 func extractCanonicalLocations(text string) []string {
+	text = NormalizeIncomingCustomerText(text)
 	matches := locationMentionPattern.FindAllStringSubmatch(text, -1)
 	seen := make(map[string]struct{}, len(matches))
 	items := make([]string, 0, len(matches))
@@ -951,7 +953,7 @@ func parseConfirmedRouteMessage(text string) (string, string, bool) {
 }
 
 func inferRouteContextFromText(text string) inferredRouteContext {
-	body := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
 		return inferredRouteContext{}
 	}
@@ -973,6 +975,11 @@ func inferRouteContextFromText(text string) inferredRouteContext {
 			if origin := normalizeRouteEndpoint(match[1], uf); origin != "" {
 				context.Origin = origin
 			}
+		}
+	}
+	if context.Destination == "" {
+		if destination, ok := inferExplicitTravelDestination(body); ok {
+			context.Destination = normalizeSupportedPackageLocation(destination)
 		}
 	}
 	if context.Destination != "" {
@@ -1045,7 +1052,7 @@ func inferDestinationSelectionContext(text string, base inferredRouteContext) in
 }
 
 func inferKnownPackageDestination(text string, direction string) string {
-	folded := foldChatText(text)
+	folded := foldChatText(NormalizeIncomingCustomerText(text))
 	if folded == "" {
 		return ""
 	}
@@ -1075,7 +1082,7 @@ func inferKnownPackageDestination(text string, direction string) string {
 }
 
 func inferKnownPackageOrigin(text string, direction string) string {
-	folded := foldChatText(text)
+	folded := foldChatText(NormalizeIncomingCustomerText(text))
 	if folded == "" {
 		return ""
 	}
@@ -1234,6 +1241,7 @@ func foldChatText(text string) string {
 }
 
 func normalizeLocationDisplayName(value string) string {
+	value = NormalizeIncomingCustomerText(value)
 	raw := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	if raw == "" {
 		return ""
@@ -1279,6 +1287,21 @@ func normalizeLocationDisplayName(value string) string {
 		parts[i] = strings.ToUpper(string(runes[0])) + string(runes[1:])
 	}
 	return strings.Join(parts, " ") + "/" + uf
+}
+
+func normalizeSupportedPackageLocation(value string) string {
+	folded := foldChatText(NormalizeIncomingCustomerText(value))
+	for key, canonical := range scPackageDestinations {
+		if strings.Contains(folded, " "+foldChatDestinationKey(key)+" ") {
+			return canonical
+		}
+	}
+	for key, canonical := range maPackageDestinations {
+		if strings.Contains(folded, " "+foldChatDestinationKey(key)+" ") {
+			return canonical
+		}
+	}
+	return normalizeLocationDisplayName(value)
 }
 
 func normalizeRouteEndpoint(city string, uf string) string {

@@ -47,6 +47,9 @@ func selectReprocessCandidateMessages(history []Message) []Message {
 		if message.Direction != "INBOUND" {
 			continue
 		}
+		if isAudioMessageKind(message.Kind) && hasFailedAudioTranscription(message) {
+			continue
+		}
 		if isAudioMessageKind(message.Kind) && !hasCompletedAudioTranscription(message) {
 			if len(candidates) == 0 {
 				candidates = append([]Message{message}, candidates...)
@@ -206,6 +209,10 @@ func hasCompletedAudioTranscription(message Message) bool {
 		return false
 	}
 	return strings.TrimSpace(asString(message.NormalizedPayload["transcription_text"])) != ""
+}
+
+func hasFailedAudioTranscription(message Message) bool {
+	return strings.EqualFold(strings.TrimSpace(asString(message.NormalizedPayload["transcription_status"])), "FAILED")
 }
 
 func candidateMediaMemory(messages []Message) []map[string]interface{} {
