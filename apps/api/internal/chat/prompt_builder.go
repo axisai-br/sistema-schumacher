@@ -161,7 +161,34 @@ func buildAgentUserPrompt(session Session, memory map[string]interface{}, tools 
 		if context.RouteDirection == "TO_MA" {
 			builder.WriteString("- Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida em Santa Catarina.\n")
 		}
+		if context.PassengerCountReplyContext {
+			builder.WriteString("- Caso atual: o cliente esta respondendo a pergunta sobre quantidade de passageiros e crianca. Nao trate isso como consulta nova de rota ou disponibilidade.\n")
+			if context.PassengerCountReplyParsed {
+				builder.WriteString(fmt.Sprintf("- Quantidade de passageiros inferida: %d.\n", context.PassengerCount))
+				builder.WriteString(fmt.Sprintf("- Crianca de ate 5 anos inferida: %d.\n", context.ChildUnder5Count))
+				builder.WriteString("- Se a rota, data e horario ja estiverem definidos no contexto, continue o fluxo de reserva com a proxima pergunta util.\n")
+			} else {
+				builder.WriteString("- A resposta ficou ambigua. Pergunte: Entendi. A passagem e so para voce ou vai mais alguem junto?\n")
+			}
+		}
 	}
+
+	passengerCountReplyContext := strings.EqualFold(strings.TrimSpace(asString(memory["passenger_count_reply_context"])), "true")
+	passengerCountReplyParsed := strings.EqualFold(strings.TrimSpace(asString(memory["passenger_count_reply_parsed"])), "true")
+	passengerCount := asInt(memory["passenger_count"])
+	childUnder5Count := asInt(memory["child_under_5_count"])
+	if passengerCountReplyContext {
+		builder.WriteString("\nCONTEXTO DE PASSAGEIROS\n")
+		builder.WriteString("- O cliente esta respondendo a pergunta sobre quantidade de passageiros e crianca. Nao trate isso como consulta nova de rota ou disponibilidade.\n")
+		if passengerCountReplyParsed {
+			builder.WriteString(fmt.Sprintf("- Quantidade de passageiros inferida: %d.\n", passengerCount))
+			builder.WriteString(fmt.Sprintf("- Crianca de ate 5 anos inferida: %d.\n", childUnder5Count))
+			builder.WriteString("- Se a rota, data e horario ja estiverem definidos no contexto, continue o fluxo de reserva com a proxima pergunta util.\n")
+		} else {
+			builder.WriteString("- A resposta ficou ambigua. Pergunte: Entendi. A passagem e so para voce ou vai mais alguem junto?\n")
+		}
+	}
+
 	if context.WaitingForPassengerDocuments {
 		if builder.Len() > 0 {
 			builder.WriteString("\n")
@@ -548,6 +575,10 @@ type promptConversationContext struct {
 	TravelOptionChosenNow        bool
 	ShouldRespondWithSCTable     bool
 	ShouldAskSCOriginForMA       bool
+	PassengerCountReplyContext   bool
+	PassengerCountReplyParsed    bool
+	PassengerCount               int
+	ChildUnder5Count             int
 	ExpectedPassengerCount       int
 	CapturedPassengerCount       int
 	OutstandingPassengerCount    int
@@ -571,6 +602,7 @@ func derivePromptConversationContext(currentTurn string, recentMessages []map[st
 	merged := mergeInferredRouteContext(currentContext, historyContext)
 	folded := foldChatText(currentTurn)
 	tripDate := extractTripDate(currentTurn, time.Now().UTC())
+	passengerCountReplyContext, passengerCountReplyParsed, passengerCount, childUnder5Count := detectPassengerCountReplyContext(currentTurn, recentMessages)
 	destinationChosenNow := currentContext.Destination != "" && !strings.EqualFold(currentContext.Destination, historyContext.Destination)
 	dateChosenForDestination := tripDate != nil && merged.Destination != "" && merged.PackageName != "" && merged.Origin == "" && (historyContext.Destination != "" || destinationChosenNow)
 	travelOptionChosenNow := extractSelectedOptionIndex(currentTurn) > 0 || strings.Contains(folded, "essa opcao") || strings.Contains(folded, "essa viagem")
@@ -593,6 +625,10 @@ func derivePromptConversationContext(currentTurn string, recentMessages []map[st
 		TravelOptionChosenNow:        travelOptionChosenNow,
 		ShouldRespondWithSCTable:     detectBroadTravelState(folded) == "SC" && !looksLikeBroadStateScheduleLookup(currentTurn) && currentContext.Origin == "" && currentContext.Destination == "",
 		ShouldAskSCOriginForMA:       detectBroadTravelState(folded) == "MA" && !looksLikeBroadStateScheduleLookup(currentTurn) && currentContext.Origin == "" && currentContext.Destination == "",
+		PassengerCountReplyContext:   passengerCountReplyContext,
+		PassengerCountReplyParsed:    passengerCountReplyParsed,
+		PassengerCount:               passengerCount,
+		ChildUnder5Count:             childUnder5Count,
 		ExpectedPassengerCount:       expectedPassengerCount,
 		CapturedPassengerCount:       capturedPassengerCount,
 		OutstandingPassengerCount:    outstandingPassengerCount,
@@ -600,6 +636,29 @@ func derivePromptConversationContext(currentTurn string, recentMessages []map[st
 		CurrentTurnHasImage:          len(currentTurnMedia) > 0,
 		CurrentTurnMediaCount:        len(currentTurnMedia),
 	}
+}
+
+func detectPassengerCountReplyContext(currentTurn string, recentMessages []map[string]interface{}) (bool, bool, int, int) {
+	if !lastBotAskedPassengerCountFromTexts(recentMessages) {
+		return false, false, 0, 0
+	}
+	passengerCount, childUnder5Count, ok := parsePassengerCountReply(currentTurn)
+	if ok {
+		return true, true, passengerCount, childUnder5Count
+	}
+	return true, false, 0, 0
+}
+
+func lastBotAskedPassengerCountFromTexts(recentMessages []map[string]interface{}) bool {
+	for i := len(recentMessages) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(asString(recentMessages[i]["direction"])), "OUTBOUND") {
+			continue
+		}
+		if looksLikePassengerCountQuestion(strings.TrimSpace(asString(recentMessages[i]["body"]))) {
+			return true
+		}
+	}
+	return false
 }
 
 func inferExpectedPassengerCountFromMemory(currentTurn string, recentMessages []map[string]interface{}) int {

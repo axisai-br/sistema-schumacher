@@ -477,6 +477,9 @@ func inferExpectedPassengerCount(history []Message, texts ...string) int {
 }
 
 func inferPassengerQuantityFromFreeText(text string) int {
+	if passengerCount, _, ok := parsePassengerCountReply(text); ok && passengerCount > 0 {
+		return passengerCount
+	}
 	if qty := extractPassengerQuantity(text); qty > 0 {
 		return qty
 	}
@@ -541,6 +544,111 @@ func inferPassengerQuantityFromFreeText(text string) int {
 	}
 
 	return 0
+}
+
+func lastBotAskedPassengerCount(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.TrimSpace(message.Body)
+		if body == "" {
+			continue
+		}
+		return looksLikePassengerCountQuestion(body)
+	}
+	return false
+}
+
+func looksLikePassengerCountQuestion(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+
+	patterns := []string{
+		"a passagem e so para voce",
+		"a passagem e so para voce ou tem mais alguem",
+		"e so para voce",
+		"tem mais alguem",
+		"quantas pessoas",
+		"quantos passageiros",
+		"passageiros",
+		"crianca de ate 5 anos",
+		"crianca de 5 anos ou menos",
+		"ha crianca",
+		"tem crianca",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(folded, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func parsePassengerCountReply(currentTurn string) (int, int, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
+	if folded == "" {
+		return 0, 0, false
+	}
+
+	passengerCount := 0
+	childUnder5Count := -1
+
+	switch {
+	case containsAnyFolded(folded, "eu e mais uma pessoa", "eu e mais uma", "eu e mais um passageiro", "eu e mais um acompanhante", "eu e outra pessoa", "eu e outra", "eu e minha", "eu e meu", "eu e minha esposa", "eu e meu esposo", "eu e minha filha", "eu e meu filho", "eu e minha mulher", "eu e meu marido"):
+		passengerCount = 2
+	case containsAnyFolded(folded, "so eu", "somente eu", "só eu", "é só eu", "e so eu", "so para mim", "só para mim", "e so para mim", "é só para mim", "passagem so para mim", "passagem só para mim", "vou sozinho", "vou so", "vou só", "sou so eu", "sou só eu", "sou sozinho", "uma pessoa", "1 pessoa", "um passageiro"):
+		passengerCount = 1
+	case containsAnyFolded(folded, "duas pessoas", "dois passageiros", "2 pessoas", "2 passageiros", "as duas", "os dois", "nos duas", "nos dois", "dos dois", "das duas"):
+		passengerCount = 2
+	case containsAnyFolded(folded, "tres pessoas", "3 pessoas", "tres passageiros", "3 passageiros"):
+		passengerCount = 3
+	case containsAnyFolded(folded, "quatro pessoas", "4 pessoas", "quatro passageiros", "4 passageiros"):
+		passengerCount = 4
+	case containsAnyFolded(folded, "cinco pessoas", "5 pessoas", "cinco passageiros", "5 passageiros"):
+		passengerCount = 5
+	}
+
+	if passengerCount == 0 {
+		if match := passengerWordQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+			switch match[1] {
+			case "um", "uma":
+				passengerCount = 1
+			case "dois", "duas":
+				passengerCount = 2
+			case "tres":
+				passengerCount = 3
+			case "quatro":
+				passengerCount = 4
+			case "cinco":
+				passengerCount = 5
+			}
+		}
+	}
+
+	if containsAnyFolded(folded, "nao tem crianca", "não tem criança", "sem crianca", "sem criança", "nao leva crianca", "não leva criança", "nao leva crianca de 5 anos", "sem crianca de 5 anos", "nao tem filhos", "sem filhos") {
+		childUnder5Count = 0
+	}
+
+	if passengerCount == 0 && childUnder5Count < 0 {
+		return 0, 0, false
+	}
+	if childUnder5Count < 0 {
+		childUnder5Count = 0
+	}
+	return passengerCount, childUnder5Count, true
+}
+
+func containsAnyFolded(value string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(value, strings.TrimSpace(pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeDigits(value string) string {

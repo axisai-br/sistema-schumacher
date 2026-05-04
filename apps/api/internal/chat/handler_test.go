@@ -4123,6 +4123,84 @@ func TestReprocessIgnoresOlderFailedAudioWhenNewAudioIsTranscribed(t *testing.T)
 	}
 }
 
+func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Perfeito, vamos seguir com os documentos.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-passenger-reply-1",
+		},
+	}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:       "WHATSAPP",
+		ContactKey:    "5511999999999",
+		CustomerPhone: "5511999999999",
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             "Perfeito, Messias — a passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create passenger question: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID,
+		Direction: "INBOUND",
+		Kind:      "AUDIO",
+		Body:      "é só para mim",
+		NormalizedPayload: map[string]interface{}{
+			"transcription_status": "COMPLETED",
+			"transcription_text":   "é só para mim",
+		},
+		ProcessingStatus: "READY_FOR_AUTOMATION",
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create passenger reply: %v", err)
+	}
+
+	handler := NewHandler(svc)
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/reprocess", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected runner to be called once, got %d", runner.calls)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search for passenger reply, got %d", searcher.calls)
+	}
+	if strings.Contains(runner.lastInput.UserPrompt, "atendemos apenas viagens dos pacotes Santa Catarina e Maranhao") {
+		t.Fatalf("expected passenger reply to avoid out-of-service fallback, got %q", runner.lastInput.UserPrompt)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "CONTEXTO DE PASSAGEIROS") {
+		t.Fatalf("expected passenger reply context in prompt, got %q", runner.lastInput.UserPrompt)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "Quantidade de passageiros inferida: 1") {
+		t.Fatalf("expected passenger count in prompt, got %q", runner.lastInput.UserPrompt)
+	}
+	if !strings.Contains(runner.lastInput.UserPrompt, "Crianca de ate 5 anos inferida: 0") {
+		t.Fatalf("expected child count in prompt, got %q", runner.lastInput.UserPrompt)
+	}
+}
+
 func TestReprocessSkipsRunnerForUntranscribedAudio(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{

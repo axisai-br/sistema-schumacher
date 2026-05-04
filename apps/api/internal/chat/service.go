@@ -716,7 +716,54 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 
 	systemPrompt := buildAgentSystemPrompt()
-	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(strings.TrimSpace(asString(memory["current_turn_body"])))
+	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
+	passengerCountContext := lastBotAskedPassengerCount(history)
+	passengerCountReplyParsed := false
+	if passengerCountContext {
+		s.logReprocess(
+			"chat reprocess event=passenger_count_context_detected session_id=%s trigger=%s job_run_id=%s",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+		)
+		if passengerCount, childUnder5Count, ok := parsePassengerCountReply(currentTurn); ok {
+			passengerCountReplyParsed = true
+			memory["passenger_count_reply_context"] = "true"
+			memory["passenger_count_reply_parsed"] = "true"
+			memory["passenger_count"] = passengerCount
+			memory["child_under_5_count"] = childUnder5Count
+			s.logReprocess(
+				"chat reprocess event=passenger_count_reply_parsed session_id=%s trigger=%s job_run_id=%s passenger_count=%d child_under_5_count=%d",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				passengerCount,
+				childUnder5Count,
+			)
+			s.logReprocess(
+				"chat reprocess event=booking_context_continue_from_passenger_reply session_id=%s trigger=%s job_run_id=%s passenger_count=%d child_under_5_count=%d",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				passengerCount,
+				childUnder5Count,
+			)
+		} else {
+			memory["passenger_count_reply_context"] = "true"
+		}
+	}
+	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
+	if passengerCountContext {
+		if unsupportedPackageHandled {
+			s.logReprocess(
+				"chat reprocess event=fallback_out_of_service_blocked_reason=passenger_count_context session_id=%s trigger=%s job_run_id=%s",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+			)
+		}
+		unsupportedPackageHandled = false
+	}
 	toolContext := agentToolContext{}
 	if !unsupportedPackageHandled {
 		var err error
@@ -756,6 +803,41 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	if unsupportedPackageHandled {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildUnsupportedPackageDraftRun(unsupportedPackage)
+	} else if passengerCountContext && !passengerCountReplyParsed {
+		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
+		s.logReprocess(
+			"chat reprocess event=runner_run_start session_id=%s trigger=%s job_run_id=%s current_turn_count=%d tool_call_count=%d",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+			len(candidates),
+			len(toolContext.Calls),
+		)
+		run, err = s.runner.Run(ctx, RunAgentInput{
+			Session:          persisted.Session,
+			CurrentTurnIDs:   candidateMessageIDs(candidates),
+			CurrentTurnMedia: collectCandidateMedia(candidates),
+			SystemPrompt:     systemPrompt,
+			UserPrompt:       userPrompt,
+			IdempotencyKey:   draftID,
+		})
+		if err != nil {
+			s.logReprocess(
+				"chat reprocess event=runner_run_failed session_id=%s trigger=%s job_run_id=%s error=%v",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				err,
+			)
+			return ReprocessResult{}, fmt.Errorf("%w: %v", ErrAgentRunFailed, err)
+		}
+		s.logReprocess(
+			"chat reprocess event=runner_run_done session_id=%s trigger=%s job_run_id=%s has_reply=%t",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+			strings.TrimSpace(run.ReplyText) != "",
+		)
 	} else if documentHandled && toolContext.DocumentExtract != nil {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)

@@ -303,3 +303,49 @@ func TestParseBookingCreateInputBlocksShortPaymentReplyAfterBookingCreated(t *te
 		t.Fatalf("expected payment reply to block booking create, got %+v", input)
 	}
 }
+
+func TestLastBotAskedPassengerCount(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Perfeito, a passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
+		{Direction: "INBOUND", Body: "é só para mim"},
+	}
+	if !lastBotAskedPassengerCount(history) {
+		t.Fatal("expected passenger count question to be detected")
+	}
+}
+
+func TestLastBotAskedPassengerCountIgnoresOlderPassengerQuestionAfterDocumentRequest(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Perfeito, a passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
+		{Direction: "INBOUND", Body: "é só para mim"},
+		{Direction: "OUTBOUND", Body: "Pode enviar os nomes completos e os documentos dos dois. Se preferir, pode mandar foto legivel do documento."},
+	}
+	if lastBotAskedPassengerCount(history) {
+		t.Fatal("expected latest outbound document request to clear passenger count context")
+	}
+}
+
+func TestParsePassengerCountReply(t *testing.T) {
+	cases := []struct {
+		name       string
+		text       string
+		passengers int
+		children   int
+		ok         bool
+	}{
+		{name: "solo", text: "é só para mim", passengers: 1, children: 0, ok: true},
+		{name: "alone", text: "sou só eu", passengers: 1, children: 0, ok: true},
+		{name: "couple", text: "eu e minha esposa", passengers: 2, children: 0, ok: true},
+		{name: "two_people", text: "eu e mais uma pessoa", passengers: 2, children: 0, ok: true},
+		{name: "child_denial", text: "não tem criança", passengers: 0, children: 0, ok: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			passengers, children, ok := parsePassengerCountReply(tc.text)
+			if ok != tc.ok || passengers != tc.passengers || children != tc.children {
+				t.Fatalf("unexpected parse result for %q: passengers=%d children=%d ok=%v", tc.text, passengers, children, ok)
+			}
+		})
+	}
+}

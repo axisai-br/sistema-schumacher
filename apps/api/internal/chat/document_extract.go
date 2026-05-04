@@ -30,13 +30,14 @@ type DocumentExtractResult struct {
 
 func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Session, candidates []Message, memory map[string]interface{}, draftID string) (agentToolContext, bool, error) {
 	media := collectCandidateMedia(candidates)
-	if len(media) == 0 || !shouldRunDocumentExtract(memory) {
+	recent := normalizeRecentMemoryMessages(memory["recent_messages"])
+	if len(media) == 0 || (!isWaitingForPassengerDocuments(recent) && !hasRecentDocumentRequest(recent)) {
 		return agentToolContext{}, false, nil
 	}
 
 	expected := inferExpectedPassengerCountFromMemory(
 		strings.TrimSpace(asString(memory["current_turn_body"])),
-		normalizeRecentMemoryMessages(memory["recent_messages"]),
+		recent,
 	)
 
 	/* Log for init of extraction */
@@ -140,11 +141,27 @@ func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Ses
 }
 
 func shouldRunDocumentExtract(memory map[string]interface{}) bool {
-	currentTurn := strings.TrimSpace(asString(memory["current_turn_body"]))
 	recent := normalizeRecentMemoryMessages(memory["recent_messages"])
 	media := normalizeMediaMemoryItems(memory["current_turn_media"])
-	context := derivePromptConversationContext(currentTurn, recent, media)
-	return context.WaitingForPassengerDocuments && context.CurrentTurnHasImage
+	return len(media) > 0 && (isWaitingForPassengerDocuments(recent) || hasRecentDocumentRequest(recent))
+}
+
+func hasRecentDocumentRequest(recent []map[string]interface{}) bool {
+	for i := len(recent) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(asString(recent[i]["direction"])), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(asString(recent[i]["body"]))), " ")
+		if body == "" {
+			continue
+		}
+		if strings.Contains(body, "documento") || strings.Contains(body, "documentos") {
+			if strings.Contains(body, "foto") || strings.Contains(body, "enviar") || strings.Contains(body, "digitar") || strings.Contains(body, "nome completo") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Service) runDocumentExtract(ctx context.Context, session Session, candidates []Message, media []AgentMediaInput, expected int, draftID string) (RunAgentResult, DocumentExtractResult, error) {
