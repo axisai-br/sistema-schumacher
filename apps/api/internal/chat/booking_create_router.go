@@ -75,6 +75,133 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 	return input, true
 }
 
+func parseBookingCreateFromDocumentConfirmation(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
+	if !lastAssistantAskedDocumentConfirmation(history) || !looksLikeDocumentConfirmation(currentTurn) {
+		return BookingCreateInput{}, false
+	}
+
+	context := collectBookingDraftContext(session, history, currentTurn)
+	if strings.TrimSpace(context.TripID) == "" ||
+		strings.TrimSpace(context.BoardStopID) == "" ||
+		strings.TrimSpace(context.AlightStopID) == "" ||
+		strings.TrimSpace(context.Origin) == "" ||
+		strings.TrimSpace(context.Destination) == "" ||
+		strings.TrimSpace(context.TripDate) == "" {
+		return BookingCreateInput{}, false
+	}
+
+	extract := findLatestDocumentExtractContext(history)
+	if extract == nil || strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" {
+		return BookingCreateInput{}, false
+	}
+	expected := extract.ExpectedPassengerCount
+	if expected <= 0 {
+		expected = context.PassengerCount
+	}
+	if expected <= 0 {
+		expected = len(extract.Passengers)
+	}
+	if expected <= 0 || len(extract.Passengers) != expected {
+		return BookingCreateInput{}, false
+	}
+
+	passengers := make([]BookingCreatePassengerInput, 0, len(extract.Passengers))
+	for _, extracted := range extract.Passengers {
+		passenger := bookingPassengerFromDocumentExtract(extracted, session)
+		if strings.TrimSpace(passenger.Name) == "" ||
+			strings.TrimSpace(passenger.DocumentType) == "" ||
+			strings.TrimSpace(passenger.Document) == "" {
+			return BookingCreateInput{}, false
+		}
+		passengers = append(passengers, passenger)
+	}
+	if len(passengers) != expected {
+		return BookingCreateInput{}, false
+	}
+	applyLapChildFlags(passengers, context.ChildUnder5Count)
+
+	input := BookingCreateInput{
+		SelectedOptionIndex:    context.SelectedOptionIndex,
+		TripID:                 strings.TrimSpace(context.TripID),
+		BoardStopID:            strings.TrimSpace(context.BoardStopID),
+		AlightStopID:           strings.TrimSpace(context.AlightStopID),
+		OriginDisplayName:      strings.TrimSpace(context.Origin),
+		DestinationDisplayName: strings.TrimSpace(context.Destination),
+		TripDate:               strings.TrimSpace(context.TripDate),
+		DepartureTime:          strings.TrimSpace(context.DepartureTime),
+		Qty:                    expected,
+		CustomerName:           firstNonEmpty(strings.TrimSpace(session.CustomerName), strings.TrimSpace(passengers[0].Name)),
+		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
+		Passengers:             passengers,
+	}
+	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
+	return input, true
+}
+
+func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, session Session) BookingCreatePassengerInput {
+	documentType := normalizePassengerDocumentType(extracted.DocumentType)
+	document := normalizePassengerDocumentValue(extracted.Document, documentType)
+	return BookingCreatePassengerInput{
+		Name:         strings.TrimSpace(extracted.Name),
+		DocumentType: documentType,
+		Document:     document,
+		Phone:        strings.TrimSpace(session.CustomerPhone),
+	}
+}
+
+func looksLikeDocumentConfirmation(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	switch folded {
+	case "conferem",
+		"confere",
+		"sim",
+		"isso",
+		"correto",
+		"esta certo",
+		"ta certo",
+		"tá certo",
+		"pode seguir",
+		"confirmo":
+		return true
+	default:
+		return false
+	}
+}
+
+func lastAssistantAskedDocumentConfirmation(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(message.Body)), " ")
+		if body == "" {
+			continue
+		}
+		return strings.Contains(body, "consegui identificar estes dados") ||
+			strings.Contains(body, "eles conferem") ||
+			strings.Contains(body, "dados conferem") ||
+			strings.Contains(body, "confere")
+	}
+	return false
+}
+
+func findLatestDocumentExtractContext(history []Message) *DocumentExtractResult {
+	for i := len(history) - 1; i >= 0; i-- {
+		for _, toolContext := range messageToolContexts(history[i]) {
+			payload := asMap(toolContext[toolNameDocumentExtract])
+			if len(payload) == 0 {
+				continue
+			}
+			result := parseDocumentExtractContextPayload(payload)
+			if strings.TrimSpace(result.Mode) != "" {
+				return &result
+			}
+		}
+	}
+	return nil
+}
+
 func shouldBlockBookingCreateBecausePaymentFlow(history []Message, currentTurn string) bool {
 	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
 	if folded == "" || !looksLikePaymentFlowShortReply(folded) {

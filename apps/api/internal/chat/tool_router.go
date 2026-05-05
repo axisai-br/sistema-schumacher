@@ -430,7 +430,12 @@ func (s *Service) resolveContextualActionTools(ctx context.Context, session Sess
 		}
 	}
 	if s.canCreateBookings() {
-		createInput, ok := parseBookingCreateInput(session, history, currentTurn, nil)
+		createInput, ok := parseBookingCreateFromDocumentConfirmation(session, history, currentTurn)
+		if ok {
+			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
+			return updated, true, err
+		}
+		createInput, ok = parseBookingCreateInput(session, history, currentTurn, nil)
 		if ok {
 			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
 			return updated, true, err

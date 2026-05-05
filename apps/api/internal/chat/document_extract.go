@@ -323,6 +323,25 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 	}
 }
 
+func parseDocumentExtractContextPayload(payload map[string]interface{}) DocumentExtractResult {
+	result := DocumentExtractResult{
+		Mode:                   strings.ToUpper(strings.TrimSpace(asString(payload["mode"]))),
+		ExpectedPassengerCount: readInt(payload["expected_passenger_count"]),
+		MediaCount:             readInt(payload["media_count"]),
+		FailureReason:          strings.TrimSpace(asString(payload["failure_reason"])),
+		Model:                  strings.TrimSpace(asString(payload["model"])),
+		ProviderResponseID:     strings.TrimSpace(asString(payload["provider_response_id"])),
+	}
+	for _, raw := range asInterfaceSliceMaps(payload["passengers"]) {
+		passenger := parseDocumentExtractPassenger(raw)
+		if passenger.Name == "" && passenger.Document == "" {
+			continue
+		}
+		result.Passengers = append(result.Passengers, passenger)
+	}
+	return result
+}
+
 func selectDocumentByPriority(raw map[string]interface{}) (string, string) {
 	candidates := []struct {
 		Type string

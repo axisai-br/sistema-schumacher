@@ -300,3 +300,52 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 		})
 	}
 }
+
+func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true}
+	creator := &fakeBookingCreator{
+		enabled: true,
+		result: BookingCreateResult{
+			Mode:            "created",
+			BookingID:       "BK-DOC123",
+			ReservationCode: "DOC12345",
+			Status:          "PENDING",
+			TotalAmount:     950,
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := Session{
+		ID:            "session-resolve-document-confirmation",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
+
+	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "conferem", agentToolContext{})
+	if err != nil {
+		t.Fatalf("resolve contextual tools: %v", err)
+	}
+	if !used {
+		t.Fatalf("expected contextual action tool to be used")
+	}
+	if creator.calls != 1 {
+		t.Fatalf("expected one booking create call, got %d", creator.calls)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected runner not to be called, got %d", runner.calls)
+	}
+	if len(context.Calls) != 1 || context.Calls[0].ToolName != toolNameBookingCreate {
+		t.Fatalf("expected one booking_create tool call, got %+v", context.Calls)
+	}
+	if context.BookingCreate == nil {
+		t.Fatalf("expected booking create result in context")
+	}
+	if creator.lastInput.OriginDisplayName != "Santa Inês/MA" || creator.lastInput.DestinationDisplayName != "Fraiburgo/SC" {
+		t.Fatalf("unexpected route: %+v", creator.lastInput)
+	}
+	if creator.lastInput.TripID != "trip-doc-1" || creator.lastInput.TripDate != "2026-05-11" {
+		t.Fatalf("unexpected selected trip: %+v", creator.lastInput)
+	}
+}

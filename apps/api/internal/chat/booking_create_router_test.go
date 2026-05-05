@@ -304,6 +304,61 @@ func TestParseBookingCreateInputBlocksShortPaymentReplyAfterBookingCreated(t *te
 	}
 }
 
+func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
+	session := Session{
+		ID:            "session-document-confirmation",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem")
+	if !ok {
+		t.Fatalf("expected booking create from document confirmation")
+	}
+	if input.TripID != "trip-doc-1" || input.BoardStopID != "board-doc-1" || input.AlightStopID != "alight-doc-1" {
+		t.Fatalf("unexpected trip identifiers: %+v", input)
+	}
+	if input.OriginDisplayName != "Santa Inês/MA" || input.DestinationDisplayName != "Fraiburgo/SC" {
+		t.Fatalf("unexpected route: %+v", input)
+	}
+	if input.TripDate != "2026-05-11" || input.DepartureTime != "12:00" {
+		t.Fatalf("unexpected schedule: %+v", input)
+	}
+	if input.Qty != 1 || len(input.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", input)
+	}
+	if input.Passengers[0].Name != "Joao Vitor Messias" {
+		t.Fatalf("unexpected passenger name: %+v", input.Passengers[0])
+	}
+	if input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "06645648103" {
+		t.Fatalf("unexpected passenger document: %+v", input.Passengers[0])
+	}
+	if input.IdempotencyKey == "" {
+		t.Fatalf("expected idempotency key")
+	}
+}
+
+func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(t *testing.T) {
+	session := Session{
+		ID:            "session-document-missing",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", false)
+
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {
+		t.Fatalf("expected missing document_extract to block booking create, got %+v", input)
+	}
+
+	history = documentConfirmationBookingHistory(time.Now().UTC(), "PARTIAL", true)
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {
+		t.Fatalf("expected partial document_extract to block booking create, got %+v", input)
+	}
+}
+
 func TestLastBotAskedPassengerCount(t *testing.T) {
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Perfeito, a passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
@@ -312,6 +367,88 @@ func TestLastBotAskedPassengerCount(t *testing.T) {
 	if !lastBotAskedPassengerCount(history) {
 		t.Fatal("expected passenger count question to be detected")
 	}
+}
+
+func documentConfirmationBookingHistory(now time.Time, documentMode string, includeDocumentExtract bool) []Message {
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Opções para Santa Inês/MA -> Fraiburgo/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-5 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{
+							Origin:      "Santa Inês/MA",
+							Destination: "Fraiburgo/SC",
+							Qty:         1,
+							Limit:       8,
+						},
+						Results: []AvailabilitySearchItem{
+							{
+								TripID:                 "trip-doc-1",
+								BoardStopID:            "board-doc-1",
+								AlightStopID:           "alight-doc-1",
+								OriginDisplayName:      "Santa Inês/MA",
+								DestinationDisplayName: "Fraiburgo/SC",
+								OriginDepartTime:       "12:00",
+								TripDate:               "2026-05-11",
+								Price:                  950,
+								Currency:               "BRL",
+								PackageName:            packageToSantaCatarina,
+							},
+						},
+					}),
+				},
+			},
+		},
+		{
+			Direction:        "INBOUND",
+			Body:             "a primeira",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-4 * time.Minute),
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+		},
+	}
+	if includeDocumentExtract {
+		history = append(history, Message{
+			Direction:        "OUTBOUND",
+			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103",
+			ProcessingStatus: messageStatusAutomationDraft,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
+						Mode:                   documentMode,
+						ExpectedPassengerCount: 1,
+						MediaCount:             1,
+						Passengers: []DocumentExtractPassenger{
+							{
+								Name:         "Joao Vitor Messias",
+								DocumentType: "CPF",
+								Document:     "06645648103",
+								Confidence:   0.98,
+							},
+						},
+					}),
+				},
+			},
+		})
+	} else {
+		history = append(history, Message{
+			Direction:        "OUTBOUND",
+			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103",
+			ProcessingStatus: messageStatusAutomationDraft,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+		})
+	}
+	return history
 }
 
 func TestLastBotAskedPassengerCountIgnoresOlderPassengerQuestionAfterDocumentRequest(t *testing.T) {
