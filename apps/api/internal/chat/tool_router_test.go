@@ -215,3 +215,88 @@ func TestParseAvailabilitySearchInputKeepsMADestinationWhenUserAnswersSCOrigin(t
 		t.Fatalf("expected limit 8, got %+v", input)
 	}
 }
+
+func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *testing.T) {
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Inês/MA",
+			Destination: "Fraiburgo/SC",
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       8,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "ma-sc-2026-05-11",
+				BoardStopID:            "board-11",
+				AlightStopID:           "alight-11",
+				OriginDisplayName:      "Santa Inês/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "12:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+				Status:                 "ATIVO",
+				TripStatus:             "ATIVO",
+				PackageName:            packageToSantaCatarina,
+			},
+			{
+				TripID:                 "ma-sc-2026-05-25",
+				BoardStopID:            "board-25",
+				AlightStopID:           "alight-25",
+				OriginDisplayName:      "Santa Inês/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "12:00",
+				TripDate:               "2026-05-25",
+				Price:                  950,
+				Currency:               "BRL",
+				Status:                 "ATIVO",
+				TripStatus:             "ATIVO",
+				PackageName:            packageToSantaCatarina,
+			},
+		},
+	}
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			ProcessingStatus: messageStatusAutomationDraft,
+			Body:             "Opções (Santa Inês → Fraiburgo — saída 12:00 — R$950):\n11/05/2026\n25/05/2026",
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+				},
+			},
+		},
+	}
+
+	cases := []string{
+		"Eu quero a primeira data do dia 11/05/2026.",
+		"Quero a primeira data",
+	}
+	for _, currentTurn := range cases {
+		t.Run(currentTurn, func(t *testing.T) {
+			input, ok := parseAvailabilitySearchInput(history, currentTurn, time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC))
+			if !ok {
+				t.Fatalf("expected availability search input")
+			}
+			if input.Origin != "Santa Inês/MA" {
+				t.Fatalf("expected origin Santa Inês/MA, got %+v", input)
+			}
+			if input.Destination != "Fraiburgo/SC" {
+				t.Fatalf("expected destination Fraiburgo/SC, got %+v", input)
+			}
+			if input.PackageName != packageToSantaCatarina {
+				t.Fatalf("expected package %q, got %+v", packageToSantaCatarina, input)
+			}
+			if input.TripDate == nil || input.TripDate.UTC().Format("2006-01-02") != "2026-05-11" {
+				t.Fatalf("expected trip date 2026-05-11, got %+v", input)
+			}
+			if input.Qty != 1 {
+				t.Fatalf("expected qty 1, got %+v", input)
+			}
+			if input.Limit != 8 {
+				t.Fatalf("expected limit 8, got %+v", input)
+			}
+		})
+	}
+}

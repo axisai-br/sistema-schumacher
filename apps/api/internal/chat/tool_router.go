@@ -569,6 +569,10 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 	}
 	historyContext := inferLatestRouteContextFromHistory(history)
 
+	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
+		return input, true
+	}
+
 	if input, ok := parseDirectAvailabilitySearchInput(body, observedAt); ok {
 		return input, true
 	}
@@ -671,6 +675,90 @@ func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, ob
 		input.Qty = 1
 	}
 	return input, true
+}
+
+func parseAvailabilityDateSelectionInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
+	latest := findLatestAvailabilityContext(history)
+	if latest == nil || len(latest.Results) == 0 {
+		return AvailabilitySearchInput{}, false
+	}
+	selected, ok := resolveAvailabilityDateSelection(latest.Results, text, observedAt)
+	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+
+	tripDate := parseISODatePtr(selected.TripDate)
+	if tripDate == nil {
+		tripDate = extractTripDate(text, observedAt)
+	}
+	origin := strings.TrimSpace(selected.OriginDisplayName)
+	if origin == "" {
+		origin = strings.TrimSpace(latest.Filter.Origin)
+	}
+	destination := strings.TrimSpace(selected.DestinationDisplayName)
+	if destination == "" {
+		destination = strings.TrimSpace(latest.Filter.Destination)
+	}
+	packageName := strings.TrimSpace(selected.PackageName)
+	if packageName == "" {
+		packageName = strings.TrimSpace(latest.Filter.PackageName)
+	}
+	if packageName == "" {
+		packageName = packageNameForRouteDirection(inferRouteDirectionFromDestination(destination))
+	}
+	if origin == "" || destination == "" || packageName == "" || tripDate == nil {
+		return AvailabilitySearchInput{}, false
+	}
+
+	input := AvailabilitySearchInput{
+		Origin:      origin,
+		Destination: destination,
+		PackageName: packageName,
+		TripDate:    tripDate,
+		Qty:         latest.Filter.Qty,
+		Limit:       8,
+	}
+	if input.Qty <= 0 {
+		input.Qty = extractPassengerQuantity(text)
+	}
+	if input.Qty <= 0 {
+		input.Qty = 1
+	}
+	return input, true
+}
+
+func resolveAvailabilityDateSelection(results []AvailabilitySearchItem, text string, observedAt time.Time) (AvailabilitySearchItem, bool) {
+	if len(results) == 0 {
+		return AvailabilitySearchItem{}, false
+	}
+	body := NormalizeIncomingCustomerText(text)
+	if body == "" {
+		return AvailabilitySearchItem{}, false
+	}
+
+	if selectedDate := extractTripDate(body, observedAt); selectedDate != nil {
+		for _, item := range results {
+			itemDate := parseISODatePtr(item.TripDate)
+			if sameCalendarDate(itemDate, selectedDate) {
+				return item, true
+			}
+		}
+	}
+	if day := extractDayOfMonthDateSelection(body); day > 0 {
+		for _, item := range results {
+			itemDate := parseISODatePtr(item.TripDate)
+			if itemDate != nil && itemDate.UTC().Day() == day {
+				return item, true
+			}
+		}
+	}
+	if index := extractSelectedOptionIndex(body); index > 0 {
+		if index <= len(results) {
+			return results[index-1], true
+		}
+		return AvailabilitySearchItem{}, false
+	}
+	return AvailabilitySearchItem{}, false
 }
 
 func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
@@ -1522,6 +1610,46 @@ func extractTripDate(text string, observedAt time.Time) *time.Time {
 		}
 	}
 	return nil
+}
+
+func parseISODatePtr(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil
+	}
+	parsed = parsed.UTC()
+	return &parsed
+}
+
+func sameCalendarDate(a *time.Time, b *time.Time) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aUTC := a.UTC()
+	bUTC := b.UTC()
+	return aUTC.Year() == bUTC.Year() && aUTC.Month() == bUTC.Month() && aUTC.Day() == bUTC.Day()
+}
+
+func extractDayOfMonthDateSelection(text string) int {
+	folded := foldChatText(text)
+	if folded == "" || !strings.Contains(folded, " dia ") {
+		return 0
+	}
+	fields := strings.Fields(folded)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] != "dia" {
+			continue
+		}
+		day, err := strconv.Atoi(fields[i+1])
+		if err == nil && day >= 1 && day <= 31 {
+			return day
+		}
+	}
+	return 0
 }
 
 func extractPassengerQuantity(text string) int {

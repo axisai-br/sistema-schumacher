@@ -805,6 +805,7 @@ func parseAvailabilityContextPayload(payload map[string]interface{}) Availabilit
 		Filter: AvailabilitySearchInput{
 			Origin:      strings.TrimSpace(asString(payload["origin"])),
 			Destination: strings.TrimSpace(asString(payload["destination"])),
+			PackageName: strings.TrimSpace(asString(payload["package_name"])),
 			Qty:         asInt(payload["qtd"]),
 			Limit:       len(asInterfaceSliceMaps(payload["results"])),
 		},
