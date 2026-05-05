@@ -573,6 +573,10 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 		return input, true
 	}
 
+	if input, ok := parseOriginAnswerAvailabilitySearchInput(history, body, observedAt); ok {
+		return input, true
+	}
+
 	currentContext := inferRouteContextFromText(body)
 	if looksLikeGenericAvailabilityQuestion(body) &&
 		strings.TrimSpace(currentContext.Origin) == "" &&
@@ -619,6 +623,48 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 		PackageName: context.PackageName,
 		TripDate:    extractTripDate(body, observedAt),
 		Qty:         extractPassengerQuantity(body),
+		Limit:       8,
+	}
+	if input.Qty <= 0 {
+		input.Qty = 1
+	}
+	return input, true
+}
+
+func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
+	originState, questionIndex, ok := lastAssistantOriginQuestionState(history)
+	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+	origin := inferOriginFromCurrentTurnAnswer(history, text)
+	if origin == "" || !strings.HasSuffix(strings.ToUpper(origin), "/"+originState) {
+		return AvailabilitySearchInput{}, false
+	}
+
+	priorContext := inferLatestRouteContextFromHistory(history[:questionIndex])
+	destination := strings.TrimSpace(priorContext.Destination)
+	if destination == "" {
+		destination = inferLatestDestinationBeforeOriginQuestion(history)
+	}
+	if destination == "" || strings.HasSuffix(strings.ToUpper(destination), "/"+originState) {
+		return AvailabilitySearchInput{}, false
+	}
+
+	routeDirection := inferRouteDirectionFromDestination(destination)
+	packageName := packageNameForRouteDirection(routeDirection)
+	if packageName == "" {
+		packageName = priorContext.PackageName
+	}
+	if packageName == "" {
+		return AvailabilitySearchInput{}, false
+	}
+
+	input := AvailabilitySearchInput{
+		Origin:      origin,
+		Destination: destination,
+		PackageName: packageName,
+		TripDate:    extractTripDate(text, observedAt),
+		Qty:         extractPassengerQuantity(text),
 		Limit:       8,
 	}
 	if input.Qty <= 0 {
@@ -888,6 +934,84 @@ func inferLatestRouteContextFromHistory(history []Message) inferredRouteContext 
 	return context
 }
 
+func lastAssistantAskedOriginInMaranhao(history []Message) bool {
+	state, _, ok := lastAssistantOriginQuestionState(history)
+	return ok && state == "MA"
+}
+
+func lastAssistantAskedOriginInSantaCatarina(history []Message) bool {
+	state, _, ok := lastAssistantOriginQuestionState(history)
+	return ok && state == "SC"
+}
+
+func lastAssistantOriginQuestionState(history []Message) (string, int, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !isAssistantRouteQuestionMessage(message) {
+			continue
+		}
+		switch {
+		case assistantAskedOriginInState(message.Body, "MA"):
+			return "MA", i, true
+		case assistantAskedOriginInState(message.Body, "SC"):
+			return "SC", i, true
+		}
+	}
+	return "", -1, false
+}
+
+func isAssistantRouteQuestionMessage(message Message) bool {
+	direction := strings.TrimSpace(message.Direction)
+	return strings.EqualFold(direction, "OUTBOUND") || strings.EqualFold(direction, "BOT")
+}
+
+func assistantAskedOriginInState(text string, state string) bool {
+	folded := foldChatText(text)
+	if folded == "" {
+		return false
+	}
+
+	hasState := false
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "MA":
+		hasState = strings.Contains(folded, " maranhao ") || strings.Contains(folded, " ma ")
+	case "SC":
+		hasState = strings.Contains(folded, " santa catarina ") || strings.Contains(folded, " sc ")
+	}
+	if !hasState || !strings.Contains(folded, " cidade ") {
+		return false
+	}
+	return strings.Contains(folded, " sair ") ||
+		strings.Contains(folded, " sai ") ||
+		strings.Contains(folded, " saida ") ||
+		strings.Contains(folded, " saindo ") ||
+		strings.Contains(folded, " origem ")
+}
+
+func inferOriginFromCurrentTurnAnswer(history []Message, currentTurn string) string {
+	state, _, ok := lastAssistantOriginQuestionState(history)
+	if !ok {
+		return ""
+	}
+	switch state {
+	case "MA":
+		return inferKnownLocationFromCandidates(currentTurn, maPackageDestinations)
+	case "SC":
+		return inferKnownLocationFromCandidates(currentTurn, scPackageDestinations)
+	default:
+		return ""
+	}
+}
+
+func inferLatestDestinationBeforeOriginQuestion(history []Message) string {
+	_, questionIndex, ok := lastAssistantOriginQuestionState(history)
+	if !ok {
+		return ""
+	}
+	context := inferLatestRouteContextFromHistory(history[:questionIndex])
+	return context.Destination
+}
+
 func lastConfirmedRouteFromHistory(history []Message) (string, string, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
@@ -1094,6 +1218,26 @@ func inferKnownPackageOrigin(text string, direction string) string {
 	case "TO_MA":
 		candidates = scPackageDestinations
 	default:
+		return ""
+	}
+
+	matchCount := 0
+	selected := ""
+	for key, canonical := range candidates {
+		if strings.Contains(folded, " "+key+" ") {
+			matchCount++
+			selected = canonical
+		}
+	}
+	if matchCount != 1 {
+		return ""
+	}
+	return selected
+}
+
+func inferKnownLocationFromCandidates(text string, candidates map[string]string) string {
+	folded := foldChatText(NormalizeIncomingCustomerText(text))
+	if folded == "" {
 		return ""
 	}
 

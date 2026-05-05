@@ -157,3 +157,61 @@ func TestInferRouteContextFromTextNormalizesSupportedDestination(t *testing.T) {
 		t.Fatalf("expected route direction TO_SC, got %+v", context)
 	}
 }
+
+func TestParseAvailabilitySearchInputKeepsSCDestinationWhenUserAnswersMAOrigin(t *testing.T) {
+	history := []Message{
+		{Direction: "INBOUND", Body: "Passagem para Santa Catarina"},
+		{Direction: "OUTBOUND", Body: "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nVideira R$ 950"},
+		{Direction: "INBOUND", Body: "Videira"},
+		{Direction: "OUTBOUND", Body: "Perfeito, Messias. De qual cidade do Maranhão você vai sair?"},
+	}
+
+	input, ok := parseAvailabilitySearchInput(history, "Monção", time.Now().UTC())
+	if !ok {
+		t.Fatalf("expected availability search input")
+	}
+	if input.Origin != "Moncao/MA" && input.Origin != "Monção/MA" {
+		t.Fatalf("expected origin Moncao/MA or Monção/MA, got %+v", input)
+	}
+	if input.Destination != "Videira/SC" {
+		t.Fatalf("expected destination Videira/SC, got %+v", input)
+	}
+	if input.PackageName != packageToSantaCatarina {
+		t.Fatalf("expected package %q, got %+v", packageToSantaCatarina, input)
+	}
+	if input.Qty != 1 {
+		t.Fatalf("expected qty 1, got %+v", input)
+	}
+	if input.Limit != 8 {
+		t.Fatalf("expected limit 8, got %+v", input)
+	}
+}
+
+func TestParseAvailabilitySearchInputKeepsMADestinationWhenUserAnswersSCOrigin(t *testing.T) {
+	history := []Message{
+		{Direction: "INBOUND", Body: "Passagem para Maranhão"},
+		{Direction: "OUTBOUND", Body: "Oi Messias, temos sim. Valores por cidade no Maranhão:\nSanta Inês R$ 950"},
+		{Direction: "INBOUND", Body: "Santa Inês"},
+		{Direction: "OUTBOUND", Body: "Perfeito. Saindo de qual cidade de Santa Catarina?"},
+	}
+
+	input, ok := parseAvailabilitySearchInput(history, "Chapecó", time.Now().UTC())
+	if !ok {
+		t.Fatalf("expected availability search input")
+	}
+	if input.Origin != "Chapeco/SC" && input.Origin != "Chapecó/SC" {
+		t.Fatalf("expected origin Chapeco/SC or Chapecó/SC, got %+v", input)
+	}
+	if input.Destination != "Santa Ines/MA" && input.Destination != "Santa Inês/MA" {
+		t.Fatalf("expected destination Santa Ines/MA or Santa Inês/MA, got %+v", input)
+	}
+	if input.PackageName != packageToMaranhao {
+		t.Fatalf("expected package %q, got %+v", packageToMaranhao, input)
+	}
+	if input.Qty != 1 {
+		t.Fatalf("expected qty 1, got %+v", input)
+	}
+	if input.Limit != 8 {
+		t.Fatalf("expected limit 8, got %+v", input)
+	}
+}
