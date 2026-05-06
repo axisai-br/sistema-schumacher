@@ -689,16 +689,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		result.Reason = "review_required"
 		return result, nil
 	}
-	if !s.canRunAgent() {
-		s.logReprocess(
-			"chat reprocess event=runner_disabled session_id=%s trigger=%s job_run_id=%s reason=agent_runner_unavailable",
-			persisted.Session.ID,
-			trigger,
-			jobRunID,
-		)
-		return result, nil
-	}
-
 	draftID := buildAgentDraftIdempotencyKey(sessionID, candidateMessageIDs(candidates))
 	if existing, err := s.store.FindMessageByKeys(ctx, "", draftID); err != nil {
 		return ReprocessResult{}, err
@@ -716,6 +706,16 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 
 	systemPrompt := buildAgentSystemPrompt()
 	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
+	unsupportedCargo, unsupportedCargoHandled := inferUnsupportedCargoQuery(currentTurn)
+	if !unsupportedCargoHandled && !s.canRunAgent() {
+		s.logReprocess(
+			"chat reprocess event=runner_disabled session_id=%s trigger=%s job_run_id=%s reason=agent_runner_unavailable",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+		)
+		return result, nil
+	}
 	passengerCountContext := lastBotAskedPassengerCount(history)
 	passengerCountReplyParsed := false
 
@@ -814,7 +814,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		unsupportedPackageHandled = false
 	}
 	toolContext := agentToolContext{}
-	if !unsupportedPackageHandled && !deterministicBookingHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
 		var err error
 		s.logReprocess(
 			"chat reprocess event=resolve_agent_tool_context_start session_id=%s trigger=%s job_run_id=%s",
@@ -837,7 +837,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	result.ToolCalls = toolContext.Calls
 
 	documentHandled := false
-	if !unsupportedPackageHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled {
 		documentContext, handled, err := s.resolveDocumentExtractContext(ctx, persisted.Session, candidates, memory, draftID)
 		if err != nil {
 			return ReprocessResult{}, err
@@ -850,7 +850,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	var run RunAgentResult
 	var userPrompt string
 
-	if unsupportedPackageHandled {
+	if unsupportedCargoHandled {
+		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
+		run = buildUnsupportedCargoDraftRun(unsupportedCargo)
+	} else if unsupportedPackageHandled {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildUnsupportedPackageDraftRun(unsupportedPackage)
 	} else if deterministicBookingHandled && deterministicBookingRun != nil {

@@ -48,6 +48,9 @@ const defaultAgentSystemPrompt = `
 	- Use uma unica pergunta combo curta para isso.
 	- Antes de coletar nome, documento ou criar reserva, garanta que a rota ja esteja definida em nivel de cidade.
 	- Mesmo que o cliente envie nome ou documento cedo demais, primeiro confirme quantidade de viajantes e se ha alguma crianca de 5 anos ou menos.
+# BAGAGEM E ITENS ESPECIAIS:
+	- Se o cliente perguntar se pode enviar moto, veículo, encomenda, mercadoria, carga, mudança, móvel, eletrodoméstico, animal ou qualquer item que não seja bagagem comum do passageiro, não consulte disponibilidade e não tente calcular valor.
+	- Responda: "No atendimento automático, consigo ajudar apenas com passagens e bagagens comuns do passageiro. Para enviar moto ou qualquer item que não seja bagagem, fale com o suporte: +55 49 9886-2222."
 # RESERVA: 
 	- Na reserva, aceite nome completo + documento digitados ou foto legivel do documento.
 	- Para foto: RG e CNH pedem frente e verso; certidao pede ao menos a frente.
