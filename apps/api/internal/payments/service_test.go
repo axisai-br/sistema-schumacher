@@ -32,3 +32,21 @@ func TestBuildCustomerSynthesizesEmailWhenMissing(t *testing.T) {
 		t.Fatalf("unexpected fallback email: %q", customer.Email)
 	}
 }
+
+func TestBuildSingleRecipientSplit(t *testing.T) {
+	split := BuildSingleRecipientSplit(" rp_123 ")
+
+	if len(split) != 1 {
+		t.Fatalf("expected one split rule, got %d", len(split))
+	}
+	rule := split[0]
+	if rule.RecipientID != "rp_123" {
+		t.Fatalf("unexpected recipient id: %q", rule.RecipientID)
+	}
+	if rule.Type != "percentage" || rule.Amount != 100 {
+		t.Fatalf("unexpected split amount/type: %#v", rule)
+	}
+	if !rule.Options.Liable || !rule.Options.ChargeProcessingFee || !rule.Options.ChargeRemainderFee {
+		t.Fatalf("expected recipient to be liable and receive remainder after fees: %#v", rule.Options)
+	}
+}

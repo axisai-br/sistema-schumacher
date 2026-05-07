@@ -138,6 +138,13 @@ Excecoes relevantes:
 - `ABACATEPAY_PUBLIC_KEY`
 - `ABACATEPAY_RETURN_URL`
 - `ABACATEPAY_COMPLETION_URL`
+- `PAGARME_SECRET_KEY`
+- `PAGARME_BASE_URL`
+- `PAGARME_API_BASE_URL`
+- `PAGARME_PAYMENT_RECIPIENT_ID` obrigatoria para `POST /payments` automatico com Pagar.me; o Pix e criado com split de 100% para esse recebedor.
+- `PAGARME_DEBUG_RECIPIENT_ID`
+- `PAGARME_WEBHOOK_BASIC_USER`
+- `PAGARME_WEBHOOK_BASIC_PASS`
 
 ### 6.3 CORS
 
@@ -534,6 +541,7 @@ Regras:
 - `POST /payments` aceita apenas metodos do provedor, como `PIX` e `CARD`.
 - `POST /payments/manual` aceita metodos manuais, como `CASH`, `TRANSFER`, `OTHER`.
 - `customer.document` em `POST /payments` continua sendo o documento fiscal do pagador (`CPF`/`CNPJ`); `RG`, `CNH` e `CERTIDAO_NASCIMENTO` podem ser usados na reserva, mas nao devem ser reutilizados como `taxId` no provedor.
+- pagamentos automaticos Pagar.me exigem `PAGARME_PAYMENT_RECIPIENT_ID`; a order Pix e enviada com `payments[].split` em `type=percentage`, `amount=100` e `recipient_id` do recebedor configurado.
 - erro de configuracao de checkout retorna `503 CHECKOUT_NOT_CONFIGURED`.
 - `POST /payments` agora devolve `payment`, `provider_raw`, `checkout_url` e `pix_code` quando o provedor retornar esses dados.
 - `GET /payments/{paymentId}/status` retorna um resumo com `status`, `amount`, `provider`, `provider_ref`, `metadata`.

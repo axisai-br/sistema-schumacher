@@ -54,7 +54,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	payment, raw, err := h.svc.Create(r.Context(), input)
 	if err != nil {
-		if strings.Contains(err.Error(), "PAGARME_SECRET_KEY is required") {
+		if strings.Contains(err.Error(), "PAGARME_SECRET_KEY is required") || strings.Contains(err.Error(), "PAGARME_PAYMENT_RECIPIENT_ID is required") {
 			httpx.WriteError(w, http.StatusServiceUnavailable, "CHECKOUT_NOT_CONFIGURED", err.Error(), nil)
 			return
 		}

@@ -63,9 +63,23 @@ type PixPayment struct {
 	ExpiresIn int `json:"expires_in,omitempty"`
 }
 
+type SplitOptions struct {
+	Liable              bool `json:"liable"`
+	ChargeProcessingFee bool `json:"charge_processing_fee"`
+	ChargeRemainderFee  bool `json:"charge_remainder_fee"`
+}
+
+type SplitRule struct {
+	Amount      int          `json:"amount"`
+	Type        string       `json:"type"`
+	RecipientID string       `json:"recipient_id"`
+	Options     SplitOptions `json:"options"`
+}
+
 type OrderPayment struct {
 	PaymentMethod string      `json:"payment_method"`
 	Pix           *PixPayment `json:"pix,omitempty"`
+	Split         []SplitRule `json:"split,omitempty"`
 }
 
 type OrderRequest struct {
@@ -202,6 +216,23 @@ func BuildCustomer(input *CustomerInput, bookingID string) *OrderCustomer {
 		customer.Phones = &CustomerPhones{MobilePhone: phone}
 	}
 	return customer
+}
+
+func BuildSingleRecipientSplit(recipientID string) []SplitRule {
+	recipientID = strings.TrimSpace(recipientID)
+	if recipientID == "" {
+		return nil
+	}
+	return []SplitRule{{
+		Amount:      100,
+		Type:        "percentage",
+		RecipientID: recipientID,
+		Options: SplitOptions{
+			Liable:              true,
+			ChargeProcessingFee: true,
+			ChargeRemainderFee:  true,
+		},
+	}}
 }
 
 func resolveCustomerEmail(explicitEmail, bookingID string) string {

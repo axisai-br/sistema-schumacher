@@ -8,28 +8,29 @@ import (
 )
 
 type Config struct {
-	AppEnv                  string
-	Port                    string
-	CORSOrigins             string
-	DatabaseURL             string
-	SupabaseURL             string
-	SupabaseAnonKey         string
-	SupabaseServiceRoleKey  string
-	SupabaseJWKSURL         string
-	SupabaseIssuer          string
-	SupabaseAudience        string
-	AuthDisabled            bool
-	APIServiceTokens        []string
-	PagarmeSecretKey        string
-	PagarmeBaseURL          string
-	PagarmeAPIBaseURL       string
-	PagarmeDebugRecipientID string
-	PagarmeWebhookBasicUser string
-	PagarmeWebhookBasicPass string
-	AbacatePayAPIKey        string
-	AbacatePayWebhookSecret string
-	AbacatePayBaseURL       string
-	AbacatePayPublicKey     string
+	AppEnv                    string
+	Port                      string
+	CORSOrigins               string
+	DatabaseURL               string
+	SupabaseURL               string
+	SupabaseAnonKey           string
+	SupabaseServiceRoleKey    string
+	SupabaseJWKSURL           string
+	SupabaseIssuer            string
+	SupabaseAudience          string
+	AuthDisabled              bool
+	APIServiceTokens          []string
+	PagarmeSecretKey          string
+	PagarmeBaseURL            string
+	PagarmeAPIBaseURL         string
+	PagarmePaymentRecipientID string
+	PagarmeDebugRecipientID   string
+	PagarmeWebhookBasicUser   string
+	PagarmeWebhookBasicPass   string
+	AbacatePayAPIKey          string
+	AbacatePayWebhookSecret   string
+	AbacatePayBaseURL         string
+	AbacatePayPublicKey       string
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
 	AbacatePayReturnURL string
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
@@ -75,6 +76,7 @@ func Load() (Config, error) {
 		PagarmeSecretKey:                   os.Getenv("PAGARME_SECRET_KEY"),
 		PagarmeBaseURL:                     os.Getenv("PAGARME_BASE_URL"),
 		PagarmeAPIBaseURL:                  getEnv("PAGARME_API_BASE_URL", getEnv("PAGARME_BASE_URL", "https://api.pagar.me/core/v5")),
+		PagarmePaymentRecipientID:          strings.TrimSpace(os.Getenv("PAGARME_PAYMENT_RECIPIENT_ID")),
 		PagarmeDebugRecipientID:            strings.TrimSpace(os.Getenv("PAGARME_DEBUG_RECIPIENT_ID")),
 		PagarmeWebhookBasicUser:            os.Getenv("PAGARME_WEBHOOK_BASIC_USER"),
 		PagarmeWebhookBasicPass:            os.Getenv("PAGARME_WEBHOOK_BASIC_PASS"),

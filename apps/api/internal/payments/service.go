@@ -13,14 +13,16 @@ import (
 )
 
 type Service struct {
-	repo   *Repository
-	client *Client
+	repo               *Repository
+	client             *Client
+	paymentRecipientID string
 }
 
 func NewService(repo *Repository, cfg config.Config) *Service {
 	return &Service{
-		repo:   repo,
-		client: NewClient(cfg.PagarmeBaseURL, cfg.PagarmeSecretKey),
+		repo:               repo,
+		client:             NewClient(cfg.PagarmeBaseURL, cfg.PagarmeSecretKey),
+		paymentRecipientID: strings.TrimSpace(cfg.PagarmePaymentRecipientID),
 	}
 }
 
@@ -30,6 +32,9 @@ func (s *Service) Create(ctx context.Context, input CreatePaymentInput) (Payment
 	}
 	if s.client == nil || strings.TrimSpace(s.client.apiKey) == "" {
 		return Payment{}, nil, errors.New("PAGARME_SECRET_KEY is required for automatic payments")
+	}
+	if strings.TrimSpace(s.paymentRecipientID) == "" {
+		return Payment{}, nil, errors.New("PAGARME_PAYMENT_RECIPIENT_ID is required for automatic payments")
 	}
 
 	desc := strings.TrimSpace(input.Description)
@@ -60,6 +65,7 @@ func (s *Service) Create(ctx context.Context, input CreatePaymentInput) (Payment
 			Pix: &PixPayment{
 				ExpiresIn: 3600,
 			},
+			Split: BuildSingleRecipientSplit(s.paymentRecipientID),
 		}},
 		Metadata: map[string]string{
 			"booking_id":       input.BookingID,
