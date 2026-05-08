@@ -40,6 +40,22 @@ const isCancelledTripStatus = (status: string | null | undefined) => {
   return s === "CANCELLED" || s === "CANCELED";
 };
 
+const normalizeFilePart = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+
+const buildExportTimestamp = () => {
+  const date = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(
+    date.getMinutes()
+  )}${pad(date.getSeconds())}`;
+};
+
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof APIRequestError) return error.message;
   if (error instanceof Error) return error.message;
@@ -50,6 +66,8 @@ export default function Trips() {
   const [search, setSearch] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [passengerSearch, setPassengerSearch] = useState("");
+  const [exportingPassengers, setExportingPassengers] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createRouteId, setCreateRouteId] = useState("");
@@ -304,6 +322,37 @@ export default function Trips() {
     }
   };
 
+  const exportPassengersXlsx = async () => {
+    if (visiblePassengers.length === 0) return;
+    setExportingPassengers(true);
+    setExportError(null);
+    try {
+      const XLSX = await import("xlsx");
+      const rows = visiblePassengers.map((passenger) => ({
+        Passageiro: passenger.name,
+        Embarque: passenger.origin_name || "-",
+        Desembarque: passenger.destination_name || "-",
+        Assento: passenger.seat_number || "-",
+        Documento: passenger.document || "-",
+        Telefone: passenger.phone || "-",
+        Pago: Number(passenger.paid_amount ?? 0),
+        Pendente: Number(passenger.due_amount ?? 0),
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Passageiros");
+
+      const routePart = normalizeFilePart(selectedRoute?.name ?? "rota");
+      const fileName = `passageiros-${routePart || "rota"}-${buildExportTimestamp()}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+    } catch (error) {
+      setExportError(toErrorMessage(error, "Nao foi possivel exportar os passageiros para .xlsx."));
+    } finally {
+      setExportingPassengers(false);
+    }
+  };
+
   return (
     <section className="page">
       <PageHeader
@@ -385,14 +434,25 @@ export default function Trips() {
             </InlineAlert>
           ) : routeTripIds.length > 0 ? (
             <>
+              {exportError ? <InlineAlert tone="error">{exportError}</InlineAlert> : null}
               <div style={{ marginBottom: "12px" }}>
-                <SearchToolbar
-                  value={passengerSearch}
-                  onChange={setPassengerSearch}
-                  placeholder="Buscar por nome, documento, embarque ou desembarque"
-                  inputLabel="Buscar passageiros"
-                  resultCount={visiblePassengers.length}
-                />
+                <div className="route-admin-header">
+                  <SearchToolbar
+                    value={passengerSearch}
+                    onChange={setPassengerSearch}
+                    placeholder="Buscar por nome, documento, embarque ou desembarque"
+                    inputLabel="Buscar passageiros"
+                    resultCount={visiblePassengers.length}
+                  />
+                  <button
+                    className="button secondary sm"
+                    type="button"
+                    onClick={() => void exportPassengersXlsx()}
+                    disabled={visiblePassengers.length === 0 || exportingPassengers}
+                  >
+                    {exportingPassengers ? "Exportando..." : "Exportar .xlsx"}
+                  </button>
+                </div>
               </div>
               <DataTable
                 columns={passengerColumns}

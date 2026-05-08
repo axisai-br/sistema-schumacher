@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -30,7 +32,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Get("/messages", h.listMessages)
 			r.Post("/handoff", h.requestHandoff)
 			r.Post("/resume", h.resumeSession)
+			r.Post("/resolve", h.resolveSession)
 			r.Post("/reply", h.reply)
+			r.Post("/reply/media", h.replyMedia)
 			r.Post("/reprocess", h.reprocess)
 		})
 	})
@@ -258,6 +262,38 @@ func (h *Handler) resumeSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) resolveSession(w http.ResponseWriter, r *http.Request) {
+	sessionID, err := httpx.ParseUUIDParam(r, "sessionId")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_ID", "invalid session id", nil)
+		return
+	}
+
+	var input ResolveSessionInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_BODY", "invalid json", err.Error())
+		return
+	}
+	input.SessionID = sessionID.String()
+
+	result, err := h.svc.ResolveSession(r.Context(), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSessionNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "chat session not found", nil)
+		case errors.Is(err, ErrResolveByRequired), errors.Is(err, ErrInvalidResolveBy):
+			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		case errors.Is(err, ErrSessionAlreadyResolved), errors.Is(err, ErrResolveRequiresHuman), errors.Is(err, ErrResolveOwnerMismatch):
+			httpx.WriteError(w, http.StatusConflict, "RESOLVE_NOT_ALLOWED", err.Error(), nil)
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "CHAT_RESOLVE_ERROR", "could not resolve chat session", err.Error())
+		}
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 	sessionID, err := httpx.ParseUUIDParam(r, "sessionId")
 	if err != nil {
@@ -285,6 +321,77 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadGateway, "CHAT_REPLY_DELIVERY_ERROR", "could not deliver assisted reply", err.Error())
 		default:
 			httpx.WriteError(w, http.StatusInternalServerError, "CHAT_REPLY_ERROR", "could not create assisted reply", err.Error())
+		}
+		return
+	}
+
+	status := http.StatusCreated
+	if result.Idempotent {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, result)
+}
+
+func (h *Handler) replyMedia(w http.ResponseWriter, r *http.Request) {
+	sessionID, err := httpx.ParseUUIDParam(r, "sessionId")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_ID", "invalid session id", nil)
+		return
+	}
+
+	if err := r.ParseMultipartForm(25 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_BODY", "invalid multipart body", err.Error())
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "file is required", nil)
+		return
+	}
+	defer file.Close()
+
+	fileContent, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_BODY", "could not read uploaded file", err.Error())
+		return
+	}
+
+	metadata := map[string]interface{}{}
+	if rawMetadata := r.FormValue("metadata"); rawMetadata != "" {
+		if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "metadata must be a valid json object", nil)
+			return
+		}
+	}
+
+	input := ReplyMediaInput{
+		SessionID:      sessionID.String(),
+		OwnerUserID:    r.FormValue("owner_user_id"),
+		SenderName:     r.FormValue("sender_name"),
+		IdempotencyKey: r.FormValue("idempotency_key"),
+		Caption:        r.FormValue("caption"),
+		MediaType:      r.FormValue("media_type"),
+		FileName:       header.Filename,
+		MimeType:       header.Header.Get("Content-Type"),
+		FileContent:    fileContent,
+		Metadata:       metadata,
+	}
+
+	result, err := h.svc.ReplyMedia(r.Context(), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSessionNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "chat session not found", nil)
+		case errors.Is(err, ErrReplyBodyRequired), errors.Is(err, ErrReplyOwnerRequired), errors.Is(err, ErrInvalidReplyOwner),
+			errors.Is(err, ErrReplyMediaFileRequired), errors.Is(err, ErrReplyMediaTypeInvalid):
+			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		case errors.Is(err, ErrReplyRequiresHuman), errors.Is(err, ErrReplyOwnerMismatch):
+			httpx.WriteError(w, http.StatusConflict, "REPLY_NOT_ALLOWED", err.Error(), nil)
+		case errors.Is(err, ErrReplyDeliveryFailed):
+			httpx.WriteError(w, http.StatusBadGateway, "CHAT_REPLY_DELIVERY_ERROR", "could not deliver assisted media reply", err.Error())
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "CHAT_REPLY_MEDIA_ERROR", "could not create assisted media reply", err.Error())
 		}
 		return
 	}

@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import CRUDListPage, {
   type ColumnConfig,
   type FormFieldConfig,
@@ -6,8 +6,9 @@ import CRUDListPage, {
 } from "../../components/layout/CRUDListPage";
 import StatusBadge from "../../components/StatusBadge";
 import FileUpload from "../../components/form/FileUpload";
-import useToast from "../../hooks/useToast";
 import useMediaQuery from "../../hooks/useMediaQuery";
+import useConfirmedAction from "../../hooks/shared/useConfirmedAction";
+import { useTripRouteLookup } from "../../hooks/useTripRouteLookup";
 import { useFinancialFiltersOptional } from "../Financial/FinancialContext";
 import { apiGet, apiPatch, apiPost } from "../../services/api";
 import type { DriverCard, TripExpense } from "../../types/financial";
@@ -17,6 +18,7 @@ import {
   paymentMethodLabel,
 } from "../../utils/financialLabels";
 import { formatDateTime, formatShortId } from "../../utils/format";
+import { createCrudPageConfig } from "../shared/createCrudPageConfig";
 
 type TripExpenseForm = {
   trip_id: string;
@@ -33,9 +35,7 @@ type TripExpenseForm = {
 };
 
 type TripItem = { id: string; route_id: string; departure_at: string };
-
 type RouteItem = { id: string; origin_city: string; destination_city: string };
-
 type DriverItem = { id: string; name: string };
 
 type TripExpensesProps = {
@@ -43,24 +43,18 @@ type TripExpensesProps = {
 };
 
 export default function TripExpenses({ embedded = false }: TripExpensesProps) {
-  const toast = useToast();
   const isMobile = useMediaQuery("(max-width: 900px)");
+  const runConfirmedAction = useConfirmedAction();
   const financialFilters = useFinancialFiltersOptional();
   const tripFilter = embedded ? financialFilters?.tripFilter ?? "" : "";
+
   const [trips, setTrips] = useState<TripItem[]>([]);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
   const [drivers, setDrivers] = useState<DriverItem[]>([]);
   const [cards, setCards] = useState<DriverCard[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const routeMap = useMemo(
-    () => new Map(routes.map((route) => [route.id, route])),
-    [routes]
-  );
-  const tripMap = useMemo(
-    () => new Map(trips.map((trip) => [trip.id, trip])),
-    [trips]
-  );
+  const { tripLabel } = useTripRouteLookup(routes, trips);
   const driverMap = useMemo(
     () => new Map(drivers.map((driver) => [driver.id, driver.name])),
     [drivers]
@@ -70,18 +64,8 @@ export default function TripExpenses({ embedded = false }: TripExpensesProps) {
     [cards]
   );
 
-  const tripLabel = (tripId: string) => {
-    const trip = tripMap.get(tripId);
-    if (!trip) return formatShortId(tripId);
-    const route = routeMap.get(trip.route_id);
-    const routeLabel = route
-      ? `${route.origin_city} -> ${route.destination_city}`
-      : formatShortId(trip.route_id);
-    return `${routeLabel} - ${formatDateTime(trip.departure_at)}`;
-  };
-
-  const formFields: FormFieldConfig<TripExpenseForm>[] = useMemo(
-    () => [
+  const config = createCrudPageConfig<TripExpense, TripExpenseForm>({
+    formFields: [
       {
         key: "trip_id",
         label: "Viagem",
@@ -195,53 +179,77 @@ export default function TripExpenses({ embedded = false }: TripExpensesProps) {
         type: "textarea",
         colSpan: "full",
       },
-    ],
-    [trips, drivers, cards, routeMap]
-  );
-
-  const columns: ColumnConfig<TripExpense>[] = [
-    { label: "Viagem", accessor: (item) => tripLabel(item.trip_id), hideOnMobile: true },
-    {
-      label: "Motorista",
-      accessor: (item) => driverMap.get(item.driver_id) ?? formatShortId(item.driver_id),
+    ] as FormFieldConfig<TripExpenseForm>[],
+    columns: [
+      { label: "Viagem", accessor: (item) => tripLabel(item.trip_id), hideOnMobile: true },
+      {
+        label: "Motorista",
+        accessor: (item) => driverMap.get(item.driver_id) ?? formatShortId(item.driver_id),
+      },
+      {
+        label: "Tipo",
+        accessor: (item) => expenseTypeLabel[item.expense_type] ?? item.expense_type,
+      },
+      { label: "Valor", accessor: (item) => formatCurrency(item.amount) },
+      {
+        label: "Pagamento",
+        accessor: (item) => paymentMethodLabel[item.payment_method] ?? item.payment_method,
+        hideOnMobile: true,
+      },
+      {
+        label: "Aprovacao",
+        render: (item) => (
+          <StatusBadge tone={item.is_approved ? "success" : "warning"}>
+            {item.is_approved ? "Aprovada" : "Pendente"}
+          </StatusBadge>
+        ),
+      },
+      { label: "Data", accessor: (item) => formatDateTime(item.expense_date), hideOnMobile: true },
+    ] as ColumnConfig<TripExpense>[],
+    initialForm: {
+      trip_id: "",
+      driver_id: "",
+      expense_type: "",
+      amount: 0,
+      description: "",
+      expense_date: "",
+      payment_method: "ADVANCE",
+      driver_card_id: "",
+      receipt_number: "",
+      receipt_photo: null,
+      notes: "",
     },
-    {
-      label: "Tipo",
-      accessor: (item) => expenseTypeLabel[item.expense_type] ?? item.expense_type,
+    mapItemToForm: (item) => ({
+      trip_id: item.trip_id,
+      driver_id: item.driver_id,
+      expense_type: item.expense_type,
+      amount: item.amount,
+      description: item.description,
+      expense_date: item.expense_date ? item.expense_date.slice(0, 16) : "",
+      payment_method: item.payment_method,
+      driver_card_id: item.driver_card_id ?? "",
+      receipt_number: item.receipt_number ?? "",
+      receipt_photo: null,
+      notes: item.notes ?? "",
+    }),
+    searchFilter: (item, term) => {
+      const trip = tripLabel(item.trip_id).toLowerCase();
+      const driver = (driverMap.get(item.driver_id) ?? "").toLowerCase();
+      const card = item.driver_card_id ? (cardMap.get(item.driver_card_id) ?? "").toLowerCase() : "";
+      return (
+        trip.includes(term) ||
+        driver.includes(term) ||
+        item.description.toLowerCase().includes(term) ||
+        card.includes(term)
+      );
     },
-    { label: "Valor", accessor: (item) => formatCurrency(item.amount) },
-    {
-      label: "Pagamento",
-      accessor: (item) => paymentMethodLabel[item.payment_method] ?? item.payment_method,
-      hideOnMobile: true,
-    },
-    {
-      label: "Aprovacao",
-      render: (item) => (
-        <StatusBadge tone={item.is_approved ? "success" : "warning"}>
-          {item.is_approved ? "Aprovada" : "Pendente"}
-        </StatusBadge>
-      ),
-    },
-    { label: "Data", accessor: (item) => formatDateTime(item.expense_date), hideOnMobile: true },
-  ];
+  });
 
   const visibilityOptions: VisibilityOption<TripExpense>[] = [
     { label: "Pendentes", value: "pending", predicate: (item) => !item.is_approved },
     { label: "Aprovadas", value: "approved", predicate: (item) => item.is_approved },
     { label: "Todas", value: "all", predicate: () => true },
   ];
-
-  const handleApprove = async (item: TripExpense) => {
-    if (!window.confirm("Confirmar aprovacao da despesa?")) return;
-    try {
-      await apiPost(`/trip-expenses/${item.id}/approve`, {});
-      toast.success("Despesa aprovada.");
-      setReloadKey((value) => value + 1);
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao aprovar despesa");
-    }
-  };
 
   return (
     <CRUDListPage<TripExpense, TripExpenseForm>
@@ -257,34 +265,10 @@ export default function TripExpenses({ embedded = false }: TripExpensesProps) {
         title: "Nenhuma despesa encontrada",
         description: "Cadastre uma despesa para comecar.",
       }}
-      formFields={formFields}
-      columns={columns}
-      initialForm={{
-        trip_id: "",
-        driver_id: "",
-        expense_type: "",
-        amount: 0,
-        description: "",
-        expense_date: "",
-        payment_method: "ADVANCE",
-        driver_card_id: "",
-        receipt_number: "",
-        receipt_photo: null,
-        notes: "",
-      }}
-      mapItemToForm={(item) => ({
-        trip_id: item.trip_id,
-        driver_id: item.driver_id,
-        expense_type: item.expense_type,
-        amount: item.amount,
-        description: item.description,
-        expense_date: item.expense_date ? item.expense_date.slice(0, 16) : "",
-        payment_method: item.payment_method,
-        driver_card_id: item.driver_card_id ?? "",
-        receipt_number: item.receipt_number ?? "",
-        receipt_photo: null,
-        notes: item.notes ?? "",
-      })}
+      formFields={config.formFields}
+      columns={config.columns}
+      initialForm={config.initialForm}
+      mapItemToForm={config.mapItemToForm}
       getId={(item) => item.id}
       fetchItems={async ({ page, pageSize }) => {
         const tripFilterQuery = tripFilter ? `&trip_id=${encodeURIComponent(tripFilter)}` : "";
@@ -326,19 +310,7 @@ export default function TripExpenses({ embedded = false }: TripExpensesProps) {
           notes: form.notes || undefined,
         })
       }
-      searchFilter={(item, term) => {
-        const trip = tripLabel(item.trip_id).toLowerCase();
-        const driver = (driverMap.get(item.driver_id) ?? "").toLowerCase();
-        const card = item.driver_card_id
-          ? (cardMap.get(item.driver_card_id) ?? "").toLowerCase()
-          : "";
-        return (
-          trip.includes(term) ||
-          driver.includes(term) ||
-          item.description.toLowerCase().includes(term) ||
-          card.includes(term)
-        );
-      }}
+      searchFilter={config.searchFilter}
       visibilityOptions={visibilityOptions}
       visibilityDefault="pending"
       layout={isMobile ? "stacked" : "split"}
@@ -347,7 +319,15 @@ export default function TripExpenses({ embedded = false }: TripExpensesProps) {
           <button
             className="button success sm"
             type="button"
-            onClick={() => handleApprove(item)}
+            onClick={() =>
+              void runConfirmedAction({
+                confirmMessage: "Confirmar aprovacao da despesa?",
+                request: () => apiPost(`/trip-expenses/${item.id}/approve`, {}),
+                successMessage: "Despesa aprovada.",
+                errorMessage: "Erro ao aprovar despesa",
+                onSuccess: () => setReloadKey((value) => value + 1),
+              })
+            }
           >
             Aprovar
           </button>

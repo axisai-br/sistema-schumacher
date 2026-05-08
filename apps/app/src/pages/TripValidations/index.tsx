@@ -1,8 +1,9 @@
-﻿import { useMemo, useState } from "react";
+import { useState } from "react";
 import CRUDListPage, { type ColumnConfig, type FormFieldConfig } from "../../components/layout/CRUDListPage";
+import { useTripRouteLookup } from "../../hooks/useTripRouteLookup";
 import { apiGet, apiPatch, apiPost } from "../../services/api";
 import type { TripValidation } from "../../types/financial";
-import { formatDateTime, formatShortId } from "../../utils/format";
+import { createCrudPageConfig } from "../shared/createCrudPageConfig";
 
 type TripValidationForm = {
   trip_id: string;
@@ -15,7 +16,6 @@ type TripValidationForm = {
 };
 
 type TripItem = { id: string; route_id: string; departure_at: string };
-
 type RouteItem = { id: string; origin_city: string; destination_city: string };
 
 type TripValidationsProps = {
@@ -26,129 +26,117 @@ export default function TripValidations({ embedded = false }: TripValidationsPro
   const [trips, setTrips] = useState<TripItem[]>([]);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
 
-  const routeMap = useMemo(
-    () => new Map(routes.map((route) => [route.id, route])),
-    [routes]
-  );
-  const tripMap = useMemo(
-    () => new Map(trips.map((trip) => [trip.id, trip])),
-    [trips]
-  );
+  const { tripLabel } = useTripRouteLookup(routes, trips, { separator: " -> " });
 
-  const tripLabel = (tripId: string) => {
-    const trip = tripMap.get(tripId);
-    if (!trip) return formatShortId(tripId);
-    const route = routeMap.get(trip.route_id);
-    const routeLabel = route
-      ? `${route.origin_city} → ${route.destination_city}`
-      : formatShortId(trip.route_id);
-    return `${routeLabel} • ${formatDateTime(trip.departure_at)}`;
-  };
-
-  const formFields: FormFieldConfig<TripValidationForm>[] = [
-    {
-      key: "trip_id",
-      label: "Viagem",
-      type: "select",
-      required: true,
-      options: [
-        { label: "Selecione a viagem", value: "" },
-        ...trips.map((trip) => ({
-          label: tripLabel(trip.id),
-          value: trip.id,
-        })),
-      ],
+  const config = createCrudPageConfig<TripValidation, TripValidationForm>({
+    formFields: [
+      {
+        key: "trip_id",
+        label: "Viagem",
+        type: "select",
+        required: true,
+        options: [
+          { label: "Selecione a viagem", value: "" },
+          ...trips.map((trip) => ({
+            label: tripLabel(trip.id),
+            value: trip.id,
+          })),
+        ],
+      },
+      {
+        key: "odometer_initial",
+        label: "Odometro inicial",
+        type: "number",
+        inputProps: { min: 0 },
+      },
+      {
+        key: "odometer_final",
+        label: "Odometro final",
+        type: "number",
+        inputProps: { min: 0 },
+      },
+      {
+        key: "passengers_expected",
+        label: "Passageiros esperados",
+        type: "number",
+        inputProps: { min: 0 },
+      },
+      {
+        key: "passengers_boarded",
+        label: "Passageiros embarcados",
+        type: "number",
+        inputProps: { min: 0 },
+      },
+      {
+        key: "passengers_no_show",
+        label: "No-show",
+        type: "number",
+        inputProps: { min: 0 },
+      },
+      {
+        key: "validation_notes",
+        label: "Observacoes",
+        type: "textarea",
+        colSpan: "full",
+      },
+    ] as FormFieldConfig<TripValidationForm>[],
+    columns: [
+      { label: "Viagem", accessor: (item) => tripLabel(item.trip_id) },
+      {
+        label: "Odometro",
+        accessor: (item) =>
+          item.odometer_initial !== undefined && item.odometer_final !== undefined
+            ? `${item.odometer_initial} -> ${item.odometer_final}`
+            : "-",
+      },
+      {
+        label: "Distancia",
+        accessor: (item) => (item.distance_km ? `${item.distance_km} km` : "-"),
+      },
+      {
+        label: "Passageiros",
+        accessor: (item) => `${item.passengers_boarded}/${item.passengers_expected}`,
+      },
+    ] as ColumnConfig<TripValidation>[],
+    initialForm: {
+      trip_id: "",
+      odometer_initial: "",
+      odometer_final: "",
+      passengers_expected: 0,
+      passengers_boarded: 0,
+      passengers_no_show: 0,
+      validation_notes: "",
     },
-    {
-      key: "odometer_initial",
-      label: "Odômetro inicial",
-      type: "number",
-      inputProps: { min: 0 },
-    },
-    {
-      key: "odometer_final",
-      label: "Odômetro final",
-      type: "number",
-      inputProps: { min: 0 },
-    },
-    {
-      key: "passengers_expected",
-      label: "Passageiros esperados",
-      type: "number",
-      inputProps: { min: 0 },
-    },
-    {
-      key: "passengers_boarded",
-      label: "Passageiros embarcados",
-      type: "number",
-      inputProps: { min: 0 },
-    },
-    {
-      key: "passengers_no_show",
-      label: "No-show",
-      type: "number",
-      inputProps: { min: 0 },
-    },
-    {
-      key: "validation_notes",
-      label: "Observações",
-      type: "textarea",
-      colSpan: "full",
-    },
-  ];
-
-  const columns: ColumnConfig<TripValidation>[] = [
-    { label: "Viagem", accessor: (item) => tripLabel(item.trip_id) },
-    {
-      label: "Odômetro",
-      accessor: (item) =>
-        item.odometer_initial !== undefined && item.odometer_final !== undefined
-          ? `${item.odometer_initial} → ${item.odometer_final}`
-          : "-",
-    },
-    {
-      label: "Distância",
-      accessor: (item) => (item.distance_km ? `${item.distance_km} km` : "-"),
-    },
-    {
-      label: "Passageiros",
-      accessor: (item) => `${item.passengers_boarded}/${item.passengers_expected}`,
-    },
-  ];
+    mapItemToForm: (item) => ({
+      trip_id: item.trip_id,
+      odometer_initial: item.odometer_initial ?? "",
+      odometer_final: item.odometer_final ?? "",
+      passengers_expected: item.passengers_expected ?? 0,
+      passengers_boarded: item.passengers_boarded ?? 0,
+      passengers_no_show: item.passengers_no_show ?? 0,
+      validation_notes: item.validation_notes ?? "",
+    }),
+    searchFilter: (item, term) =>
+      tripLabel(item.trip_id).toLowerCase().includes(term) || item.id.toLowerCase().includes(term),
+  });
 
   return (
     <CRUDListPage<TripValidation, TripValidationForm>
       hidePageHeader={embedded}
-      title="Validações de Viagem"
-      subtitle="Conferência de km e passageiros."
-      formTitle="Nova validação"
-      listTitle="Validações registradas"
-      createLabel="Criar validação"
-      updateLabel="Salvar validação"
+      title="Validacoes de Viagem"
+      subtitle="Conferencia de km e passageiros."
+      formTitle="Nova validacao"
+      listTitle="Validacoes registradas"
+      createLabel="Criar validacao"
+      updateLabel="Salvar validacao"
       emptyState={{
-        title: "Nenhuma validação encontrada",
-        description: "Registre uma validação para acompanhar a viagem.",
+        title: "Nenhuma validacao encontrada",
+        description: "Registre uma validacao para acompanhar a viagem.",
       }}
-      formFields={formFields}
-      columns={columns}
-      initialForm={{
-        trip_id: "",
-        odometer_initial: "",
-        odometer_final: "",
-        passengers_expected: 0,
-        passengers_boarded: 0,
-        passengers_no_show: 0,
-        validation_notes: "",
-      }}
-      mapItemToForm={(item) => ({
-        trip_id: item.trip_id,
-        odometer_initial: item.odometer_initial ?? "",
-        odometer_final: item.odometer_final ?? "",
-        passengers_expected: item.passengers_expected ?? 0,
-        passengers_boarded: item.passengers_boarded ?? 0,
-        passengers_no_show: item.passengers_no_show ?? 0,
-        validation_notes: item.validation_notes ?? "",
-      })}
+      formFields={config.formFields}
+      columns={config.columns}
+      initialForm={config.initialForm}
+      mapItemToForm={config.mapItemToForm}
       getId={(item) => item.id}
       fetchItems={async ({ page, pageSize }) => {
         const data = await apiGet<TripValidation[]>(
@@ -183,10 +171,7 @@ export default function TripValidations({ embedded = false }: TripValidationsPro
           validation_notes: form.validation_notes || undefined,
         })
       }
-      searchFilter={(item, term) =>
-        tripLabel(item.trip_id).toLowerCase().includes(term) ||
-        item.id.toLowerCase().includes(term)
-      }
+      searchFilter={config.searchFilter}
     />
   );
 }

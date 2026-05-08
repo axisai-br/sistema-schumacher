@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type TripItem = {
   id: string;
@@ -68,20 +68,12 @@ type UseTripsOptions = {
 };
 
 export function useTrips(limit = 200, offset = 0, options: UseTripsOptions = {}) {
-  const search = options.search?.trim() ?? "";
-  const status = options.status?.trim() ?? "";
-
-  return useQuery({
-    queryKey: ["trips", limit, offset, search, status],
-    queryFn: () =>
-      apiGet<TripItem[]>(
-        buildListQuery("/trips", {
-          limit,
-          offset,
-          search,
-          status,
-        })
-      ),
+  return useEntityList<TripItem, UseTripsOptions>({
+    queryKey: ["trips"],
+    path: "/trips",
+    limit,
+    offset,
+    filters: options,
   });
 }
 

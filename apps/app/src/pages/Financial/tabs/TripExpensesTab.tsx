@@ -1,5 +1,4 @@
 import TripExpenses from "../../TripExpenses";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function TripExpensesTab() {
-  return <TripExpenses embedded />;
-}
+export default createEmbeddedTab(TripExpenses);

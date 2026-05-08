@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type RouteItem = {
   id: string;
@@ -21,19 +19,14 @@ type UseRoutesOptions = {
 };
 
 export function useRoutes(limit = 200, offset = 0, options: UseRoutesOptions = {}) {
-  const search = options.search?.trim() ?? "";
-  const status = options.status ?? "all";
-
-  return useQuery({
-    queryKey: ["routes", limit, offset, search, status],
-    queryFn: () =>
-      apiGet<RouteItem[]>(
-        buildListQuery("/routes", {
-          limit,
-          offset,
-          search,
-          status,
-        })
-      ),
+  return useEntityList<RouteItem, UseRoutesOptions>({
+    queryKey: ["routes"],
+    path: "/routes",
+    limit,
+    offset,
+    filters: {
+      ...options,
+      status: options.status ?? "all",
+    },
   });
 }

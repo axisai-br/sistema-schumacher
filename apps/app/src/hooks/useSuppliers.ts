@@ -1,5 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiPatch, apiDelete } from "../services/api";
+import { useQuery } from "@tanstack/react-query";
+import { apiGet } from "../services/api";
+import { createCrudMutations } from "./shared/createCrudMutations";
+import { useEntityList } from "./shared/useEntityList";
 
 export type Supplier = {
   id: string;
@@ -25,13 +27,22 @@ export type CreateSupplierInput = {
   notes?: string;
 };
 
+type UseSuppliersFilters = {
+  active?: boolean;
+};
+
+const supplierCrud = createCrudMutations<CreateSupplierInput, Partial<CreateSupplierInput>, Supplier>({
+  basePath: "/suppliers",
+  queryKey: ["suppliers"],
+});
+
 export function useSuppliers(limit = 200, offset = 0, active?: boolean) {
-  let url = `/suppliers?limit=${limit}&offset=${offset}`;
-  if (active !== undefined) url += `&active=${active}`;
-  
-  return useQuery({
-    queryKey: ["suppliers", limit, offset, active],
-    queryFn: () => apiGet<Supplier[]>(url),
+  return useEntityList<Supplier, UseSuppliersFilters>({
+    queryKey: ["suppliers"],
+    path: "/suppliers",
+    limit,
+    offset,
+    filters: { active },
   });
 }
 
@@ -43,27 +54,6 @@ export function useSupplier(id: string) {
   });
 }
 
-export function useCreateSupplier() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: CreateSupplierInput) => apiPost<Supplier>("/suppliers", data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suppliers"] }),
-  });
-}
-
-export function useUpdateSupplier() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<CreateSupplierInput> }) =>
-      apiPatch<Supplier>(`/suppliers/${id}`, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suppliers"] }),
-  });
-}
-
-export function useDeleteSupplier() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => apiDelete(`/suppliers/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suppliers"] }),
-  });
-}
+export const useCreateSupplier = supplierCrud.useCreateEntity;
+export const useUpdateSupplier = supplierCrud.useUpdateEntity;
+export const useDeleteSupplier = supplierCrud.useDeleteEntity;

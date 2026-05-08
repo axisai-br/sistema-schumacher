@@ -1,5 +1,4 @@
 import DriverCards from "../../DriverCards";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function DriverCardsTab() {
-  return <DriverCards embedded />;
-}
+export default createEmbeddedTab(DriverCards);

@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type DriverItem = {
   id: string;
@@ -12,17 +10,11 @@ type UseDriversOptions = {
 };
 
 export function useDrivers(limit = 200, offset = 0, options: UseDriversOptions = {}) {
-  const search = options.search?.trim() ?? "";
-
-  return useQuery({
-    queryKey: ["drivers", limit, offset, search],
-    queryFn: () =>
-      apiGet<DriverItem[]>(
-        buildListQuery("/drivers", {
-          limit,
-          offset,
-          search,
-        })
-      ),
+  return useEntityList<DriverItem, UseDriversOptions>({
+    queryKey: ["drivers"],
+    path: "/drivers",
+    limit,
+    offset,
+    filters: options,
   });
 }

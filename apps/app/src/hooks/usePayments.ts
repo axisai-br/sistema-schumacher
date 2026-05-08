@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type PaymentItem = {
   id: string;
@@ -21,21 +19,11 @@ type UsePaymentsOptions = {
 };
 
 export function usePayments(limit = 200, offset = 0, options: UsePaymentsOptions = {}) {
-  const booking_id = options.booking_id?.trim() ?? "";
-  const status = options.status?.trim() ?? "";
-  const search = options.search?.trim() ?? "";
-
-  return useQuery({
-    queryKey: ["payments", limit, offset, booking_id, status, search],
-    queryFn: () =>
-      apiGet<PaymentItem[]>(
-        buildListQuery("/payments", {
-          limit,
-          offset,
-          booking_id,
-          status,
-          search,
-        })
-      ),
+  return useEntityList<PaymentItem, UsePaymentsOptions>({
+    queryKey: ["payments"],
+    path: "/payments",
+    limit,
+    offset,
+    filters: options,
   });
 }

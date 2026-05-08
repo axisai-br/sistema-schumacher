@@ -1,9 +1,11 @@
-﻿import { useMemo, useState } from "react";
+import { useState } from "react";
 import CRUDListPage, { type ColumnConfig, type FormFieldConfig } from "../../components/layout/CRUDListPage";
+import { useTripRouteLookup } from "../../hooks/useTripRouteLookup";
 import { apiGet, apiPatch, apiPost } from "../../services/api";
 import type { FiscalDocument } from "../../types/financial";
 import { formatCurrency } from "../../utils/financialLabels";
-import { formatDateTime, formatShortId } from "../../utils/format";
+import { formatDateTime } from "../../utils/format";
+import { createCrudPageConfig } from "../shared/createCrudPageConfig";
 
 type FiscalDocumentForm = {
   trip_id: string;
@@ -19,7 +21,6 @@ type FiscalDocumentForm = {
 };
 
 type TripItem = { id: string; route_id: string; departure_at: string };
-
 type RouteItem = { id: string; origin_city: string; destination_city: string };
 
 type FiscalDocumentsProps = {
@@ -30,93 +31,110 @@ export default function FiscalDocuments({ embedded = false }: FiscalDocumentsPro
   const [trips, setTrips] = useState<TripItem[]>([]);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
 
-  const routeMap = useMemo(
-    () => new Map(routes.map((route) => [route.id, route])),
-    [routes]
-  );
-  const tripMap = useMemo(
-    () => new Map(trips.map((trip) => [trip.id, trip])),
-    [trips]
-  );
+  const { tripLabel } = useTripRouteLookup(routes, trips, { separator: " -> " });
 
-  const tripLabel = (tripId: string) => {
-    const trip = tripMap.get(tripId);
-    if (!trip) return formatShortId(tripId);
-    const route = routeMap.get(trip.route_id);
-    const routeLabel = route
-      ? `${route.origin_city} → ${route.destination_city}`
-      : formatShortId(trip.route_id);
-    return `${routeLabel} • ${formatDateTime(trip.departure_at)}`;
-  };
-
-  const formFields: FormFieldConfig<FiscalDocumentForm>[] = [
-    {
-      key: "trip_id",
-      label: "Viagem",
-      type: "select",
-      required: true,
-      options: [
-        { label: "Selecione a viagem", value: "" },
-        ...trips.map((trip) => ({
-          label: tripLabel(trip.id),
-          value: trip.id,
-        })),
-      ],
+  const config = createCrudPageConfig<FiscalDocument, FiscalDocumentForm>({
+    formFields: [
+      {
+        key: "trip_id",
+        label: "Viagem",
+        type: "select",
+        required: true,
+        options: [
+          { label: "Selecione a viagem", value: "" },
+          ...trips.map((trip) => ({
+            label: tripLabel(trip.id),
+            value: trip.id,
+          })),
+        ],
+      },
+      {
+        key: "document_type",
+        label: "Tipo de documento",
+        required: true,
+      },
+      {
+        key: "document_number",
+        label: "Numero",
+      },
+      {
+        key: "issue_date",
+        label: "Data de emissao",
+        type: "datetime",
+      },
+      {
+        key: "amount",
+        label: "Valor",
+        type: "number",
+        required: true,
+        inputProps: { min: 0, step: 0.01 },
+      },
+      {
+        key: "recipient_name",
+        label: "Destinatario",
+      },
+      {
+        key: "recipient_document",
+        label: "Documento do destinatario",
+      },
+      {
+        key: "status",
+        label: "Status",
+      },
+      {
+        key: "external_id",
+        label: "ID externo",
+      },
+      {
+        key: "metadata",
+        label: "Metadata (JSON)",
+        type: "textarea",
+        colSpan: "full",
+        hint: "Cole um JSON valido se precisar de dados extras",
+      },
+    ] as FormFieldConfig<FiscalDocumentForm>[],
+    columns: [
+      { label: "Viagem", accessor: (item) => tripLabel(item.trip_id) },
+      { label: "Tipo", accessor: (item) => item.document_type },
+      { label: "Numero", accessor: (item) => item.document_number ?? "-" },
+      { label: "Valor", accessor: (item) => formatCurrency(item.amount) },
+      { label: "Status", accessor: (item) => item.status },
+      { label: "Emissao", accessor: (item) => formatDateTime(item.issue_date) },
+    ] as ColumnConfig<FiscalDocument>[],
+    initialForm: {
+      trip_id: "",
+      document_type: "",
+      document_number: "",
+      issue_date: "",
+      amount: 0,
+      recipient_name: "",
+      recipient_document: "",
+      status: "PENDING",
+      external_id: "",
+      metadata: "",
     },
-    {
-      key: "document_type",
-      label: "Tipo de documento",
-      required: true,
+    mapItemToForm: (item) => ({
+      trip_id: item.trip_id,
+      document_type: item.document_type,
+      document_number: item.document_number ?? "",
+      issue_date: item.issue_date ? item.issue_date.slice(0, 16) : "",
+      amount: item.amount,
+      recipient_name: item.recipient_name ?? "",
+      recipient_document: item.recipient_document ?? "",
+      status: item.status ?? "",
+      external_id: item.external_id ?? "",
+      metadata: item.metadata ? JSON.stringify(item.metadata, null, 2) : "",
+    }),
+    searchFilter: (item, term) => {
+      const trip = tripLabel(item.trip_id).toLowerCase();
+      return (
+        trip.includes(term) ||
+        item.document_type.toLowerCase().includes(term) ||
+        item.document_number?.toLowerCase().includes(term) ||
+        item.status?.toLowerCase().includes(term)
+      );
     },
-    {
-      key: "document_number",
-      label: "Número",
-    },
-    {
-      key: "issue_date",
-      label: "Data de emissão",
-      type: "datetime",
-    },
-    {
-      key: "amount",
-      label: "Valor",
-      type: "number",
-      required: true,
-      inputProps: { min: 0, step: 0.01 },
-    },
-    {
-      key: "recipient_name",
-      label: "Destinatário",
-    },
-    {
-      key: "recipient_document",
-      label: "Documento do destinatário",
-    },
-    {
-      key: "status",
-      label: "Status",
-    },
-    {
-      key: "external_id",
-      label: "ID externo",
-    },
-    {
-      key: "metadata",
-      label: "Metadata (JSON)",
-      type: "textarea",
-      colSpan: "full",
-      hint: "Cole um JSON válido se precisar de dados extras",
-    },
-  ];
-
-  const columns: ColumnConfig<FiscalDocument>[] = [
-    { label: "Viagem", accessor: (item) => tripLabel(item.trip_id) },
-    { label: "Tipo", accessor: (item) => item.document_type },
-    { label: "Número", accessor: (item) => item.document_number ?? "-" },
-    { label: "Valor", accessor: (item) => formatCurrency(item.amount) },
-    { label: "Status", accessor: (item) => item.status },
-    { label: "Emissão", accessor: (item) => formatDateTime(item.issue_date) },
-  ];
+  });
 
   const parseMetadata = (raw: string) => {
     const trimmed = raw.trim();
@@ -128,41 +146,19 @@ export default function FiscalDocuments({ embedded = false }: FiscalDocumentsPro
     <CRUDListPage<FiscalDocument, FiscalDocumentForm>
       hidePageHeader={embedded}
       title="Documentos Fiscais"
-      subtitle="Registro básico de NFS-e, CT-e e outros documentos."
+      subtitle="Registro basico de NFS-e, CT-e e outros documentos."
       formTitle="Novo documento"
       listTitle="Documentos registrados"
       createLabel="Criar documento"
       updateLabel="Salvar documento"
       emptyState={{
         title: "Nenhum documento encontrado",
-        description: "Cadastre um documento fiscal para começar.",
+        description: "Cadastre um documento fiscal para comecar.",
       }}
-      formFields={formFields}
-      columns={columns}
-      initialForm={{
-        trip_id: "",
-        document_type: "",
-        document_number: "",
-        issue_date: "",
-        amount: 0,
-        recipient_name: "",
-        recipient_document: "",
-        status: "PENDING",
-        external_id: "",
-        metadata: "",
-      }}
-      mapItemToForm={(item) => ({
-        trip_id: item.trip_id,
-        document_type: item.document_type,
-        document_number: item.document_number ?? "",
-        issue_date: item.issue_date ? item.issue_date.slice(0, 16) : "",
-        amount: item.amount,
-        recipient_name: item.recipient_name ?? "",
-        recipient_document: item.recipient_document ?? "",
-        status: item.status ?? "",
-        external_id: item.external_id ?? "",
-        metadata: item.metadata ? JSON.stringify(item.metadata, null, 2) : "",
-      })}
+      formFields={config.formFields}
+      columns={config.columns}
+      initialForm={config.initialForm}
+      mapItemToForm={config.mapItemToForm}
       getId={(item) => item.id}
       fetchItems={async ({ page, pageSize }) => {
         const data = await apiGet<FiscalDocument[]>(
@@ -204,15 +200,7 @@ export default function FiscalDocuments({ embedded = false }: FiscalDocumentsPro
           metadata,
         });
       }}
-      searchFilter={(item, term) => {
-        const trip = tripLabel(item.trip_id).toLowerCase();
-        return (
-          trip.includes(term) ||
-          item.document_type.toLowerCase().includes(term) ||
-          item.document_number?.toLowerCase().includes(term) ||
-          item.status?.toLowerCase().includes(term)
-        );
-      }}
+      searchFilter={config.searchFilter}
     />
   );
 }

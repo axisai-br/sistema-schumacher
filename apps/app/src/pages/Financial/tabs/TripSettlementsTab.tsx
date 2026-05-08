@@ -1,5 +1,4 @@
 import TripSettlements from "../../TripSettlements";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function TripSettlementsTab() {
-  return <TripSettlements embedded />;
-}
+export default createEmbeddedTab(TripSettlements);

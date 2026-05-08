@@ -1,5 +1,4 @@
 import TripAdvances from "../../TripAdvances";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function TripAdvancesTab() {
-  return <TripAdvances embedded />;
-}
+export default createEmbeddedTab(TripAdvances);

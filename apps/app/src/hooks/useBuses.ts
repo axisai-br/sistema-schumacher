@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type BusItem = {
   id: string;
@@ -12,17 +10,11 @@ type UseBusesOptions = {
 };
 
 export function useBuses(limit = 200, offset = 0, options: UseBusesOptions = {}) {
-  const search = options.search?.trim() ?? "";
-
-  return useQuery({
-    queryKey: ["buses", limit, offset, search],
-    queryFn: () =>
-      apiGet<BusItem[]>(
-        buildListQuery("/buses", {
-          limit,
-          offset,
-          search,
-        })
-      ),
+  return useEntityList<BusItem, UseBusesOptions>({
+    queryKey: ["buses"],
+    path: "/buses",
+    limit,
+    offset,
+    filters: options,
   });
 }

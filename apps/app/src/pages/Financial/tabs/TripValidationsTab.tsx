@@ -1,5 +1,4 @@
 import TripValidations from "../../TripValidations";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function TripValidationsTab() {
-  return <TripValidations embedded />;
-}
+export default createEmbeddedTab(TripValidations);

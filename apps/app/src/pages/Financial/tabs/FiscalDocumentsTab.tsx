@@ -1,5 +1,4 @@
 import FiscalDocuments from "../../FiscalDocuments";
+import { createEmbeddedTab } from "./createEmbeddedTab";
 
-export default function FiscalDocumentsTab() {
-  return <FiscalDocuments embedded />;
-}
+export default createEmbeddedTab(FiscalDocuments);

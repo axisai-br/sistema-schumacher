@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../services/api";
-import { buildListQuery } from "./buildListQuery";
+import { useEntityList } from "./shared/useEntityList";
 
 export type BookingItem = {
   id: string;
@@ -60,21 +60,11 @@ type UseBookingsOptions = {
 };
 
 export function useBookings(limit = 200, offset = 0, options: UseBookingsOptions = {}) {
-  const search = options.search?.trim() ?? "";
-  const status = options.status?.trim() ?? "";
-  const trip_id = options.trip_id?.trim() ?? "";
-
-  return useQuery({
-    queryKey: ["bookings", limit, offset, search, status, trip_id],
-    queryFn: () =>
-      apiGet<BookingItem[]>(
-        buildListQuery("/bookings", {
-          limit,
-          offset,
-          search,
-          status,
-          trip_id,
-        })
-      ),
+  return useEntityList<BookingItem, UseBookingsOptions>({
+    queryKey: ["bookings"],
+    path: "/bookings",
+    limit,
+    offset,
+    filters: options,
   });
 }

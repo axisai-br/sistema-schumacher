@@ -22,6 +22,7 @@ type Store interface {
 	UpdateSessionBufferState(ctx context.Context, input UpdateSessionBufferStateInput) (Session, error)
 	RequestHandoff(ctx context.Context, input RequestHandoffInput) (RequestHandoffResult, error)
 	ResumeSession(ctx context.Context, input ResumeSessionInput) (ResumeSessionResult, error)
+	ResolveSession(ctx context.Context, input ResolveSessionInput) (ResolveSessionResult, error)
 	FindReplyByIdempotency(ctx context.Context, sessionID string, idempotencyKey string) (*ReplyResult, error)
 	CreateReply(ctx context.Context, input ReplyInput, debounceWindow time.Duration) (ReplyResult, error)
 	CreateAutomationReply(ctx context.Context, input CreateAutomationReplyInput, debounceWindow time.Duration) (ReplyResult, error)
@@ -129,6 +130,18 @@ func (r *Repository) UpsertSession(ctx context.Context, input UpsertSessionInput
 		on conflict (channel, contact_key) do update
 		set customer_phone = coalesce(nullif(excluded.customer_phone, ''), chat_sessions.customer_phone),
 				customer_name = coalesce(nullif(excluded.customer_name, ''), chat_sessions.customer_name),
+				status = case
+					when chat_sessions.status = 'RESOLVED' and excluded.last_inbound_at is not null then 'ACTIVE'
+					else chat_sessions.status
+				end,
+				handoff_status = case
+					when chat_sessions.status = 'RESOLVED' and excluded.last_inbound_at is not null then 'BOT'
+					else chat_sessions.handoff_status
+				end,
+				current_owner_user_id = case
+					when chat_sessions.status = 'RESOLVED' and excluded.last_inbound_at is not null then null
+					else chat_sessions.current_owner_user_id
+				end,
 				last_message_at = case
 					when chat_sessions.last_message_at is null then excluded.last_message_at
 					when excluded.last_message_at is null then chat_sessions.last_message_at
@@ -556,6 +569,112 @@ func (r *Repository) ResumeSession(ctx context.Context, input ResumeSessionInput
 	}, nil
 }
 
+func (r *Repository) ResolveSession(ctx context.Context, input ResolveSessionInput) (ResolveSessionResult, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ResolveSessionResult{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	sessionRow := tx.QueryRow(ctx, `
+		select
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+		from chat_sessions
+		where id = $1::uuid
+		for update
+	`, input.SessionID)
+
+	session, err := scanSession(sessionRow)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ResolveSessionResult{}, ErrSessionNotFound
+		}
+		return ResolveSessionResult{}, err
+	}
+
+	if strings.EqualFold(strings.TrimSpace(session.Status), "RESOLVED") {
+		return ResolveSessionResult{}, ErrSessionAlreadyResolved
+	}
+	if session.HandoffStatus != "HUMAN" || strings.TrimSpace(session.CurrentOwnerUserID) == "" {
+		return ResolveSessionResult{}, ErrResolveRequiresHuman
+	}
+	if strings.TrimSpace(session.CurrentOwnerUserID) != strings.TrimSpace(input.ResolvedByUserID) {
+		return ResolveSessionResult{}, ErrResolveOwnerMismatch
+	}
+
+	metadata := map[string]interface{}{}
+	for key, value := range session.Metadata {
+		metadata[key] = value
+	}
+	for key, value := range input.Metadata {
+		metadata[key] = value
+	}
+	metadata["resolved_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	metadata["resolved_by_user_id"] = strings.TrimSpace(input.ResolvedByUserID)
+	if reason := strings.TrimSpace(input.ResolveReason); reason != "" {
+		metadata["resolve_reason"] = reason
+	}
+	metadataPayload, err := encodeMap(metadata)
+	if err != nil {
+		return ResolveSessionResult{}, err
+	}
+
+	updatedSessionRow := tx.QueryRow(ctx, `
+		update chat_sessions
+		set status = 'RESOLVED',
+				handoff_status = 'BOT',
+				current_owner_user_id = null,
+				metadata = $2::jsonb,
+				updated_at = now()
+		where id = $1::uuid
+		returning
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+	`, input.SessionID, metadataPayload)
+
+	updatedSession, err := scanSession(updatedSessionRow)
+	if err != nil {
+		return ResolveSessionResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ResolveSessionResult{}, err
+	}
+
+	return ResolveSessionResult{
+		Session: updatedSession,
+		Status:  "resolved",
+		Reason:  "manual_resolve",
+	}, nil
+}
+
 func (r *Repository) FindReplyByIdempotency(ctx context.Context, sessionID string, idempotencyKey string) (*ReplyResult, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
@@ -671,8 +790,11 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 	if err != nil {
 		return ReplyResult{}, err
 	}
-	if session.HandoffStatus != "BOT" || strings.TrimSpace(session.CurrentOwnerUserID) != "" {
-		return ReplyResult{}, ErrReprocessRequiresBot
+	if session.HandoffStatus != "HUMAN" || strings.TrimSpace(session.CurrentOwnerUserID) == "" {
+		return ReplyResult{}, ErrReplyRequiresHuman
+	}
+	if strings.TrimSpace(session.CurrentOwnerUserID) != strings.TrimSpace(input.OwnerUserID) {
+		return ReplyResult{}, ErrReplyOwnerMismatch
 	}
 
 	recordedAt := time.Now().UTC()
@@ -787,6 +909,13 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 	for key, value := range input.Metadata {
 		replyPayload[key] = value
 	}
+	replyKind := "TEXT"
+	if mediaKind := strings.ToUpper(strings.TrimSpace(asString(replyPayload["media_kind"]))); mediaKind != "" {
+		switch mediaKind {
+		case "IMAGE", "AUDIO", "DOCUMENT":
+			replyKind = mediaKind
+		}
+	}
 
 	messagePayload, err := encodeMap(replyPayload)
 	if err != nil {
@@ -808,7 +937,7 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 		) values (
 			$1::uuid,
 			'OUTBOUND',
-			'TEXT',
+			$7,
 			$2,
 			nullif($3, ''),
 			nullif($4, ''),
@@ -833,7 +962,7 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 			received_at,
 			sent_at,
 			created_at
-	`, input.SessionID, input.IdempotencyKey, input.SenderName, replyBody, messagePayload, recordedAt)
+	`, input.SessionID, input.IdempotencyKey, input.SenderName, replyBody, messagePayload, recordedAt, replyKind)
 
 	message, err := scanMessage(messageRow)
 	if err != nil {

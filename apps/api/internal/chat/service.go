@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"schumacher-tur/api/internal/shared/config"
@@ -22,6 +23,11 @@ var (
 	ErrHandoffAlreadyActive         = errors.New("chat session already waiting for human handoff")
 	ErrNoActiveHandoff              = errors.New("chat session has no active human handoff")
 	ErrInvalidAssignedUser          = errors.New("assigned_user_id must be a valid uuid")
+	ErrResolveByRequired            = errors.New("resolved_by_user_id is required")
+	ErrInvalidResolveBy             = errors.New("resolved_by_user_id must be a valid uuid")
+	ErrResolveRequiresHuman         = errors.New("chat session resolve requires active human ownership")
+	ErrResolveOwnerMismatch         = errors.New("resolved_by_user_id does not match current session owner")
+	ErrSessionAlreadyResolved       = errors.New("chat session is already resolved")
 	ErrReplyBodyRequired            = errors.New("reply.body is required")
 	ErrReplyOwnerRequired           = errors.New("owner_user_id is required")
 	ErrInvalidReplyOwner            = errors.New("owner_user_id must be a valid uuid")
@@ -29,6 +35,8 @@ var (
 	ErrReplyRequiresHuman           = errors.New("chat session reply requires active human ownership")
 	ErrReplyOwnerMismatch           = errors.New("owner_user_id does not match current session owner")
 	ErrReplyDraftNotAllowed         = errors.New("draft_message_id is not an active automation draft in this session")
+	ErrReplyMediaFileRequired       = errors.New("reply.media file is required")
+	ErrReplyMediaTypeInvalid        = errors.New("reply.media_type must be IMAGE, AUDIO or DOCUMENT")
 	ErrDraftNotFound                = errors.New("chat session has no automation draft")
 	ErrDraftAutoSendRetryNotAllowed = errors.New("current draft is not waiting for auto-send retry")
 	ErrReplyDeliveryFailed          = errors.New("chat reply delivery failed")
@@ -459,6 +467,51 @@ func (s *Service) ResumeSession(ctx context.Context, input ResumeSessionInput) (
 	})
 }
 
+func (s *Service) ResolveSession(ctx context.Context, input ResolveSessionInput) (ResolveSessionResult, error) {
+	sessionID := strings.TrimSpace(input.SessionID)
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return ResolveSessionResult{}, err
+	}
+	if strings.EqualFold(strings.TrimSpace(session.Status), "RESOLVED") {
+		return ResolveSessionResult{}, ErrSessionAlreadyResolved
+	}
+	if session.HandoffStatus != "HUMAN" || strings.TrimSpace(session.CurrentOwnerUserID) == "" {
+		return ResolveSessionResult{}, ErrResolveRequiresHuman
+	}
+
+	resolvedBy := strings.TrimSpace(input.ResolvedByUserID)
+	if resolvedBy == "" {
+		return ResolveSessionResult{}, ErrResolveByRequired
+	}
+	parsedResolvedBy, err := uuid.Parse(resolvedBy)
+	if err != nil {
+		return ResolveSessionResult{}, ErrInvalidResolveBy
+	}
+	resolvedBy = parsedResolvedBy.String()
+	if resolvedBy != session.CurrentOwnerUserID {
+		return ResolveSessionResult{}, ErrResolveOwnerMismatch
+	}
+
+	reason := strings.TrimSpace(input.ResolveReason)
+	result, err := s.store.ResolveSession(ctx, ResolveSessionInput{
+		SessionID:        sessionID,
+		ResolvedByUserID: resolvedBy,
+		ResolveReason:    reason,
+		Metadata:         input.Metadata,
+	})
+	if err != nil {
+		return ResolveSessionResult{}, err
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "resolved"
+	}
+	if strings.TrimSpace(result.Reason) == "" {
+		result.Reason = "manual_resolve"
+	}
+	return result, nil
+}
+
 func (s *Service) Reply(ctx context.Context, input ReplyInput) (ReplyResult, error) {
 	sessionID := strings.TrimSpace(input.SessionID)
 	session, err := s.GetSession(ctx, sessionID)
@@ -559,6 +612,54 @@ func (s *Service) Reply(ctx context.Context, input ReplyInput) (ReplyResult, err
 	}
 
 	return result, nil
+}
+
+func (s *Service) ReplyMedia(ctx context.Context, input ReplyMediaInput) (ReplyMediaResult, error) {
+	fileContent := input.FileContent
+	if len(fileContent) == 0 {
+		return ReplyMediaResult{}, ErrReplyMediaFileRequired
+	}
+
+	mediaType, ok := normalizeReplyMediaType(input.MediaType, input.MimeType)
+	if !ok {
+		return ReplyMediaResult{}, ErrReplyMediaTypeInvalid
+	}
+
+	fileName := strings.TrimSpace(input.FileName)
+	if fileName == "" {
+		fileName = defaultReplyMediaFileName(mediaType, input.MimeType)
+	}
+
+	caption := strings.TrimSpace(input.Caption)
+	body := caption
+	if body == "" {
+		body = defaultReplyMediaBody(mediaType)
+	}
+
+	metadata := map[string]interface{}{}
+	for key, value := range input.Metadata {
+		metadata[key] = value
+	}
+	mimeType := strings.TrimSpace(input.MimeType)
+	if mimeType == "" {
+		mimeType = defaultReplyMediaMIMEType(mediaType)
+	}
+	metadata["media_kind"] = strings.ToLower(mediaType)
+	metadata["media_mime_type"] = mimeType
+	metadata["media_file_name"] = fileName
+	metadata["media_base64"] = base64.StdEncoding.EncodeToString(fileContent)
+	if caption != "" {
+		metadata["media_caption"] = caption
+	}
+
+	return s.Reply(ctx, ReplyInput{
+		SessionID:      input.SessionID,
+		OwnerUserID:    input.OwnerUserID,
+		Body:           body,
+		SenderName:     input.SenderName,
+		IdempotencyKey: input.IdempotencyKey,
+		Metadata:       metadata,
+	})
 }
 
 func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (ReprocessResult, error) {
@@ -2106,6 +2207,90 @@ func normalizeReplyProviderStatus(status string) string {
 		return "SENT"
 	}
 	return normalized
+}
+
+func normalizeReplyMediaType(raw string, mimeType string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "IMAGE":
+		return "IMAGE", true
+	case "AUDIO":
+		return "AUDIO", true
+	case "DOCUMENT":
+		return "DOCUMENT", true
+	case "":
+		mime := strings.ToLower(strings.TrimSpace(mimeType))
+		switch {
+		case strings.HasPrefix(mime, "image/"):
+			return "IMAGE", true
+		case strings.HasPrefix(mime, "audio/"):
+			return "AUDIO", true
+		default:
+			return "DOCUMENT", true
+		}
+	default:
+		return "", false
+	}
+}
+
+func defaultReplyMediaBody(mediaType string) string {
+	switch strings.ToUpper(strings.TrimSpace(mediaType)) {
+	case "IMAGE":
+		return "[imagem]"
+	case "AUDIO":
+		return "[audio]"
+	default:
+		return "[documento]"
+	}
+}
+
+func defaultReplyMediaMIMEType(mediaType string) string {
+	switch strings.ToUpper(strings.TrimSpace(mediaType)) {
+	case "IMAGE":
+		return "image/jpeg"
+	case "AUDIO":
+		return "audio/ogg"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func defaultReplyMediaFileName(mediaType string, mimeType string) string {
+	ext := "bin"
+	switch strings.ToUpper(strings.TrimSpace(mediaType)) {
+	case "IMAGE":
+		ext = "jpg"
+	case "AUDIO":
+		ext = "ogg"
+	default:
+		ext = extensionForMIMEType(mimeType)
+	}
+	return fmt.Sprintf("media-%d.%s", time.Now().UTC().Unix(), ext)
+}
+
+func extensionForMIMEType(mimeType string) string {
+	mime := strings.ToLower(strings.TrimSpace(mimeType))
+	switch mime {
+	case "image/png":
+		return "png"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	case "application/pdf":
+		return "pdf"
+	case "audio/mpeg":
+		return "mp3"
+	case "audio/mp4", "audio/m4a":
+		return "m4a"
+	case "audio/webm":
+		return "webm"
+	case "audio/wav":
+		return "wav"
+	case "audio/ogg":
+		return "ogg"
+	default:
+		return "bin"
+	}
 }
 
 func buildQueuedAutomationDraftPayload(session Session, draftID string, metadata map[string]interface{}, observedAt time.Time) (map[string]interface{}, map[string]interface{}) {
