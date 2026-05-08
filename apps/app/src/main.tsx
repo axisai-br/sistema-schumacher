@@ -6,7 +6,6 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./app/App";
 import AuthGate from "./app/AuthGate";
 import { queryClient } from "./lib/queryClient";
-import { ToastProvider } from "./components/feedback/Toast";
 import "antd/dist/reset.css";
 import "./styles/theme.css";
 
@@ -17,9 +16,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthGate>
-          <ToastProvider>
-            <App />
-          </ToastProvider>
+          <App />
         </AuthGate>
       </BrowserRouter>
     </QueryClientProvider>
