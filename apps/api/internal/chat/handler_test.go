@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -2024,6 +2025,68 @@ func TestReplyRejectsInvalidDraftMessageID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestReplyMediaCreatesOutboundRecordForHumanOwner(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
+	ownerID := uuid.NewString()
+	item := store.sessions[session.ID]
+	item.HandoffStatus = "HUMAN"
+	item.CurrentOwnerUserID = ownerID
+	store.sessions[session.ID] = item
+
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("owner_user_id", ownerID); err != nil {
+		t.Fatalf("write owner_user_id: %v", err)
+	}
+	if err := writer.WriteField("caption", "Segue o documento"); err != nil {
+		t.Fatalf("write caption: %v", err)
+	}
+	if err := writer.WriteField("media_type", "DOCUMENT"); err != nil {
+		t.Fatalf("write media_type: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "rg.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake-pdf-content")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/reply/media", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var out ReplyResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Message.Kind != "DOCUMENT" {
+		t.Fatalf("expected message kind DOCUMENT, got %s", out.Message.Kind)
+	}
+	if got := asString(out.Message.Payload["media_kind"]); got != "document" {
+		t.Fatalf("expected media_kind document, got %s", got)
+	}
+	if got := asString(out.Message.Payload["media_file_name"]); got != "rg.pdf" {
+		t.Fatalf("expected media_file_name rg.pdf, got %s", got)
+	}
+	if got := asString(out.Message.Payload["media_base64"]); got == "" {
+		t.Fatalf("expected media_base64 payload")
 	}
 }
 
@@ -5702,6 +5765,193 @@ func TestReprocessRejectsWhenNoPendingMessagesExist(t *testing.T) {
 	}
 }
 
+func TestResolveSessionSuccess(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511991111111", "ola")
+	ownerUserID := uuid.NewString()
+	if _, err := store.RequestHandoff(context.Background(), RequestHandoffInput{
+		SessionID:      session.ID,
+		AssignedUserID: ownerUserID,
+	}); err != nil {
+		t.Fatalf("request handoff: %v", err)
+	}
+
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/chat/sessions/"+session.ID+"/resolve",
+		bytes.NewBufferString(`{"resolved_by_user_id":"`+ownerUserID+`","reason":"atendimento concluido"}`),
+	)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var out ResolveSessionResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Session.Status != "RESOLVED" {
+		t.Fatalf("expected status RESOLVED, got %s", out.Session.Status)
+	}
+	if out.Session.HandoffStatus != "BOT" {
+		t.Fatalf("expected handoff BOT, got %s", out.Session.HandoffStatus)
+	}
+	if out.Session.CurrentOwnerUserID != "" {
+		t.Fatalf("expected owner to be cleared")
+	}
+	if got := strings.TrimSpace(asString(out.Session.Metadata["resolved_by_user_id"])); got != ownerUserID {
+		t.Fatalf("expected resolved_by_user_id %s, got %s", ownerUserID, got)
+	}
+	if got := strings.TrimSpace(asString(out.Session.Metadata["resolve_reason"])); got != "atendimento concluido" {
+		t.Fatalf("expected resolve reason to be stored, got %s", got)
+	}
+}
+
+func TestResolveSessionRejectsWithoutHumanOwnership(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511992222222", "oi")
+	ownerUserID := uuid.NewString()
+
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/chat/sessions/"+session.ID+"/resolve",
+		bytes.NewBufferString(`{"resolved_by_user_id":"`+ownerUserID+`"}`),
+	)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, rec.Code)
+	}
+}
+
+func TestIngestReopensResolvedSessionAfterInbound(t *testing.T) {
+	store := newFakeStore()
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
+	session, _ := store.seedSessionWithMessage("5511993333333", "bom dia")
+	ownerUserID := uuid.NewString()
+
+	if _, err := svc.RequestHandoff(context.Background(), RequestHandoffInput{
+		SessionID:      session.ID,
+		AssignedUserID: ownerUserID,
+	}); err != nil {
+		t.Fatalf("request handoff: %v", err)
+	}
+	if _, err := svc.ResolveSession(context.Background(), ResolveSessionInput{
+		SessionID:        session.ID,
+		ResolvedByUserID: ownerUserID,
+		ResolveReason:    "finalizado",
+	}); err != nil {
+		t.Fatalf("resolve session: %v", err)
+	}
+
+	out, err := svc.Ingest(context.Background(), IngestMessageInput{
+		Channel:       "WHATSAPP",
+		ContactKey:    "5511993333333",
+		CustomerPhone: "5511993333333",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-reopen-1",
+			IdempotencyKey:    "idem-reopen-1",
+			Body:              "voltei, preciso de ajuda",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest message: %v", err)
+	}
+
+	if out.Session.Status != "ACTIVE" {
+		t.Fatalf("expected reopened status ACTIVE, got %s", out.Session.Status)
+	}
+	if out.Session.HandoffStatus != "BOT" {
+		t.Fatalf("expected reopened handoff BOT, got %s", out.Session.HandoffStatus)
+	}
+	if out.Session.CurrentOwnerUserID != "" {
+		t.Fatalf("expected reopened session to clear owner")
+	}
+}
+
+func TestListSessionsSupportsOperationalTabs(t *testing.T) {
+	store := newFakeStore()
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
+
+	naoAtendido, _ := store.seedSessionWithMessage("5511980000001", "oi")
+	aberto, _ := store.seedSessionWithMessage("5511980000002", "oi")
+	finalizado, _ := store.seedSessionWithMessage("5511980000003", "oi")
+
+	ownerUserID := uuid.NewString()
+	if _, err := store.RequestHandoff(context.Background(), RequestHandoffInput{
+		SessionID:      aberto.ID,
+		AssignedUserID: ownerUserID,
+	}); err != nil {
+		t.Fatalf("request handoff aberto: %v", err)
+	}
+	if _, err := svc.ResolveSession(context.Background(), ResolveSessionInput{
+		SessionID:        finalizado.ID,
+		ResolvedByUserID: ownerUserID,
+	}); err == nil {
+		t.Fatalf("expected resolve without ownership to fail")
+	}
+	if _, err := store.RequestHandoff(context.Background(), RequestHandoffInput{
+		SessionID:      finalizado.ID,
+		AssignedUserID: ownerUserID,
+	}); err != nil {
+		t.Fatalf("request handoff finalizado: %v", err)
+	}
+	if _, err := svc.ResolveSession(context.Background(), ResolveSessionInput{
+		SessionID:        finalizado.ID,
+		ResolvedByUserID: ownerUserID,
+		ResolveReason:    "concluido",
+	}); err != nil {
+		t.Fatalf("resolve finalizado: %v", err)
+	}
+
+	nonAttended, err := svc.ListSessions(context.Background(), ListSessionsFilter{
+		Channel:       "WHATSAPP",
+		Status:        "ACTIVE",
+		HandoffStatus: "BOT",
+	})
+	if err != nil {
+		t.Fatalf("list non attended: %v", err)
+	}
+	if len(nonAttended) != 1 || nonAttended[0].ID != naoAtendido.ID {
+		t.Fatalf("expected only non attended session")
+	}
+
+	openSessions, err := svc.ListSessions(context.Background(), ListSessionsFilter{
+		Channel:       "WHATSAPP",
+		Status:        "ACTIVE",
+		HandoffStatus: "HUMAN",
+	})
+	if err != nil {
+		t.Fatalf("list open sessions: %v", err)
+	}
+	if len(openSessions) != 1 || openSessions[0].ID != aberto.ID {
+		t.Fatalf("expected only open human session")
+	}
+
+	resolvedSessions, err := svc.ListSessions(context.Background(), ListSessionsFilter{
+		Channel: "WHATSAPP",
+		Status:  "RESOLVED",
+	})
+	if err != nil {
+		t.Fatalf("list resolved sessions: %v", err)
+	}
+	if len(resolvedSessions) != 1 || resolvedSessions[0].ID != finalizado.ID {
+		t.Fatalf("expected only resolved session")
+	}
+}
+
 type fakeStore struct {
 	sessions         map[string]Session
 	sessionsByKey    map[string]string
@@ -6118,6 +6368,11 @@ func (s *fakeStore) UpsertSession(_ context.Context, input UpsertSessionInput) (
 	key := input.Channel + "::" + input.ContactKey
 	if existingID, ok := s.sessionsByKey[key]; ok {
 		item := s.sessions[existingID]
+		if strings.EqualFold(strings.TrimSpace(item.Status), "RESOLVED") && input.LastInboundAt != nil {
+			item.Status = "ACTIVE"
+			item.HandoffStatus = "BOT"
+			item.CurrentOwnerUserID = ""
+		}
 		if input.CustomerPhone != "" {
 			item.CustomerPhone = input.CustomerPhone
 		}
@@ -6342,6 +6597,47 @@ func (s *fakeStore) ResumeSession(_ context.Context, input ResumeSessionInput) (
 	}, nil
 }
 
+func (s *fakeStore) ResolveSession(_ context.Context, input ResolveSessionInput) (ResolveSessionResult, error) {
+	item, ok := s.sessions[input.SessionID]
+	if !ok {
+		return ResolveSessionResult{}, ErrSessionNotFound
+	}
+	if strings.EqualFold(strings.TrimSpace(item.Status), "RESOLVED") {
+		return ResolveSessionResult{}, ErrSessionAlreadyResolved
+	}
+	if item.HandoffStatus != "HUMAN" || strings.TrimSpace(item.CurrentOwnerUserID) == "" {
+		return ResolveSessionResult{}, ErrResolveRequiresHuman
+	}
+	if strings.TrimSpace(item.CurrentOwnerUserID) != strings.TrimSpace(input.ResolvedByUserID) {
+		return ResolveSessionResult{}, ErrResolveOwnerMismatch
+	}
+
+	if item.Metadata == nil {
+		item.Metadata = map[string]interface{}{}
+	}
+	for key, value := range input.Metadata {
+		item.Metadata[key] = value
+	}
+
+	now := time.Now().UTC()
+	item.Metadata["resolved_at"] = now.Format(time.RFC3339Nano)
+	item.Metadata["resolved_by_user_id"] = strings.TrimSpace(input.ResolvedByUserID)
+	if reason := strings.TrimSpace(input.ResolveReason); reason != "" {
+		item.Metadata["resolve_reason"] = reason
+	}
+	item.Status = "RESOLVED"
+	item.HandoffStatus = "BOT"
+	item.CurrentOwnerUserID = ""
+	item.UpdatedAt = now
+	s.sessions[item.ID] = item
+
+	return ResolveSessionResult{
+		Session: item,
+		Status:  "resolved",
+		Reason:  "manual_resolve",
+	}, nil
+}
+
 func (s *fakeStore) FindReplyByIdempotency(_ context.Context, sessionID string, idempotencyKey string) (*ReplyResult, error) {
 	messageID, ok := s.byIdempotencyKey[idempotencyKey]
 	if !ok {
@@ -6375,6 +6671,10 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 	replyBody := strings.TrimSpace(input.Body)
 	replyMode := "ASSISTED_REPLY"
 	reviewAction := ""
+	replyKind := "TEXT"
+	if mediaKind := strings.ToUpper(strings.TrimSpace(asString(input.Metadata["media_kind"]))); mediaKind == "IMAGE" || mediaKind == "AUDIO" || mediaKind == "DOCUMENT" {
+		replyKind = mediaKind
+	}
 	var reviewedDraft *Message
 	if input.DraftMessageID != "" {
 		draft, ok := s.messages[input.DraftMessageID]
@@ -6417,7 +6717,7 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 		ID:             uuid.NewString(),
 		SessionID:      input.SessionID,
 		Direction:      "OUTBOUND",
-		Kind:           "TEXT",
+		Kind:           replyKind,
 		IdempotencyKey: input.IdempotencyKey,
 		SenderName:     input.SenderName,
 		Body:           replyBody,

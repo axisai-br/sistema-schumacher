@@ -8,6 +8,7 @@ const Trips = lazy(() => import("../pages/Trips"));
 const TripDetailsPage = lazy(() => import("../pages/Trips/TripDetailsPage"));
 const RoutesPage = lazy(() => import("../pages/Routes"));
 const Bookings = lazy(() => import("../pages/Bookings"));
+const Atendimentos = lazy(() => import("../pages/Atendimentos"));
 const TripOperations = lazy(() => import("../pages/TripOperations"));
 const Buses = lazy(() => import("../pages/Buses"));
 const Drivers = lazy(() => import("../pages/Drivers"));
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/trips/:tripId" element={<TripDetailsPage />} />
           <Route path="/routes" element={<RoutesPage />} />
           <Route path="/bookings" element={<Bookings />} />
+          <Route path="/atendimentos" element={<Atendimentos />} />
           <Route path="/saldo" element={<Saldo />} />
           <Route path="/users" element={<Users />} />
           {legacyMode ? (

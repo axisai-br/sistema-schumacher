@@ -14,6 +14,7 @@ import {
   HandCoins,
   Users,
   Box,
+  MessageSquare,
   ChevronDown,
   Moon,
   Sun,
@@ -29,6 +30,7 @@ const baseNavItems = [
   { path: "/trips", label: "Viagens", icon: Route },
   { path: "/routes", label: "Rotas", icon: MapPin },
   { path: "/bookings", label: "Reservas", icon: Ticket },
+  { path: "/atendimentos", label: "Atendimentos", icon: MessageSquare },
   { path: "/users", label: "Usuarios", icon: Users },
 ];
 
@@ -73,6 +75,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     return saved === "dark" ? "dark" : "light";
   });
   const location = useLocation();
+  const isAtendimentosRoute = location.pathname.startsWith("/atendimentos");
 
   const currentItem = useMemo(() => {
     return navItems.find((item) => location.pathname.startsWith(item.path));
@@ -172,7 +175,11 @@ export default function Layout({ children }: { children: ReactNode }) {
             Sair
           </button>
         </aside>
-        <main id="main-content" className="main" tabIndex={-1}>
+        <main
+          id="main-content"
+          className={`main ${isAtendimentosRoute ? "main-atendimentos" : ""}`}
+          tabIndex={-1}
+        >
           {children}
         </main>
         <button

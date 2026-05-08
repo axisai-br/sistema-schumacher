@@ -246,6 +246,19 @@ type ResumeSessionResult struct {
 	Handoff Handoff `json:"handoff"`
 }
 
+type ResolveSessionInput struct {
+	SessionID        string                 `json:"-"`
+	ResolvedByUserID string                 `json:"resolved_by_user_id"`
+	ResolveReason    string                 `json:"reason"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+type ResolveSessionResult struct {
+	Session Session `json:"session"`
+	Status  string  `json:"status"`
+	Reason  string  `json:"reason,omitempty"`
+}
+
 type ReplyOutbound struct {
 	ID                string                 `json:"id"`
 	SessionID         string                 `json:"session_id,omitempty"`
@@ -271,6 +284,21 @@ type ReplyInput struct {
 	IdempotencyKey string                 `json:"idempotency_key"`
 	Metadata       map[string]interface{} `json:"metadata"`
 }
+
+type ReplyMediaInput struct {
+	SessionID      string
+	OwnerUserID    string
+	SenderName     string
+	IdempotencyKey string
+	Caption        string
+	MediaType      string
+	FileName       string
+	MimeType       string
+	FileContent    []byte
+	Metadata       map[string]interface{}
+}
+
+type ReplyMediaResult = ReplyResult
 
 type CreateAutomationReplyInput struct {
 	SessionID      string

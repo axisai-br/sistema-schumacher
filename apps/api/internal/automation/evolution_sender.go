@@ -56,22 +56,55 @@ func (s *EvolutionSender) SendReply(ctx context.Context, input chat.SendReplyInp
 		return chat.SendReplyResult{}, fmt.Errorf("%w: missing recipient", ErrEvolutionSendFailed)
 	}
 
-	text := strings.TrimSpace(input.Message.Body)
-	if text == "" {
-		text = strings.TrimSpace(asString(input.Outbound.Payload["body"]))
-	}
-	if text == "" {
-		return chat.SendReplyResult{}, fmt.Errorf("%w: empty reply text", ErrEvolutionSendFailed)
-	}
+	requestPayload := map[string]interface{}{}
+	isMediaMessage := false
+	if outboundPayloadHasMedia(input.Outbound.Payload) {
+		mediaType := normalizeEvolutionMediaType(asString(input.Outbound.Payload["media_kind"]))
+		if mediaType == "" {
+			mediaType = "document"
+		}
+		mimeType := strings.TrimSpace(asString(input.Outbound.Payload["media_mime_type"]))
+		if mimeType == "" {
+			mimeType = defaultEvolutionMediaMIMEType(mediaType)
+		}
+		fileName := strings.TrimSpace(asString(input.Outbound.Payload["media_file_name"]))
+		if fileName == "" {
+			fileName = defaultEvolutionMediaFileName(mediaType)
+		}
+		caption := strings.TrimSpace(asString(input.Outbound.Payload["media_caption"]))
+		if caption == "" {
+			caption = strings.TrimSpace(input.Message.Body)
+		}
 
-	requestPayload := map[string]interface{}{
-		"number": number,
-		"text":   text,
-		"textMessage": map[string]interface{}{
-			"text": text,
-		},
-		"delay":       1200,
-		"linkPreview": false,
+		requestPayload = map[string]interface{}{
+			"number":    number,
+			"mediatype": mediaType,
+			"mimetype":  mimeType,
+			"media":     strings.TrimSpace(asString(input.Outbound.Payload["media_base64"])),
+			"fileName":  fileName,
+		}
+		if caption != "" && mediaType != "audio" {
+			requestPayload["caption"] = caption
+		}
+		isMediaMessage = true
+	} else {
+		text := strings.TrimSpace(input.Message.Body)
+		if text == "" {
+			text = strings.TrimSpace(asString(input.Outbound.Payload["body"]))
+		}
+		if text == "" {
+			return chat.SendReplyResult{}, fmt.Errorf("%w: empty reply text", ErrEvolutionSendFailed)
+		}
+
+		requestPayload = map[string]interface{}{
+			"number": number,
+			"text":   text,
+			"textMessage": map[string]interface{}{
+				"text": text,
+			},
+			"delay":       1200,
+			"linkPreview": false,
+		}
 	}
 
 	body, err := json.Marshal(requestPayload)
@@ -79,7 +112,11 @@ func (s *EvolutionSender) SendReply(ctx context.Context, input chat.SendReplyInp
 		return chat.SendReplyResult{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/message/sendText/"+s.instance, bytes.NewReader(body))
+	endpoint := s.baseURL + "/message/sendText/" + s.instance
+	if isMediaMessage {
+		endpoint = s.baseURL + "/message/sendMedia/" + s.instance
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return chat.SendReplyResult{}, err
 	}
@@ -175,4 +212,43 @@ func deliveryModeForOutbound(payload map[string]interface{}) string {
 		return "BOT_AUTO_SEND"
 	}
 	return "MANUAL_CONTROLLED"
+}
+
+func outboundPayloadHasMedia(payload map[string]interface{}) bool {
+	return strings.TrimSpace(asString(payload["media_base64"])) != ""
+}
+
+func normalizeEvolutionMediaType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "image":
+		return "image"
+	case "audio":
+		return "audio"
+	case "document":
+		return "document"
+	default:
+		return ""
+	}
+}
+
+func defaultEvolutionMediaMIMEType(mediaType string) string {
+	switch mediaType {
+	case "image":
+		return "image/jpeg"
+	case "audio":
+		return "audio/ogg"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func defaultEvolutionMediaFileName(mediaType string) string {
+	switch mediaType {
+	case "image":
+		return "media.jpg"
+	case "audio":
+		return "audio.ogg"
+	default:
+		return "document.bin"
+	}
 }
