@@ -8,29 +8,31 @@ import (
 )
 
 type Config struct {
-	AppEnv                    string
-	Port                      string
-	CORSOrigins               string
-	DatabaseURL               string
-	SupabaseURL               string
-	SupabaseAnonKey           string
-	SupabaseServiceRoleKey    string
-	SupabaseJWKSURL           string
-	SupabaseIssuer            string
-	SupabaseAudience          string
-	AuthDisabled              bool
-	APIServiceTokens          []string
-	PagarmeSecretKey          string
-	PagarmeBaseURL            string
-	PagarmeAPIBaseURL         string
-	PagarmePaymentRecipientID string
-	PagarmeDebugRecipientID   string
-	PagarmeWebhookBasicUser   string
-	PagarmeWebhookBasicPass   string
-	AbacatePayAPIKey          string
-	AbacatePayWebhookSecret   string
-	AbacatePayBaseURL         string
-	AbacatePayPublicKey       string
+	AppEnv                     string
+	Port                       string
+	CORSOrigins                string
+	DatabaseURL                string
+	SupabaseURL                string
+	SupabaseAnonKey            string
+	SupabaseServiceRoleKey     string
+	SupabaseJWKSURL            string
+	SupabaseJWTSecret          string
+	SupabaseIssuer             string
+	SupabaseAudience           string
+	SupabaseAllowMissingIssuer bool
+	AuthDisabled               bool
+	APIServiceTokens           []string
+	PagarmeSecretKey           string
+	PagarmeBaseURL             string
+	PagarmeAPIBaseURL          string
+	PagarmePaymentRecipientID  string
+	PagarmeDebugRecipientID    string
+	PagarmeWebhookBasicUser    string
+	PagarmeWebhookBasicPass    string
+	AbacatePayAPIKey           string
+	AbacatePayWebhookSecret    string
+	AbacatePayBaseURL          string
+	AbacatePayPublicKey        string
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
 	AbacatePayReturnURL string
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
@@ -69,8 +71,10 @@ func Load() (Config, error) {
 		SupabaseAnonKey:                    os.Getenv("SUPABASE_ANON_KEY"),
 		SupabaseServiceRoleKey:             os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 		SupabaseJWKSURL:                    os.Getenv("SUPABASE_JWKS_URL"),
+		SupabaseJWTSecret:                  os.Getenv("SUPABASE_JWT_SECRET"),
 		SupabaseIssuer:                     os.Getenv("SUPABASE_ISSUER"),
 		SupabaseAudience:                   getEnv("SUPABASE_AUDIENCE", "authenticated"),
+		SupabaseAllowMissingIssuer:         parseBool(os.Getenv("SUPABASE_ALLOW_MISSING_ISSUER")),
 		AuthDisabled:                       parseBool(os.Getenv("AUTH_DISABLED")),
 		APIServiceTokens:                   splitCSV(os.Getenv("API_SERVICE_TOKENS")),
 		PagarmeSecretKey:                   os.Getenv("PAGARME_SECRET_KEY"),
@@ -113,8 +117,11 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")
 	}
-	if cfg.SupabaseJWKSURL == "" || cfg.SupabaseIssuer == "" {
-		return cfg, errors.New("SUPABASE_JWKS_URL and SUPABASE_ISSUER are required")
+	if cfg.SupabaseJWTSecret == "" && cfg.SupabaseJWKSURL == "" {
+		return cfg, errors.New("SUPABASE_JWT_SECRET or SUPABASE_JWKS_URL is required")
+	}
+	if cfg.SupabaseIssuer == "" {
+		return cfg, errors.New("SUPABASE_ISSUER is required")
 	}
 	return cfg, nil
 }

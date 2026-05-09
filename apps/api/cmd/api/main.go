@@ -64,7 +64,15 @@ func main() {
 	}
 	defer pool.Close()
 
-	authMiddleware, err := auth.NewAuthenticator(cfg.SupabaseJWKSURL, cfg.SupabaseIssuer, cfg.SupabaseAudience, cfg.APIServiceTokens, cfg.AuthDisabled)
+	authMiddleware, err := auth.NewAuthenticator(auth.Config{
+		JWKSURL:            cfg.SupabaseJWKSURL,
+		JWTSecret:          cfg.SupabaseJWTSecret,
+		Issuer:             cfg.SupabaseIssuer,
+		Audience:           cfg.SupabaseAudience,
+		AllowMissingIssuer: cfg.SupabaseAllowMissingIssuer,
+		ServiceTokens:      cfg.APIServiceTokens,
+		Skip:               cfg.AuthDisabled,
+	})
 	if err != nil {
 		log.Fatalf("auth error: %v", err)
 	}

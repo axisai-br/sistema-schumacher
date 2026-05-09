@@ -53,7 +53,7 @@ Authorization: Bearer <jwt-ou-service-token>
 Validacoes aplicadas:
 
 - token tecnico configurado em `API_SERVICE_TOKENS`; ou
-- token JWT valido;
+- token JWT valido via `SUPABASE_JWT_SECRET` para tokens HS256 do Supabase self-hosted, ou via `SUPABASE_JWKS_URL` quando usado;
 - `iss` igual ao `SUPABASE_ISSUER` quando configurado;
 - `aud` contendo `SUPABASE_AUDIENCE` quando configurado;
 - `sub` obrigatorio.
@@ -61,6 +61,7 @@ Validacoes aplicadas:
 Observacao importante:
 - falhas de autenticacao retornam `401` com corpo texto simples via `http.Error`, nao no envelope JSON padrao.
 - a autenticacao de servico existe para integracoes server-to-server como `n8n -> API`, evitando depender de `access_token` de sessao do `Supabase Auth` e de fluxo de refresh no workflow.
+- `SUPABASE_ALLOW_MISSING_ISSUER=true` e apenas uma compatibilidade temporaria para Supabase Auth emitindo token sem `iss`; ela ainda exige assinatura valida, `exp` valido, `sub`, `role=authenticated` e `aud=authenticated`.
 
 ## 4) Convencoes de requisicao
 
@@ -119,7 +120,7 @@ Excecoes relevantes:
 ### 6.1 Obrigatorias para subir a API
 
 - `DATABASE_URL`
-- `SUPABASE_JWKS_URL`
+- `SUPABASE_JWT_SECRET` ou `SUPABASE_JWKS_URL`
 - `SUPABASE_ISSUER`
 
 ### 6.2 Principais opcionais
@@ -130,6 +131,7 @@ Excecoes relevantes:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_AUDIENCE` default `authenticated`
+- `SUPABASE_ALLOW_MISSING_ISSUER` default `false`
 - `AUTH_DISABLED`
 - `API_SERVICE_TOKENS` lista separada por virgula com tokens tecnicos aceitos no header `Authorization: Bearer ...`
 - `ABACATEPAY_API_KEY`
