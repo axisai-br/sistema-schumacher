@@ -117,7 +117,8 @@ func main() {
 	rescheduleAssistTool := chat.NewRescheduleAssistTool(bookingLookupTool, reportsSvc, availabilityTool)
 	paymentStatusTool := chat.NewPaymentStatusTool(paymentsSvc)
 	paymentCreateTool := chat.NewPaymentCreateTool(bookingsSvc, paymentsSvc)
-	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool)
+	userProfileSvc := users.NewProfileService(pool)
+	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool, userProfileSvc)
 	chatHandler := chat.NewHandler(chatSvc)
 	automationSvc := automation.NewService(automation.NewRepository(pool), chatSvc, cfg, paymentsRepo, bookingsSvc)
 	automation.StartChatBufferFlushLoop(ctx, automationSvc, cfg, log.Default())
@@ -195,7 +196,7 @@ func main() {
 		importsXLSXHandler := imports_xlsx.NewHandler(imports_xlsx.NewService(imports_xlsx.NewRepository(pool)))
 		importsXLSXHandler.RegisterRoutes(pr)
 
-		users.NewHandler(pool, cfg).RegisterRoutes(pr)
+		users.NewHandler(pool, cfg, userProfileSvc).RegisterRoutes(pr)
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)

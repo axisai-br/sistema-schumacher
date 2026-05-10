@@ -18,6 +18,7 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "user_id"
+const authUserKey contextKey = "auth_user"
 const authBypassKey contextKey = "auth_bypass"
 
 // Config controls API authentication against Supabase Auth.
@@ -29,6 +30,13 @@ type Config struct {
 	AllowMissingIssuer bool
 	ServiceTokens      []string
 	Skip               bool
+}
+
+type AuthUser struct {
+	ID      string
+	Email   string
+	Name    string
+	Service bool
 }
 
 // Authenticator validates Supabase JWTs and service tokens.
@@ -92,7 +100,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			if uid == "" {
 				uid = a.debugUID
 			}
-			ctx := context.WithValue(r.Context(), userIDKey, uid)
+			ctx := WithUser(r.Context(), AuthUser{ID: uid, Service: false})
 			ctx = context.WithValue(ctx, authBypassKey, true)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -120,7 +128,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 
 		tokenString := parts[1]
 		if subject, ok := a.services[tokenString]; ok {
-			ctx := context.WithValue(r.Context(), userIDKey, subject)
+			ctx := WithUser(r.Context(), AuthUser{ID: subject, Service: true})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -176,7 +184,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			http.Error(w, "invalid subject", http.StatusUnauthorized)
 			return
 		}
-		ctx := context.WithValue(r.Context(), userIDKey, sub)
+		ctx := WithUser(r.Context(), authUserFromClaims(sub, claims))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -199,6 +207,11 @@ func (a *Authenticator) compatibleMissingIssuerClaims(claims jwt.MapClaims) bool
 	return sub != "" && role == "authenticated" && audMatches("authenticated", claims["aud"])
 }
 
+func WithUser(ctx context.Context, user AuthUser) context.Context {
+	ctx = context.WithValue(ctx, userIDKey, user.ID)
+	return context.WithValue(ctx, authUserKey, user)
+}
+
 func UserIDFromContext(ctx context.Context) (string, bool) {
 	v := ctx.Value(userIDKey)
 	if v == nil {
@@ -206,6 +219,18 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	}
 	id, ok := v.(string)
 	return id, ok
+}
+
+func UserFromContext(ctx context.Context) (AuthUser, bool) {
+	v := ctx.Value(authUserKey)
+	if v == nil {
+		if id, ok := UserIDFromContext(ctx); ok {
+			return AuthUser{ID: id}, true
+		}
+		return AuthUser{}, false
+	}
+	user, ok := v.(AuthUser)
+	return user, ok
 }
 
 func IsAuthBypass(ctx context.Context) bool {
@@ -297,4 +322,43 @@ func issuerError(iss string) string {
 		return "missing issuer"
 	}
 	return "invalid issuer"
+}
+
+func authUserFromClaims(sub string, claims jwt.MapClaims) AuthUser {
+	user := AuthUser{
+		ID:    strings.TrimSpace(sub),
+		Email: strings.TrimSpace(asClaimString(claims["email"])),
+	}
+	if metadata, ok := claims["user_metadata"].(map[string]interface{}); ok {
+		user.Name = firstNonEmptyClaim(
+			asClaimString(metadata["full_name"]),
+			asClaimString(metadata["name"]),
+			asClaimString(metadata["display_name"]),
+		)
+	}
+	if user.Name == "" {
+		user.Name = firstNonEmptyClaim(
+			asClaimString(claims["name"]),
+			asClaimString(claims["full_name"]),
+			user.Email,
+		)
+	}
+	return user
+}
+
+func asClaimString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	s, _ := value.(string)
+	return strings.TrimSpace(s)
+}
+
+func firstNonEmptyClaim(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

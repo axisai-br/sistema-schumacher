@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"schumacher-tur/api/internal/auth"
+	"schumacher-tur/api/internal/shared/config"
 )
 
 var (
@@ -22,6 +24,8 @@ var (
 	ErrSessionNotFound              = errors.New("chat session not found")
 	ErrHandoffAlreadyActive         = errors.New("chat session already waiting for human handoff")
 	ErrNoActiveHandoff              = errors.New("chat session has no active human handoff")
+	ErrAuthenticatedUserRequired    = errors.New("authenticated user is required")
+	ErrUserProfileNotConfigured     = errors.New("authenticated user profile is not configured")
 	ErrInvalidAssignedUser          = errors.New("assigned_user_id must be a valid uuid")
 	ErrResolveByRequired            = errors.New("resolved_by_user_id is required")
 	ErrInvalidResolveBy             = errors.New("resolved_by_user_id must be a valid uuid")
@@ -59,10 +63,15 @@ type Service struct {
 	payments      PaymentStatusSearcher
 	paymentCreate PaymentCreator
 	bookingCancel BookingCanceler
+	profiles      AuthUserProfileEnsurer
 }
 
 type chatLogger interface {
 	Printf(format string, v ...interface{})
+}
+
+type AuthUserProfileEnsurer interface {
+	EnsureUserProfileIDFromAuth(ctx context.Context, user auth.AuthUser) (string, error)
 }
 
 func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
@@ -77,6 +86,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 	var payments PaymentStatusSearcher
 	var paymentCreate PaymentCreator
 	var bookingCancel BookingCanceler
+	var profiles AuthUserProfileEnsurer
 	for _, dep := range deps {
 		switch typed := dep.(type) {
 		case chatLogger:
@@ -123,6 +133,10 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 			if bookingCancel == nil {
 				bookingCancel = typed
 			}
+		case AuthUserProfileEnsurer:
+			if profiles == nil {
+				profiles = typed
+			}
 		}
 	}
 	return &Service{
@@ -139,6 +153,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 		payments:      payments,
 		paymentCreate: paymentCreate,
 		bookingCancel: bookingCancel,
+		profiles:      profiles,
 	}
 }
 
@@ -428,6 +443,17 @@ func (s *Service) RequestHandoff(ctx context.Context, input RequestHandoffInput)
 	}
 	assignedUserID := strings.TrimSpace(input.AssignedUserID)
 	if assignedUserID != "" {
+		if s.profiles != nil {
+			authUser, ok := auth.UserFromContext(ctx)
+			if !ok || strings.TrimSpace(authUser.ID) == "" {
+				return RequestHandoffResult{}, ErrAuthenticatedUserRequired
+			}
+			profileID, err := s.profiles.EnsureUserProfileIDFromAuth(ctx, authUser)
+			if err != nil {
+				return RequestHandoffResult{}, fmt.Errorf("%w: %v", ErrUserProfileNotConfigured, err)
+			}
+			assignedUserID = profileID
+		}
 		parsed, err := uuid.Parse(assignedUserID)
 		if err != nil {
 			return RequestHandoffResult{}, ErrInvalidAssignedUser
@@ -435,13 +461,20 @@ func (s *Service) RequestHandoff(ctx context.Context, input RequestHandoffInput)
 		assignedUserID = parsed.String()
 	}
 
-	return s.store.RequestHandoff(ctx, RequestHandoffInput{
+	result, err := s.store.RequestHandoff(ctx, RequestHandoffInput{
 		SessionID:      sessionID,
 		RequestedBy:    requestedBy,
 		Reason:         strings.TrimSpace(input.Reason),
 		AssignedUserID: assignedUserID,
 		Metadata:       input.Metadata,
 	})
+	if err != nil {
+		if isForeignKeyViolation(err) {
+			return RequestHandoffResult{}, ErrUserProfileNotConfigured
+		}
+		return RequestHandoffResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) ResumeSession(ctx context.Context, input ResumeSessionInput) (ResumeSessionResult, error) {

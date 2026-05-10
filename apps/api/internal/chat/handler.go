@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"schumacher-tur/api/internal/auth"
 	httpx "schumacher-tur/api/internal/shared/http"
 )
 
@@ -212,13 +213,27 @@ func (h *Handler) requestHandoff(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_BODY", "invalid json", err.Error())
 		return
 	}
+	authUser, ok := auth.UserFromContext(r.Context())
+	if !ok || authUser.ID == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authenticated user", nil)
+		return
+	}
 	input.SessionID = sessionID.String()
+	input.AssignedUserID = authUser.ID
+	input.RequestedBy = "OPERATOR"
+	if input.Reason == "" {
+		input.Reason = "manual_assume"
+	}
 
 	result, err := h.svc.RequestHandoff(r.Context(), input)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrSessionNotFound):
 			httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "chat session not found", nil)
+		case errors.Is(err, ErrAuthenticatedUserRequired):
+			httpx.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authenticated user", nil)
+		case errors.Is(err, ErrUserProfileNotConfigured):
+			httpx.WriteError(w, http.StatusForbidden, "USER_PROFILE_NOT_CONFIGURED", "authenticated user profile is not configured", nil)
 		case errors.Is(err, ErrInvalidAssignedUser):
 			httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		case errors.Is(err, ErrHandoffAlreadyActive):

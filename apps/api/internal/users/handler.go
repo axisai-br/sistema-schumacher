@@ -24,9 +24,16 @@ import (
 )
 
 type Handler struct {
-	pool *pgxpool.Pool
-	cfg  config.Config
-	http *http.Client
+	pool     *pgxpool.Pool
+	cfg      config.Config
+	http     *http.Client
+	profiles userProfileService
+}
+
+type userProfileService interface {
+	EnsureUserProfileFromAuth(ctx context.Context, user auth.AuthUser) (Profile, error)
+	LoadRoles(ctx context.Context, userID string) ([]string, error)
+	HasActiveRecipient(ctx context.Context, userID string) (bool, error)
 }
 
 type MeResponse struct {
@@ -54,10 +61,10 @@ type UserControlUpdateInput struct {
 }
 
 type UserCreateInput struct {
-	Email           string `json:"email"`
-	FullName        string `json:"full_name"`
-	Password        string `json:"password"`
-	CanAccessSaldo  bool   `json:"can_access_saldo"`
+	Email           string  `json:"email"`
+	FullName        string  `json:"full_name"`
+	Password        string  `json:"password"`
+	CanAccessSaldo  bool    `json:"can_access_saldo"`
 	RecipientID     *string `json:"recipient_id"`
 	RecipientActive *bool   `json:"recipient_active"`
 }
@@ -79,11 +86,16 @@ type supabaseAdminUser struct {
 	Email string `json:"email"`
 }
 
-func NewHandler(pool *pgxpool.Pool, cfg config.Config) *Handler {
+func NewHandler(pool *pgxpool.Pool, cfg config.Config, profiles ...userProfileService) *Handler {
+	profileSvc := userProfileService(NewProfileService(pool))
+	if len(profiles) > 0 && profiles[0] != nil {
+		profileSvc = profiles[0]
+	}
 	return &Handler{
-		pool: pool,
-		cfg:  cfg,
-		http: &http.Client{Timeout: 15 * time.Second},
+		pool:     pool,
+		cfg:      cfg,
+		http:     &http.Client{Timeout: 15 * time.Second},
+		profiles: profileSvc,
 	}
 }
 
@@ -115,12 +127,27 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roles, err := h.loadRoles(r.Context(), userID)
+	authUser, ok := auth.UserFromContext(r.Context())
+	if !ok || strings.TrimSpace(authUser.ID) == "" {
+		authUser = auth.AuthUser{ID: userID}
+	}
+	profile, err := h.profiles.EnsureUserProfileFromAuth(r.Context(), authUser)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrUserProfileNotConfigured):
+			httpx.WriteError(w, http.StatusForbidden, "USER_PROFILE_NOT_CONFIGURED", "could not configure authenticated user profile", nil)
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "USER_PROFILE_ERROR", "could not ensure user profile", err.Error())
+		}
+		return
+	}
+
+	roles, err := h.profiles.LoadRoles(r.Context(), profile.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "USER_ROLES_ERROR", "could not load user roles", err.Error())
 		return
 	}
-	hasRecipient, err := h.hasActiveRecipient(r.Context(), userID)
+	hasRecipient, err := h.profiles.HasActiveRecipient(r.Context(), profile.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "USER_RECIPIENT_ERROR", "could not load recipient linkage", err.Error())
 		return
@@ -140,7 +167,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, MeResponse{
-		UserID:         userID,
+		UserID:         profile.ID,
 		Roles:          roles,
 		CanAccessSaldo: hasFinanceiro,
 		HasRecipient:   hasRecipient,

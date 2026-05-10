@@ -15,7 +15,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"schumacher-tur/api/internal/auth"
 	"schumacher-tur/api/internal/shared/config"
 )
 
@@ -2173,59 +2175,19 @@ func TestPresenceSignalIsSkippedWhenHumanOwnerIsActive(t *testing.T) {
 func TestRequestHandoffCreatesRecordAndUpdatesSession(t *testing.T) {
 	store := newFakeStore()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
-	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
+	profiles := &fakeProfileEnsurer{}
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
 
 	r := chi.NewRouter()
 	handler.RegisterRoutes(r)
 
+	userID := uuid.NewString()
 	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{
 		"requested_by":"operator",
 		"reason":"cliente pediu atendimento humano",
 		"metadata":{"source":"dashboard"}
 	}`))
-	rec := httptest.NewRecorder()
-
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
-	}
-
-	var out RequestHandoffResult
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if out.Session.HandoffStatus != "HUMAN_REQUESTED" {
-		t.Fatalf("expected session handoff status HUMAN_REQUESTED, got %s", out.Session.HandoffStatus)
-	}
-	if out.Handoff.Status != "REQUESTED" {
-		t.Fatalf("expected handoff status REQUESTED, got %s", out.Handoff.Status)
-	}
-	if out.Handoff.RequestedBy != "OPERATOR" {
-		t.Fatalf("expected requested_by to be normalized, got %s", out.Handoff.RequestedBy)
-	}
-	if len(store.handoffs) != 1 {
-		t.Fatalf("expected one persisted handoff, got %d", len(store.handoffs))
-	}
-	if out.Session.CurrentOwnerUserID != "" {
-		t.Fatalf("expected session without owner assignment, got %s", out.Session.CurrentOwnerUserID)
-	}
-}
-
-func TestRequestHandoffAssignsHumanOwnerWhenProvided(t *testing.T) {
-	store := newFakeStore()
-	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
-	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
-
-	r := chi.NewRouter()
-	handler.RegisterRoutes(r)
-
-	ownerID := uuid.NewString()
-	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{
-		"requested_by":"operator",
-		"assigned_user_id":"`+ownerID+`",
-		"reason":"cliente pediu atendimento humano"
-	}`))
+	req = req.WithContext(auth.WithUser(req.Context(), auth.AuthUser{ID: userID, Email: "operador@example.com"}))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -2241,15 +2203,67 @@ func TestRequestHandoffAssignsHumanOwnerWhenProvided(t *testing.T) {
 	if out.Session.HandoffStatus != "HUMAN" {
 		t.Fatalf("expected session handoff status HUMAN, got %s", out.Session.HandoffStatus)
 	}
-	if out.Session.CurrentOwnerUserID != ownerID {
-		t.Fatalf("expected current owner %s, got %s", ownerID, out.Session.CurrentOwnerUserID)
+	if out.Handoff.Status != "REQUESTED" {
+		t.Fatalf("expected handoff status REQUESTED, got %s", out.Handoff.Status)
 	}
-	if out.Handoff.AssignedUserID != ownerID {
-		t.Fatalf("expected handoff assigned user %s, got %s", ownerID, out.Handoff.AssignedUserID)
+	if out.Handoff.RequestedBy != "OPERATOR" {
+		t.Fatalf("expected requested_by to be normalized, got %s", out.Handoff.RequestedBy)
+	}
+	if len(store.handoffs) != 1 {
+		t.Fatalf("expected one persisted handoff, got %d", len(store.handoffs))
+	}
+	if out.Session.CurrentOwnerUserID != userID {
+		t.Fatalf("expected current owner %s, got %s", userID, out.Session.CurrentOwnerUserID)
+	}
+	if out.Handoff.AssignedUserID != userID {
+		t.Fatalf("expected handoff assigned user %s, got %s", userID, out.Handoff.AssignedUserID)
+	}
+	if profiles.calls != 1 || profiles.lastUser.ID != userID {
+		t.Fatalf("expected profile ensure for authenticated user, got calls=%d user=%s", profiles.calls, profiles.lastUser.ID)
 	}
 }
 
-func TestRequestHandoffRejectsInvalidAssignedUserID(t *testing.T) {
+func TestRequestHandoffIgnoresBodyAssignedUserID(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
+	profiles := &fakeProfileEnsurer{}
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	bodyOwnerID := uuid.NewString()
+	authOwnerID := uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{
+		"requested_by":"operator",
+		"assigned_user_id":"`+bodyOwnerID+`",
+		"reason":"cliente pediu atendimento humano"
+	}`))
+	req = req.WithContext(auth.WithUser(req.Context(), auth.AuthUser{ID: authOwnerID, Email: "operador@example.com"}))
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
+	}
+
+	var out RequestHandoffResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Session.HandoffStatus != "HUMAN" {
+		t.Fatalf("expected session handoff status HUMAN, got %s", out.Session.HandoffStatus)
+	}
+	if out.Session.CurrentOwnerUserID != authOwnerID {
+		t.Fatalf("expected current owner from auth %s, got %s", authOwnerID, out.Session.CurrentOwnerUserID)
+	}
+	if out.Handoff.AssignedUserID != authOwnerID {
+		t.Fatalf("expected handoff assigned user from auth %s, got %s", authOwnerID, out.Handoff.AssignedUserID)
+	}
+}
+
+func TestRequestHandoffRequiresAuthenticatedUser(t *testing.T) {
 	store := newFakeStore()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
@@ -2264,8 +2278,8 @@ func TestRequestHandoffRejectsInvalidAssignedUserID(t *testing.T) {
 
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
 	}
 }
 
@@ -2281,12 +2295,59 @@ func TestRequestHandoffRejectsWhenAlreadyActive(t *testing.T) {
 	handler.RegisterRoutes(r)
 
 	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{}`))
+	req = req.WithContext(auth.WithUser(req.Context(), auth.AuthUser{ID: uuid.NewString(), Email: "operador@example.com"}))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected status %d, got %d", http.StatusConflict, rec.Code)
+	}
+}
+
+func TestRequestHandoffProfileFailureReturnsForbidden(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
+	profiles := &fakeProfileEnsurer{err: ErrUserProfileNotConfigured}
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{}`))
+	req = req.WithContext(auth.WithUser(req.Context(), auth.AuthUser{ID: uuid.NewString(), Email: "operador@example.com"}))
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "USER_PROFILE_NOT_CONFIGURED") {
+		t.Fatalf("expected USER_PROFILE_NOT_CONFIGURED response, got %s", rec.Body.String())
+	}
+}
+
+func TestRequestHandoffForeignKeyFailureReturnsForbidden(t *testing.T) {
+	store := newFakeStore()
+	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
+	store.requestHandoffErr = &pgconn.PgError{Code: "23503", ConstraintName: "chat_handoffs_assigned_user_id_fkey"}
+	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/sessions/"+session.ID+"/handoff", bytes.NewBufferString(`{}`))
+	req = req.WithContext(auth.WithUser(req.Context(), auth.AuthUser{ID: uuid.NewString(), Email: "operador@example.com"}))
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "USER_PROFILE_NOT_CONFIGURED") {
+		t.Fatalf("expected USER_PROFILE_NOT_CONFIGURED response, got %s", rec.Body.String())
 	}
 }
 
@@ -5953,16 +6014,32 @@ func TestListSessionsSupportsOperationalTabs(t *testing.T) {
 }
 
 type fakeStore struct {
-	sessions         map[string]Session
-	sessionsByKey    map[string]string
-	messages         map[string]Message
-	messageOrder     []string
-	byProviderID     map[string]string
-	byIdempotencyKey map[string]string
-	handoffs         map[string]Handoff
-	outbounds        map[string]ReplyOutbound
-	toolCalls        map[string]ToolCall
-	toolCallOrder    []string
+	sessions          map[string]Session
+	sessionsByKey     map[string]string
+	messages          map[string]Message
+	messageOrder      []string
+	byProviderID      map[string]string
+	byIdempotencyKey  map[string]string
+	handoffs          map[string]Handoff
+	outbounds         map[string]ReplyOutbound
+	toolCalls         map[string]ToolCall
+	toolCallOrder     []string
+	requestHandoffErr error
+}
+
+type fakeProfileEnsurer struct {
+	calls    int
+	lastUser auth.AuthUser
+	err      error
+}
+
+func (f *fakeProfileEnsurer) EnsureUserProfileIDFromAuth(_ context.Context, user auth.AuthUser) (string, error) {
+	f.calls++
+	f.lastUser = user
+	if f.err != nil {
+		return "", f.err
+	}
+	return user.ID, nil
 }
 
 type fakeReplySender struct {
@@ -6510,6 +6587,9 @@ func (s *fakeStore) UpdateSessionBufferState(_ context.Context, input UpdateSess
 }
 
 func (s *fakeStore) RequestHandoff(_ context.Context, input RequestHandoffInput) (RequestHandoffResult, error) {
+	if s.requestHandoffErr != nil {
+		return RequestHandoffResult{}, s.requestHandoffErr
+	}
 	item, ok := s.sessions[input.SessionID]
 	if !ok {
 		return RequestHandoffResult{}, ErrSessionNotFound

@@ -2600,3 +2600,11 @@ func IsUniqueViolation(err error) bool {
 	}
 	return pgErr.Code == "23505"
 }
+
+func isForeignKeyViolation(err error) bool {
+	pgErr, ok := err.(*pgconn.PgError)
+	if !ok {
+		return false
+	}
+	return pgErr.Code == "23503"
+}
