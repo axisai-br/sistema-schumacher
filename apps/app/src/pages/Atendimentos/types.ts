@@ -14,7 +14,7 @@ export type ChatMessage = {
   direction: string;
   body?: string;
   sender_name?: string;
-  processing_status: string;
+  processing_status: "AUTOMATION_PENDING" | "AUTOMATION_SENT";
   received_at: string;
   sent_at?: string | null;
   created_at: string;
@@ -40,5 +40,7 @@ export type MessageBubbleVM = {
   id: string;
   body: string;
   timeLabel: string;
+  statusSymbol: string;
+  statusLabel: string;
   outbound: boolean;
 };

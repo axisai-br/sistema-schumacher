@@ -6,19 +6,26 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"schumacher-tur/api/internal/payments"
+	"schumacher-tur/api/internal/realtime"
 	httpx "schumacher-tur/api/internal/shared/http"
 )
 
 type Handler struct {
-	svc *Service
+	svc    *Service
+	broker *realtime.Broker
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, brokers ...*realtime.Broker) *Handler {
+	var broker *realtime.Broker
+	if len(brokers) > 0 {
+		broker = brokers[0]
+	}
+	return &Handler{svc: svc, broker: broker}
 }
 
 func (h *Handler) RegisterWebhooks(r chi.Router) {
@@ -269,6 +276,7 @@ func (h *Handler) dispatchEvolutionWebhook(w http.ResponseWriter, r *http.Reques
 			}
 			return true
 		}
+		h.publishChatEvent("chat.message.upsert", result.SessionID)
 		httpx.WriteJSON(w, http.StatusAccepted, result)
 		return true
 	case "messages.update":
@@ -282,6 +290,7 @@ func (h *Handler) dispatchEvolutionWebhook(w http.ResponseWriter, r *http.Reques
 			}
 			return true
 		}
+		h.publishChatEvent("chat.message.status", "")
 		httpx.WriteJSON(w, http.StatusAccepted, result)
 		return true
 	case "presence.update", "presence-update":
@@ -295,12 +304,26 @@ func (h *Handler) dispatchEvolutionWebhook(w http.ResponseWriter, r *http.Reques
 			}
 			return true
 		}
+		h.publishChatEvent("chat.presence.update", result.SessionID)
 		httpx.WriteJSON(w, http.StatusAccepted, result)
 		return true
 	default:
 		return false
 	}
 }
+
+func (h *Handler) publishChatEvent(eventType string, sessionID string) {
+	if h.broker == nil {
+		return
+	}
+	h.broker.Publish(realtime.ChatEvent{
+		Type:      eventType,
+		Channel:   "WHATSAPP",
+		SessionID: strings.TrimSpace(sessionID),
+		At:        time.Now().UTC(),
+	})
+}
+
 
 func resolveEvolutionWebhookEvent(body []byte) (string, error) {
 	payload, _, err := decodeEvolutionPayload(body)

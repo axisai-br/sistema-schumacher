@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import InlineAlert from "../../components/InlineAlert";
@@ -7,7 +7,7 @@ import SearchToolbar from "../../components/input/SearchToolbar";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import useDebouncedValue from "../../hooks/useDebouncedValue";
 import useToast from "../../hooks/useToast";
-import { apiGet, apiPost, apiPostForm } from "../../services/api";
+import { apiGet, apiPost, apiPostForm, apiStream } from "../../services/api";
 import { buildListQuery } from "../../hooks/buildListQuery";
 import { isSessionInTab, sortByLastMessageDesc, type AtendimentoTab } from "./sessionFilters";
 import AtendimentosRail from "./AtendimentosRail";
@@ -47,6 +47,7 @@ export default function AtendimentosPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [replyBody, setReplyBody] = useState("");
+  const invalidateDebounceRef = useRef<number | null>(null);
   const debouncedSearch = useDebouncedValue(search, 250);
 
   const sessionsQuery = useQuery({
@@ -58,7 +59,8 @@ export default function AtendimentosPage() {
           limit: 200,
         })
       ),
-    refetchInterval: 5000,
+    refetchInterval: false,
+    refetchOnWindowFocus: true,
   });
 
   const allSessions = sessionsQuery.data ?? [];
@@ -125,7 +127,7 @@ export default function AtendimentosPage() {
         })
       ),
     enabled: Boolean(selectedSessionId),
-    refetchInterval: selectedSessionId ? 5000 : false,
+    refetchInterval: false,
   });
   const messageItems = useMemo(
     () => dedupeMessages(messagesQuery.data ?? []).map(mapMessageToBubbleVM),
@@ -138,12 +140,83 @@ export default function AtendimentosPage() {
     handleContainerScroll,
   } = useMessageAutoScroll(messageItems.length);
 
-  const invalidateChatQueries = async () => {
+  const invalidateChatQueries = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
     if (selectedSessionId) {
       await queryClient.invalidateQueries({ queryKey: ["chat-session-messages", selectedSessionId] });
     }
-  };
+  }, [queryClient, selectedSessionId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let closed = false;
+    let reconnectTimer: number | null = null;
+
+    const scheduleInvalidate = () => {
+      if (invalidateDebounceRef.current !== null) {
+        window.clearTimeout(invalidateDebounceRef.current);
+      }
+      invalidateDebounceRef.current = window.setTimeout(() => {
+        invalidateDebounceRef.current = null;
+        void invalidateChatQueries();
+      }, 250);
+    };
+
+    const consume = async () => {
+      while (!closed) {
+        try {
+          const response = await apiStream("/chat/events/stream?channel=WHATSAPP", {
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) {
+            throw new Error(`stream_unavailable_${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (!closed) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+
+            buffer += decoder.decode(chunk.value, { stream: true });
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() ?? "";
+
+            for (const part of parts) {
+              const lines = part.split("\n");
+              const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "";
+              if (eventName === "chat_event") {
+                scheduleInvalidate();
+              }
+            }
+          }
+        } catch {
+          // Stream failures are retried silently.
+        }
+
+        if (closed) break;
+        await new Promise<void>((resolve) => {
+          reconnectTimer = window.setTimeout(() => resolve(), 1200);
+        });
+      }
+    };
+
+    void consume();
+
+    return () => {
+      closed = true;
+      controller.abort();
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (invalidateDebounceRef.current !== null) {
+        window.clearTimeout(invalidateDebounceRef.current);
+        invalidateDebounceRef.current = null;
+      }
+    };
+  }, [invalidateChatQueries]);
 
   const assumeMutation = useMutation({
     mutationFn: async (sessionId: string) =>

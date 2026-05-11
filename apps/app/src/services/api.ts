@@ -14,6 +14,10 @@ type FormRequestOptions = {
   body: FormData;
 };
 
+type StreamRequestOptions = {
+  signal?: AbortSignal;
+};
+
 export class APIRequestError extends Error {
   code?: string;
   details?: unknown;
@@ -50,6 +54,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const authHeader = await getAuthHeader();
   const res = await fetch(`${API_URL}${path}`, {
     method: options.method ?? "GET",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(authHeader ? { Authorization: authHeader } : {}),
@@ -84,6 +89,7 @@ async function requestForm<T>(path: string, options: FormRequestOptions): Promis
   const authHeader = await getAuthHeader();
   const res = await fetch(`${API_URL}${path}`, {
     method: options.method ?? "POST",
+    cache: "no-store",
     headers: {
       ...(authHeader ? { Authorization: authHeader } : {}),
       ...(DEBUG_USER_ID ? { "X-Debug-User-Id": DEBUG_USER_ID } : {}),
@@ -139,4 +145,18 @@ export function apiPostForm<T>(path: string, body: FormData) {
 
 export function apiBaseUrl() {
   return API_URL;
+}
+
+export async function apiStream(path: string, options: StreamRequestOptions = {}) {
+  const authHeader = await getAuthHeader();
+  return fetch(`${API_URL}${path}`, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      Accept: "text/event-stream",
+      ...(authHeader ? { Authorization: authHeader } : {}),
+      ...(DEBUG_USER_ID ? { "X-Debug-User-Id": DEBUG_USER_ID } : {}),
+    },
+    signal: options.signal,
+  });
 }

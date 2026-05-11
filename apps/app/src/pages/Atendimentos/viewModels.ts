@@ -110,10 +110,14 @@ export function mapSessionToConversationListItemVM(session: ChatSession): Conver
 
 export function mapMessageToBubbleVM(message: ChatMessage): MessageBubbleVM {
   const outbound = message.direction === "OUTBOUND";
+  const statusSymbol = message.processing_status === "AUTOMATION_SENT" ? "✓" : "…";
+
   return {
     id: message.id,
     body: message.body?.trim() || "[sem texto]",
     timeLabel: formatAtendimentoTime(message.sent_at || message.received_at || message.created_at),
+    statusSymbol,
+    statusLabel: message.processing_status,
     outbound,
   };
 }

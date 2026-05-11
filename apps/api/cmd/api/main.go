@@ -30,6 +30,7 @@ import (
 	"schumacher-tur/api/internal/products"
 	"schumacher-tur/api/internal/purchase_orders"
 	"schumacher-tur/api/internal/reports"
+	"schumacher-tur/api/internal/realtime"
 	"schumacher-tur/api/internal/routes"
 	"schumacher-tur/api/internal/service_orders"
 	"schumacher-tur/api/internal/shared/config"
@@ -110,11 +111,12 @@ func main() {
 	paymentStatusTool := chat.NewPaymentStatusTool(paymentsSvc)
 	paymentCreateTool := chat.NewPaymentCreateTool(bookingsSvc, paymentsSvc)
 	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool)
-	chatHandler := chat.NewHandler(chatSvc)
+	chatRealtimeBroker := realtime.NewBroker()
+	chatHandler := chat.NewHandler(chatSvc, chatRealtimeBroker)
 	automationSvc := automation.NewService(automation.NewRepository(pool), chatSvc, cfg, paymentsRepo, bookingsSvc)
 	automation.StartChatBufferFlushLoop(ctx, automationSvc, cfg, log.Default())
 	automation.StartChatAutoSendRetryLoop(ctx, automationSvc, cfg, log.Default())
-	automationHandler := automation.NewHandler(automationSvc)
+	automationHandler := automation.NewHandler(automationSvc, chatRealtimeBroker)
 	automationHandler.RegisterWebhooks(r)
 
 	r.Group(func(pr chi.Router) {

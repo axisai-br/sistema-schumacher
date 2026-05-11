@@ -3,25 +3,35 @@ package chat
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"schumacher-tur/api/internal/realtime"
 	httpx "schumacher-tur/api/internal/shared/http"
 )
 
 type Handler struct {
-	svc *Service
+	svc    *Service
+	broker *realtime.Broker
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, brokers ...*realtime.Broker) *Handler {
+	var broker *realtime.Broker
+	if len(brokers) > 0 {
+		broker = brokers[0]
+	}
+	return &Handler{svc: svc, broker: broker}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Route("/chat", func(r chi.Router) {
+		r.Get("/events/stream", h.streamEvents)
 		r.Post("/messages/ingest", h.ingestMessage)
 		r.Get("/sessions", h.listSessions)
 		r.Get("/sessions/summary", h.getSessionsSummary)
@@ -38,6 +48,69 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			r.Post("/reprocess", h.reprocess)
 		})
 	})
+}
+
+func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request) {
+	if h.broker == nil {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "CHAT_EVENTS_DISABLED", "chat events stream is disabled", nil)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpx.WriteError(w, http.StatusInternalServerError, "STREAM_NOT_SUPPORTED", "streaming is not supported by this server", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sub, cancel := h.broker.Subscribe()
+	defer cancel()
+
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+
+	send := func(eventType string, payload interface{}) error {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\n", eventType); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	_ = send("connected", map[string]string{"status": "ok"})
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			if err := send("heartbeat", map[string]string{"at": time.Now().UTC().Format(time.RFC3339)}); err != nil {
+				return
+			}
+		case event, ok := <-sub:
+			if !ok {
+				return
+			}
+			channel := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("channel")))
+			if channel != "" && channel != strings.ToUpper(event.Channel) {
+				continue
+			}
+			if err := send("chat_event", event); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (h *Handler) ingestMessage(w http.ResponseWriter, r *http.Request) {

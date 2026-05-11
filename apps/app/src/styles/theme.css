@@ -3539,6 +3539,8 @@ textarea.input {
 .atendimentos-session-list {
   display: grid;
   gap: 10px;
+  align-content: start;
+  grid-auto-rows: max-content;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -3572,6 +3574,8 @@ textarea.input {
   border-radius: var(--radius-lg);
   background: linear-gradient(145deg, var(--surface-elevated), var(--panel-muted));
   padding: 10px 12px;
+  max-height: 220px;
+  overflow: hidden;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
