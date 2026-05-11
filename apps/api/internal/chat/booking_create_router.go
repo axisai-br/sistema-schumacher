@@ -76,7 +76,8 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 }
 
 func parseBookingCreateFromDocumentConfirmation(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
-	if !lastAssistantAskedDocumentConfirmation(history) || !looksLikeDocumentConfirmation(currentTurn) {
+	if (!lastAssistantAskedDocumentConfirmation(history) && !lastAssistantAskedBookingProceedConfirmation(history)) ||
+		!looksLikeDocumentConfirmation(currentTurn) {
 		return BookingCreateInput{}, false
 	}
 
@@ -90,32 +91,51 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 		return BookingCreateInput{}, false
 	}
 
-	extract := findLatestDocumentExtractContext(history)
-	if extract == nil || strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" {
-		return BookingCreateInput{}, false
-	}
-	expected := extract.ExpectedPassengerCount
-	if expected <= 0 {
-		expected = context.PassengerCount
-	}
-	if expected <= 0 {
-		expected = len(extract.Passengers)
-	}
-	if expected <= 0 || len(extract.Passengers) != expected {
-		return BookingCreateInput{}, false
-	}
+	expected := context.PassengerCount
+	var passengers []BookingCreatePassengerInput
 
-	passengers := make([]BookingCreatePassengerInput, 0, len(extract.Passengers))
-	for _, extracted := range extract.Passengers {
-		passenger := bookingPassengerFromDocumentExtract(extracted, session)
-		if strings.TrimSpace(passenger.Name) == "" ||
-			strings.TrimSpace(passenger.DocumentType) == "" ||
-			strings.TrimSpace(passenger.Document) == "" {
+	if extract := findLatestDocumentExtractContext(history); extract != nil {
+		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" {
 			return BookingCreateInput{}, false
 		}
-		passengers = append(passengers, passenger)
+		if expected <= 0 {
+			expected = extract.ExpectedPassengerCount
+		}
+		if expected <= 0 {
+			expected = len(extract.Passengers)
+		}
+		if expected <= 0 || len(extract.Passengers) != expected {
+			return BookingCreateInput{}, false
+		}
+
+		passengers = make([]BookingCreatePassengerInput, 0, len(extract.Passengers))
+		for _, extracted := range extract.Passengers {
+			passenger := bookingPassengerFromDocumentExtract(extracted, session)
+			if strings.TrimSpace(passenger.Name) == "" ||
+				strings.TrimSpace(passenger.DocumentType) == "" ||
+				strings.TrimSpace(passenger.Document) == "" {
+				return BookingCreateInput{}, false
+			}
+			passengers = append(passengers, passenger)
+		}
+	} else {
+		passengerSource := context.PassengerDetailsText
+		if passengerSource == "" {
+			passengerSource = findLatestPassengerDetailsText(history, session)
+		}
+		passengers = extractBookingCreatePassengers(passengerSource, session)
+		if len(passengers) == 0 {
+			return BookingCreateInput{}, false
+		}
+		if expected <= 0 {
+			expected = inferExpectedPassengerCount(history, currentTurn, passengerSource)
+		}
+		if expected <= 0 {
+			expected = len(passengers)
+		}
 	}
-	if len(passengers) != expected {
+
+	if expected <= 0 || len(passengers) != expected {
 		return BookingCreateInput{}, false
 	}
 	applyLapChildFlags(passengers, context.ChildUnder5Count)
@@ -157,10 +177,17 @@ func looksLikeDocumentConfirmation(text string) bool {
 		"sim",
 		"isso",
 		"correto",
+		"sim esta correto",
+		"esta correto",
+		"sim correto",
 		"esta certo",
 		"ta certo",
 		"tá certo",
 		"pode seguir",
+		"pode prosseguir",
+		"pode criar",
+		"pode fazer a reserva",
+		"confirmado",
 		"confirmo":
 		return true
 	default:
@@ -182,6 +209,26 @@ func lastAssistantAskedDocumentConfirmation(history []Message) bool {
 			strings.Contains(body, "eles conferem") ||
 			strings.Contains(body, "dados conferem") ||
 			strings.Contains(body, "confere")
+	}
+	return false
+}
+
+func lastAssistantAskedBookingProceedConfirmation(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(message.Body)), " ")
+		if body == "" {
+			continue
+		}
+		return strings.Contains(body, "posso prosseguir") ||
+			strings.Contains(body, "posso seguir") ||
+			strings.Contains(body, "seguir com a reserva") ||
+			strings.Contains(body, "criar a reserva") ||
+			strings.Contains(body, "fazer a reserva") ||
+			strings.Contains(body, "prosseguir e criar")
 	}
 	return false
 }
@@ -342,7 +389,8 @@ func looksLikePaymentFlowShortReply(folded string) bool {
 func looksLikeBookingCreateConfirmation(text string) bool {
 	folded := strings.TrimSpace(foldChatText(text))
 	switch folded {
-	case "sim", "isso", "isso mesmo", "pode seguir", "pode reservar", "confirmo", "confirmado", "ok", "certo":
+	case "sim", "isso", "isso mesmo", "pode seguir", "pode reservar", "confirmo", "confirmado", "ok", "certo",
+		"sim esta correto", "esta correto", "sim correto", "pode prosseguir", "pode criar", "pode fazer a reserva":
 		return true
 	default:
 		return false
@@ -430,6 +478,20 @@ func extractSelectedOptionIndex(text string) int {
 func extractBookingCreatePassengers(text string, session Session) []BookingCreatePassengerInput {
 	if passengers := extractBookingCreatePassengersByLines(text, session); len(passengers) > 0 {
 		return passengers
+	}
+	if match := passengerLooseCPFLinePattern.FindStringSubmatch(text); len(match) == 3 {
+		name := normalizePassengerName(match[1])
+		document := normalizeDigits(match[2])
+		if name != "" && len(document) == 11 {
+			return []BookingCreatePassengerInput{
+				{
+					Name:         name,
+					Document:     document,
+					DocumentType: "CPF",
+					Phone:        strings.TrimSpace(session.CustomerPhone),
+				},
+			}
+		}
 	}
 	document, documentType := extractBookingPassengerDocument(text)
 	if document == "" || documentType == "" {

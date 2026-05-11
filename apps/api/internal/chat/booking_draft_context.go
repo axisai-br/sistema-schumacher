@@ -27,6 +27,11 @@ type BookingDraftContext struct {
 	Currency                    string
 	PassengerCount              int
 	ChildUnder5Count            int
+	PassengerCountKnown         bool
+	ChildUnder5CountKnown       bool
+	HasPassengerDetails         bool
+	PassengerDetailsCount       int
+	PassengerDetailsText        string
 	HasAvailabilityShown        bool
 	AskedPassengerQuestion      bool
 	PassengerCountContextActive bool
@@ -70,6 +75,13 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 			}
 		}
 
+		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
+			(!context.PassengerCountKnown || !context.ChildUnder5CountKnown) {
+			if passengerCount, childUnder5Count, ok := parsePassengerCountReply(body); ok {
+				context = mergePassengerReplyIntoBookingDraft(context, passengerCount, childUnder5Count)
+			}
+		}
+
 		for _, toolContext := range messageToolContexts(message) {
 			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil {
 				context.HasAvailabilityShown = true
@@ -84,8 +96,16 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		}
 	}
 
+	passengerDetailsText := findLatestPassengerDetailsText(history, session)
+	passengers := extractBookingCreatePassengers(passengerDetailsText, session)
+	if len(passengers) > 0 {
+		context.HasPassengerDetails = true
+		context.PassengerDetailsCount = len(passengers)
+		context.PassengerDetailsText = passengerDetailsText
+	}
+
 	if context.PassengerCount == 0 && context.RequestedPassengerDocuments {
-		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, findLatestPassengerDetailsText(history, session))
+		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, passengerDetailsText)
 	}
 
 	return context
@@ -97,7 +117,9 @@ func mergePassengerReplyIntoBookingDraft(context BookingDraftContext, passengerC
 	}
 	if childUnder5Count >= 0 {
 		context.ChildUnder5Count = childUnder5Count
+		context.ChildUnder5CountKnown = true
 	}
+	context.PassengerCountKnown = passengerCount > 0 || context.PassengerCountKnown
 	context.AskedPassengerQuestion = true
 	context.PassengerCountContextActive = true
 	return context
@@ -119,10 +141,10 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 		strings.TrimSpace(context.TripDate) == "" {
 		return BookingNextCallCreate
 	}
-	if context.RequestedPassengerDocuments {
-		return BookingNextCallCreate
+	if !context.HasPassengerDetails {
+		return BookingNextAskPassengerDocuments
 	}
-	return BookingNextAskPassengerDocuments
+	return BookingNextCallCreate
 }
 
 func buildBookingContinuationReply(context BookingDraftContext, action BookingNextAction) string {

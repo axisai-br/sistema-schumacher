@@ -70,3 +70,23 @@ func TestBuildBookingContinuationReplyAsksOnlyForDocuments(t *testing.T) {
 		t.Fatalf("unexpected reply: %q", reply)
 	}
 }
+
+func TestDecideNextBookingStepDoesNotCallCreateWithoutPassengerDetails(t *testing.T) {
+	context := BookingDraftContext{
+		HasAvailabilityShown:        true,
+		TripID:                      "trip-1",
+		BoardStopID:                 "board-1",
+		AlightStopID:                "alight-1",
+		Origin:                      "Igarape do Meio/MA",
+		Destination:                 "Petrolandia/SC",
+		TripDate:                    "2026-05-11",
+		PassengerCount:              1,
+		ChildUnder5Count:            0,
+		RequestedPassengerDocuments: true,
+		HasPassengerDetails:         false,
+	}
+
+	if action := decideNextBookingStep(context); action != BookingNextAskPassengerDocuments {
+		t.Fatalf("expected next action %s, got %s", BookingNextAskPassengerDocuments, action)
+	}
+}

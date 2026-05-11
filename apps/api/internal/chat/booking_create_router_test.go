@@ -340,6 +340,144 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	}
 }
 
+func TestLooksLikeDocumentConfirmationAcceptsNaturalConfirmations(t *testing.T) {
+	cases := []string{
+		"sim esta correto",
+		"sim está correto",
+		"esta correto",
+		"está correto",
+		"pode prosseguir",
+		"pode criar",
+		"confirmado",
+	}
+
+	for _, tc := range cases {
+		t.Run(tc, func(t *testing.T) {
+			if !looksLikeDocumentConfirmation(tc) {
+				t.Fatalf("expected %q to be accepted as document confirmation", tc)
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ID:            "session-manual-confirmation",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao",
+	}
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Datas para Igarape do Meio/MA -> Petrolandia/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-7 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{
+							Origin:      "Igarape do Meio/MA",
+							Destination: "Petrolandia/SC",
+							Qty:         1,
+							Limit:       5,
+						},
+						Results: []AvailabilitySearchItem{
+							{
+								TripID:                 "trip-manual-1",
+								BoardStopID:            "board-manual-1",
+								AlightStopID:           "alight-manual-1",
+								OriginDisplayName:      "Igarape do Meio/MA",
+								DestinationDisplayName: "Petrolandia/SC",
+								OriginDepartTime:       "11:00",
+								TripDate:               "2026-05-11",
+								Price:                  950,
+								Currency:               "BRL",
+								PackageName:            packageToSantaCatarina,
+							},
+						},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "11/05", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Nome e CPF confirmados. Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected booking create from manual passenger confirmation")
+	}
+	if input.Qty != 1 {
+		t.Fatalf("expected qty 1, got %d", input.Qty)
+	}
+	if input.TripID == "" || input.BoardStopID == "" || input.AlightStopID == "" {
+		t.Fatalf("expected trip identifiers, got %+v", input)
+	}
+	if len(input.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", input.Passengers)
+	}
+	passenger := input.Passengers[0]
+	if passenger.Name != "Joao Vitor Messias" || passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+		t.Fatalf("unexpected passenger: %+v", passenger)
+	}
+	if passenger.Phone != "5549988709047" {
+		t.Fatalf("expected passenger phone from session, got %+v", passenger)
+	}
+}
+
+func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ID:            "session-no-lap-child",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+	}
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Datas para Igarape do Meio/MA -> Petrolandia/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-7 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{Origin: "Igarape do Meio/MA", Destination: "Petrolandia/SC", Qty: 1, Limit: 5},
+						Results: []AvailabilitySearchItem{{
+							TripID: "trip-no-child-1", BoardStopID: "board-no-child-1", AlightStopID: "alight-no-child-1",
+							OriginDisplayName: "Igarape do Meio/MA", DestinationDisplayName: "Petrolandia/SC", OriginDepartTime: "11:00", TripDate: "2026-05-11",
+						}},
+					}),
+				},
+			},
+		},
+		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	context := collectBookingDraftContext(session, history, "sim")
+	if context.ChildUnder5Count != 0 {
+		t.Fatalf("expected child_under_5_count 0, got %+v", context)
+	}
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected booking create from confirmation")
+	}
+	for _, passenger := range input.Passengers {
+		if passenger.IsLapChild {
+			t.Fatalf("did not expect lap child from generic sim, got %+v", input.Passengers)
+		}
+	}
+}
+
 func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(t *testing.T) {
 	session := Session{
 		ID:            "session-document-missing",
@@ -349,8 +487,8 @@ func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(
 	}
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", false)
 
-	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {
-		t.Fatalf("expected missing document_extract to block booking create, got %+v", input)
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); !ok || input.Qty != 1 {
+		t.Fatalf("expected missing document_extract to use passenger details fallback, got ok=%v input=%+v", ok, input)
 	}
 
 	history = documentConfirmationBookingHistory(time.Now().UTC(), "PARTIAL", true)
