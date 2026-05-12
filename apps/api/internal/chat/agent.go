@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +30,13 @@ const (
 const (
 	draftAutoSendReasonBookingFlowRegression   = "booking_flow_regression"
 	draftAutoSendReasonOutOfScopeDuringBooking = "out_of_scope_during_booking_flow"
+	draftAutoSendReasonOperationalNoTool       = "operational_claim_without_tool"
+)
+
+var (
+	autoSendDepartureTimePattern = regexp.MustCompile(`(?i)\b(?:sa[ií]da\s+(?:as|às)|saida\s+as)\s+\d{1,2}[:h]\d{2}\b`)
+	autoSendRouteDatePattern     = regexp.MustCompile(`\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b`)
+	autoSendPricePattern         = regexp.MustCompile(`(?i)\br\$\s*\d+`)
 )
 
 type draftAutoSendPolicy struct {
@@ -305,13 +313,16 @@ func buildAutoSendReplyIdempotencyKey(draftID string) string {
 	return "chat-auto-reply-" + strings.TrimSpace(draftID)
 }
 
-func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall) draftAutoSendPolicy {
+func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, replyText string) draftAutoSendPolicy {
 	reasons := make([]string, 0, 2)
 	if len(toolCalls) > 0 && !hasOnlyAutoSendSafeToolCalls(toolCalls) {
 		reasons = append(reasons, draftAutoSendReasonToolCall)
 	}
 	if hasBlockingNonTextCandidate(candidates) {
 		reasons = append(reasons, draftAutoSendReasonNonTextTurn)
+	}
+	if len(toolCalls) == 0 && containsOperationalAutoSendClaimWithoutTool(replyText) {
+		reasons = append(reasons, draftAutoSendReasonOperationalNoTool)
 	}
 
 	policy := draftAutoSendPolicy{Status: draftAutoSendStatusEligible}
@@ -320,6 +331,67 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall) dra
 		policy.Reasons = reasons
 	}
 	return policy
+}
+
+func containsOperationalAutoSendClaimWithoutTool(text string) bool {
+	folded := foldChatText(text)
+	if folded == "" {
+		return false
+	}
+
+	blockedPhrases := []string{
+		"qual horario prefere",
+		"tem vaga",
+		"tem disponibilidade",
+		"disponivel",
+		"disponibilidade",
+	}
+	for _, phrase := range blockedPhrases {
+		if strings.Contains(folded, " "+phrase+" ") {
+			return true
+		}
+	}
+
+	hasRoute := (strings.Contains(text, "→") || strings.Contains(text, "->") || strings.Contains(folded, " para ")) &&
+		mentionsSupportedCityForAutoSend(folded, scPackageDestinations) &&
+		mentionsSupportedCityForAutoSend(folded, maPackageDestinations)
+	hasDate := autoSendRouteDatePattern.MatchString(text)
+	hasTimePreference := strings.Contains(folded, " manha ") || strings.Contains(folded, " tarde ") || strings.Contains(folded, " noite ")
+	if hasTimePreference && (hasRoute || hasDate || strings.Contains(folded, " horario ")) {
+		return true
+	}
+	if autoSendDepartureTimePattern.MatchString(text) {
+		return true
+	}
+	if hasRoute && hasDate {
+		return true
+	}
+	if autoSendPricePattern.MatchString(text) && !looksLikePublicSCTableReply(folded) {
+		return true
+	}
+	return false
+}
+
+func mentionsSupportedCityForAutoSend(folded string, candidates map[string]string) bool {
+	for key := range candidates {
+		if strings.Contains(folded, " "+foldChatDestinationKey(key)+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikePublicSCTableReply(folded string) bool {
+	if !strings.Contains(folded, " santa catarina ") && !strings.Contains(folded, " sc ") {
+		return false
+	}
+	matchCount := 0
+	for key := range scPackageDestinations {
+		if strings.Contains(folded, " "+foldChatDestinationKey(key)+" ") {
+			matchCount++
+		}
+	}
+	return matchCount >= 3
 }
 
 func hasOnlyAutoSendSafeToolCalls(toolCalls []ToolCall) bool {

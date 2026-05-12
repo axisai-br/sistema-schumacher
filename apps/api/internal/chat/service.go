@@ -1069,7 +1069,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 
 	runAt := time.Now().UTC()
-	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls)
+	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run.ReplyText)
 	draftAgentState := buildDraftGeneratedAgentState(persisted.Session.Metadata, candidates, draftID, run, toolContext.Calls, autoSendPolicy, runAt)
 	draftBuffer := buildDraftGeneratedBufferState(persisted.Session.Metadata, candidates, draftID, runAt)
 	draftPayload, draftNormalizedPayload := buildAgentDraftPayload(persisted.Session, candidates, draftID, systemPrompt, userPrompt, run, toolContext, autoSendPolicy, runAt)

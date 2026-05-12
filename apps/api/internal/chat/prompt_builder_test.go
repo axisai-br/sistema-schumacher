@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildAgentUserPromptGuidesPassengerCheckpointAfterTravelOptionChoice(t *testing.T) {
@@ -69,6 +70,50 @@ func TestBuildAgentUserPromptGuidesIntegralOrDepositAfterBookingCreate(t *testin
 	}
 	if !strings.Contains(prompt, "nao perguntar PIX, cartao ou pagar no embarque antes de o cliente escolher entre integral e sinal") {
 		t.Fatalf("expected prompt to block generic payment-method question, got %q", prompt)
+	}
+}
+
+func TestAvailabilityReplyUsesOnlyReturnedDepartureTimes(t *testing.T) {
+	session := Session{
+		Channel:       "WHATSAPP",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	tripDate := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
+	tools := agentToolContext{
+		Availability: &AvailabilitySearchResult{
+			Filter: AvailabilitySearchInput{
+				Origin:      "Fraiburgo/SC",
+				Destination: "Moncao/MA",
+				PackageName: packageToMaranhao,
+				TripDate:    &tripDate,
+				Qty:         1,
+				Limit:       8,
+			},
+			Results: []AvailabilitySearchItem{
+				{
+					OriginDisplayName:      "Fraiburgo/SC",
+					DestinationDisplayName: "Moncao/MA",
+					OriginDepartTime:       "15:00",
+					TripDate:               "2026-05-18",
+					Price:                  950,
+					Currency:               "BRL",
+					PackageName:            packageToMaranhao,
+				},
+			},
+		},
+	}
+
+	prompt := buildAgentUserPrompt(session, map[string]interface{}{"current_turn_body": "Fraiburgo para monção 18/05"}, tools)
+
+	if !strings.Contains(prompt, "15:00") {
+		t.Fatalf("expected prompt to contain returned departure time, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Use somente o horario 15:00") {
+		t.Fatalf("expected prompt to force the single returned departure time, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "nao ofereca manha, tarde, noite") {
+		t.Fatalf("expected prompt to block abstract time periods, got %q", prompt)
 	}
 }
 

@@ -213,7 +213,7 @@ func TestGetCurrentDraftReturnsObservabilityForGeneratedDraft(t *testing.T) {
 					OriginDisplayName:      "Videira/SC",
 					DestinationDisplayName: "Sao Luis/MA",
 					OriginDepartTime:       "18:30",
-					TripDate:               "2026-05-10",
+					TripDate:               "2026-05-20",
 					SeatsAvailable:         12,
 					Price:                  250,
 					Currency:               "BRL",
@@ -295,6 +295,49 @@ func TestGetCurrentDraftReturnsObservabilityForGeneratedDraft(t *testing.T) {
 	}
 	if out.LinkedReply != nil {
 		t.Fatalf("expected no linked reply for generated draft")
+	}
+}
+
+func TestBlockAutoSendOperationalTimePreferenceWithoutAvailabilityTool(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Confirmando: Fraiburgo → Monção em 18/05. Qual horário prefere — manhã, tarde ou noite?",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-operational-no-tool",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-operational-no-tool",
+			IdempotencyKey:    "idem-operational-no-tool",
+			Body:              "Fraiburgo para monção 18/05",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest message: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft")
+	}
+	if got := readInt(out.Draft.NormalizedPayload["tool_call_count"]); got != 0 {
+		t.Fatalf("expected tool_call_count=0, got %d", got)
+	}
+	if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusReviewNeeded {
+		t.Fatalf("expected auto_send_status %s, got %s", draftAutoSendStatusReviewNeeded, got)
+	}
+	reasons := readDraftAutoSendReasons(*out.Draft)
+	if len(reasons) != 1 || reasons[0] != draftAutoSendReasonOperationalNoTool {
+		t.Fatalf("expected auto_send reason %s, got %+v", draftAutoSendReasonOperationalNoTool, reasons)
 	}
 }
 
@@ -3544,7 +3587,7 @@ func TestReprocessUsesAvailabilityToolWhenTurnHasStructuredRoute(t *testing.T) {
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-tool-1",
 			IdempotencyKey:    "idem-tool-1",
-			Body:              "quais horarios e o valor de Videira/SC para Sao Luis/MA em 10/05 para 2 pessoas?",
+			Body:              "quais horarios e o valor de Videira/SC para Sao Luis/MA em 20/05 para 2 pessoas?",
 		},
 	})
 	if err != nil {
@@ -3585,8 +3628,8 @@ func TestReprocessUsesAvailabilityToolWhenTurnHasStructuredRoute(t *testing.T) {
 	if searcher.lastInput.Qty != 2 {
 		t.Fatalf("expected quantity 2, got %d", searcher.lastInput.Qty)
 	}
-	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-05-10" {
-		t.Fatalf("expected inferred date 2026-05-10, got %+v", searcher.lastInput.TripDate)
+	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-05-20" {
+		t.Fatalf("expected inferred date 2026-05-20, got %+v", searcher.lastInput.TripDate)
 	}
 	if !strings.Contains(runner.lastInput.UserPrompt, "RESULTADO DE FERRAMENTA") {
 		t.Fatalf("expected prompt to include tool result section")

@@ -301,6 +301,114 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 	}
 }
 
+func TestParseAvailabilitySearchInputSupportedCityPairWithDate(t *testing.T) {
+	input, ok := parseAvailabilitySearchInput(nil, "Fraiburgo para monção 18/05", time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatalf("expected availability search input")
+	}
+	if input.Origin != "Fraiburgo/SC" {
+		t.Fatalf("expected origin Fraiburgo/SC, got %+v", input)
+	}
+	if input.Destination != "Moncao/MA" {
+		t.Fatalf("expected destination Moncao/MA, got %+v", input)
+	}
+	if input.PackageName != packageToMaranhao {
+		t.Fatalf("expected package %q, got %+v", packageToMaranhao, input)
+	}
+	if input.TripDate == nil || input.TripDate.UTC().Format("2006-01-02") != "2026-05-18" {
+		t.Fatalf("expected trip date 2026-05-18, got %+v", input)
+	}
+	if input.Qty != 1 {
+		t.Fatalf("expected qty 1, got %+v", input)
+	}
+	if input.Limit != 8 {
+		t.Fatalf("expected limit 8, got %+v", input)
+	}
+}
+
+func TestParseAvailabilitySearchInputSupportedCityPairReverseDirection(t *testing.T) {
+	input, ok := parseAvailabilitySearchInput(nil, "Monção para Fraiburgo 18/05", time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatalf("expected availability search input")
+	}
+	if input.Origin != "Moncao/MA" {
+		t.Fatalf("expected origin Moncao/MA, got %+v", input)
+	}
+	if input.Destination != "Fraiburgo/SC" {
+		t.Fatalf("expected destination Fraiburgo/SC, got %+v", input)
+	}
+	if input.PackageName != packageToSantaCatarina {
+		t.Fatalf("expected package %q, got %+v", packageToSantaCatarina, input)
+	}
+	if input.TripDate == nil || input.TripDate.UTC().Format("2006-01-02") != "2026-05-18" {
+		t.Fatalf("expected trip date 2026-05-18, got %+v", input)
+	}
+	if input.Qty != 1 {
+		t.Fatalf("expected qty 1, got %+v", input)
+	}
+	if input.Limit != 8 {
+		t.Fatalf("expected limit 8, got %+v", input)
+	}
+}
+
+func TestReprocessUsesAvailabilityToolForSupportedCityPairWithoutUF(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Encontrei uma opcao as 15:00.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-supported-city-pair",
+		},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result: AvailabilitySearchResult{
+			Results: []AvailabilitySearchItem{
+				{
+					OriginDisplayName:      "Fraiburgo/SC",
+					DestinationDisplayName: "Moncao/MA",
+					OriginDepartTime:       "15:00",
+					TripDate:               "2026-05-18",
+					Price:                  950,
+					Currency:               "BRL",
+					PackageName:            packageToMaranhao,
+				},
+			},
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-supported-city-pair",
+			IdempotencyKey:    "idem-supported-city-pair",
+			Body:              "Fraiburgo para monção 18/05",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ToolName != toolNameAvailabilitySearch {
+		t.Fatalf("expected one availability_search tool call, got %+v", out.ToolCalls)
+	}
+	if searcher.lastInput.Origin != "Fraiburgo/SC" || searcher.lastInput.Destination != "Moncao/MA" {
+		t.Fatalf("unexpected route: %+v", searcher.lastInput)
+	}
+	if searcher.lastInput.PackageName != packageToMaranhao {
+		t.Fatalf("expected package %q, got %+v", packageToMaranhao, searcher.lastInput)
+	}
+	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-05-18" {
+		t.Fatalf("expected trip date 2026-05-18, got %+v", searcher.lastInput.TripDate)
+	}
+}
+
 func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true}

@@ -572,6 +572,9 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 	if body == "" {
 		return AvailabilitySearchInput{}, false
 	}
+	if input, ok := parseSupportedCityPairAvailabilityInput(body, observedAt); ok {
+		return input, true
+	}
 	historyContext := inferLatestRouteContextFromHistory(history)
 
 	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
@@ -799,6 +802,63 @@ func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext,
 		input.Qty = 1
 	}
 	return input, true
+}
+
+func parseSupportedCityPairAvailabilityInput(text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
+	body := NormalizeIncomingCustomerText(text)
+	if body == "" {
+		return AvailabilitySearchInput{}, false
+	}
+
+	scCity, scIndex, okSC := findSingleSupportedCityMention(body, scPackageDestinations)
+	maCity, maIndex, okMA := findSingleSupportedCityMention(body, maPackageDestinations)
+	if !okSC || !okMA || scIndex == maIndex {
+		return AvailabilitySearchInput{}, false
+	}
+
+	input := AvailabilitySearchInput{
+		TripDate: extractTripDate(body, observedAt),
+		Qty:      extractPassengerQuantity(body),
+		Limit:    8,
+	}
+	if input.Qty <= 0 {
+		input.Qty = 1
+	}
+	if scIndex < maIndex {
+		input.Origin = scCity
+		input.Destination = maCity
+		input.PackageName = packageToMaranhao
+	} else {
+		input.Origin = maCity
+		input.Destination = scCity
+		input.PackageName = packageToSantaCatarina
+	}
+	return input, true
+}
+
+func findSingleSupportedCityMention(text string, candidates map[string]string) (string, int, bool) {
+	folded := foldChatText(text)
+	if folded == "" {
+		return "", -1, false
+	}
+
+	matchCount := 0
+	selected := ""
+	selectedIndex := -1
+	for key, canonical := range candidates {
+		needle := " " + foldChatDestinationKey(key) + " "
+		index := strings.Index(folded, needle)
+		if index < 0 {
+			continue
+		}
+		matchCount++
+		selected = canonical
+		selectedIndex = index
+	}
+	if matchCount != 1 {
+		return "", -1, false
+	}
+	return selected, selectedIndex, true
 }
 
 func parseDirectAvailabilitySearchInput(text string, observedAt time.Time) (AvailabilitySearchInput, bool) {

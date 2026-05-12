@@ -275,6 +275,12 @@ func buildAgentUserPrompt(session Session, memory map[string]interface{}, tools 
 			if filter.Origin != "" && filter.Destination != "" && filter.TripDate != nil {
 				builder.WriteString("- Fluxo correto com este resultado: a rota ja esta definida em nivel de cidade, data e horario. Antes de pedir documento, pergunte se a passagem e so para o cliente ou se ha mais alguem incluso e se existe crianca de 5 anos ou menos.\n")
 			}
+			if len(tools.Availability.Results) == 1 {
+				only := strings.TrimSpace(tools.Availability.Results[0].OriginDepartTime)
+				if only != "" {
+					builder.WriteString(fmt.Sprintf("- Guardrail de horario: existe uma unica opcao retornada pela ferramenta. Use somente o horario %s; nao ofereca manha, tarde, noite ou outros periodos.\n", only))
+				}
+			}
 		}
 	}
 
