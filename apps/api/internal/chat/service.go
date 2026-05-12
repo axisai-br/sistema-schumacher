@@ -752,6 +752,12 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	agentState := buildReprocessAgentState(session, candidates, trigger, observedAt, input.Metadata)
 	buffer := buildReprocessBufferState(session.Metadata, candidates, trigger, observedAt)
 	untranscribedAudioMessage, untranscribedAudio := currentTurnUntranscribedAudioCandidate(candidates)
+	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
+	canonicalState := CanonicalConversationState{}
+	if canonicalStateEnabled() {
+		canonicalState = deriveCanonicalConversationState(session, history, currentTurn)
+		agentState["canonical_state"] = canonicalState
+	}
 
 	messageMetadata := map[string]interface{}{
 		"agent_ready_for_automation": true,
@@ -839,7 +845,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 
 	systemPrompt := buildAgentSystemPrompt()
-	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
 	unsupportedCargo, unsupportedCargoHandled := inferUnsupportedCargoQuery(currentTurn)
 	if !unsupportedCargoHandled && !s.canRunAgent() {
 		s.logReprocess(
@@ -949,6 +954,50 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 	toolContext := agentToolContext{}
 	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
+		if intentRouterEnabled() && templateRealizerEnabled() {
+			decision := routeDeterministicIntent(history, currentTurn, canonicalState, observedAt)
+			if decision.Intent != IntentUnknown {
+				s.logReprocess(
+					"chat reprocess event=intent_router_decision session_id=%s trigger=%s job_run_id=%s intent=%s intent_source=%s phase_before=%s action=%s template_name=%s",
+					persisted.Session.ID,
+					trigger,
+					jobRunID,
+					decision.Intent,
+					decision.Source,
+					canonicalState.Phase,
+					decision.Action,
+					decision.TemplateName,
+				)
+			}
+			if canRealizeWithoutLLM(decision, canonicalState) {
+				reply, ok := realizeResponseTemplate(decision.TemplateName)
+				if ok {
+					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
+					agentState["canonical_state"] = canonicalState
+					memory["canonical_state"] = canonicalState
+					memory["intent_decision"] = map[string]interface{}{
+						"intent":                string(decision.Intent),
+						"intent_source":         decision.Source,
+						"selected_option_index": decision.SelectedOptionIndex,
+						"template_name":         string(decision.TemplateName),
+					}
+					run := buildTemplateDraftRun(decision.TemplateName, reply)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				}
+			}
+		}
+	}
+	if !legacyPromptFallbackEnabled() && deterministicBookingHandled == false && !unsupportedCargoHandled && !unsupportedPackageHandled {
+		s.logReprocess(
+			"chat reprocess event=legacy_prompt_fallback_disabled session_id=%s trigger=%s job_run_id=%s",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+		)
+		return result, nil
+	}
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
 		var err error
 		s.logReprocess(
 			"chat reprocess event=resolve_agent_tool_context_start session_id=%s trigger=%s job_run_id=%s",
@@ -991,8 +1040,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildUnsupportedPackageDraftRun(unsupportedPackage)
 	} else if deterministicBookingHandled && deterministicBookingRun != nil {
-		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = *deterministicBookingRun
+		if run.Model != "template_realizer" {
+			userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
+		}
 	} else if passengerCountContext && !passengerCountReplyParsed {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		s.logReprocess(
@@ -1071,6 +1122,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	runAt := time.Now().UTC()
 	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run.ReplyText)
 	draftAgentState := buildDraftGeneratedAgentState(persisted.Session.Metadata, candidates, draftID, run, toolContext.Calls, autoSendPolicy, runAt)
+	if canonicalStateEnabled() {
+		draftAgentState["canonical_state"] = canonicalState
+	}
 	draftBuffer := buildDraftGeneratedBufferState(persisted.Session.Metadata, candidates, draftID, runAt)
 	draftPayload, draftNormalizedPayload := buildAgentDraftPayload(persisted.Session, candidates, draftID, systemPrompt, userPrompt, run, toolContext, autoSendPolicy, runAt)
 	s.logReprocess(

@@ -1,0 +1,200 @@
+package chat
+
+import "strings"
+
+type ConversationPhase string
+
+const (
+	ConversationPhaseDiscovery           ConversationPhase = "DISCOVERY"
+	ConversationPhaseRouteSelection      ConversationPhase = "ROUTE_SELECTION"
+	ConversationPhaseTripSelection       ConversationPhase = "TRIP_SELECTION"
+	ConversationPhasePassengerCollection ConversationPhase = "PASSENGER_COLLECTION"
+	ConversationPhaseBookingPending      ConversationPhase = "BOOKING_PENDING"
+	ConversationPhaseBooked              ConversationPhase = "BOOKED"
+	ConversationPhasePaymentPending      ConversationPhase = "PAYMENT_PENDING"
+	ConversationPhasePaidPartial         ConversationPhase = "PAID_PARTIAL"
+	ConversationPhasePaidFull            ConversationPhase = "PAID_FULL"
+	ConversationPhasePostSale            ConversationPhase = "POST_SALE"
+	ConversationPhaseHandoffHuman        ConversationPhase = "HANDOFF_HUMAN"
+)
+
+type CanonicalConversationState struct {
+	SessionID          string                  `json:"session_id"`
+	Phase              ConversationPhase       `json:"phase"`
+	Route              CanonicalRouteState     `json:"route"`
+	Passengers         CanonicalPassengerState `json:"passengers"`
+	Booking            CanonicalBookingState   `json:"booking"`
+	Payment            CanonicalPaymentState   `json:"payment"`
+	LastToolFacts      map[string]interface{}  `json:"last_tool_facts,omitempty"`
+	AllowedNextActions []string                `json:"allowed_next_actions,omitempty"`
+}
+
+type CanonicalRouteState struct {
+	Origin              string `json:"origin,omitempty"`
+	Destination         string `json:"destination,omitempty"`
+	PackageName         string `json:"package_name,omitempty"`
+	TripDate            string `json:"trip_date,omitempty"`
+	DepartureTime       string `json:"departure_time,omitempty"`
+	SelectedOptionIndex int    `json:"selected_option_index,omitempty"`
+	TripID              string `json:"trip_id,omitempty"`
+	BoardStopID         string `json:"board_stop_id,omitempty"`
+	AlightStopID        string `json:"alight_stop_id,omitempty"`
+}
+
+type CanonicalPassengerState struct {
+	ExpectedCount      int  `json:"expected_count,omitempty"`
+	ChildUnder5Count   int  `json:"child_under_5_count,omitempty"`
+	DocumentsCollected bool `json:"documents_collected,omitempty"`
+}
+
+type CanonicalBookingState struct {
+	BookingID       string `json:"booking_id,omitempty"`
+	ReservationCode string `json:"reservation_code,omitempty"`
+	Status          string `json:"status,omitempty"`
+}
+
+type CanonicalPaymentState struct {
+	Status     string `json:"status,omitempty"`
+	Preference string `json:"preference,omitempty"`
+}
+
+func deriveCanonicalConversationState(session Session, history []Message, currentTurn string) CanonicalConversationState {
+	draft := collectBookingDraftContext(session, history, currentTurn)
+	state := CanonicalConversationState{
+		SessionID:          strings.TrimSpace(session.ID),
+		Phase:              ConversationPhaseDiscovery,
+		LastToolFacts:      map[string]interface{}{},
+		AllowedNextActions: []string{},
+	}
+	if strings.EqualFold(strings.TrimSpace(session.HandoffStatus), "HUMAN") || strings.TrimSpace(session.CurrentOwnerUserID) != "" {
+		state.Phase = ConversationPhaseHandoffHuman
+	}
+	state.Route.Origin = draft.Origin
+	state.Route.Destination = draft.Destination
+	state.Route.SelectedOptionIndex = draft.SelectedOptionIndex
+	state.Route.TripID = draft.TripID
+	state.Route.BoardStopID = draft.BoardStopID
+	state.Route.AlightStopID = draft.AlightStopID
+	state.Route.TripDate = draft.TripDate
+	state.Route.DepartureTime = draft.DepartureTime
+	state.Passengers.ExpectedCount = draft.PassengerCount
+	state.Passengers.ChildUnder5Count = draft.ChildUnder5Count
+	state.Passengers.DocumentsCollected = draft.HasPassengerDetails
+
+	for i := len(history) - 1; i >= 0; i-- {
+		for _, toolContext := range messageToolContexts(history[i]) {
+			mergeToolFactsIntoCanonicalState(&state, toolContext)
+		}
+	}
+	state.Phase = inferConversationPhase(state, draft)
+	state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
+	return state
+}
+
+func mergeToolFactsIntoCanonicalState(state *CanonicalConversationState, toolContext map[string]interface{}) {
+	if state == nil {
+		return
+	}
+	if availability := asMap(toolContext[toolNameAvailabilitySearch]); len(availability) > 0 {
+		state.LastToolFacts[toolNameAvailabilitySearch] = availability
+		if state.Route.PackageName == "" {
+			state.Route.PackageName = strings.TrimSpace(asString(availability["package_name"]))
+		}
+	}
+	if booking := asMap(toolContext[toolNameBookingCreate]); len(booking) > 0 {
+		state.LastToolFacts[toolNameBookingCreate] = booking
+		state.Booking.BookingID = firstNonEmpty(state.Booking.BookingID, strings.TrimSpace(asString(booking["booking_id"])))
+		state.Booking.ReservationCode = firstNonEmpty(state.Booking.ReservationCode, strings.TrimSpace(asString(booking["reservation_code"])))
+		state.Booking.Status = firstNonEmpty(state.Booking.Status, strings.TrimSpace(asString(booking["status"])))
+	}
+	if payment := asMap(toolContext[toolNamePaymentStatus]); len(payment) > 0 {
+		state.LastToolFacts[toolNamePaymentStatus] = payment
+	}
+	if payment := asMap(toolContext[toolNamePaymentCreate]); len(payment) > 0 {
+		state.LastToolFacts[toolNamePaymentCreate] = payment
+		state.Payment.Status = firstNonEmpty(state.Payment.Status, strings.TrimSpace(asString(payment["payment_status"])))
+	}
+}
+
+func inferConversationPhase(state CanonicalConversationState, draft BookingDraftContext) ConversationPhase {
+	if state.Phase == ConversationPhaseHandoffHuman {
+		return state.Phase
+	}
+	if strings.TrimSpace(state.Payment.Status) != "" {
+		status := strings.ToUpper(strings.TrimSpace(state.Payment.Status))
+		if status == "PAID" || status == "PAID_FULL" {
+			return ConversationPhasePaidFull
+		}
+		if status == "PAID_PARTIAL" {
+			return ConversationPhasePaidPartial
+		}
+		return ConversationPhasePaymentPending
+	}
+	if strings.TrimSpace(state.Booking.BookingID) != "" || draft.BookingCreated {
+		return ConversationPhaseBooked
+	}
+	if draft.HasPassengerDetails {
+		return ConversationPhaseBookingPending
+	}
+	if draft.AskedPassengerQuestion || state.Passengers.ExpectedCount > 0 {
+		return ConversationPhasePassengerCollection
+	}
+	if strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0 {
+		return ConversationPhaseTripSelection
+	}
+	if draft.HasAvailabilityShown || strings.TrimSpace(state.Route.Origin) != "" || strings.TrimSpace(state.Route.Destination) != "" {
+		return ConversationPhaseRouteSelection
+	}
+	return ConversationPhaseDiscovery
+}
+
+func allowedNextActionsForPhase(phase ConversationPhase) []string {
+	switch phase {
+	case ConversationPhaseDiscovery:
+		return []string{string(IntentAvailabilitySearch), string(IntentHumanSupport)}
+	case ConversationPhaseRouteSelection:
+		return []string{string(IntentAvailabilitySearch), string(IntentSelectAvailabilityOption), string(IntentHumanSupport)}
+	case ConversationPhaseTripSelection:
+		return []string{string(IntentSelectAvailabilityOption), string(IntentPassengerCountReply), string(IntentHumanSupport)}
+	case ConversationPhasePassengerCollection:
+		return []string{string(IntentPassengerCountReply), string(IntentPassengerDocumentsProvided), string(IntentHumanSupport)}
+	case ConversationPhaseBookingPending:
+		return []string{string(IntentBookingCreateConfirmation), string(IntentHumanSupport)}
+	case ConversationPhaseBooked:
+		return []string{string(IntentPaymentPreference), string(IntentPaymentCreate), string(IntentPaymentStatusQuery), string(IntentBookingCancel), string(IntentHumanSupport)}
+	case ConversationPhasePaymentPending:
+		return []string{string(IntentPaymentStatusQuery), string(IntentHumanSupport)}
+	default:
+		return []string{string(IntentHumanSupport)}
+	}
+}
+
+func validateConversationTransition(before ConversationPhase, after ConversationPhase, state CanonicalConversationState) bool {
+	if before == after {
+		return true
+	}
+	switch before {
+	case ConversationPhaseDiscovery:
+		return after == ConversationPhaseRouteSelection
+	case ConversationPhaseRouteSelection:
+		return after == ConversationPhaseTripSelection && hasCanonicalRoute(state)
+	case ConversationPhaseTripSelection:
+		return after == ConversationPhasePassengerCollection && state.Route.SelectedOptionIndex > 0
+	case ConversationPhasePassengerCollection:
+		return after == ConversationPhaseBookingPending && state.Passengers.ExpectedCount > 0 && state.Passengers.DocumentsCollected
+	case ConversationPhaseBookingPending:
+		return after == ConversationPhaseBooked && strings.TrimSpace(state.Booking.BookingID) != ""
+	case ConversationPhaseBooked:
+		return after == ConversationPhasePaymentPending && strings.TrimSpace(state.Payment.Preference) != ""
+	case ConversationPhasePaymentPending:
+		return (after == ConversationPhasePaidPartial || after == ConversationPhasePaidFull) && strings.TrimSpace(state.Payment.Status) != ""
+	default:
+		return false
+	}
+}
+
+func hasCanonicalRoute(state CanonicalConversationState) bool {
+	return strings.TrimSpace(state.Route.Origin) != "" ||
+		strings.TrimSpace(state.Route.Destination) != "" ||
+		strings.TrimSpace(state.Route.PackageName) != ""
+}

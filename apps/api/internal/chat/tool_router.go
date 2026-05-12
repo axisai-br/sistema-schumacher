@@ -869,6 +869,9 @@ func parseDirectAvailabilitySearchInput(text string, observedAt time.Time) (Avai
 	if !looksLikeExplicitRouteQuery(body) {
 		locations := extractCanonicalLocations(body)
 		if len(locations) < 2 {
+			locations = extractSupportedPackageLocationsInOrder(body)
+		}
+		if len(locations) < 2 {
 			return AvailabilitySearchInput{}, false
 		}
 		folded := foldChatText(body)
@@ -1072,6 +1075,46 @@ func extractCanonicalLocations(text string) []string {
 		items = append(items, location)
 	}
 	return items
+}
+
+func extractSupportedPackageLocationsInOrder(text string) []string {
+	folded := " " + strings.Join(strings.Fields(foldChatText(text)), " ") + " "
+	type match struct {
+		index   int
+		display string
+	}
+	matches := make([]match, 0, len(scPackageDestinations)+len(maPackageDestinations))
+	for key, display := range scPackageDestinations {
+		if index := strings.Index(folded, " "+key+" "); index >= 0 {
+			matches = append(matches, match{index: index, display: display})
+		}
+	}
+	for key, display := range maPackageDestinations {
+		if index := strings.Index(folded, " "+key+" "); index >= 0 {
+			matches = append(matches, match{index: index, display: display})
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	for i := 0; i < len(matches)-1; i++ {
+		for j := i + 1; j < len(matches); j++ {
+			if matches[j].index < matches[i].index {
+				matches[i], matches[j] = matches[j], matches[i]
+			}
+		}
+	}
+	seen := map[string]struct{}{}
+	locations := make([]string, 0, len(matches))
+	for _, item := range matches {
+		key := strings.ToUpper(item.display)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		locations = append(locations, item.display)
+	}
+	return locations
 }
 
 func inferLatestRouteContextFromHistory(history []Message) inferredRouteContext {
@@ -1662,15 +1705,6 @@ func extractTripDate(text string, observedAt time.Time) *time.Time {
 		}
 		parsed := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 		if parsed.Month() == time.Month(month) && parsed.Day() == day {
-			if len(match) < 4 || strings.TrimSpace(match[3]) == "" {
-				threshold := observedAt.UTC().Add(-24 * time.Hour)
-				if parsed.Before(time.Date(threshold.Year(), threshold.Month(), threshold.Day(), 0, 0, 0, 0, time.UTC)) {
-					nextYear := time.Date(year+1, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-					if nextYear.Month() == time.Month(month) && nextYear.Day() == day {
-						parsed = nextYear
-					}
-				}
-			}
 			return &parsed
 		}
 	}
@@ -1972,6 +2006,7 @@ func looksLikePaymentLookupIntent(text string) bool {
 		"pix",
 		"cobranc",
 		"cobranç",
+		"paguei",
 		"pago",
 		"quitad",
 		"checkout",

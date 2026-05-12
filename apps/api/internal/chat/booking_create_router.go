@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	optionIndexPattern           = regexp.MustCompile(`(?i)\bop[cç][aã]o\s*([1-5])\b`)
+	optionIndexPattern           = regexp.MustCompile(`(?i)\bop[cç][aã]o\s*0?([1-5])\b`)
 	passengerNamePattern         = regexp.MustCompile(`(?i)\bnome(?:\s+completo)?\s*(?:é|e|:|-)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
 	passengerAltNamePattern      = regexp.MustCompile(`(?i)\b(?:meu nome|sou)\s*(?:é|e)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
 	passengerCPFPattern          = regexp.MustCompile(`(?i)\bcpf\b[^0-9]*([0-9.\-]{11,14})`)
@@ -460,17 +460,27 @@ func resolveBookingCreateSelection(text string, history []Message, currentAvaila
 }
 
 func extractSelectedOptionIndex(text string) int {
-	if match := optionIndexPattern.FindStringSubmatch(text); len(match) == 2 {
+	lower := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if match := optionIndexPattern.FindStringSubmatch(lower); len(match) == 2 {
 		return asInt(float64(match[1][0] - '0'))
 	}
-	lower := strings.ToLower(strings.TrimSpace(text))
+	if len(lower) == 1 && lower[0] >= '1' && lower[0] <= '5' {
+		return int(lower[0] - '0')
+	}
+	if len(lower) == 2 && lower[0] == '0' && lower[1] >= '1' && lower[1] <= '5' {
+		return int(lower[1] - '0')
+	}
 	switch {
-	case strings.Contains(lower, "primeira opção"), strings.Contains(lower, "primeira opcao"), strings.Contains(lower, "a primeira"):
+	case lower == "primeira", lower == "primeiro", strings.Contains(lower, "primeira opcao"), strings.Contains(lower, "primeiro opcao"), strings.Contains(lower, "a primeira"), strings.Contains(lower, "o primeiro"):
 		return 1
-	case strings.Contains(lower, "segunda opção"), strings.Contains(lower, "segunda opcao"), strings.Contains(lower, "a segunda"):
+	case lower == "segunda", lower == "segundo", strings.Contains(lower, "segunda opcao"), strings.Contains(lower, "segundo opcao"), strings.Contains(lower, "a segunda"), strings.Contains(lower, "o segundo"):
 		return 2
-	case strings.Contains(lower, "terceira opção"), strings.Contains(lower, "terceira opcao"), strings.Contains(lower, "a terceira"):
+	case lower == "terceira", lower == "terceiro", strings.Contains(lower, "terceira opcao"), strings.Contains(lower, "terceiro opcao"), strings.Contains(lower, "a terceira"), strings.Contains(lower, "o terceiro"):
 		return 3
+	case lower == "quarta", lower == "quarto", strings.Contains(lower, "quarta opcao"), strings.Contains(lower, "quarto opcao"), strings.Contains(lower, "a quarta"), strings.Contains(lower, "o quarto"):
+		return 4
+	case lower == "quinta", lower == "quinto", strings.Contains(lower, "quinta opcao"), strings.Contains(lower, "quinto opcao"), strings.Contains(lower, "a quinta"), strings.Contains(lower, "o quinto"):
+		return 5
 	}
 	return 0
 }
