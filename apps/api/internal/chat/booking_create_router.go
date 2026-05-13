@@ -91,6 +91,15 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 	}
 
 	context := collectBookingDraftContext(session, history, currentTurn)
+	if (!context.PassengerCountKnown || context.PassengerCount <= 0) && context.PassengerDetailsCount > 0 {
+		context.PassengerCount = context.PassengerDetailsCount
+		context.PassengerCountKnown = true
+	}
+
+	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
+		return BookingCreateInput{}, false
+	}
+
 	if strings.TrimSpace(context.TripID) == "" ||
 		strings.TrimSpace(context.BoardStopID) == "" ||
 		strings.TrimSpace(context.AlightStopID) == "" ||
@@ -184,14 +193,26 @@ func looksLikeDocumentConfirmation(text string) bool {
 	case "conferem",
 		"confere",
 		"sim",
+		"sim sim",
 		"isso",
+		"isso mesmo",
 		"correto",
+		"certo",
 		"sim esta correto",
 		"esta correto",
 		"sim correto",
 		"esta certo",
 		"ta certo",
 		"tá certo",
+		"ta tudo certo",
+		"tá tudo certo",
+		"tudo certo",
+		"sim ta tudo certo",
+		"sim tá tudo certo",
+		"sim sim ta tudo certo",
+		"sim sim tá tudo certo",
+		"sim sim ta tudo certo tudo certo",
+		"sim sim tá tudo certo tudo certo",
 		"pode seguir",
 		"pode prosseguir",
 		"pode criar",
@@ -200,7 +221,10 @@ func looksLikeDocumentConfirmation(text string) bool {
 		"confirmo":
 		return true
 	default:
-		return false
+		return strings.Contains(folded, "tudo certo") ||
+			strings.Contains(folded, "pode criar") ||
+			strings.Contains(folded, "pode seguir") ||
+			strings.Contains(folded, "pode prosseguir")
 	}
 }
 
@@ -861,11 +885,33 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 	}
 
 	if isShortNoReply(folded) ||
-		containsAnyFolded(folded, "nao tem crianca", "sem crianca", "nao leva crianca", "nao leva crianca de 5 anos", "sem crianca de 5 anos", "nao tem filhos", "sem filhos") {
+		containsAnyFolded(
+			folded,
+			"nao tem crianca",
+			"não tem criança",
+			"sem crianca",
+			"sem criança",
+			"nenhuma crianca",
+			"nenhuma criança",
+			"tem nenhuma crianca nao",
+			"tem nenhuma criança não",
+			"tem nenhuma crianca não",
+			"tem crianca nao",
+			"tem criança não",
+			"crianca nao",
+			"criança não",
+			"nao vai crianca",
+			"não vai criança",
+			"nao leva crianca",
+			"não leva criança",
+			"nao leva crianca de 5 anos",
+			"sem crianca de 5 anos",
+			"nao tem filhos",
+			"sem filhos",
+		) {
 		slots.ChildUnder5Count = 0
 		slots.ChildUnder5CountKnown = true
 	}
-
 	if !slots.ChildUnder5CountKnown {
 		if match := childUnder5AgePattern.FindStringSubmatch(folded); len(match) == 2 {
 			slots.ChildUnder5Count = 1
