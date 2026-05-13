@@ -4348,24 +4348,124 @@ func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected runner to be called once, got %d", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected passenger slot reply to avoid LLM, got %d runner calls", runner.calls)
 	}
 	if searcher.calls != 0 {
 		t.Fatalf("expected no availability search for passenger reply, got %d", searcher.calls)
 	}
-	if strings.Contains(runner.lastInput.UserPrompt, "atendemos apenas viagens dos pacotes Santa Catarina e Maranhao") {
-		t.Fatalf("expected passenger reply to avoid out-of-service fallback, got %q", runner.lastInput.UserPrompt)
+	draft := latestAutomationDraftForSession(t, store, session.ID)
+	if got := strings.TrimSpace(draft.Body); got != "Tem crianca de 5 anos ou menos viajando?" {
+		t.Fatalf("expected child-only deterministic reply, got %q", got)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "CONTEXTO DE PASSAGEIROS") {
-		t.Fatalf("expected passenger reply context in prompt, got %q", runner.lastInput.UserPrompt)
+}
+
+func TestPassengerCountContextDoesNotCallLLMForPraMim(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-pra-mim",
+			IdempotencyKey:    "idem-pra-mim",
+			Body:              "pra mim",
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Quantidade de passageiros inferida: 1") {
-		t.Fatalf("expected passenger count in prompt, got %q", runner.lastInput.UserPrompt)
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Crianca de ate 5 anos inferida: 0") {
-		t.Fatalf("expected child count in prompt, got %q", runner.lastInput.UserPrompt)
+	if runner.calls != 0 {
+		t.Fatalf("expected passenger count context to avoid LLM, got %d calls", runner.calls)
 	}
+	if got := strings.TrimSpace(out.Draft.Body); got != "Tem crianca de 5 anos ou menos viajando?" {
+		t.Fatalf("expected child-only deterministic reply, got %q", got)
+	}
+}
+
+func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-so-eu",
+			IdempotencyKey:    "idem-so-eu",
+			Body:              "so eu",
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected passenger count context to avoid LLM, got %d calls", runner.calls)
+	}
+	if strings.Contains(out.Draft.Body, "vai mais alguem junto") {
+		t.Fatalf("expected not to repeat combo question, got %q", out.Draft.Body)
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != "Tem crianca de 5 anos ou menos viajando?" {
+		t.Fatalf("expected child-only deterministic reply, got %q", got)
+	}
+}
+
+func seedPassengerCountContext(t *testing.T, store *fakeStore, question string) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999999",
+		CustomerPhone:  "5511999999999",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             question,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed passenger question: %v", err)
+	}
+	return session
+}
+
+func latestAutomationDraftForSession(t *testing.T, store *fakeStore, sessionID string) Message {
+	t.Helper()
+	var latest *Message
+	for _, messageID := range store.messageOrder {
+		message := store.messages[messageID]
+		if message.SessionID != sessionID ||
+			message.Direction != "OUTBOUND" ||
+			message.ProcessingStatus != messageStatusAutomationDraft {
+			continue
+		}
+		item := message
+		latest = &item
+	}
+	if latest == nil {
+		t.Fatalf("expected automation draft for session %s", sessionID)
+	}
+	return *latest
 }
 
 func TestReprocessSkipsRunnerForUntranscribedAudio(t *testing.T) {

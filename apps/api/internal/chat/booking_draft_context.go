@@ -54,9 +54,7 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		PassengerCountContextActive: lastBotAskedPassengerCount(history),
 	}
 
-	if passengerCount, childUnder5Count, ok := parsePassengerCountReply(currentTurn); ok {
-		context = mergePassengerReplyIntoBookingDraft(context, passengerCount, childUnder5Count)
-	}
+	context = mergePassengerClarificationSlotsIntoBookingDraft(context, parsePassengerClarificationSlots(currentTurn))
 
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
@@ -77,9 +75,7 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
 			(!context.PassengerCountKnown || !context.ChildUnder5CountKnown) {
-			if passengerCount, childUnder5Count, ok := parsePassengerCountReply(body); ok {
-				context = mergePassengerReplyIntoBookingDraft(context, passengerCount, childUnder5Count)
-			}
+			context = mergePassengerClarificationSlotsIntoBookingDraft(context, parsePassengerClarificationSlots(body))
 		}
 
 		for _, toolContext := range messageToolContexts(message) {
@@ -91,6 +87,7 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 				context.BookingCreated = true
 				if context.PassengerCount == 0 {
 					context.PassengerCount = readInt(booking["passenger_count"])
+					context.PassengerCountKnown = context.PassengerCount > 0
 				}
 			}
 		}
@@ -106,22 +103,34 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 	if context.PassengerCount == 0 && context.RequestedPassengerDocuments {
 		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, passengerDetailsText)
+		context.PassengerCountKnown = context.PassengerCount > 0
 	}
 
 	return context
 }
 
 func mergePassengerReplyIntoBookingDraft(context BookingDraftContext, passengerCount int, childUnder5Count int) BookingDraftContext {
-	if passengerCount > 0 {
-		context.PassengerCount = passengerCount
+	return mergePassengerClarificationSlotsIntoBookingDraft(context, PassengerClarificationSlots{
+		PassengerCount:        passengerCount,
+		PassengerCountKnown:   passengerCount > 0,
+		ChildUnder5Count:      childUnder5Count,
+		ChildUnder5CountKnown: childUnder5Count >= 0,
+	})
+}
+
+func mergePassengerClarificationSlotsIntoBookingDraft(context BookingDraftContext, slots PassengerClarificationSlots) BookingDraftContext {
+	if slots.PassengerCountKnown && slots.PassengerCount > 0 {
+		context.PassengerCount = slots.PassengerCount
+		context.PassengerCountKnown = true
 	}
-	if childUnder5Count >= 0 {
-		context.ChildUnder5Count = childUnder5Count
+	if slots.ChildUnder5CountKnown {
+		context.ChildUnder5Count = slots.ChildUnder5Count
 		context.ChildUnder5CountKnown = true
 	}
-	context.PassengerCountKnown = passengerCount > 0 || context.PassengerCountKnown
-	context.AskedPassengerQuestion = true
-	context.PassengerCountContextActive = true
+	if slots.PassengerCountKnown || slots.ChildUnder5CountKnown {
+		context.AskedPassengerQuestion = true
+		context.PassengerCountContextActive = true
+	}
 	return context
 }
 
@@ -129,7 +138,10 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 	if context.BookingCreated {
 		return BookingNextAskBookingPaymentPreference
 	}
-	if context.PassengerCount <= 0 {
+	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
+		return BookingNextAskPassengerClarification
+	}
+	if !context.ChildUnder5CountKnown {
 		return BookingNextAskPassengerClarification
 	}
 	if !context.HasAvailabilityShown ||
@@ -150,6 +162,9 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 func buildBookingContinuationReply(context BookingDraftContext, action BookingNextAction) string {
 	switch action {
 	case BookingNextAskPassengerClarification:
+		if context.PassengerCountKnown && context.PassengerCount > 0 && !context.ChildUnder5CountKnown {
+			return "Tem crianca de 5 anos ou menos viajando?"
+		}
 		return "Entendi. A passagem e so para voce ou vai mais alguem junto?"
 	case BookingNextAskPassengerDocuments:
 		if context.PassengerCount <= 1 {

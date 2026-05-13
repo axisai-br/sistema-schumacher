@@ -856,7 +856,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		return result, nil
 	}
 	passengerCountContext := lastBotAskedPassengerCount(history)
-	passengerCountReplyParsed := false
 
 	var deterministicBookingRun *RunAgentResult
 	var deterministicBookingHandled bool
@@ -868,77 +867,71 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			trigger,
 			jobRunID,
 		)
-		if passengerCount, childUnder5Count, ok := parsePassengerCountReply(currentTurn); ok {
-			passengerCountReplyParsed = true
-			memory["passenger_count_reply_context"] = "true"
-			memory["passenger_count_reply_parsed"] = "true"
-			memory["passenger_count"] = passengerCount
-			memory["child_under_5_count"] = childUnder5Count
-			bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
-			bookingDraft = mergePassengerReplyIntoBookingDraft(bookingDraft, passengerCount, childUnder5Count)
+		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+		memory["passenger_count_reply_context"] = "true"
+		memory["passenger_count_reply_parsed"] = bookingDraft.PassengerCountKnown || bookingDraft.ChildUnder5CountKnown
+		memory["passenger_count"] = bookingDraft.PassengerCount
+		memory["passenger_count_known"] = bookingDraft.PassengerCountKnown
+		memory["child_under_5_count"] = bookingDraft.ChildUnder5Count
+		memory["child_under_5_count_known"] = bookingDraft.ChildUnder5CountKnown
 
-			memory["booking_draft_context"] = map[string]interface{}{
-				"origin":                         bookingDraft.Origin,
-				"destination":                    bookingDraft.Destination,
-				"selected_option_index":          bookingDraft.SelectedOptionIndex,
-				"trip_id":                        bookingDraft.TripID,
-				"board_stop_id":                  bookingDraft.BoardStopID,
-				"alight_stop_id":                 bookingDraft.AlightStopID,
-				"trip_date":                      bookingDraft.TripDate,
-				"departure_time":                 bookingDraft.DepartureTime,
-				"price":                          bookingDraft.Price,
-				"currency":                       bookingDraft.Currency,
-				"passenger_count":                bookingDraft.PassengerCount,
-				"child_under_5_count":            bookingDraft.ChildUnder5Count,
-				"has_availability_shown":         bookingDraft.HasAvailabilityShown,
-				"asked_passenger_question":       bookingDraft.AskedPassengerQuestion,
-				"passenger_count_context_active": bookingDraft.PassengerCountContextActive,
-			}
-
-			deterministicBookingAction = decideNextBookingStep(bookingDraft)
-
-			s.logReprocess(
-				"chat reprocess event=booking_draft_context_collected session_id=%s trigger=%s job_run_id=%s action=%s origin=%q destination=%q trip_date=%q trip_id_present=%t passenger_count=%d child_under_5_count=%d",
-				persisted.Session.ID,
-				trigger,
-				jobRunID,
-				deterministicBookingAction,
-				bookingDraft.Origin,
-				bookingDraft.Destination,
-				bookingDraft.TripDate,
-				strings.TrimSpace(bookingDraft.TripID) != "",
-				bookingDraft.PassengerCount,
-				bookingDraft.ChildUnder5Count,
-			)
-
-			if deterministicBookingAction != BookingNextCallCreate {
-				reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
-				if strings.TrimSpace(reply) != "" {
-					run := buildBookingContinuationDraftRun(reply)
-					deterministicBookingRun = &run
-					deterministicBookingHandled = true
-				}
-			}
-
-			s.logReprocess(
-				"chat reprocess event=passenger_count_reply_parsed session_id=%s trigger=%s job_run_id=%s passenger_count=%d child_under_5_count=%d",
-				persisted.Session.ID,
-				trigger,
-				jobRunID,
-				passengerCount,
-				childUnder5Count,
-			)
-			s.logReprocess(
-				"chat reprocess event=booking_context_continue_from_passenger_reply session_id=%s trigger=%s job_run_id=%s passenger_count=%d child_under_5_count=%d",
-				persisted.Session.ID,
-				trigger,
-				jobRunID,
-				passengerCount,
-				childUnder5Count,
-			)
-		} else {
-			memory["passenger_count_reply_context"] = "true"
+		memory["booking_draft_context"] = map[string]interface{}{
+			"origin":                         bookingDraft.Origin,
+			"destination":                    bookingDraft.Destination,
+			"selected_option_index":          bookingDraft.SelectedOptionIndex,
+			"trip_id":                        bookingDraft.TripID,
+			"board_stop_id":                  bookingDraft.BoardStopID,
+			"alight_stop_id":                 bookingDraft.AlightStopID,
+			"trip_date":                      bookingDraft.TripDate,
+			"departure_time":                 bookingDraft.DepartureTime,
+			"price":                          bookingDraft.Price,
+			"currency":                       bookingDraft.Currency,
+			"passenger_count":                bookingDraft.PassengerCount,
+			"passenger_count_known":          bookingDraft.PassengerCountKnown,
+			"child_under_5_count":            bookingDraft.ChildUnder5Count,
+			"child_under_5_count_known":      bookingDraft.ChildUnder5CountKnown,
+			"has_availability_shown":         bookingDraft.HasAvailabilityShown,
+			"asked_passenger_question":       bookingDraft.AskedPassengerQuestion,
+			"passenger_count_context_active": bookingDraft.PassengerCountContextActive,
 		}
+
+		deterministicBookingAction = decideNextBookingStep(bookingDraft)
+
+		s.logReprocess(
+			"chat reprocess event=booking_draft_context_collected session_id=%s trigger=%s job_run_id=%s action=%s origin=%q destination=%q trip_date=%q trip_id_present=%t passenger_count=%d passenger_count_known=%t child_under_5_count=%d child_under_5_count_known=%t",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+			deterministicBookingAction,
+			bookingDraft.Origin,
+			bookingDraft.Destination,
+			bookingDraft.TripDate,
+			strings.TrimSpace(bookingDraft.TripID) != "",
+			bookingDraft.PassengerCount,
+			bookingDraft.PassengerCountKnown,
+			bookingDraft.ChildUnder5Count,
+			bookingDraft.ChildUnder5CountKnown,
+		)
+
+		if deterministicBookingAction != BookingNextCallCreate {
+			reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
+			if strings.TrimSpace(reply) != "" {
+				run := buildBookingContinuationDraftRun(reply)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
+		}
+
+		s.logReprocess(
+			"chat reprocess event=passenger_slots_collected session_id=%s trigger=%s job_run_id=%s passenger_count=%d passenger_count_known=%t child_under_5_count=%d child_under_5_count_known=%t",
+			persisted.Session.ID,
+			trigger,
+			jobRunID,
+			bookingDraft.PassengerCount,
+			bookingDraft.PassengerCountKnown,
+			bookingDraft.ChildUnder5Count,
+			bookingDraft.ChildUnder5CountKnown,
+		)
 	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
 	if passengerCountContext {
@@ -1044,41 +1037,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		if run.Model != "template_realizer" {
 			userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		}
-	} else if passengerCountContext && !passengerCountReplyParsed {
-		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
-		s.logReprocess(
-			"chat reprocess event=runner_run_start session_id=%s trigger=%s job_run_id=%s current_turn_count=%d tool_call_count=%d",
-			persisted.Session.ID,
-			trigger,
-			jobRunID,
-			len(candidates),
-			len(toolContext.Calls),
-		)
-		run, err = s.runner.Run(ctx, RunAgentInput{
-			Session:          persisted.Session,
-			CurrentTurnIDs:   candidateMessageIDs(candidates),
-			CurrentTurnMedia: collectCandidateMedia(candidates),
-			SystemPrompt:     systemPrompt,
-			UserPrompt:       userPrompt,
-			IdempotencyKey:   draftID,
-		})
-		if err != nil {
-			s.logReprocess(
-				"chat reprocess event=runner_run_failed session_id=%s trigger=%s job_run_id=%s error=%v",
-				persisted.Session.ID,
-				trigger,
-				jobRunID,
-				err,
-			)
-			return ReprocessResult{}, fmt.Errorf("%w: %v", ErrAgentRunFailed, err)
-		}
-		s.logReprocess(
-			"chat reprocess event=runner_run_done session_id=%s trigger=%s job_run_id=%s has_reply=%t",
-			persisted.Session.ID,
-			trigger,
-			jobRunID,
-			strings.TrimSpace(run.ReplyText) != "",
-		)
 	} else if documentHandled && toolContext.DocumentExtract != nil {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)

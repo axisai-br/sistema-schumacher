@@ -18,7 +18,16 @@ var (
 	passengerBirthRecordPattern  = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9.\-]{8,40})`)
 	passengerLooseCPFLinePattern = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+([0-9.\-]{11,14})\s*$`)
 	passengerWordQtyPattern      = regexp.MustCompile(`\b(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	passengerDigitQtyPattern     = regexp.MustCompile(`\b([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	childUnder5AgePattern        = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
 )
+
+type PassengerClarificationSlots struct {
+	PassengerCount        int
+	PassengerCountKnown   bool
+	ChildUnder5Count      int
+	ChildUnder5CountKnown bool
+}
 
 func parseBookingCreateInput(session Session, history []Message, text string, currentAvailability *AvailabilitySearchResult) (BookingCreateInput, bool) {
 	body := strings.TrimSpace(text)
@@ -788,62 +797,104 @@ func looksLikePassengerCountQuestion(text string) bool {
 }
 
 func parsePassengerCountReply(currentTurn string) (int, int, bool) {
+	slots := parsePassengerClarificationSlots(currentTurn)
+	if slots.PassengerCountKnown || slots.ChildUnder5CountKnown {
+		return slots.PassengerCount, slots.ChildUnder5Count, true
+	}
+	return 0, 0, false
+}
+
+func parsePassengerClarificationSlots(currentTurn string) PassengerClarificationSlots {
 	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
 	if folded == "" {
-		return 0, 0, false
+		return PassengerClarificationSlots{}
 	}
 
-	passengerCount := 0
-	childUnder5Count := -1
+	slots := PassengerClarificationSlots{}
 
 	switch {
 	case containsAnyFolded(folded, "eu e mais uma pessoa", "eu e mais uma", "eu e mais um passageiro", "eu e mais um acompanhante", "eu e outra pessoa", "eu e outra", "eu e minha", "eu e meu", "eu e minha esposa", "eu e meu esposo", "eu e minha filha", "eu e meu filho", "eu e minha mulher", "eu e meu marido"):
-		passengerCount = 2
-	case containsAnyFolded(folded, "so eu", "somente eu", "só eu", "é só eu", "e so eu", "so para mim", "só para mim", "e so para mim", "é só para mim", "passagem so para mim", "passagem só para mim", "vou sozinho", "vou so", "vou só", "sou so eu", "sou só eu", "sou sozinho", "uma pessoa", "1 pessoa", "um passageiro"):
-		passengerCount = 1
+		slots.PassengerCount = 2
+		slots.PassengerCountKnown = true
+	case containsAnyFolded(folded, "pra mim", "para mim", "so pra mim", "so para mim", "e so pra mim", "eh so pra mim", "e so para mim", "eh so para mim", "passagem so para mim", "so eu", "somente eu", "e so eu", "eh so eu", "sou eu", "sou so eu", "sozinho", "vou sozinho", "vou so", "uma pessoa", "1 pessoa", "um passageiro"):
+		slots.PassengerCount = 1
+		slots.PassengerCountKnown = true
 	case containsAnyFolded(folded, "duas pessoas", "dois passageiros", "2 pessoas", "2 passageiros", "as duas", "os dois", "nos duas", "nos dois", "dos dois", "das duas"):
-		passengerCount = 2
+		slots.PassengerCount = 2
+		slots.PassengerCountKnown = true
 	case containsAnyFolded(folded, "tres pessoas", "3 pessoas", "tres passageiros", "3 passageiros"):
-		passengerCount = 3
+		slots.PassengerCount = 3
+		slots.PassengerCountKnown = true
 	case containsAnyFolded(folded, "quatro pessoas", "4 pessoas", "quatro passageiros", "4 passageiros"):
-		passengerCount = 4
+		slots.PassengerCount = 4
+		slots.PassengerCountKnown = true
 	case containsAnyFolded(folded, "cinco pessoas", "5 pessoas", "cinco passageiros", "5 passageiros"):
-		passengerCount = 5
+		slots.PassengerCount = 5
+		slots.PassengerCountKnown = true
 	}
 
-	if passengerCount == 0 {
-		if match := passengerWordQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
-			switch match[1] {
-			case "um", "uma":
-				passengerCount = 1
-			case "dois", "duas":
-				passengerCount = 2
-			case "tres":
-				passengerCount = 3
-			case "quatro":
-				passengerCount = 4
-			case "cinco":
-				passengerCount = 5
+	if !slots.PassengerCountKnown {
+		if match := passengerDigitQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+			if qty := readInt(match[1]); qty > 0 {
+				slots.PassengerCount = qty
+				slots.PassengerCountKnown = true
 			}
 		}
 	}
 
-	if containsAnyFolded(folded, "nao tem crianca", "não tem criança", "sem crianca", "sem criança", "nao leva crianca", "não leva criança", "nao leva crianca de 5 anos", "sem crianca de 5 anos", "nao tem filhos", "sem filhos") {
-		childUnder5Count = 0
+	if !slots.PassengerCountKnown {
+		if match := passengerWordQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+			switch match[1] {
+			case "um", "uma":
+				slots.PassengerCount = 1
+			case "dois", "duas":
+				slots.PassengerCount = 2
+			case "tres":
+				slots.PassengerCount = 3
+			case "quatro":
+				slots.PassengerCount = 4
+			case "cinco":
+				slots.PassengerCount = 5
+			}
+			slots.PassengerCountKnown = slots.PassengerCount > 0
+		}
 	}
 
-	if passengerCount == 0 && childUnder5Count < 0 {
-		return 0, 0, false
+	if isShortNoReply(folded) ||
+		containsAnyFolded(folded, "nao tem crianca", "sem crianca", "nao leva crianca", "nao leva crianca de 5 anos", "sem crianca de 5 anos", "nao tem filhos", "sem filhos") {
+		slots.ChildUnder5Count = 0
+		slots.ChildUnder5CountKnown = true
 	}
-	if childUnder5Count < 0 {
-		childUnder5Count = 0
+
+	if !slots.ChildUnder5CountKnown {
+		if match := childUnder5AgePattern.FindStringSubmatch(folded); len(match) == 2 {
+			slots.ChildUnder5Count = 1
+			slots.ChildUnder5CountKnown = true
+		}
 	}
-	return passengerCount, childUnder5Count, true
+
+	if !slots.ChildUnder5CountKnown &&
+		containsAnyFolded(folded, "tem crianca", "uma crianca", "1 crianca", "meu filho tem", "minha filha tem", "meu filho de", "minha filha de") {
+		slots.ChildUnder5Count = 1
+		slots.ChildUnder5CountKnown = true
+	}
+
+	return slots
+}
+
+func isShortNoReply(folded string) bool {
+	switch strings.TrimSpace(folded) {
+	case "nao", "n":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsAnyFolded(value string, patterns ...string) bool {
 	for _, pattern := range patterns {
-		if strings.Contains(value, strings.TrimSpace(pattern)) {
+		foldedPattern := strings.Join(strings.Fields(foldChatText(pattern)), " ")
+		if foldedPattern != "" && strings.Contains(value, foldedPattern) {
 			return true
 		}
 	}

@@ -624,3 +624,51 @@ func TestParsePassengerCountReply(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePassengerClarificationSlotsPraMim(t *testing.T) {
+	cases := []string{
+		"pra mim",
+		"para mim",
+		"so pra mim",
+		"só pra mim",
+		"eh so pra mim",
+		"so eu",
+		"só eu",
+		"sou eu",
+		"sozinho",
+	}
+
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			slots := parsePassengerClarificationSlots(text)
+			if !slots.PassengerCountKnown || slots.PassengerCount != 1 {
+				t.Fatalf("expected passenger_count=1 known for %q, got %+v", text, slots)
+			}
+			if slots.ChildUnder5CountKnown {
+				t.Fatalf("expected child slot unknown for %q, got %+v", text, slots)
+			}
+		})
+	}
+}
+
+func TestParsePassengerClarificationSlotsNaoChild(t *testing.T) {
+	cases := []string{
+		"nao",
+		"não",
+		"sem criança",
+		"nao tem criança",
+		"não tem criança",
+	}
+
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			slots := parsePassengerClarificationSlots(text)
+			if !slots.ChildUnder5CountKnown || slots.ChildUnder5Count != 0 {
+				t.Fatalf("expected child_under_5_count=0 known for %q, got %+v", text, slots)
+			}
+			if slots.PassengerCountKnown {
+				t.Fatalf("expected passenger slot unknown for %q, got %+v", text, slots)
+			}
+		})
+	}
+}
