@@ -84,10 +84,57 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if passengerCount, _, ok := parsePassengerCountReply(body); ok && passengerCount > 0 {
 		return IntentDecision{Intent: IntentPassengerCountReply, Source: "deterministic"}
 	}
+	if input, ok := parseSCDestinationFollowUpAfterPublicTable(history, body); ok {
+		return IntentDecision{
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic",
+			AvailabilityInput: &input,
+			TemplateName:      TemplateAskMAOrigin,
+			Action:            "template",
+		}
+	}
 	if input, ok := parseAvailabilitySearchInput(history, body, observedAt); ok {
 		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic", AvailabilityInput: &input, Action: "tool"}
 	}
 	return IntentDecision{Intent: IntentUnknown, Source: "deterministic"}
+}
+
+func parseSCDestinationFollowUpAfterPublicTable(history []Message, currentTurn string) (AvailabilitySearchInput, bool) {
+	if !lastAssistantSentPublicSCTable(history) {
+		return AvailabilitySearchInput{}, false
+	}
+	destination, ok := findSingleSupportedCityInText(currentTurn)
+	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+	return AvailabilitySearchInput{
+		Destination: destination,
+		PackageName: packageToSantaCatarina,
+		Qty:         1,
+		Limit:       8,
+	}, true
+}
+
+func lastAssistantSentPublicSCTable(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(messageTurnText(history[i]))), " ")
+		if body == "" {
+			continue
+		}
+		return strings.Contains(body, "valores por cidade em santa catarina")
+	}
+	return false
+}
+
+func findSingleSupportedCityInText(text string) (string, bool) {
+	city, _, ok := findSingleSupportedCityMention(text, scPackageDestinations)
+	if !ok {
+		return "", false
+	}
+	return city, true
 }
 
 func hasPreviousAvailabilityList(history []Message) bool {

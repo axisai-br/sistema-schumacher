@@ -38,3 +38,36 @@ func TestIntentRouterAvailabilitySearch(t *testing.T) {
 		t.Fatalf("expected availability search decision, got %+v", got)
 	}
 }
+
+func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
+	history := []Message{
+		{Direction: "INBOUND", Body: "Passagem para Santa Catarina"},
+		{Direction: "OUTBOUND", Body: "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nVideira R$ 950\nItuporanga R$ 1100"},
+	}
+
+	got := routeDeterministicIntent(history, "Quero pra Ituporanga.", CanonicalConversationState{}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+	if got.Intent != IntentAvailabilitySearch {
+		t.Fatalf("expected availability search intent, got %+v", got)
+	}
+	if got.Source != "deterministic" || got.Action != "template" {
+		t.Fatalf("expected deterministic template action, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskMAOrigin {
+		t.Fatalf("expected template %s, got %+v", TemplateAskMAOrigin, got)
+	}
+	if got.AvailabilityInput == nil {
+		t.Fatalf("expected availability input")
+	}
+	if got.AvailabilityInput.Destination != "Ituporanga/SC" {
+		t.Fatalf("expected destination Ituporanga/SC, got %+v", got.AvailabilityInput)
+	}
+	if got.AvailabilityInput.PackageName != packageToSantaCatarina {
+		t.Fatalf("expected package %q, got %+v", packageToSantaCatarina, got.AvailabilityInput)
+	}
+	if got.AvailabilityInput.Qty != 1 || got.AvailabilityInput.Limit != 8 {
+		t.Fatalf("expected qty=1 limit=8, got %+v", got.AvailabilityInput)
+	}
+	if got.AvailabilityInput.Origin != "" || got.AvailabilityInput.TripDate != nil {
+		t.Fatalf("expected follow-up to avoid origin/date resolution, got %+v", got.AvailabilityInput)
+	}
+}

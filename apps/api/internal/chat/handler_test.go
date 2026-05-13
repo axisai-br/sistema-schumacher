@@ -4423,6 +4423,122 @@ func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *te
 	}
 }
 
+func TestSCDestinationFollowUpAsksMAOrigin(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedPublicSCTableContext(t, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-sc-followup-ituporanga",
+			IdempotencyKey:    "idem-sc-followup-ituporanga",
+			Body:              "Quero pra Ituporanga.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest SC follow-up: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft reply")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != "De qual cidade do Maranhao voce vai sair?" {
+		t.Fatalf("expected MA origin prompt, got %q", got)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic follow-up to avoid LLM, got %d calls", runner.calls)
+	}
+}
+
+func TestSCDestinationFollowUpDoesNotCallAvailabilityYet(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedPublicSCTableContext(t, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-sc-followup-ituporanga-no-tool",
+			IdempotencyKey:    "idem-sc-followup-ituporanga-no-tool",
+			Body:              "Quero pra Ituporanga.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest SC follow-up: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft reply")
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls yet, got %+v", out.ToolCalls)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search yet, got %d", searcher.calls)
+	}
+}
+
+func TestOperationalUnsupportedLLMDraftStillBlocked(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "A rota para Ituporanga nao esta disponivel no momento.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-unsupported-llm-block",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:       "WHATSAPP",
+		ContactKey:    "5511999999999",
+		CustomerPhone: "5511999999999",
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-unsupported-llm-block",
+			IdempotencyKey:    "idem-unsupported-llm-block",
+			Body:              "Quero pra Ituporanga.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest message: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected LLM draft to be persisted")
+	}
+	if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusReviewNeeded {
+		t.Fatalf("expected auto_send_status %s, got %s", draftAutoSendStatusReviewNeeded, got)
+	}
+	reasons := readDraftAutoSendReasons(*out.Draft)
+	if len(reasons) != 1 || reasons[0] != draftAutoSendReasonOperationalClaimWithoutTool {
+		t.Fatalf("expected review reason %q, got %+v", draftAutoSendReasonOperationalClaimWithoutTool, reasons)
+	}
+}
+
 func seedPassengerCountContext(t *testing.T, store *fakeStore, question string) Session {
 	t.Helper()
 	now := time.Now().UTC()
@@ -4445,6 +4561,32 @@ func seedPassengerCountContext(t *testing.T, store *fakeStore, question string) 
 		ReceivedAt:       now.Add(-2 * time.Minute),
 	}); err != nil {
 		t.Fatalf("seed passenger question: %v", err)
+	}
+	return session
+}
+
+func seedPublicSCTableContext(t *testing.T, store *fakeStore) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999999",
+		CustomerPhone:  "5511999999999",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nVideira R$ 950\nItuporanga R$ 1100",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed public SC table: %v", err)
 	}
 	return session
 }
