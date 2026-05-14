@@ -17,6 +17,45 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 func (r *Repository) Search(ctx context.Context, filter SearchFilter) ([]SearchResult, error) {
+	query, args := buildAvailabilitySearchQuery(filter)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]SearchResult, 0)
+	for rows.Next() {
+		var item SearchResult
+		if err := rows.Scan(
+			&item.SegmentID,
+			&item.TripID,
+			&item.RouteID,
+			&item.BoardStopID,
+			&item.AlightStopID,
+			&item.OriginStopID,
+			&item.DestinationStopID,
+			&item.OriginDisplayName,
+			&item.DestinationDisplayName,
+			&item.OriginDepartTime,
+			&item.TripDate,
+			&item.SeatsAvailable,
+			&item.Price,
+			&item.Currency,
+			&item.Status,
+			&item.TripStatus,
+			&item.PackageName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
+func buildAvailabilitySearchQuery(filter SearchFilter) (string, []interface{}) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 50 {
 		limit = 10
@@ -79,8 +118,8 @@ func (r *Repository) Search(ctx context.Context, filter SearchFilter) ([]SearchR
 		clauses = append(clauses, fmt.Sprintf("t.trip_date = $%d::date", len(args)))
 	}
 	if filter.PackageName != "" {
-		args = append(args, filter.PackageName)
-		clauses = append(clauses, fmt.Sprintf("lower(coalesce(t.package_name, '')) = lower($%d)", len(args)))
+		args = append(args, normalizeSearchText(filter.PackageName))
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", normalizedSearchColumnSQL("t.package_name"), len(args)))
 	}
 	if filter.Qty > 0 {
 		args = append(args, filter.Qty)
@@ -96,40 +135,7 @@ func (r *Repository) Search(ctx context.Context, filter SearchFilter) ([]SearchR
   order by t.trip_date asc, board.depart_time asc, origin_stop.display_name asc, destination_stop.display_name asc
   limit $%d`, len(args))
 
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]SearchResult, 0)
-	for rows.Next() {
-		var item SearchResult
-		if err := rows.Scan(
-			&item.SegmentID,
-			&item.TripID,
-			&item.RouteID,
-			&item.BoardStopID,
-			&item.AlightStopID,
-			&item.OriginStopID,
-			&item.DestinationStopID,
-			&item.OriginDisplayName,
-			&item.DestinationDisplayName,
-			&item.OriginDepartTime,
-			&item.TripDate,
-			&item.SeatsAvailable,
-			&item.Price,
-			&item.Currency,
-			&item.Status,
-			&item.TripStatus,
-			&item.PackageName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-
-	return items, rows.Err()
+	return query, args
 }
 
 func activeTripStatusClause(column string) string {
