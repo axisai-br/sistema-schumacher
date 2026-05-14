@@ -4582,7 +4582,7 @@ func seedPublicSCTableContext(t *testing.T, store *fakeStore) Session {
 		SessionID:        session.ID,
 		Direction:        "OUTBOUND",
 		Kind:             "TEXT",
-		Body:             "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nVideira R$ 950\nItuporanga R$ 1100",
+		Body:             "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nFraiburgo R$ 950\nVideira R$ 950\nItuporanga R$ 1100",
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       now.Add(-2 * time.Minute),
 	}); err != nil {

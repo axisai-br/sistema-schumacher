@@ -42,7 +42,7 @@ func TestIntentRouterAvailabilitySearch(t *testing.T) {
 func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
 	history := []Message{
 		{Direction: "INBOUND", Body: "Passagem para Santa Catarina"},
-		{Direction: "OUTBOUND", Body: "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nVideira R$ 950\nItuporanga R$ 1100"},
+		{Direction: "OUTBOUND", Body: "Oi Messias, temos sim. Valores por cidade em Santa Catarina:\nFraiburgo R$ 950\nVideira R$ 950\nItuporanga R$ 1100"},
 	}
 
 	got := routeDeterministicIntent(history, "Quero pra Ituporanga.", CanonicalConversationState{}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))

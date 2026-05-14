@@ -2244,3 +2244,97 @@ func buildPaymentStatusResponsePayload(result PaymentStatusResult) map[string]in
 	}
 	return payload
 }
+
+func (s *Service) executeAvailabilitySearchIntentTool(ctx context.Context, session Session, input AvailabilitySearchInput) (agentToolContext, error) {
+	if !s.canSearchAvailability() {
+		return agentToolContext{}, nil
+	}
+
+	startedAt := time.Now().UTC()
+	requestPayload := buildAvailabilityToolRequestPayload(input)
+
+	result, err := s.availability.Search(ctx, input)
+	finishedAt := time.Now().UTC()
+	finishedAtPtr := &finishedAt
+
+	if err != nil {
+		call, recordErr := s.store.CreateToolCall(ctx, CreateToolCallInput{
+			SessionID:      session.ID,
+			ToolName:       toolNameAvailabilitySearch,
+			RequestPayload: requestPayload,
+			Status:         "FAILED",
+			ErrorCode:      "AVAILABILITY_SEARCH_ERROR",
+			ErrorMessage:   strings.TrimSpace(err.Error()),
+			StartedAt:      startedAt,
+			FinishedAt:     finishedAtPtr,
+		})
+		if recordErr != nil {
+			return agentToolContext{}, recordErr
+		}
+		return agentToolContext{Calls: []ToolCall{call}}, fmt.Errorf("%w: %v", ErrAgentToolFailed, err)
+	}
+
+	call, err := s.store.CreateToolCall(ctx, CreateToolCallInput{
+		SessionID:       session.ID,
+		ToolName:        toolNameAvailabilitySearch,
+		RequestPayload:  requestPayload,
+		ResponsePayload: buildAvailabilityToolResponsePayload(result),
+		Status:          "COMPLETED",
+		StartedAt:       startedAt,
+		FinishedAt:      finishedAtPtr,
+	})
+	if err != nil {
+		return agentToolContext{}, err
+	}
+
+	return agentToolContext{
+		Calls:        []ToolCall{call},
+		Availability: &result,
+	}, nil
+}
+
+func (s *Service) executePricingQuoteFromAvailabilityTool(ctx context.Context, session Session, context agentToolContext, currentTurn string) (agentToolContext, error) {
+	if !s.canSearchPricing() || context.Availability == nil || !looksLikePricingQuoteIntent(currentTurn) || len(context.Availability.Results) == 0 {
+		return context, nil
+	}
+
+	pricingInput := buildPricingQuoteInput(*context.Availability)
+	pricingStartedAt := time.Now().UTC()
+	pricingRequestPayload := buildPricingQuoteRequestPayload(pricingInput)
+	pricingResult, pricingErr := s.pricing.Search(ctx, pricingInput)
+	pricingFinishedAt := time.Now().UTC()
+	pricingFinishedAtPtr := &pricingFinishedAt
+	if pricingErr != nil {
+		call, recordErr := s.store.CreateToolCall(ctx, CreateToolCallInput{
+			SessionID:      session.ID,
+			ToolName:       toolNamePricingQuote,
+			RequestPayload: pricingRequestPayload,
+			Status:         "FAILED",
+			ErrorCode:      "PRICING_QUOTE_ERROR",
+			ErrorMessage:   strings.TrimSpace(pricingErr.Error()),
+			StartedAt:      pricingStartedAt,
+			FinishedAt:     pricingFinishedAtPtr,
+		})
+		if recordErr != nil {
+			return agentToolContext{}, recordErr
+		}
+		context.Calls = append(context.Calls, call)
+		return context, fmt.Errorf("%w: %v", ErrAgentToolFailed, pricingErr)
+	}
+
+	call, err := s.store.CreateToolCall(ctx, CreateToolCallInput{
+		SessionID:       session.ID,
+		ToolName:        toolNamePricingQuote,
+		RequestPayload:  pricingRequestPayload,
+		ResponsePayload: buildPricingQuoteResponsePayload(pricingResult),
+		Status:          "COMPLETED",
+		StartedAt:       pricingStartedAt,
+		FinishedAt:      pricingFinishedAtPtr,
+	})
+	if err != nil {
+		return agentToolContext{}, err
+	}
+	context.Calls = append(context.Calls, call)
+	context.Pricing = &pricingResult
+	return context, nil
+}

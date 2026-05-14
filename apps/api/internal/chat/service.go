@@ -5,14 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"schumacher-tur/api/internal/auth"
+	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"schumacher-tur/api/internal/auth"
-	"schumacher-tur/api/internal/shared/config"
 )
 
 var (
@@ -859,6 +858,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 
 	var deterministicBookingRun *RunAgentResult
 	var deterministicBookingHandled bool
+	var deterministicToolHandled bool
 	var deterministicBookingAction BookingNextAction
 	if passengerCountContext {
 		s.logReprocess(
@@ -962,8 +962,37 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					decision.TemplateName,
 				)
 			}
+			if decision.Action == "tool" && decision.Intent == IntentAvailabilitySearch && decision.AvailabilityInput != nil {
+				context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, *decision.AvailabilityInput)
+				if err != nil {
+					return ReprocessResult{}, err
+				}
+
+				toolContext = mergeAgentToolContexts(toolContext, context)
+				result.ToolCalls = toolContext.Calls
+				deterministicToolHandled = len(toolContext.Calls) > 0
+
+				toolFacts := map[string]interface{}{}
+				if toolContext.Availability != nil {
+					toolFacts[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*toolContext.Availability)
+				}
+				mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+				agentState["canonical_state"] = canonicalState
+				memory["canonical_state"] = canonicalState
+				memory["intent_decision"] = map[string]interface{}{
+					"intent":        string(decision.Intent),
+					"intent_source": decision.Source,
+					"action":        decision.Action,
+				}
+
+				toolContext, err = s.executePricingQuoteFromAvailabilityTool(ctx, persisted.Session, toolContext, currentTurn)
+				if err != nil {
+					return ReprocessResult{}, err
+				}
+				result.ToolCalls = toolContext.Calls
+			}
 			if canRealizeWithoutLLM(decision, canonicalState) {
-				reply, ok := realizeResponseTemplate(decision.TemplateName)
+				reply, ok := realizeIntentResponseTemplate(decision)
 				if ok {
 					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
 					agentState["canonical_state"] = canonicalState
@@ -974,14 +1003,14 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 						"selected_option_index": decision.SelectedOptionIndex,
 						"template_name":         string(decision.TemplateName),
 					}
-					run := buildTemplateDraftRun(decision.TemplateName, reply)
+					run := buildTemplateDraftRunFromDecision(decision, reply)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 				}
 			}
 		}
 	}
-	if !legacyPromptFallbackEnabled() && deterministicBookingHandled == false && !unsupportedCargoHandled && !unsupportedPackageHandled {
+	if !legacyPromptFallbackEnabled() && deterministicBookingHandled == false && !deterministicToolHandled && !unsupportedCargoHandled && !unsupportedPackageHandled {
 		s.logReprocess(
 			"chat reprocess event=legacy_prompt_fallback_disabled session_id=%s trigger=%s job_run_id=%s",
 			persisted.Session.ID,
@@ -990,7 +1019,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		)
 		return result, nil
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled {
 		var err error
 		s.logReprocess(
 			"chat reprocess event=resolve_agent_tool_context_start session_id=%s trigger=%s job_run_id=%s",

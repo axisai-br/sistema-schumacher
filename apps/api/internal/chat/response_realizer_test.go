@@ -13,6 +13,18 @@ func TestResponseRealizerTemplates(t *testing.T) {
 	}
 }
 
+func TestResponseRealizerNoDuplicateMADestinationCase(t *testing.T) {
+	directReply, ok := realizeResponseTemplate(TemplateAskMADestination)
+	if !ok || directReply == "" {
+		t.Fatalf("expected direct MADestination template reply")
+	}
+
+	intentReply, ok := realizeIntentResponseTemplate(IntentDecision{TemplateName: TemplateAskMADestination})
+	if !ok || intentReply != directReply {
+		t.Fatalf("expected intent realizer to fall back to direct template reply, got ok=%t reply=%q direct=%q", ok, intentReply, directReply)
+	}
+}
+
 func TestResponseRealizerRequiresToolFactForSelection(t *testing.T) {
 	decision := IntentDecision{Intent: IntentSelectAvailabilityOption, SelectedOptionIndex: 1, TemplateName: TemplateAskPassengerCount}
 	if canRealizeWithoutLLM(decision, CanonicalConversationState{}) {

@@ -7,6 +7,7 @@ type ResponseTemplateName string
 const (
 	TemplateAskPassengerCount ResponseTemplateName = "ASK_PASSENGER_COUNT"
 	TemplateAskMAOrigin       ResponseTemplateName = "ASK_MA_ORIGIN"
+	TemplateAskMADestination  ResponseTemplateName = "ASK_MA_DESTINATION"
 	TemplateAskSCOrigin       ResponseTemplateName = "ASK_SC_ORIGIN"
 	TemplateNoAvailability    ResponseTemplateName = "NO_AVAILABILITY"
 	TemplateUnsupportedCargo  ResponseTemplateName = "UNSUPPORTED_CARGO"
@@ -20,6 +21,8 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return askPassengerCountReply, true
 	case TemplateAskMAOrigin:
 		return "De qual cidade do Maranhao voce vai sair?", true
+	case TemplateAskMADestination:
+		return "Para qual cidade do Maranhao voce quer ir?", true
 	case TemplateAskSCOrigin:
 		return "De qual cidade de Santa Catarina voce vai sair?", true
 	case TemplateNoAvailability:
@@ -31,19 +34,40 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 	}
 }
 
-func buildTemplateDraftRun(templateName ResponseTemplateName, reply string) RunAgentResult {
+func buildTemplateDraftRunFromDecision(decision IntentDecision, reply string) RunAgentResult {
 	reply = strings.TrimSpace(reply)
+
+	requestPayload := map[string]interface{}{
+		"mode":          "TEMPLATE_FIRST_REPLY",
+		"template_name": string(decision.TemplateName),
+		"intent":        string(decision.Intent),
+		"action":        decision.Action,
+	}
+
+	responsePayload := map[string]interface{}{
+		"reply_text":    reply,
+		"template_name": string(decision.TemplateName),
+		"intent":        string(decision.Intent),
+		"action":        decision.Action,
+	}
+
+	if decision.AvailabilityInput != nil {
+		input := map[string]interface{}{
+			"origin":       strings.TrimSpace(decision.AvailabilityInput.Origin),
+			"destination":  strings.TrimSpace(decision.AvailabilityInput.Destination),
+			"package_name": strings.TrimSpace(decision.AvailabilityInput.PackageName),
+			"qtd":          decision.AvailabilityInput.Qty,
+			"limit":        decision.AvailabilityInput.Limit,
+		}
+		requestPayload["pending_availability_input"] = input
+		responsePayload["pending_availability_input"] = input
+	}
+
 	return RunAgentResult{
-		ReplyText: reply,
-		Model:     "template_realizer",
-		RequestPayload: map[string]interface{}{
-			"mode":          "TEMPLATE_FIRST_REPLY",
-			"template_name": string(templateName),
-		},
-		ResponsePayload: map[string]interface{}{
-			"reply_text":    reply,
-			"template_name": string(templateName),
-		},
+		ReplyText:       reply,
+		Model:           "template_realizer",
+		RequestPayload:  requestPayload,
+		ResponsePayload: responsePayload,
 	}
 }
 
@@ -87,4 +111,17 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 		state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 	}
 	return state
+}
+
+func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {
+	switch decision.TemplateName {
+	case TemplateAskMAOrigin:
+		return "De qual cidade do Maranhao voce vai sair?", true
+
+	case TemplateAskSCOrigin:
+		return "De qual cidade de Santa Catarina voce vai sair?", true
+
+	default:
+		return realizeResponseTemplate(decision.TemplateName)
+	}
 }

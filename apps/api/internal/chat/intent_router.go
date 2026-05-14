@@ -30,6 +30,7 @@ type IntentDecision struct {
 	AvailabilityInput   *AvailabilitySearchInput
 	TemplateName        ResponseTemplateName
 	Action              string
+	TemplateData        map[string]interface{}
 }
 
 func routeDeterministicIntent(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
@@ -93,6 +94,23 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			Action:            "template",
 		}
 	}
+	if input, ok := parseMADestinationFollowUpAfterSCOrigin(history, body); ok {
+		return IntentDecision{
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic",
+			AvailabilityInput: &input,
+			Action:            "tool",
+		}
+	}
+	if input, ok := parseSCOriginFollowUpAfterMaranhaoQuery(history, body); ok {
+		return IntentDecision{
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic",
+			AvailabilityInput: &input,
+			TemplateName:      TemplateAskMADestination,
+			Action:            "template",
+		}
+	}
 	if input, ok := parseAvailabilitySearchInput(history, body, observedAt); ok {
 		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic", AvailabilityInput: &input, Action: "tool"}
 	}
@@ -103,7 +121,7 @@ func parseSCDestinationFollowUpAfterPublicTable(history []Message, currentTurn s
 	if !lastAssistantSentPublicSCTable(history) {
 		return AvailabilitySearchInput{}, false
 	}
-	destination, ok := findSingleSupportedCityInText(currentTurn)
+	destination, ok := findSingleSupportedCityInText(currentTurn, scPackageDestinations)
 	if !ok {
 		return AvailabilitySearchInput{}, false
 	}
@@ -124,17 +142,13 @@ func lastAssistantSentPublicSCTable(history []Message) bool {
 		if body == "" {
 			continue
 		}
-		return strings.Contains(body, "valores por cidade em santa catarina")
+
+		return strings.Contains(body, "santa catarina") &&
+			strings.Contains(body, "fraiburgo") &&
+			strings.Contains(body, "ituporanga") &&
+			(strings.Contains(body, "precos") || strings.Contains(body, "valores") || strings.Contains(body, "tabela"))
 	}
 	return false
-}
-
-func findSingleSupportedCityInText(text string) (string, bool) {
-	city, _, ok := findSingleSupportedCityMention(text, scPackageDestinations)
-	if !ok {
-		return "", false
-	}
-	return city, true
 }
 
 func hasPreviousAvailabilityList(history []Message) bool {
@@ -163,4 +177,129 @@ func looksLikeHumanSupportIntent(folded string) bool {
 	return strings.Contains(folded, "atendente") ||
 		strings.Contains(folded, "humano") ||
 		strings.Contains(folded, "suporte")
+}
+
+func parseSCOriginFollowUpAfterMaranhaoQuery(history []Message, currentTurn string) (AvailabilitySearchInput, bool) {
+	if !lastAssistantAskedSCOriginForMaranhao(history) {
+		return AvailabilitySearchInput{}, false
+	}
+
+	origin, ok := findSingleSupportedCityInText(currentTurn, scPackageDestinations)
+	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+
+	return AvailabilitySearchInput{
+		Origin:      origin,
+		PackageName: packageToMaranhao,
+		Qty:         1,
+		Limit:       8,
+	}, true
+}
+
+func lastAssistantAskedSCOriginForMaranhao(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+
+		body := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
+		if body == "" {
+			continue
+		}
+
+		return strings.Contains(body, "de qual cidade de santa catarina") &&
+			strings.Contains(body, "maranhao")
+	}
+	return false
+}
+
+func parseMADestinationFollowUpAfterSCOrigin(history []Message, currentTurn string) (AvailabilitySearchInput, bool) {
+	pending, ok := findLatestPendingMaranhaoAvailabilityInput(history)
+	if !ok || strings.TrimSpace(pending.Origin) == "" {
+		return AvailabilitySearchInput{}, false
+	}
+
+	destination, ok := findSingleSupportedCityInText(currentTurn, maPackageDestinations)
+	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+
+	return AvailabilitySearchInput{
+		Origin:      strings.TrimSpace(pending.Origin),
+		Destination: destination,
+		PackageName: packageToMaranhao,
+		Qty:         1,
+		Limit:       8,
+	}, true
+}
+
+func findLatestPendingMaranhaoAvailabilityInput(history []Message) (AvailabilitySearchInput, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+
+		payloads := []map[string]interface{}{
+			asMap(message.Payload),
+			asMap(message.NormalizedPayload),
+			asMap(asMap(message.Payload)["request_payload"]),
+			asMap(asMap(message.Payload)["response_payload"]),
+			asMap(asMap(message.NormalizedPayload)["request_payload"]),
+			asMap(asMap(message.NormalizedPayload)["response_payload"]),
+		}
+
+		for _, payload := range payloads {
+			input, ok := readPendingAvailabilityInput(payload)
+			if ok && strings.TrimSpace(input.Origin) != "" && input.PackageName == packageToMaranhao {
+				if input.Qty <= 0 {
+					input.Qty = 1
+				}
+				if input.Limit <= 0 {
+					input.Limit = 8
+				}
+				return input, true
+			}
+		}
+	}
+	return AvailabilitySearchInput{}, false
+}
+
+func readPendingAvailabilityInput(payload map[string]interface{}) (AvailabilitySearchInput, bool) {
+	if len(payload) == 0 {
+		return AvailabilitySearchInput{}, false
+	}
+
+	raw := asMap(payload["pending_availability_input"])
+	if len(raw) == 0 {
+		return AvailabilitySearchInput{}, false
+	}
+
+	input := AvailabilitySearchInput{
+		Origin:      strings.TrimSpace(asString(raw["origin"])),
+		Destination: strings.TrimSpace(asString(raw["destination"])),
+		PackageName: strings.TrimSpace(asString(raw["package_name"])),
+		Qty:         firstPositiveInt(readInt(raw["qty"]), readInt(raw["qtd"])),
+		Limit:       readInt(raw["limit"]),
+	}
+	return input, true
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func findSingleSupportedCityInText(text string, candidates map[string]string) (string, bool) {
+	city, _, ok := findSingleSupportedCityMention(text, candidates)
+	if !ok {
+		return "", false
+	}
+	return city, true
 }

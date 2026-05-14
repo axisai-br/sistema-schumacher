@@ -477,6 +477,30 @@ func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[strin
 
 func mergeAgentToolContexts(base agentToolContext, extra agentToolContext) agentToolContext {
 	base.Calls = append(base.Calls, extra.Calls...)
+	if extra.Availability != nil {
+		base.Availability = extra.Availability
+	}
+	if extra.Pricing != nil {
+		base.Pricing = extra.Pricing
+	}
+	if extra.Booking != nil {
+		base.Booking = extra.Booking
+	}
+	if extra.BookingCreate != nil {
+		base.BookingCreate = extra.BookingCreate
+	}
+	if extra.BookingCancel != nil {
+		base.BookingCancel = extra.BookingCancel
+	}
+	if extra.Reschedule != nil {
+		base.Reschedule = extra.Reschedule
+	}
+	if extra.Payments != nil {
+		base.Payments = extra.Payments
+	}
+	if extra.PaymentCreate != nil {
+		base.PaymentCreate = extra.PaymentCreate
+	}
 	if extra.DocumentExtract != nil {
 		base.DocumentExtract = extra.DocumentExtract
 	}
