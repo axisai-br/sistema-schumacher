@@ -130,16 +130,17 @@ func routeBroadStateTemplateIntent(body string, folded string) (IntentDecision, 
 	}
 	switch detectBroadTravelState(folded) {
 	case "SC":
+		input := enrichAvailabilitySearchInput(AvailabilitySearchInput{
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       8,
+		})
 		return IntentDecision{
-			Intent:       IntentAvailabilitySearch,
-			Source:       "deterministic_broad_state",
-			TemplateName: TemplatePublicSCTable,
-			Action:       "template",
-			input: enrichAvailabilitySearchInput(AvailabilitySearchInput{
-				PackageName: packageToSantaCatarina,
-				Qty:         1,
-				Limit:       8,
-			}),
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic_broad_state",
+			TemplateName:      TemplatePublicSCTable,
+			Action:            "template",
+			AvailabilityInput: &input,
 		}, true
 	case "MA":
 		return IntentDecision{
