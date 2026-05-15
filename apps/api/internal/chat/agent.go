@@ -481,11 +481,16 @@ func messageTurnText(message Message) string {
 
 func buildDraftGeneratedAgentState(metadata map[string]interface{}, candidates []Message, draftID string, run RunAgentResult, toolCalls []ToolCall, autoSend draftAutoSendPolicy, observedAt time.Time) map[string]interface{} {
 	state := cloneNestedMetadataMap(metadata, "agent")
+	runMode := agentRunMode(run)
 	state["status"] = agentStatusDraftGenerated
 	state["draft_idempotency_key"] = draftID
 	state["draft_generated_at"] = observedAt.UTC().Format(time.RFC3339Nano)
 	state["draft_message_ids"] = candidateMessageIDs(candidates)
 	state["draft_model"] = strings.TrimSpace(run.Model)
+	if runMode != "" {
+		state["run_mode"] = runMode
+	}
+	copyRunMetadata(state, run)
 	state["provider_response_id"] = strings.TrimSpace(run.ProviderResponseID)
 	state["tool_calls_count"] = len(toolCalls)
 	state["auto_send_status"] = autoSend.Status
@@ -655,6 +660,7 @@ func buildDraftAutoSendBlockedAgentState(metadata map[string]interface{}, draft 
 }
 
 func buildAgentDraftPayload(session Session, candidates []Message, draftID string, systemPrompt string, userPrompt string, run RunAgentResult, tools agentToolContext, autoSend draftAutoSendPolicy, observedAt time.Time) (map[string]interface{}, map[string]interface{}) {
+	runMode := agentRunMode(run)
 	payload := map[string]interface{}{
 		"mode":                     "AUTOMATION_DRAFT",
 		"draft_idempotency_key":    draftID,
@@ -670,6 +676,10 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		"session_channel":          session.Channel,
 		"contact_key":              session.ContactKey,
 	}
+	if runMode != "" {
+		payload["run_mode"] = runMode
+	}
+	copyRunMetadata(payload, run)
 	if len(tools.Calls) > 0 {
 		payload["tool_calls"] = serializeToolCalls(tools.Calls)
 	}
@@ -715,6 +725,10 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		"auto_send_status":         autoSend.Status,
 		"tool_call_count":          len(tools.Calls),
 	}
+	if runMode != "" {
+		normalized["run_mode"] = runMode
+	}
+	copyRunMetadata(normalized, run)
 	if len(tools.Calls) > 0 {
 		normalized["tool_names"] = toolCallNames(tools.Calls)
 	}
@@ -722,6 +736,46 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		normalized["auto_send_reasons"] = autoSend.Reasons
 	}
 	return payload, normalized
+}
+
+func agentRunMode(run RunAgentResult) string {
+	return firstNonEmpty(
+		strings.TrimSpace(asString(run.RequestPayload["mode"])),
+		strings.TrimSpace(asString(run.ResponsePayload["mode"])),
+	)
+}
+
+func copyRunMetadata(target map[string]interface{}, run RunAgentResult) {
+	for _, key := range []string{
+		"intent",
+		"template_name",
+		"action",
+		"chat_agent_mode",
+		"decision_source",
+		"decision_valid",
+		"decision_confidence",
+		"validation_errors",
+		"fallback_reason",
+		"canonical_phase_before",
+		"canonical_phase_after",
+		"tool_call_count",
+	} {
+		value := firstNonEmpty(
+			strings.TrimSpace(asString(run.RequestPayload[key])),
+			strings.TrimSpace(asString(run.ResponsePayload[key])),
+		)
+		if value != "" {
+			target[key] = value
+			continue
+		}
+		if value, ok := run.RequestPayload[key]; ok {
+			target[key] = value
+			continue
+		}
+		if value, ok := run.ResponsePayload[key]; ok {
+			target[key] = value
+		}
+	}
 }
 
 func cloneNestedMetadataMap(metadata map[string]interface{}, key string) map[string]interface{} {

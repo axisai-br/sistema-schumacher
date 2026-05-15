@@ -3687,14 +3687,23 @@ func TestReprocessSkipsAvailabilityToolWhenTurnIsBroad(t *testing.T) {
 	if searcher.calls != 0 {
 		t.Fatalf("expected no availability search, got %d", searcher.calls)
 	}
-	if !strings.Contains(runner.lastInput.SystemPrompt, "Se a consulta ampla for sobre Santa Catarina ou SC, responda direto com a tabela publica") {
-		t.Fatalf("expected system prompt to include broad Santa Catarina policy")
+	if runner.calls != 0 {
+		t.Fatalf("expected broad SC template to avoid LLM, got %d calls", runner.calls)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Caso atual: consulta ampla sobre Santa Catarina") {
-		t.Fatalf("expected user prompt to include broad SC guidance, got %q", runner.lastInput.UserPrompt)
+	if out.Draft == nil {
+		t.Fatalf("expected deterministic broad SC draft")
 	}
-	if strings.Contains(runner.lastInput.UserPrompt, "Qual cidade voce quer consultar?") {
-		t.Fatalf("prompt should guide against asking unrelated city question")
+	if !strings.Contains(out.Draft.Body, "Fraiburgo: R$ 950") || !strings.Contains(out.Draft.Body, "Ituporanga: R$ 1100") {
+		t.Fatalf("expected public SC table, got %q", out.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["model"])); got != "template_realizer" {
+		t.Fatalf("expected template model, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["run_mode"])); got != "TEMPLATE_FIRST_REPLY" {
+		t.Fatalf("expected template run mode, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePublicSCTable) {
+		t.Fatalf("expected template %s, got %q", TemplatePublicSCTable, got)
 	}
 }
 

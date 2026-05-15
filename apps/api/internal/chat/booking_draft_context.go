@@ -178,17 +178,43 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 	}
 }
 
-func buildBookingContinuationDraftRun(reply string) RunAgentResult {
+func buildBookingContinuationDraftRun(reply string, action BookingNextAction, context BookingDraftContext) RunAgentResult {
 	reply = strings.TrimSpace(reply)
+	templateName := bookingContinuationTemplateName(action, context)
 	return RunAgentResult{
 		ReplyText: reply,
-		Model:     "booking_continuation",
+		Model:     "template_realizer",
 		RequestPayload: map[string]interface{}{
-			"mode": "BOOKING_CONTINUATION_DETERMINISTIC_REPLY",
+			"mode":                  "TEMPLATE_FIRST_REPLY",
+			"intent":                string(IntentPassengerCountReply),
+			"action":                string(action),
+			"template_name":         string(templateName),
+			"passenger_count":       context.PassengerCount,
+			"child_under_5_count":   context.ChildUnder5Count,
+			"passenger_count_known": context.PassengerCountKnown,
 		},
 		ResponsePayload: map[string]interface{}{
-			"reply_text": reply,
+			"reply_text":    reply,
+			"template_name": string(templateName),
+			"intent":        string(IntentPassengerCountReply),
+			"action":        string(action),
 		},
+	}
+}
+
+func bookingContinuationTemplateName(action BookingNextAction, context BookingDraftContext) ResponseTemplateName {
+	switch action {
+	case BookingNextAskPassengerClarification:
+		if context.PassengerCountKnown && context.PassengerCount > 0 && !context.ChildUnder5CountKnown {
+			return TemplateAskChildUnder5
+		}
+		return TemplateAskPassengerCount
+	case BookingNextAskPassengerDocuments:
+		return TemplateAskDocuments
+	case BookingNextAskBookingPaymentPreference:
+		return TemplateAskPaymentChoice
+	default:
+		return ""
 	}
 }
 

@@ -57,6 +57,7 @@ type Config struct {
 	ChatAutoSendRetryCooldownSeconds   int
 	ChatReviewSLAMinutes               int
 	ChatDefaultHandoffMode             string
+	ChatAgentMode                      string
 	GoogleSheetsSpreadsheetID          string
 	GoogleServiceAccountJSON           string
 }
@@ -110,6 +111,7 @@ func Load() (Config, error) {
 		ChatAutoSendRetryCooldownSeconds:   getEnvAsInt("CHAT_AUTO_SEND_RETRY_COOLDOWN_SECONDS", 30),
 		ChatReviewSLAMinutes:               getEnvAsInt("CHAT_REVIEW_SLA_MINUTES", 15),
 		ChatDefaultHandoffMode:             getEnv("CHAT_DEFAULT_HANDOFF_MODE", "BOT"),
+		ChatAgentMode:                      getEnv("CHAT_AGENT_MODE", "legacy"),
 		GoogleSheetsSpreadsheetID:          strings.TrimSpace(os.Getenv("GOOGLE_SHEETS_SPREADSHEET_ID")),
 		GoogleServiceAccountJSON:           strings.TrimSpace(os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
 	}

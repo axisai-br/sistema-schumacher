@@ -61,6 +61,9 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if looksLikeRescheduleIntent(folded) {
 		return IntentDecision{Intent: IntentReschedule, Source: "deterministic"}
 	}
+	if decision, ok := routeBroadStateTemplateIntent(body, folded); ok {
+		return decision
+	}
 	if looksLikeCreateBookingIntent(body) || looksLikeBookingCreateConfirmation(body) {
 		return IntentDecision{Intent: IntentBookingCreateConfirmation, Source: "deterministic", Action: "legacy_tool"}
 	}
@@ -97,7 +100,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if input, ok := parseMADestinationFollowUpAfterSCOrigin(history, body); ok {
 		return IntentDecision{
 			Intent:            IntentAvailabilitySearch,
-			Source:            "deterministic",
+			Source:            "deterministic_ma_destination_followup",
 			AvailabilityInput: &input,
 			Action:            "tool",
 		}
@@ -115,6 +118,44 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic", AvailabilityInput: &input, Action: "tool"}
 	}
 	return IntentDecision{Intent: IntentUnknown, Source: "deterministic"}
+}
+
+func routeBroadStateTemplateIntent(body string, folded string) (IntentDecision, bool) {
+	if looksLikeBroadStateScheduleLookup(body) {
+		return IntentDecision{}, false
+	}
+	context := inferRouteContextFromText(body)
+	if strings.TrimSpace(context.Origin) != "" || strings.TrimSpace(context.Destination) != "" {
+		return IntentDecision{}, false
+	}
+	switch detectBroadTravelState(folded) {
+	case "SC":
+		return IntentDecision{
+			Intent:       IntentAvailabilitySearch,
+			Source:       "deterministic_broad_state",
+			TemplateName: TemplatePublicSCTable,
+			Action:       "template",
+			AvailabilityInput: &AvailabilitySearchInput{
+				PackageName: packageToSantaCatarina,
+				Qty:         1,
+				Limit:       8,
+			},
+		}, true
+	case "MA":
+		return IntentDecision{
+			Intent:       IntentAvailabilitySearch,
+			Source:       "deterministic_broad_state",
+			TemplateName: TemplateAskSCOriginForMA,
+			Action:       "template",
+			AvailabilityInput: &AvailabilitySearchInput{
+				PackageName: packageToMaranhao,
+				Qty:         1,
+				Limit:       8,
+			},
+		}, true
+	default:
+		return IntentDecision{}, false
+	}
 }
 
 func parseSCDestinationFollowUpAfterPublicTable(history []Message, currentTurn string) (AvailabilitySearchInput, bool) {

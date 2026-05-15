@@ -94,14 +94,18 @@ func inferUnsupportedCargoItem(folded string) (string, bool) {
 func buildUnsupportedCargoDraftRun(query UnsupportedCargoQuery) RunAgentResult {
 	return RunAgentResult{
 		ReplyText: unsupportedCargoReply,
-		Model:     "deterministic_unsupported_cargo",
+		Model:     "template_realizer",
 		RequestPayload: map[string]interface{}{
-			"mode":   "UNSUPPORTED_CARGO",
-			"intent": query.Intent,
-			"item":   query.Item,
+			"mode":          "TEMPLATE_FIRST_REPLY",
+			"intent":        string(IntentUnsupportedCargo),
+			"template_name": string(TemplateUnsupportedCargo),
+			"cargo_intent":  query.Intent,
+			"item":          query.Item,
 		},
 		ResponsePayload: map[string]interface{}{
-			"reply_text": unsupportedCargoReply,
+			"reply_text":    unsupportedCargoReply,
+			"intent":        string(IntentUnsupportedCargo),
+			"template_name": string(TemplateUnsupportedCargo),
 		},
 	}
 }

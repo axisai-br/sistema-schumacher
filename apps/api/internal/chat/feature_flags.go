@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+const (
+	chatAgentModeLegacy     = "legacy"
+	chatAgentModeHybridJSON = "hybrid_json"
+	chatAgentModeJSONOnly   = "json_only"
+)
+
 func chatFeatureEnabled(name string, fallback bool) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -38,4 +44,28 @@ func llmIntentFallbackEnabled() bool {
 
 func legacyPromptFallbackEnabled() bool {
 	return chatFeatureEnabled("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", true)
+}
+
+func normalizeChatAgentMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case chatAgentModeHybridJSON:
+		return chatAgentModeHybridJSON
+	case chatAgentModeJSONOnly:
+		return chatAgentModeJSONOnly
+	default:
+		return chatAgentModeLegacy
+	}
+}
+
+func jsonDecisionLayerEnabledForMode(mode string) bool {
+	switch normalizeChatAgentMode(mode) {
+	case chatAgentModeHybridJSON, chatAgentModeJSONOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+func freeFormLLMFallbackEnabledForMode(mode string) bool {
+	return normalizeChatAgentMode(mode) != chatAgentModeJSONOnly && legacyPromptFallbackEnabled()
 }

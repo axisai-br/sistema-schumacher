@@ -59,6 +59,117 @@ func TestSelectAvailabilityOptionDoesNotCallLLM(t *testing.T) {
 	}
 }
 
+func TestBroadMaranhaoQueryAsksSCOriginWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-broad-ma-1",
+			IdempotencyKey:    "idem-broad-ma-1",
+			Body:              "Passagem para o Maranhão",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest broad MA query: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess broad MA query: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected broad MA template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls for broad MA query, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil || !strings.Contains(out.Draft.Body, "cidade de Santa Catarina") {
+		t.Fatalf("expected SC origin question, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskSCOriginForMA) {
+		t.Fatalf("expected template %s, got %q", TemplateAskSCOriginForMA, got)
+	}
+}
+
+func TestSCOriginAfterMaranhaoQueryAsksMADestinationWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedMaranhaoOriginQuestionFromBroadQuery(t, svc)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-ma-origin-chapeco-1",
+			IdempotencyKey:    "idem-ma-origin-chapeco-1",
+			Body:              "Saída de Chapecó",
+		},
+	}); err != nil {
+		t.Fatalf("ingest SC origin: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess SC origin: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected SC origin template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no availability search before MA destination, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Para qual cidade do Maranhao voce quer ir?" {
+		t.Fatalf("expected MA destination question, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskMADestination) {
+		t.Fatalf("expected template %s, got %q", TemplateAskMADestination, got)
+	}
+}
+
+func TestBroadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-broad-sc-1",
+			IdempotencyKey:    "idem-broad-sc-1",
+			Body:              "Tem passagem para Santa Catarina?",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest broad SC query: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess broad SC query: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected broad SC template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls for public table, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil || !strings.Contains(out.Draft.Body, "Fraiburgo: R$ 950") || !strings.Contains(out.Draft.Body, "Seara: R$ 1100") {
+		t.Fatalf("expected public SC table, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePublicSCTable) {
+		t.Fatalf("expected template %s, got %q", TemplatePublicSCTable, got)
+	}
+}
+
 func TestMADestinationAfterSCOriginExecutesAvailabilityTool(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
@@ -110,17 +221,76 @@ func TestMADestinationAfterSCOriginExecutesAvailabilityTool(t *testing.T) {
 	if searcher.calls != 1 {
 		t.Fatalf("expected one availability search, got %d", searcher.calls)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected one LLM call after availability search, got %d", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected availability template to avoid LLM, got %d", runner.calls)
 	}
 	if out.Draft == nil {
 		t.Fatal("expected draft after availability search")
 	}
+	assertAvailabilityTemplateDraft(t, *out.Draft)
 	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ToolName != toolNameAvailabilitySearch {
 		t.Fatalf("expected one availability tool call, got %+v", out.ToolCalls)
 	}
 	if searcher.lastInput.Origin != "Chapeco/SC" || searcher.lastInput.Destination != "Moncao/MA" {
 		t.Fatalf("unexpected availability search input: %+v", searcher.lastInput)
+	}
+}
+
+func TestSantaInesAfterChapecoCallsAvailabilitySearchOnceWithoutOpenAI(t *testing.T) {
+	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
+
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result: AvailabilitySearchResult{
+			Results: []AvailabilitySearchItem{{
+				TripID:                 "trip-1",
+				BoardStopID:            "board-1",
+				AlightStopID:           "alight-1",
+				OriginDisplayName:      "Chapeco/SC",
+				DestinationDisplayName: "Santa Ines/MA",
+				OriginDepartTime:       "18:30",
+				TripDate:               "2026-05-10",
+				SeatsAvailable:         6,
+				Price:                  950,
+				Currency:               "BRL",
+				Status:                 "ACTIVE",
+				TripStatus:             "SCHEDULED",
+				PackageName:            packageToMaranhao,
+			}},
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := prepareMaranhaoDestinationFollowUp(t, svc, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-ma-destination-santa-ines-1",
+			IdempotencyKey:    "idem-ma-destination-santa-ines-1",
+			Body:              "Santa Inês",
+		},
+	}); err != nil {
+		t.Fatalf("ingest MA destination: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess MA destination: %v", err)
+	}
+	if searcher.calls != 1 {
+		t.Fatalf("expected availability search exactly once, got %d", searcher.calls)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected availability template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.lastInput.Origin != "Chapeco/SC" || searcher.lastInput.Destination != "Santa Ines/MA" {
+		t.Fatalf("unexpected availability input: %+v", searcher.lastInput)
+	}
+	if out.Draft == nil || !strings.Contains(out.Draft.Body, "Santa Ines/MA") {
+		t.Fatalf("expected availability result template, got %+v", out.Draft)
 	}
 }
 
@@ -175,12 +345,13 @@ func TestMADestinationAfterSCOriginSkipsResolveAgentToolContext(t *testing.T) {
 	if searcher.calls != 1 {
 		t.Fatalf("expected one availability search, got %d", searcher.calls)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected one LLM call after tool execution, got %d", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected availability template to avoid LLM, got %d", runner.calls)
 	}
 	if out.Draft == nil {
 		t.Fatal("expected draft after availability search")
 	}
+	assertAvailabilityTemplateDraft(t, *out.Draft)
 	if len(out.ToolCalls) != 1 {
 		t.Fatalf("expected one tool call after deterministic tool handling, got %+v", out.ToolCalls)
 	}
@@ -239,12 +410,13 @@ func TestMADestinationAfterSCOriginDoesNotCallLLMBeforeTool(t *testing.T) {
 	if searcher.calls != 1 {
 		t.Fatalf("expected one availability search, got %d", searcher.calls)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected one LLM call after tool execution, got %d", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected no LLM call before or after deterministic tool execution, got %d", runner.calls)
 	}
 	if out.Draft == nil {
 		t.Fatal("expected draft after availability search")
 	}
+	assertAvailabilityTemplateDraft(t, *out.Draft)
 	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ToolName != toolNameAvailabilitySearch {
 		t.Fatalf("expected availability tool call, got %+v", out.ToolCalls)
 	}
@@ -301,12 +473,13 @@ func TestMaranhaoFlowChapecoThenMoncaoCallsAvailabilitySearchOnce(t *testing.T) 
 	if searcher.calls != 1 {
 		t.Fatalf("expected availability search once across Chapeco then Moncao flow, got %d", searcher.calls)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected one LLM call after the availability search, got %d", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic availability template to avoid LLM, got %d", runner.calls)
 	}
 	if out.Draft == nil {
 		t.Fatal("expected draft after availability search")
 	}
+	assertAvailabilityTemplateDraft(t, *out.Draft)
 }
 
 func TestBlockAutoSendOperationalClaimWithoutTool(t *testing.T) {
@@ -373,6 +546,78 @@ func TestUnsupportedCargoDoesNotCallAvailability(t *testing.T) {
 	if out.Draft == nil || !strings.Contains(out.Draft.Body, "+55 49 9886-2222") {
 		t.Fatalf("expected support draft, got %#v", out.Draft)
 	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateUnsupportedCargo) {
+		t.Fatalf("expected unsupported cargo template, got %q", got)
+	}
+}
+
+func TestSoEuFillsPassengerCountWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-so-eu-accent-1",
+			IdempotencyKey:    "idem-so-eu-accent-1",
+			Body:              "só eu",
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess passenger reply: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected passenger template to avoid LLM, got %d calls", runner.calls)
+	}
+	if got := asInt(out.Memory["passenger_count"]); got != 1 {
+		t.Fatalf("expected passenger_count=1, got %d", got)
+	}
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != askChildUnder5Reply {
+		t.Fatalf("expected child question, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskChildUnder5) {
+		t.Fatalf("expected template %s, got %q", TemplateAskChildUnder5, got)
+	}
+}
+
+func TestSemCriancaFillsChildUnder5CountWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Tem crianca de 5 anos ou menos viajando?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-sem-crianca-1",
+			IdempotencyKey:    "idem-sem-crianca-1",
+			Body:              "não, sem criança",
+		},
+	}); err != nil {
+		t.Fatalf("ingest child reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess child reply: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected child reply template to avoid LLM, got %d calls", runner.calls)
+	}
+	if got := asInt(out.Memory["child_under_5_count"]); got != 0 {
+		t.Fatalf("expected child_under_5_count=0, got %d", got)
+	}
+	if known := out.Memory["child_under_5_count_known"]; known != true {
+		t.Fatalf("expected child_under_5_count_known=true, got %#v", known)
+	}
 }
 
 func TestPaymentCannotStartWithoutBooking(t *testing.T) {
@@ -392,6 +637,31 @@ func TestBookingCannotCreateWithoutPassengers(t *testing.T) {
 	input, ok := parseBookingCreateInput(Session{}, nil, "quero reservar opcao 1", &availability)
 	if ok {
 		t.Fatalf("expected booking create to be blocked without passengers, got %+v", input)
+	}
+}
+
+func assertAvailabilityTemplateDraft(t *testing.T, draft Message) {
+	t.Helper()
+	if !strings.Contains(draft.Body, "Chapeco/SC para Moncao/MA") {
+		t.Fatalf("expected availability route in template draft, got %q", draft.Body)
+	}
+	if !strings.Contains(draft.Body, "2026-05-10") || !strings.Contains(draft.Body, "18:30") {
+		t.Fatalf("expected availability date/time in template draft, got %q", draft.Body)
+	}
+	if got := strings.TrimSpace(asString(draft.NormalizedPayload["model"])); got != "template_realizer" {
+		t.Fatalf("expected template model, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(draft.NormalizedPayload["run_mode"])); got != "TEMPLATE_FIRST_REPLY" {
+		t.Fatalf("expected template run mode, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(draft.NormalizedPayload["intent"])); got != string(IntentAvailabilitySearch) {
+		t.Fatalf("expected availability intent, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(draft.NormalizedPayload["template_name"])); got != string(TemplateAvailabilityList) {
+		t.Fatalf("expected availability template, got %q", got)
+	}
+	if got := readInt(draft.NormalizedPayload["tool_call_count"]); got != 1 {
+		t.Fatalf("expected tool_call_count=1, got %d", got)
 	}
 }
 
@@ -561,4 +831,28 @@ func prepareMaranhaoDestinationFollowUp(t *testing.T, svc *Service, store *fakeS
 		t.Fatalf("expected Maranhão destination question, got %+v", out.Draft)
 	}
 	return session
+}
+
+func seedMaranhaoOriginQuestionFromBroadQuery(t *testing.T, svc *Service) Session {
+	t.Helper()
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-broad-ma-seed-1",
+			IdempotencyKey:    "idem-broad-ma-seed-1",
+			Body:              "Passagem para o Maranhao",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest broad MA seed: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess broad MA seed: %v", err)
+	}
+	if out.Draft == nil || !strings.Contains(out.Draft.Body, "cidade de Santa Catarina") {
+		t.Fatalf("expected SC origin question seed, got %+v", out.Draft)
+	}
+	return ingested.Session
 }

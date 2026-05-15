@@ -54,6 +54,7 @@ type Service struct {
 	logger        chatLogger
 	sender        ReplySender
 	runner        AgentRunner
+	jsonRunner    AgentJSONDecisionRunner
 	availability  AvailabilitySearcher
 	pricing       PricingQuoteSearcher
 	bookings      BookingLookupSearcher
@@ -77,6 +78,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 	var logger chatLogger
 	var sender ReplySender
 	var runner AgentRunner
+	var jsonRunner AgentJSONDecisionRunner
 	var availability AvailabilitySearcher
 	var pricing PricingQuoteSearcher
 	var bookings BookingLookupSearcher
@@ -99,6 +101,10 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 		case AgentRunner:
 			if runner == nil {
 				runner = typed
+			}
+		case AgentJSONDecisionRunner:
+			if jsonRunner == nil {
+				jsonRunner = typed
 			}
 		case AvailabilitySearcher:
 			if availability == nil {
@@ -144,6 +150,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 		logger:        logger,
 		sender:        sender,
 		runner:        runner,
+		jsonRunner:    jsonRunner,
 		availability:  availability,
 		pricing:       pricing,
 		bookings:      bookings,
@@ -844,8 +851,15 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 
 	systemPrompt := buildAgentSystemPrompt()
+	agentMode := s.chatAgentMode()
+	phaseBefore := canonicalState.Phase
+	rolloutMetadata := chatAgentRolloutMetadata{
+		Mode:                 agentMode,
+		CanonicalPhaseBefore: phaseBefore,
+		CanonicalPhaseAfter:  canonicalState.Phase,
+	}
 	unsupportedCargo, unsupportedCargoHandled := inferUnsupportedCargoQuery(currentTurn)
-	if !unsupportedCargoHandled && !s.canRunAgent() {
+	if !unsupportedCargoHandled && !s.canRunAgent() && !jsonDecisionLayerEnabledForMode(agentMode) {
 		s.logReprocess(
 			"chat reprocess event=runner_disabled session_id=%s trigger=%s job_run_id=%s reason=agent_runner_unavailable",
 			persisted.Session.ID,
@@ -916,7 +930,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		if deterministicBookingAction != BookingNextCallCreate {
 			reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
 			if strings.TrimSpace(reply) != "" {
-				run := buildBookingContinuationDraftRun(reply)
+				run := buildBookingContinuationDraftRun(reply, deterministicBookingAction, bookingDraft)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
 			}
@@ -990,6 +1004,22 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					return ReprocessResult{}, err
 				}
 				result.ToolCalls = toolContext.Calls
+				rolloutMetadata.DecisionSource = "deterministic"
+				rolloutMetadata.DecisionValid = boolPtr(true)
+				rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+				toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+				if canRealizeAvailabilityToolDecisionWithoutLLM(decision, toolContext) {
+					run := buildAvailabilityTemplateDraftRun(decision, *toolContext.Availability)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					memory["intent_decision"] = map[string]interface{}{
+						"intent":        string(decision.Intent),
+						"intent_source": decision.Source,
+						"action":        "tool_template",
+						"template_name": asString(run.RequestPayload["template_name"]),
+					}
+				}
 			}
 			if canRealizeWithoutLLM(decision, canonicalState) {
 				reply, ok := realizeIntentResponseTemplate(decision)
@@ -1006,11 +1036,182 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					run := buildTemplateDraftRunFromDecision(decision, reply)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "deterministic"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
 				}
 			}
 		}
 	}
-	if !legacyPromptFallbackEnabled() && deterministicBookingHandled == false && !deterministicToolHandled && !unsupportedCargoHandled && !unsupportedPackageHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && jsonDecisionLayerEnabledForMode(agentMode) && s.canRunJSONDecisionAgent() {
+		compactInput := buildJSONDecisionCompactInput(currentTurn, canonicalState, history)
+		decision, jsonRun, err := s.jsonRunner.RunIntentDecision(ctx, RunJSONDecisionInput{
+			SystemPrompt:   buildJSONDecisionSystemPrompt(),
+			CompactInput:   compactInput,
+			SchemaName:     "intent_decision",
+			Schema:         intentDecisionJSONSchema(),
+			IdempotencyKey: draftID + ":intent_decision",
+		})
+		if err != nil {
+			rolloutMetadata.DecisionSource = "json_agent"
+			rolloutMetadata.DecisionValid = boolPtr(false)
+			rolloutMetadata.ValidationErrors = []string{"json_decision_runner_error"}
+			rolloutMetadata.FallbackReason = "json_decision_runner_error"
+			s.logReprocess(
+				"chat reprocess event=json_decision_failed session_id=%s trigger=%s job_run_id=%s error=%v",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				err,
+			)
+			if agentMode == chatAgentModeJSONOnly {
+				validation := AgentDecisionValidationResult{
+					Decision: IntentDecisionJSON{Action: jsonDecisionActionClarify, Intent: string(IntentUnknown)},
+					Valid:    false,
+					Reasons:  []string{"json_decision_runner_error"},
+				}
+				run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
+		} else {
+			validated := validateAgentIntentDecision(decision, canonicalState)
+			rolloutMetadata.DecisionSource = "json_agent"
+			rolloutMetadata.DecisionValid = boolPtr(validated.Valid)
+			rolloutMetadata.DecisionConfidence = float64Ptr(validated.Decision.Confidence)
+			rolloutMetadata.ValidationErrors = append([]string(nil), validated.Reasons...)
+			if !validated.Valid {
+				rolloutMetadata.FallbackReason = strings.Join(validated.Reasons, ",")
+			}
+			memory["json_intent_decision"] = map[string]interface{}{
+				"domain":               validated.Decision.Domain,
+				"intent":               validated.Decision.Intent,
+				"action":               validated.Decision.Action,
+				"confidence":           validated.Decision.Confidence,
+				"valid":                validated.Valid,
+				"reasons":              validated.Reasons,
+				"provider_response_id": jsonRun.ProviderResponseID,
+			}
+			agentState["json_intent_decision"] = memory["json_intent_decision"]
+			s.logReprocess(
+				"chat reprocess event=json_decision_validated session_id=%s trigger=%s job_run_id=%s intent=%s action=%s valid=%t",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				validated.Decision.Intent,
+				validated.Decision.Action,
+				validated.Valid,
+			)
+			if validated.Valid {
+				switch {
+				case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentAvailabilitySearch) && validated.Decision.AvailabilityInput != nil:
+					input := availabilityInputFromSchedulingPlan(*validated.Decision.AvailabilityInput)
+					context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, input)
+					if err != nil {
+						return ReprocessResult{}, err
+					}
+					toolContext = mergeAgentToolContexts(toolContext, context)
+					toolFacts := map[string]interface{}{}
+					if toolContext.Availability != nil {
+						toolFacts[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*toolContext.Availability)
+					}
+					mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+					agentState["canonical_state"] = canonicalState
+					memory["canonical_state"] = canonicalState
+					toolContext, err = s.executePricingQuoteFromAvailabilityTool(ctx, persisted.Session, toolContext, currentTurn)
+					if err != nil {
+						return ReprocessResult{}, err
+					}
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+					rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+					toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+					result.ToolCalls = toolContext.Calls
+					intentDecision := IntentDecision{
+						Intent:            IntentAvailabilitySearch,
+						Source:            "json_agent",
+						Action:            "tool",
+						AvailabilityInput: &input,
+					}
+					if toolContext.Availability != nil {
+						run := buildAvailabilityTemplateDraftRun(intentDecision, *toolContext.Availability)
+						deterministicBookingRun = &run
+						deterministicBookingHandled = true
+					}
+					deterministicToolHandled = len(toolContext.Calls) > 0
+				case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentPaymentCreate) && validated.Decision.PaymentInput != nil && s.canCreatePayments():
+					input := paymentCreateInputFromPlan(*validated.Decision.PaymentInput)
+					context, err := s.executePaymentCreateTool(ctx, persisted.Session, toolContext, input)
+					if err != nil {
+						return ReprocessResult{}, err
+					}
+					toolContext = mergeAgentToolContexts(toolContext, context)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+					rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+					toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+					result.ToolCalls = toolContext.Calls
+					deterministicToolHandled = len(toolContext.Calls) > 0
+					if agentMode == chatAgentModeJSONOnly {
+						validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"payment_template_not_available"}}
+						rolloutMetadata.FallbackReason = "payment_template_not_available"
+						run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+						deterministicBookingRun = &run
+						deterministicBookingHandled = true
+					}
+				case agentMode == chatAgentModeJSONOnly:
+					validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"json_decision_action_not_executable"}}
+					rolloutMetadata.FallbackReason = "json_decision_action_not_executable"
+					run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				}
+			} else if agentMode == chatAgentModeJSONOnly {
+				run := buildJSONDecisionClarificationDraftRun(validated, rolloutMetadata)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
+		}
+	}
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && agentMode == chatAgentModeJSONOnly && !s.canRunJSONDecisionAgent() {
+		rolloutMetadata.DecisionSource = "json_agent"
+		rolloutMetadata.DecisionValid = boolPtr(false)
+		rolloutMetadata.ValidationErrors = []string{"json_decision_runner_unavailable"}
+		rolloutMetadata.FallbackReason = "json_decision_runner_unavailable"
+		validation := AgentDecisionValidationResult{
+			Decision: IntentDecisionJSON{Action: jsonDecisionActionClarify, Intent: string(IntentUnknown)},
+			Valid:    false,
+			Reasons:  []string{"json_decision_runner_unavailable"},
+		}
+		run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+		deterministicBookingRun = &run
+		deterministicBookingHandled = true
+	}
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !s.canRunAgent() {
+		if jsonDecisionLayerEnabledForMode(agentMode) {
+			if rolloutMetadata.DecisionSource == "" {
+				rolloutMetadata.DecisionSource = "json_agent"
+				rolloutMetadata.DecisionValid = boolPtr(false)
+				rolloutMetadata.ValidationErrors = []string{"free_form_llm_unavailable"}
+				rolloutMetadata.FallbackReason = "free_form_llm_unavailable"
+			}
+			validation := AgentDecisionValidationResult{
+				Decision: IntentDecisionJSON{Action: jsonDecisionActionClarify, Intent: string(IntentUnknown)},
+				Valid:    false,
+				Reasons:  append([]string(nil), rolloutMetadata.ValidationErrors...),
+			}
+			run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		} else {
+			s.logReprocess(
+				"chat reprocess event=runner_disabled_after_json_decision session_id=%s trigger=%s job_run_id=%s",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+			)
+			return result, nil
+		}
+	}
+	if !freeFormLLMFallbackEnabledForMode(agentMode) && deterministicBookingHandled == false && !deterministicToolHandled && !unsupportedCargoHandled && !unsupportedPackageHandled {
 		s.logReprocess(
 			"chat reprocess event=legacy_prompt_fallback_disabled session_id=%s trigger=%s job_run_id=%s",
 			persisted.Session.ID,
@@ -1104,7 +1305,23 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			jobRunID,
 			strings.TrimSpace(run.ReplyText) != "",
 		)
+		if rolloutMetadata.DecisionSource == "" || rolloutMetadata.FallbackReason != "" {
+			rolloutMetadata.DecisionSource = "legacy_llm"
+		}
 	}
+
+	if unsupportedCargoHandled || unsupportedPackageHandled {
+		rolloutMetadata.DecisionSource = "template_realizer"
+		rolloutMetadata.DecisionValid = boolPtr(true)
+	}
+	if run.Model == "template_realizer" && rolloutMetadata.DecisionSource == "" {
+		rolloutMetadata.DecisionSource = "template_realizer"
+	}
+	rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+	rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+	toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+	result.ToolCalls = toolContext.Calls
+	applyRolloutMetadataToRun(&run, rolloutMetadata)
 
 	runAt := time.Now().UTC()
 	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run.ReplyText)
@@ -1947,6 +2164,10 @@ func (s *Service) canDeliverReply(outbound ReplyOutbound) bool {
 
 func (s *Service) canRunAgent() bool {
 	return s.runner != nil && s.runner.Enabled()
+}
+
+func (s *Service) canRunJSONDecisionAgent() bool {
+	return s.jsonRunner != nil && s.jsonRunner.Enabled()
 }
 
 func (s *Service) deliverReply(ctx context.Context, result ReplyResult) (ReplyResult, error) {
