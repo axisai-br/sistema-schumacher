@@ -3,14 +3,17 @@ package availability
 import "time"
 
 type SearchFilter struct {
-	Origin      string
-	Destination string
-	TripDate    *time.Time
-	PackageName string
-	Qty         int
-	Limit       int
-	OnlyActive  bool
-	IncludePast bool
+	Origin            string
+	Destination       string
+	OriginStopID      string `json:"origin_stop_id,omitempty"`
+	DestinationStopID string `json:"destination_stop_id,omitempty"`
+	RouteID           string `json:"route_id,omitempty"`
+	TripDate          *time.Time
+	PackageName       string
+	Qty               int
+	Limit             int
+	OnlyActive        bool
+	IncludePast       bool
 }
 
 type SearchResult struct {

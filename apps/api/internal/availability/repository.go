@@ -105,11 +105,19 @@ func buildAvailabilitySearchQuery(filter SearchFilter) (string, []interface{}) {
 	if filter.OnlyActive {
 		clauses = append(clauses, "upper(coalesce(rsp.status, 'ACTIVE')) = 'ACTIVE'")
 	}
-	if filter.Origin != "" {
+
+	if filter.OriginStopID != "" {
+		args = append(args, filter.OriginStopID)
+		clauses = append(clauses, fmt.Sprintf("board.stop_id = $%d", len(args)))
+	} else if filter.Origin != "" {
 		args = append(args, normalizeSearchText(filter.Origin))
 		clauses = append(clauses, fmt.Sprintf("%s = $%d", normalizedSearchColumnSQL("origin_stop.display_name"), len(args)))
 	}
-	if filter.Destination != "" {
+
+	if filter.DestinationStopID != "" {
+		args = append(args, filter.DestinationStopID)
+		clauses = append(clauses, fmt.Sprintf("alight.stop_id = $%d", len(args)))
+	} else if filter.Destination != "" {
 		args = append(args, normalizeSearchText(filter.Destination))
 		clauses = append(clauses, fmt.Sprintf("%s = $%d", normalizedSearchColumnSQL("destination_stop.display_name"), len(args)))
 	}
@@ -117,7 +125,10 @@ func buildAvailabilitySearchQuery(filter SearchFilter) (string, []interface{}) {
 		args = append(args, filter.TripDate.Format("2006-01-02"))
 		clauses = append(clauses, fmt.Sprintf("t.trip_date = $%d::date", len(args)))
 	}
-	if filter.PackageName != "" {
+	if filter.RouteID != "" {
+		args = append(args, filter.RouteID)
+		clauses = append(clauses, fmt.Sprintf("t.route_id = $%d", len(args)))
+	} else if filter.PackageName != "" {
 		args = append(args, normalizeSearchText(filter.PackageName))
 		clauses = append(clauses, fmt.Sprintf("%s = $%d", normalizedSearchColumnSQL("t.package_name"), len(args)))
 	}

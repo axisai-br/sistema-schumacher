@@ -135,11 +135,11 @@ func routeBroadStateTemplateIntent(body string, folded string) (IntentDecision, 
 			Source:       "deterministic_broad_state",
 			TemplateName: TemplatePublicSCTable,
 			Action:       "template",
-			AvailabilityInput: &AvailabilitySearchInput{
+			input: enrichAvailabilitySearchInput(AvailabilitySearchInput{
 				PackageName: packageToSantaCatarina,
 				Qty:         1,
 				Limit:       8,
-			},
+			}),
 		}, true
 	case "MA":
 		return IntentDecision{
@@ -166,12 +166,13 @@ func parseSCDestinationFollowUpAfterPublicTable(history []Message, currentTurn s
 	if !ok {
 		return AvailabilitySearchInput{}, false
 	}
-	return AvailabilitySearchInput{
+	input := AvailabilitySearchInput{
 		Destination: destination,
 		PackageName: packageToSantaCatarina,
 		Qty:         1,
 		Limit:       8,
-	}, true
+	}
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func lastAssistantSentPublicSCTable(history []Message) bool {
@@ -230,12 +231,13 @@ func parseSCOriginFollowUpAfterMaranhaoQuery(history []Message, currentTurn stri
 		return AvailabilitySearchInput{}, false
 	}
 
-	return AvailabilitySearchInput{
+	input := AvailabilitySearchInput{
 		Origin:      origin,
 		PackageName: packageToMaranhao,
 		Qty:         1,
 		Limit:       8,
-	}, true
+	}
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func lastAssistantAskedSCOriginForMaranhao(history []Message) bool {
@@ -267,13 +269,15 @@ func parseMADestinationFollowUpAfterSCOrigin(history []Message, currentTurn stri
 		return AvailabilitySearchInput{}, false
 	}
 
-	return AvailabilitySearchInput{
-		Origin:      strings.TrimSpace(pending.Origin),
-		Destination: destination,
-		PackageName: packageToMaranhao,
-		Qty:         1,
-		Limit:       8,
-	}, true
+	input := AvailabilitySearchInput{
+		Origin:       strings.TrimSpace(pending.Origin),
+		OriginStopID: strings.TrimSpace(pending.OriginStopID),
+		Destination:  destination,
+		PackageName:  packageToMaranhao,
+		Qty:          1,
+		Limit:        8,
+	}
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func findLatestPendingMaranhaoAvailabilityInput(history []Message) (AvailabilitySearchInput, bool) {
@@ -301,6 +305,7 @@ func findLatestPendingMaranhaoAvailabilityInput(history []Message) (Availability
 				if input.Limit <= 0 {
 					input.Limit = 8
 				}
+				input = enrichAvailabilitySearchInput(input)
 				return input, true
 			}
 		}
@@ -319,13 +324,16 @@ func readPendingAvailabilityInput(payload map[string]interface{}) (AvailabilityS
 	}
 
 	input := AvailabilitySearchInput{
-		Origin:      strings.TrimSpace(asString(raw["origin"])),
-		Destination: strings.TrimSpace(asString(raw["destination"])),
-		PackageName: strings.TrimSpace(asString(raw["package_name"])),
-		Qty:         firstPositiveInt(readInt(raw["qty"]), readInt(raw["qtd"])),
-		Limit:       readInt(raw["limit"]),
+		Origin:            strings.TrimSpace(asString(raw["origin"])),
+		Destination:       strings.TrimSpace(asString(raw["destination"])),
+		OriginStopID:      strings.TrimSpace(asString(raw["origin_stop_id"])),
+		DestinationStopID: strings.TrimSpace(asString(raw["destination_stop_id"])),
+		RouteID:           strings.TrimSpace(asString(raw["route_id"])),
+		PackageName:       strings.TrimSpace(asString(raw["package_name"])),
+		Qty:               firstPositiveInt(readInt(raw["qty"]), readInt(raw["qtd"])),
+		Limit:             readInt(raw["limit"]),
 	}
-	return input, true
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func firstPositiveInt(values ...int) int {

@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-
 	"schumacher-tur/api/internal/availability"
 )
 
@@ -14,7 +13,8 @@ type AvailabilityTool struct {
 
 func NewAvailabilityTool(svc interface {
 	Search(ctx context.Context, filter availability.SearchFilter) ([]availability.SearchResult, error)
-}) *AvailabilityTool {
+},
+) *AvailabilityTool {
 	return &AvailabilityTool{svc: svc}
 }
 
@@ -28,14 +28,17 @@ func (t *AvailabilityTool) Search(ctx context.Context, input AvailabilitySearchI
 	}
 
 	filter := availability.SearchFilter{
-		Origin:      input.Origin,
-		Destination: input.Destination,
-		PackageName: input.PackageName,
-		TripDate:    input.TripDate,
-		Qty:         input.Qty,
-		Limit:       input.Limit,
-		OnlyActive:  true,
-		IncludePast: false,
+		Origin:            input.Origin,
+		Destination:       input.Destination,
+		OriginStopID:      input.OriginStopID,
+		DestinationStopID: input.DestinationStopID,
+		RouteID:           input.RouteID,
+		PackageName:       input.PackageName,
+		TripDate:          input.TripDate,
+		Qty:               input.Qty,
+		Limit:             input.Limit,
+		OnlyActive:        true,
+		IncludePast:       false,
 	}
 	items, err := t.svc.Search(ctx, filter)
 	if err != nil {

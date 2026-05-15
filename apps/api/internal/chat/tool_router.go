@@ -43,6 +43,13 @@ const (
 	toolNameDocumentExtract    = "document_extract"
 )
 
+var supportedStopIDs = map[string]string{
+	"chapeco/sc":         "SC_CHAPECO",
+	"santa ines/ma":      "MA_SANTA_INES",
+	"moncao/ma":          "MA_MONCAO",
+	"igarape do meio/ma": "MA_IGARAPE_DO_MEIO",
+}
+
 const (
 	packageToSantaCatarina = "Pacote p/ Santa Catarina"
 	packageToMaranhao      = "Pacote p/ Maranhao"
@@ -72,6 +79,28 @@ var maPackageDestinations = map[string]string{
 	"moncao":          "Moncao/MA",
 	"santa ines":      "Santa Ines/MA",
 	"igarape do meio": "Igarape do Meio/MA",
+}
+
+var canonicalStopIDsByLocation = map[string]string{
+	"fraiburgo/sc":    "SC_FRAIBURGO",
+	"monte carlo/sc":  "SC_MONTE_CARLO",
+	"videira/sc":      "SC_VIDEIRA",
+	"campos novos/sc": "SC_CAMPOS_NOVOS",
+	"chapeco/sc":      "SC_CHAPECO",
+	"concordia/sc":    "SC_CONCORDIA",
+	"ipumirim/sc":     "SC_IPUMIRIM",
+	"petrolandia/sc":  "SC_PETROLANDIA",
+	"ituporanga/sc":   "SC_ITUPORANGA",
+	"seara/sc":        "SC_SEARA",
+
+	"moncao/ma":          "MA_MONCAO",
+	"santa ines/ma":      "MA_SANTA_INES",
+	"igarape do meio/ma": "MA_IGARAPE_DO_MEIO",
+}
+
+var routeIDByPackageName = map[string]string{
+	"pacote p/ maranhao":       "SC_MA",
+	"pacote p/ santa catarina": "MA_SC",
 }
 
 type agentToolContext struct {
@@ -573,20 +602,20 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 		return AvailabilitySearchInput{}, false
 	}
 	if input, ok := parseSupportedCityPairAvailabilityInput(body, observedAt); ok {
-		return input, true
+		return enrichAvailabilitySearchInput(input), true
 	}
 	historyContext := inferLatestRouteContextFromHistory(history)
 
 	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
-		return input, true
+		return enrichAvailabilitySearchInput(input), true
 	}
 
 	if input, ok := parseDirectAvailabilitySearchInput(body, observedAt); ok {
-		return input, true
+		return enrichAvailabilitySearchInput(input), true
 	}
 
 	if input, ok := parseOriginAnswerAvailabilitySearchInput(history, body, observedAt); ok {
-		return input, true
+		return enrichAvailabilitySearchInput(input), true
 	}
 
 	currentContext := inferRouteContextFromText(body)
@@ -682,7 +711,7 @@ func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, ob
 	if input.Qty <= 0 {
 		input.Qty = 1
 	}
-	return input, true
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func parseAvailabilityDateSelectionInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
@@ -732,7 +761,7 @@ func parseAvailabilityDateSelectionInput(history []Message, text string, observe
 	if input.Qty <= 0 {
 		input.Qty = 1
 	}
-	return input, true
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func resolveAvailabilityDateSelection(results []AvailabilitySearchItem, text string, observedAt time.Time) (AvailabilitySearchItem, bool) {
@@ -801,7 +830,7 @@ func parseContextualAvailabilitySearchInput(historyContext inferredRouteContext,
 	if input.Qty <= 0 {
 		input.Qty = 1
 	}
-	return input, true
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func parseSupportedCityPairAvailabilityInput(text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
@@ -833,7 +862,7 @@ func parseSupportedCityPairAvailabilityInput(text string, observedAt time.Time) 
 		input.Destination = scCity
 		input.PackageName = packageToSantaCatarina
 	}
-	return input, true
+	return enrichAvailabilitySearchInput(input), true
 }
 
 func findSingleSupportedCityMention(text string, candidates map[string]string) (string, int, bool) {
@@ -895,7 +924,7 @@ func parseDirectAvailabilitySearchInput(text string, observedAt time.Time) (Avai
 		if input.Qty <= 0 {
 			input.Qty = 1
 		}
-		return input, true
+		return enrichAvailabilitySearchInput(input), true
 	}
 
 	origin, destination, ok := extractExplicitRouteFromText(body)
@@ -1644,6 +1673,47 @@ func normalizeSupportedPackageLocation(value string) string {
 	return normalizeLocationDisplayName(value)
 }
 
+func canonicalStopIDForLocation(value string) string {
+	key := normalizeCanonicalLocationKey(value)
+	if key == "" {
+		return ""
+	}
+	return canonicalStopIDsByLocation[key]
+}
+
+func routeIDForPackageName(packageName string) string {
+	key := normalizeCanonicalLocationKey(packageName)
+	if key == "" {
+		return ""
+	}
+	return routeIDByPackageName[key]
+}
+
+func normalizeCanonicalLocationKey(value string) string {
+	folded := foldChatText(NormalizeIncomingCustomerText(value))
+	folded = strings.TrimSpace(folded)
+	if folded == "" {
+		return ""
+	}
+	folded = strings.Trim(folded, " .,:;!?")
+	folded = strings.ReplaceAll(folded, " /", "/")
+	folded = strings.ReplaceAll(folded, "/ ", "/")
+	return strings.Join(strings.Fields(folded), " ")
+}
+
+func enrichAvailabilitySearchInput(input AvailabilitySearchInput) AvailabilitySearchInput {
+	if input.OriginStopID == "" {
+		input.OriginStopID = canonicalStopIDForLocation(input.Origin)
+	}
+	if input.DestinationStopID == "" {
+		input.DestinationStopID = canonicalStopIDForLocation(input.Destination)
+	}
+	if input.RouteID == "" {
+		input.RouteID = routeIDForPackageName(input.PackageName)
+	}
+	return input
+}
+
 func normalizeRouteEndpoint(city string, uf string) string {
 	city = strings.Join(strings.Fields(strings.TrimSpace(city)), " ")
 	uf = strings.ToUpper(strings.TrimSpace(uf))
@@ -1770,6 +1840,15 @@ func buildAvailabilityToolRequestPayload(input AvailabilitySearchInput) map[stri
 		"qtd":         input.Qty,
 		"limit":       input.Limit,
 		"only_active": true,
+	}
+	if input.OriginStopID != "" {
+		payload["origin_stop_id"] = input.OriginStopID
+	}
+	if input.DestinationStopID != "" {
+		payload["destination_stop_id"] = input.DestinationStopID
+	}
+	if input.RouteID != "" {
+		payload["route_id"] = input.RouteID
 	}
 	if input.TripDate != nil {
 		payload["trip_date"] = input.TripDate.UTC().Format("2006-01-02")

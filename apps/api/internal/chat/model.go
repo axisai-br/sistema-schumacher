@@ -510,12 +510,15 @@ type AvailabilitySearcher interface {
 }
 
 type AvailabilitySearchInput struct {
-	Origin      string
-	Destination string
-	PackageName string
-	TripDate    *time.Time
-	Qty         int
-	Limit       int
+	Origin            string
+	Destination       string
+	OriginStopID      string
+	DestinationStopID string
+	RouteID           string
+	PackageName       string
+	TripDate          *time.Time
+	Qty               int
+	Limit             int
 }
 
 type AvailabilitySearchResult struct {
