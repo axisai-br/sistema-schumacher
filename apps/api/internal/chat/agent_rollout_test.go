@@ -134,6 +134,33 @@ func TestChatAgentModeJSONOnlyInvalidDecisionProducesClarification(t *testing.T)
 	}
 }
 
+func TestChatAgentModePersistsOpenAIContinuityMetadata(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test", ProviderResponseID: "resp_freeform_1"}}
+	jsonRunner := &fakeJSONDecisionRunner{
+		enabled:  true,
+		decision: validAvailabilityJSONDecision(),
+		result: OpenAIJSONRunResult{
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_json_1",
+		},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  rolloutAvailabilityResult(),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500, ChatAgentMode: chatAgentModeHybridJSON}, runner, jsonRunner, searcher)
+
+	out := ingestAndReprocessRollout(t, svc, "5511900000010", "Quero viajar")
+
+	if got := asString(out.Session.Metadata["provider_response_id"]); got != "resp_json_1" {
+		t.Fatalf("expected session provider_response_id resp_json_1, got %q", got)
+	}
+	if got := asString(out.Session.Metadata["provider_model"]); got != "gpt-test" {
+		t.Fatalf("expected session provider_model gpt-test, got %q", got)
+	}
+}
+
 func TestChatAgentModeMetadataPersistsOnDraftAndToolCalls(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}

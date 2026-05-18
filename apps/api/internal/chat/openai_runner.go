@@ -24,11 +24,12 @@ var (
 const maxInlineImageBytes = 8 * 1024 * 1024
 
 type OpenAIRunner struct {
-	baseURL     string
-	apiKey      string
-	model       string
-	visionModel string
-	client      *http.Client
+	baseURL           string
+	apiKey            string
+	model             string
+	visionModel       string
+	continuityEnabled bool
+	client            *http.Client
 }
 
 func compactOpenAIErrorBody(body []byte) string {
@@ -71,10 +72,11 @@ func compactOpenAIErrorBody(body []byte) string {
 
 func NewOpenAIRunner(cfg config.Config) *OpenAIRunner {
 	return &OpenAIRunner{
-		baseURL:     "https://api.openai.com/v1",
-		apiKey:      strings.TrimSpace(cfg.OpenAIAPIKey),
-		model:       strings.TrimSpace(cfg.OpenAIModel),
-		visionModel: strings.TrimSpace(cfg.OpenAIVisionModel),
+		baseURL:           "https://api.openai.com/v1",
+		apiKey:            strings.TrimSpace(cfg.OpenAIAPIKey),
+		model:             strings.TrimSpace(cfg.OpenAIModel),
+		visionModel:       strings.TrimSpace(cfg.OpenAIVisionModel),
+		continuityEnabled: cfg.ChatOpenAIContinuityEnabled,
 		client: &http.Client{
 			Timeout: 45 * time.Second,
 		},
@@ -90,15 +92,22 @@ func (r *OpenAIRunner) Run(ctx context.Context, input RunAgentInput) (RunAgentRe
 		return RunAgentResult{}, ErrOpenAIRunnerNotConfigured
 	}
 
-	requestPayload := map[string]interface{}{
-		"model":        r.requestModel(input),
-		"instructions": input.SystemPrompt,
-		"input":        buildOpenAIInputContent(ctx, r.client, input),
-	}
+	requestPayload := r.buildRequestPayload(ctx, input, true)
+	firstAttemptUsedPreviousResponseID := openAIRequestUsesPreviousResponseID(requestPayload)
 	result, err := r.runRequest(ctx, requestPayload, input.IdempotencyKey)
 	if err == nil {
-		return result, nil
+		return r.finalizeRunAgentResult(result, requestPayload, firstAttemptUsedPreviousResponseID, false, false), nil
 	}
+
+	if r.shouldRetryWithoutContinuity(input.Session, requestPayload, err) {
+		retryPayload := r.buildRequestPayload(ctx, input, false)
+		retryResult, retryErr := r.runRequest(ctx, retryPayload, openAIRetryIdempotencyKey(input.IdempotencyKey))
+		if retryErr == nil {
+			return r.finalizeRunAgentResult(retryResult, retryPayload, firstAttemptUsedPreviousResponseID, firstAttemptUsedPreviousResponseID, true), nil
+		}
+		return RunAgentResult{}, retryErr
+	}
+
 	if len(input.CurrentTurnMedia) == 0 {
 		return RunAgentResult{}, err
 	}
@@ -108,7 +117,11 @@ func (r *OpenAIRunner) Run(ctx context.Context, input RunAgentInput) (RunAgentRe
 		"instructions": input.SystemPrompt,
 		"input":        input.UserPrompt,
 	}
-	return r.runRequest(ctx, fallbackPayload, input.IdempotencyKey)
+	fallbackResult, fallbackErr := r.runRequest(ctx, fallbackPayload, input.IdempotencyKey)
+	if fallbackErr != nil {
+		return RunAgentResult{}, fallbackErr
+	}
+	return r.finalizeRunAgentResult(fallbackResult, fallbackPayload, false, false, false), nil
 }
 
 func (r *OpenAIRunner) requestModel(input RunAgentInput) string {
@@ -118,6 +131,66 @@ func (r *OpenAIRunner) requestModel(input RunAgentInput) string {
 		}
 	}
 	return r.model
+}
+
+func (r *OpenAIRunner) buildRequestPayload(ctx context.Context, input RunAgentInput, allowContinuity bool) map[string]interface{} {
+	model := r.requestModel(input)
+	payload := map[string]interface{}{
+		"model":        model,
+		"instructions": input.SystemPrompt,
+		"input":        buildOpenAIInputContent(ctx, r.client, input),
+	}
+
+	continuity := readOpenAIContinuityMetadata(input.Session.Metadata)
+	if allowContinuity && r.continuityEnabled {
+		if continuity.ProviderResponseID != "" && openAIModelsCompatible(model, continuity.ProviderModel) {
+			payload["previous_response_id"] = continuity.ProviderResponseID
+			return payload
+		}
+		if continuity.ProviderConversationID != "" && openAIModelsCompatible(model, continuity.ProviderModel) {
+			payload["conversation"] = map[string]interface{}{"id": continuity.ProviderConversationID}
+			return payload
+		}
+	}
+	return payload
+}
+
+func (r *OpenAIRunner) shouldRetryWithoutContinuity(session Session, requestPayload map[string]interface{}, err error) bool {
+	if !r.continuityEnabled || !shouldRetryOpenAIWithoutContinuity(err) {
+		return false
+	}
+	return openAIRequestUsesContinuity(requestPayload)
+}
+
+func (r *OpenAIRunner) finalizeRunAgentResult(result RunAgentResult, requestPayload map[string]interface{}, previousResponseIDUsed bool, previousResponseIDFailed bool, retryWithoutPreviousResponseID bool) RunAgentResult {
+	if result.RequestPayload == nil {
+		result.RequestPayload = map[string]interface{}{}
+	}
+	if result.ResponsePayload == nil {
+		result.ResponsePayload = map[string]interface{}{}
+	}
+	for key, value := range requestPayload {
+		result.RequestPayload[key] = value
+	}
+	result.RequestPayload["previous_response_id_used"] = previousResponseIDUsed
+	result.RequestPayload["previous_response_id_failed"] = previousResponseIDFailed
+	result.RequestPayload["retry_without_previous_response_id"] = retryWithoutPreviousResponseID
+	result.ResponsePayload["previous_response_id_used"] = previousResponseIDUsed
+	result.ResponsePayload["previous_response_id_failed"] = previousResponseIDFailed
+	result.ResponsePayload["retry_without_previous_response_id"] = retryWithoutPreviousResponseID
+	result.ProviderConversationID = firstNonEmpty(
+		result.ProviderConversationID,
+		extractOpenAIConversationID(result.ResponsePayload),
+	)
+	if result.ProviderConversationID != "" {
+		result.RequestPayload["provider_conversation_id"] = result.ProviderConversationID
+		result.ResponsePayload["provider_conversation_id"] = result.ProviderConversationID
+	}
+	if result.ProviderResponseID != "" {
+		result.RequestPayload["provider_response_id"] = result.ProviderResponseID
+		result.ResponsePayload["provider_response_id"] = result.ProviderResponseID
+	}
+	return result
 }
 
 func (r *OpenAIRunner) runRequest(ctx context.Context, requestPayload map[string]interface{}, idempotencyKey string) (RunAgentResult, error) {

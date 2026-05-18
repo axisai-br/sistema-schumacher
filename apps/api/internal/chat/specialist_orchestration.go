@@ -23,7 +23,7 @@ func (s *Service) canRunSpecialistPlanner() bool {
 	return ok
 }
 
-func (s *Service) runSpecialistPlanner(ctx context.Context, decision IntentDecisionJSON, currentTurn string, state CanonicalConversationState, history []Message, idempotencyKey string) (specialistPlannerRunResult, error) {
+func (s *Service) runSpecialistPlanner(ctx context.Context, session Session, decision IntentDecisionJSON, currentTurn string, state CanonicalConversationState, history []Message, idempotencyKey string) (specialistPlannerRunResult, error) {
 	runner, ok := s.jsonRunner.(agentJSONGenericRunner)
 	if !ok {
 		return specialistPlannerRunResult{}, fmt.Errorf("%w: specialist planner runner unavailable", ErrOpenAIJSONRunnerNotConfigured)
@@ -38,6 +38,7 @@ func (s *Service) runSpecialistPlanner(ctx context.Context, decision IntentDecis
 			SchemaName:     "general_action_plan",
 			Schema:         generalSpecialistActionPlanSchema(),
 			IdempotencyKey: idempotencyKey + ":general_specialist",
+			Session:        session,
 		}, &plan)
 		if err != nil {
 			return specialistPlannerRunResult{}, err
@@ -51,6 +52,7 @@ func (s *Service) runSpecialistPlanner(ctx context.Context, decision IntentDecis
 			SchemaName:     "scheduling_action_plan",
 			Schema:         schedulingSpecialistActionPlanSchema(),
 			IdempotencyKey: idempotencyKey + ":scheduling_specialist",
+			Session:        session,
 		}, &plan)
 		if err != nil {
 			return specialistPlannerRunResult{}, err
@@ -64,6 +66,7 @@ func (s *Service) runSpecialistPlanner(ctx context.Context, decision IntentDecis
 			SchemaName:     "payment_action_plan",
 			Schema:         paymentsSpecialistActionPlanSchema(),
 			IdempotencyKey: idempotencyKey + ":payments_specialist",
+			Session:        session,
 		}, &plan)
 		if err != nil {
 			return specialistPlannerRunResult{}, err

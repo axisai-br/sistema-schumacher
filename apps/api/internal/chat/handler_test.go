@@ -6877,6 +6877,19 @@ func (s *fakeStore) UpdateSessionBufferState(_ context.Context, input UpdateSess
 	return item, nil
 }
 
+func (s *fakeStore) UpdateSessionMetadata(_ context.Context, input UpdateSessionMetadataInput) (Session, error) {
+	item := s.sessions[input.SessionID]
+	if item.Metadata == nil {
+		item.Metadata = map[string]interface{}{}
+	}
+	for key, value := range input.Metadata {
+		item.Metadata[key] = value
+	}
+	item.UpdatedAt = time.Now().UTC()
+	s.sessions[item.ID] = item
+	return item, nil
+}
+
 func (s *fakeStore) RequestHandoff(_ context.Context, input RequestHandoffInput) (RequestHandoffResult, error) {
 	if s.requestHandoffErr != nil {
 		return RequestHandoffResult{}, s.requestHandoffErr
@@ -7296,6 +7309,21 @@ func (s *fakeStore) UpdateDraftAutoSendState(_ context.Context, input UpdateDraf
 	if len(input.Agent) > 0 {
 		if session.Metadata == nil {
 			session.Metadata = map[string]interface{}{}
+		}
+		providerResponseID := strings.TrimSpace(asString(input.Agent["provider_response_id"]))
+		providerConversationID := strings.TrimSpace(asString(input.Agent["provider_conversation_id"]))
+		if providerResponseID != "" {
+			session.Metadata["provider_response_id"] = providerResponseID
+		}
+		if providerConversationID != "" {
+			session.Metadata["provider_conversation_id"] = providerConversationID
+		}
+		if providerResponseID != "" || providerConversationID != "" {
+			if providerModel := strings.TrimSpace(asString(input.Agent["draft_model"])); providerModel != "" {
+				session.Metadata["provider_model"] = providerModel
+			} else if providerModel := strings.TrimSpace(asString(input.Agent["model"])); providerModel != "" {
+				session.Metadata["provider_model"] = providerModel
+			}
 		}
 		session.Metadata["agent"] = input.Agent
 	}

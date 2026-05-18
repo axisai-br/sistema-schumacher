@@ -496,6 +496,7 @@ func buildDraftGeneratedAgentState(metadata map[string]interface{}, candidates [
 	}
 	copyRunMetadata(state, run)
 	state["provider_response_id"] = strings.TrimSpace(run.ProviderResponseID)
+	state["provider_conversation_id"] = strings.TrimSpace(run.ProviderConversationID)
 	state["tool_calls_count"] = len(toolCalls)
 	state["auto_send_status"] = autoSend.Status
 	if len(toolCalls) > 0 {
@@ -672,6 +673,7 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		"current_turn_message_ids": candidateMessageIDs(candidates),
 		"model":                    strings.TrimSpace(run.Model),
 		"provider_response_id":     strings.TrimSpace(run.ProviderResponseID),
+		"provider_conversation_id": strings.TrimSpace(run.ProviderConversationID),
 		"auto_send_status":         autoSend.Status,
 		"request_payload":          run.RequestPayload,
 		"response_payload":         run.ResponsePayload,
@@ -726,6 +728,7 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		"current_turn_message_ids": candidateMessageIDs(candidates),
 		"model":                    strings.TrimSpace(run.Model),
 		"provider_response_id":     strings.TrimSpace(run.ProviderResponseID),
+		"provider_conversation_id": strings.TrimSpace(run.ProviderConversationID),
 		"auto_send_status":         autoSend.Status,
 		"tool_call_count":          len(tools.Calls),
 	}

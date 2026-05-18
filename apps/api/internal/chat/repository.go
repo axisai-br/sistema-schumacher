@@ -20,6 +20,7 @@ type Store interface {
 	UpdateMessage(ctx context.Context, input UpdateMessageInput) (Message, error)
 	CreateToolCall(ctx context.Context, input CreateToolCallInput) (ToolCall, error)
 	UpdateSessionBufferState(ctx context.Context, input UpdateSessionBufferStateInput) (Session, error)
+	UpdateSessionMetadata(ctx context.Context, input UpdateSessionMetadataInput) (Session, error)
 	RequestHandoff(ctx context.Context, input RequestHandoffInput) (RequestHandoffResult, error)
 	ResumeSession(ctx context.Context, input ResumeSessionInput) (ResumeSessionResult, error)
 	ResolveSession(ctx context.Context, input ResolveSessionInput) (ResolveSessionResult, error)
@@ -352,6 +353,37 @@ func (r *Repository) UpdateSessionBufferState(ctx context.Context, input UpdateS
 			created_at,
 			updated_at
 	`, input.SessionID, bufferPayload)
+
+	return scanSession(row)
+}
+
+func (r *Repository) UpdateSessionMetadata(ctx context.Context, input UpdateSessionMetadataInput) (Session, error) {
+	metadataPayload, err := encodeMap(input.Metadata)
+	if err != nil {
+		return Session{}, err
+	}
+
+	row := r.pool.QueryRow(ctx, `
+		update chat_sessions
+		set metadata = chat_sessions.metadata || $2::jsonb,
+				updated_at = now()
+		where id = $1::uuid
+		returning
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+	`, input.SessionID, metadataPayload)
 
 	return scanSession(row)
 }
@@ -1432,6 +1464,21 @@ func (r *Repository) UpdateDraftAutoSendState(ctx context.Context, input UpdateD
 		updatedMetadata := make(map[string]interface{}, len(sessionMetadata)+1)
 		for key, value := range sessionMetadata {
 			updatedMetadata[key] = value
+		}
+		providerResponseID := strings.TrimSpace(asString(input.Agent["provider_response_id"]))
+		providerConversationID := strings.TrimSpace(asString(input.Agent["provider_conversation_id"]))
+		if providerResponseID != "" {
+			updatedMetadata["provider_response_id"] = providerResponseID
+		}
+		if providerConversationID != "" {
+			updatedMetadata["provider_conversation_id"] = providerConversationID
+		}
+		if providerResponseID != "" || providerConversationID != "" {
+			if providerModel := strings.TrimSpace(asString(input.Agent["draft_model"])); providerModel != "" {
+				updatedMetadata["provider_model"] = providerModel
+			} else if providerModel := strings.TrimSpace(asString(input.Agent["model"])); providerModel != "" {
+				updatedMetadata["provider_model"] = providerModel
+			}
 		}
 		updatedMetadata["agent"] = input.Agent
 		metadataPayload, encodeErr := encodeMap(updatedMetadata)

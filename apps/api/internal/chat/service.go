@@ -1051,6 +1051,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			SchemaName:     "intent_decision",
 			Schema:         intentDecisionJSONSchema(),
 			IdempotencyKey: draftID + ":intent_decision",
+			Session:        persisted.Session,
 		})
 		if err != nil {
 			rolloutMetadata.DecisionSource = "json_agent"
@@ -1093,6 +1094,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				"provider_response_id": jsonRun.ProviderResponseID,
 			}
 			agentState["json_intent_decision"] = memory["json_intent_decision"]
+			if updatedSession, persistErr := s.persistOpenAIContinuityMetadata(ctx, persisted.Session, jsonRun.ProviderResponseID, jsonRun.ProviderConversationID, jsonRun.Model); persistErr != nil {
+				return ReprocessResult{}, persistErr
+			} else {
+				persisted.Session = updatedSession
+			}
 			s.logReprocess(
 				"chat reprocess event=json_decision_validated session_id=%s trigger=%s job_run_id=%s intent=%s action=%s valid=%t",
 				persisted.Session.ID,
@@ -1104,7 +1110,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			)
 			if validated.Valid {
 				if specialistAgentsEnabled() && validated.Decision.Action == jsonDecisionActionSpecialist && s.canRunSpecialistPlanner() {
-					plannerRun, plannerErr := s.runSpecialistPlanner(ctx, validated.Decision, currentTurn, canonicalState, history, draftID)
+					plannerRun, plannerErr := s.runSpecialistPlanner(ctx, persisted.Session, validated.Decision, currentTurn, canonicalState, history, draftID)
 					if plannerErr != nil {
 						rolloutMetadata.FallbackReason = "specialist_planner_runner_error"
 						rolloutMetadata.ValidationErrors = append(rolloutMetadata.ValidationErrors, "specialist_planner_runner_error")
@@ -1124,6 +1130,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 							"provider_response_id": plannerRun.JSONRun.ProviderResponseID,
 						}
 						agentState["specialist_action_plan"] = memory["specialist_action_plan"]
+						if updatedSession, persistErr := s.persistOpenAIContinuityMetadata(ctx, persisted.Session, plannerRun.JSONRun.ProviderResponseID, plannerRun.JSONRun.ProviderConversationID, plannerRun.JSONRun.Model); persistErr != nil {
+							return ReprocessResult{}, persistErr
+						} else {
+							persisted.Session = updatedSession
+						}
 						if !plannerRun.Validation.Valid {
 							rolloutMetadata.FallbackReason = strings.Join(plannerRun.Validation.Reasons, ",")
 							rolloutMetadata.ValidationErrors = append(rolloutMetadata.ValidationErrors, plannerRun.Validation.Reasons...)
@@ -1376,6 +1387,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				err,
 			)
 			return ReprocessResult{}, fmt.Errorf("%w: %v", ErrAgentRunFailed, err)
+		}
+		if updatedSession, persistErr := s.persistOpenAIContinuityMetadata(ctx, persisted.Session, run.ProviderResponseID, run.ProviderConversationID, run.Model); persistErr != nil {
+			return ReprocessResult{}, persistErr
+		} else {
+			persisted.Session = updatedSession
 		}
 		s.logReprocess(
 			"chat reprocess event=runner_run_done session_id=%s trigger=%s job_run_id=%s has_reply=%t",
@@ -2247,6 +2263,30 @@ func (s *Service) canRunAgent() bool {
 
 func (s *Service) canRunJSONDecisionAgent() bool {
 	return s.jsonRunner != nil && s.jsonRunner.Enabled()
+}
+
+func (s *Service) persistOpenAIContinuityMetadata(ctx context.Context, session Session, providerResponseID string, providerConversationID string, providerModel string) (Session, error) {
+	metadata := map[string]interface{}{}
+	if trimmed := strings.TrimSpace(providerResponseID); trimmed != "" {
+		metadata["provider_response_id"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(providerConversationID); trimmed != "" {
+		metadata["provider_conversation_id"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(providerModel); trimmed != "" {
+		metadata["provider_model"] = trimmed
+	}
+	if len(metadata) == 0 {
+		return session, nil
+	}
+	updated, err := s.store.UpdateSessionMetadata(ctx, UpdateSessionMetadataInput{
+		SessionID: session.ID,
+		Metadata:  metadata,
+	})
+	if err != nil {
+		return Session{}, err
+	}
+	return updated, nil
 }
 
 func (s *Service) deliverReply(ctx context.Context, result ReplyResult) (ReplyResult, error) {

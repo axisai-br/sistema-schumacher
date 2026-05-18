@@ -66,6 +66,163 @@ func TestOpenAIRunnerRun(t *testing.T) {
 	}
 }
 
+func TestOpenAIRunnerRunIncludesPreviousResponseIDWhenConfigured(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got := payload["previous_response_id"]; got != "resp_prev_1" {
+			t.Fatalf("expected previous_response_id resp_prev_1, got %#v", got)
+		}
+		if _, ok := payload["conversation"]; ok {
+			t.Fatalf("did not expect conversation payload when previous_response_id is available: %#v", payload["conversation"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":          "resp_test_4",
+			"output_text": "Continuacao ok",
+		})
+	}))
+	defer server.Close()
+
+	runner := NewOpenAIRunner(config.Config{
+		OpenAIAPIKey:                "sk-test",
+		OpenAIModel:                 "gpt-5.4",
+		ChatOpenAIContinuityEnabled: true,
+	})
+	runner.baseURL = server.URL
+
+	result, err := runner.Run(context.Background(), RunAgentInput{
+		Session: Session{
+			Metadata: map[string]interface{}{
+				"provider_response_id": "resp_prev_1",
+				"provider_model":       "gpt-5.4-mini",
+			},
+		},
+		SystemPrompt: "system",
+		UserPrompt:   "user",
+	})
+	if err != nil {
+		t.Fatalf("run agent: %v", err)
+	}
+	if result.ReplyText != "Continuacao ok" {
+		t.Fatalf("unexpected reply text: %s", result.ReplyText)
+	}
+	if result.RequestPayload["previous_response_id_used"] != true {
+		t.Fatalf("expected previous_response_id_used=true, got %#v", result.RequestPayload["previous_response_id_used"])
+	}
+}
+
+func TestOpenAIRunnerRunRetriesWithoutPreviousResponseIDOnContinuityError(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if atomic.AddInt32(&calls, 1) == 1 {
+			if got := payload["previous_response_id"]; got != "resp_prev_2" {
+				t.Fatalf("expected first request to include previous_response_id, got %#v", got)
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"message": "previous_response_id resp_prev_2 was not found",
+				},
+			})
+			return
+		}
+		if _, ok := payload["previous_response_id"]; ok {
+			t.Fatalf("expected retry to omit previous_response_id, got %#v", payload["previous_response_id"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":          "resp_test_5",
+			"output_text": "retry ok",
+		})
+	}))
+	defer server.Close()
+
+	runner := NewOpenAIRunner(config.Config{
+		OpenAIAPIKey:                "sk-test",
+		OpenAIModel:                 "gpt-5.4",
+		ChatOpenAIContinuityEnabled: true,
+	})
+	runner.baseURL = server.URL
+
+	result, err := runner.Run(context.Background(), RunAgentInput{
+		Session: Session{
+			Metadata: map[string]interface{}{
+				"provider_response_id": "resp_prev_2",
+				"provider_model":       "gpt-5.4-mini",
+			},
+		},
+		SystemPrompt: "system",
+		UserPrompt:   "user",
+	})
+	if err != nil {
+		t.Fatalf("run agent: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("expected two requests, got %d", calls)
+	}
+	if result.ReplyText != "retry ok" {
+		t.Fatalf("unexpected retry reply text: %s", result.ReplyText)
+	}
+	if result.RequestPayload["previous_response_id_used"] != true {
+		t.Fatalf("expected previous_response_id_used=true after retry, got %#v", result.RequestPayload["previous_response_id_used"])
+	}
+	if result.RequestPayload["previous_response_id_failed"] != true {
+		t.Fatalf("expected previous_response_id_failed=true after retry, got %#v", result.RequestPayload["previous_response_id_failed"])
+	}
+	if result.RequestPayload["retry_without_previous_response_id"] != true {
+		t.Fatalf("expected retry_without_previous_response_id=true after retry, got %#v", result.RequestPayload["retry_without_previous_response_id"])
+	}
+}
+
+func TestOpenAIRunnerRunWithoutPreviousResponseIDWhenContinuityDisabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if _, ok := payload["previous_response_id"]; ok {
+			t.Fatalf("did not expect previous_response_id when continuity is disabled")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":          "resp_test_6",
+			"output_text": "sem continuidade",
+		})
+	}))
+	defer server.Close()
+
+	runner := NewOpenAIRunner(config.Config{
+		OpenAIAPIKey:                "sk-test",
+		OpenAIModel:                 "gpt-5.4",
+		ChatOpenAIContinuityEnabled: false,
+	})
+	runner.baseURL = server.URL
+
+	result, err := runner.Run(context.Background(), RunAgentInput{
+		Session: Session{
+			Metadata: map[string]interface{}{
+				"provider_response_id": "resp_prev_3",
+				"provider_model":       "gpt-5.4-mini",
+			},
+		},
+		SystemPrompt: "system",
+		UserPrompt:   "user",
+	})
+	if err != nil {
+		t.Fatalf("run agent: %v", err)
+	}
+	if result.ReplyText != "sem continuidade" {
+		t.Fatalf("unexpected reply text: %s", result.ReplyText)
+	}
+	if result.RequestPayload["previous_response_id_used"] != false {
+		t.Fatalf("expected previous_response_id_used=false, got %#v", result.RequestPayload["previous_response_id_used"])
+	}
+}
+
 func TestOpenAIRunnerRunIncludesImageInputWhenCurrentTurnHasMedia(t *testing.T) {
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")

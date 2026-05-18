@@ -43,6 +43,7 @@ type Config struct {
 	OpenAIVisionModel                  string
 	OpenAITranscriptionModel           string
 	OpenAIBaseURL                      string
+	ChatOpenAIContinuityEnabled        bool
 	EvolutionBaseURL                   string
 	EvolutionAPIKey                    string
 	EvolutionInstance                  string
@@ -97,6 +98,7 @@ func Load() (Config, error) {
 		OpenAIVisionModel:                  strings.TrimSpace(os.Getenv("OPENAI_VISION_MODEL")),
 		OpenAITranscriptionModel:           strings.TrimSpace(os.Getenv("OPENAI_TRANSCRIPTION_MODEL")),
 		OpenAIBaseURL:                      getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		ChatOpenAIContinuityEnabled:        parseBool(os.Getenv("CHAT_OPENAI_CONTINUITY_ENABLED")),
 		EvolutionBaseURL:                   strings.TrimSpace(os.Getenv("EVOLUTION_BASE_URL")),
 		EvolutionAPIKey:                    strings.TrimSpace(os.Getenv("EVOLUTION_API_KEY")),
 		EvolutionInstance:                  strings.TrimSpace(os.Getenv("EVOLUTION_INSTANCE")),

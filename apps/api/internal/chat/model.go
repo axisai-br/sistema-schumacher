@@ -221,6 +221,11 @@ type UpdateSessionBufferStateInput struct {
 	Buffer    map[string]interface{}
 }
 
+type UpdateSessionMetadataInput struct {
+	SessionID string
+	Metadata  map[string]interface{}
+}
+
 type RequestHandoffInput struct {
 	SessionID      string                 `json:"-"`
 	RequestedBy    string                 `json:"requested_by"`
@@ -497,11 +502,12 @@ type RunAgentInput struct {
 }
 
 type RunAgentResult struct {
-	ReplyText          string
-	Model              string
-	ProviderResponseID string
-	RequestPayload     map[string]interface{}
-	ResponsePayload    map[string]interface{}
+	ReplyText              string
+	Model                  string
+	ProviderResponseID     string
+	ProviderConversationID string
+	RequestPayload         map[string]interface{}
+	ResponsePayload        map[string]interface{}
 }
 
 type AvailabilitySearcher interface {
