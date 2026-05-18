@@ -27,10 +27,12 @@ const (
 	TemplateConfirmDocument   ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 )
 
-const askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
-const askChildUnder5Reply = "Tem crianca de 5 anos ou menos viajando?"
-const askPaymentChoiceReply = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
-const publicSCTableReply = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar disponibilidade.\nCaso queira verificar disponibilidade de outra cidade, entre em contato com +55 49 9886-2222."
+const (
+	askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto?"
+	askChildUnder5Reply    = "Tem crianca de 5 anos ou menos viajando?"
+	askPaymentChoiceReply  = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
+	publicSCTableReply     = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
+)
 
 func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 	switch name {
