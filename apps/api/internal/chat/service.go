@@ -1344,6 +1344,8 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		if run.Model != "template_realizer" {
 			userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		}
+	} else if toolContext.BookingCreate != nil {
+		run = buildBookingCreatedDraftRun(*toolContext.BookingCreate)
 	} else if documentHandled && toolContext.DocumentExtract != nil {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)

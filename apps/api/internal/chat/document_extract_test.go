@@ -89,7 +89,7 @@ func TestBuildDocumentExtractReplyAsksOnlyMissingPassengerDocuments(t *testing.T
 		},
 	})
 
-	if !containsAll(reply, "Joao Vitor Messias | CPF | 06645648103", "Ainda falta o documento de 1 passageiro") {
+	if !containsAll(reply, "Joao Vitor Messias | CPF | 06645648103", "passageiro faltante", "CPF ou RG") {
 		t.Fatalf("unexpected reply: %q", reply)
 	}
 }

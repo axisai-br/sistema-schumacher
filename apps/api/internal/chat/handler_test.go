@@ -4458,7 +4458,7 @@ func TestSCDestinationFollowUpAsksMAOrigin(t *testing.T) {
 	if out.Draft == nil {
 		t.Fatalf("expected draft reply")
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != "De qual cidade do Maranhao voce vai sair?" {
+	if got := strings.TrimSpace(out.Draft.Body); got != "Perfeito — Ituporanga/SC. De qual cidade do Maranhao voce vai sair?" {
 		t.Fatalf("expected MA origin prompt, got %q", got)
 	}
 	if runner.calls != 0 {
@@ -5555,14 +5555,11 @@ func TestReprocessUsesBookingCreateToolWhenCustomerChoosesPreviousOption(t *test
 	if len(creator.lastInput.Passengers) != 1 || creator.lastInput.Passengers[0].Document != "06645648105" {
 		t.Fatalf("unexpected passenger input: %+v", creator.lastInput.Passengers)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, toolNameBookingCreate) {
-		t.Fatalf("expected prompt to include booking create tool section")
+	if runner.calls != 0 {
+		t.Fatalf("expected booking-created template to avoid LLM, got %d calls", runner.calls)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "codigo ABC12345") && !strings.Contains(runner.lastInput.UserPrompt, "ABC12345") {
-		t.Fatalf("expected prompt to include reservation code")
-	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "valor integral ou apenas o sinal de R$ 250 por passageiro pagante") {
-		t.Fatalf("expected prompt to guide integral-or-deposit choice after booking create")
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != askPaymentChoiceReply {
+		t.Fatalf("expected booking-created payment choice template, got %+v", out.Draft)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 type ResponseTemplateName string
@@ -21,6 +22,9 @@ const (
 	TemplateAvailabilityList  ResponseTemplateName = "AVAILABILITY_LIST"
 	TemplateNoAvailability    ResponseTemplateName = "NO_AVAILABILITY"
 	TemplateUnsupportedCargo  ResponseTemplateName = "UNSUPPORTED_CARGO"
+	TemplateHumanHandoff      ResponseTemplateName = "HUMAN_HANDOFF"
+	TemplateBookingCreated    ResponseTemplateName = "BOOKING_CREATED"
+	TemplateConfirmDocument   ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 )
 
 const askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
@@ -34,6 +38,10 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return askPassengerCountReply, true
 	case TemplateAskChildUnder5:
 		return askChildUnder5Reply, true
+	case TemplateAskDocuments:
+		return buildAskDocumentsReply(1, 0), true
+	case TemplateAskPaymentChoice:
+		return askPaymentChoiceReply, true
 	case TemplateAskMAOrigin:
 		return "De qual cidade do Maranhao voce vai sair?", true
 	case TemplateAskMADestination:
@@ -41,13 +49,13 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 	case TemplateAskSCOrigin:
 		return "De qual cidade de Santa Catarina voce vai sair?", true
 	case TemplateAskSCOriginForMA:
-		return "Sim, temos atendimento para o Maranhao. Para eu te passar o valor correto, me diga de qual cidade de Santa Catarina voce pretende sair.", true
+		return "De qual cidade de Santa Catarina voce vai sair para o Maranhao?", true
 	case TemplatePublicSCTable:
 		return publicSCTableReply, true
-	case TemplateNoAvailability:
-		return "Nao encontrei disponibilidade com esses dados. Voce quer tentar outra data?", true
 	case TemplateUnsupportedCargo:
 		return unsupportedCargoReply, true
+	case TemplateHumanHandoff:
+		return "Vou te encaminhar para um atendente continuar por aqui.", true
 	default:
 		return "", false
 	}
@@ -95,7 +103,7 @@ func buildAvailabilityTemplateDraftRun(decision IntentDecision, availability Ava
 	reply := buildAvailabilityListReply(availability)
 	if strings.TrimSpace(reply) == "" {
 		templateName = TemplateNoAvailability
-		reply, _ = realizeResponseTemplate(TemplateNoAvailability)
+		reply = buildNoAvailabilityReply(availability)
 	}
 	decision.TemplateName = templateName
 	decision.Action = "tool_template"
@@ -105,17 +113,18 @@ func buildAvailabilityTemplateDraftRun(decision IntentDecision, availability Ava
 }
 
 func buildAvailabilityListReply(result AvailabilitySearchResult) string {
-	if len(result.Results) == 0 {
+	options := futureAvailabilityOptions(result.Results, time.Now())
+	if len(options) == 0 {
 		return ""
 	}
 	var builder strings.Builder
 	builder.WriteString("Encontrei estas opcoes:\n")
-	limit := len(result.Results)
+	limit := len(options)
 	if limit > 5 {
 		limit = 5
 	}
 	for i := 0; i < limit; i++ {
-		item := result.Results[i]
+		item := options[i]
 		builder.WriteString(formatAvailabilityOptionLine(i+1, item))
 		if i < limit-1 {
 			builder.WriteString("\n")
@@ -123,6 +132,29 @@ func buildAvailabilityListReply(result AvailabilitySearchResult) string {
 	}
 	builder.WriteString("\n\nQual opcao voce prefere?")
 	return builder.String()
+}
+
+func futureAvailabilityOptions(items []AvailabilitySearchItem, now time.Time) []AvailabilitySearchItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]AvailabilitySearchItem, 0, len(items))
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	for _, item := range items {
+		dateText := strings.TrimSpace(item.TripDate)
+		if dateText == "" {
+			out = append(out, item)
+			continue
+		}
+		parsed, err := time.Parse("2006-01-02", dateText)
+		if err != nil || !parsed.Before(today) {
+			out = append(out, item)
+		}
+	}
+	if len(out) == 0 {
+		return items
+	}
+	return out
 }
 
 func formatAvailabilityOptionLine(index int, item AvailabilitySearchItem) string {
@@ -154,6 +186,36 @@ func formatAvailabilityOptionLine(index int, item AvailabilitySearchItem) string
 	return fmt.Sprintf("%d. %s", index, strings.Join(details, ", "))
 }
 
+func buildNoAvailabilityReply(result AvailabilitySearchResult) string {
+	parts := []string{"Nao encontrei disponibilidade"}
+	route := formatRouteText(result.Filter.Origin, result.Filter.Destination)
+	if route != "" {
+		parts = append(parts, "para "+route)
+	}
+	if packageName := strings.TrimSpace(result.Filter.PackageName); packageName != "" {
+		parts = append(parts, "no "+packageName)
+	}
+	if result.Filter.TripDate != nil {
+		parts = append(parts, "em "+result.Filter.TripDate.Format("02/01/2006"))
+	}
+	return strings.Join(parts, " ") + "."
+}
+
+func formatRouteText(origin string, destination string) string {
+	origin = strings.TrimSpace(origin)
+	destination = strings.TrimSpace(destination)
+	switch {
+	case origin != "" && destination != "":
+		return origin + " para " + destination
+	case origin != "":
+		return "saindo de " + origin
+	case destination != "":
+		return destination
+	default:
+		return ""
+	}
+}
+
 func formatTemplatePrice(value float64) string {
 	if value <= 0 {
 		return ""
@@ -168,8 +230,14 @@ func canRealizeWithoutLLM(decision IntentDecision, state CanonicalConversationSt
 	if decision.TemplateName == "" {
 		return false
 	}
+	if decision.TemplateName == TemplateAvailabilityList || decision.TemplateName == TemplateNoAvailability || decision.TemplateName == TemplateBookingCreated {
+		return false
+	}
 	if decision.Intent == IntentSelectAvailabilityOption {
 		return decision.SelectedOptionIndex > 0 && hasCanonicalSelectedTrip(state, decision.SelectedOptionIndex)
+	}
+	if decision.TemplateName == TemplateAskPaymentChoice {
+		return hasBookingCreatedFacts(state)
 	}
 	return true
 }
@@ -229,12 +297,101 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {
 	switch decision.TemplateName {
 	case TemplateAskMAOrigin:
+		if decision.AvailabilityInput != nil {
+			if destination := cleanStateCityName(decision.AvailabilityInput.Destination); destination != "" {
+				return fmt.Sprintf("Perfeito — %s/SC. De qual cidade do Maranhao voce vai sair?", destination), true
+			}
+		}
 		return "De qual cidade do Maranhao voce vai sair?", true
 
 	case TemplateAskSCOrigin:
 		return "De qual cidade de Santa Catarina voce vai sair?", true
+	case TemplateAskMADestination:
+		if decision.AvailabilityInput != nil {
+			if origin := cleanStateCityName(decision.AvailabilityInput.Origin); origin != "" {
+				return fmt.Sprintf("Perfeito — %s/SC. Para qual cidade do Maranhao voce quer ir?", origin), true
+			}
+		}
+		return realizeResponseTemplate(decision.TemplateName)
 
 	default:
 		return realizeResponseTemplate(decision.TemplateName)
 	}
+}
+
+func cleanStateCityName(value string) string {
+	value = strings.TrimSpace(value)
+	for _, suffix := range []string{"/SC", "/MA", "- SC", "- MA", " SC", " MA"} {
+		value = strings.TrimSuffix(value, suffix)
+	}
+	return strings.TrimSpace(value)
+}
+
+func buildAskDocumentsReply(expectedPassengerCount int, collectedDocumentCount int) string {
+	missing := expectedPassengerCount - collectedDocumentCount
+	if missing <= 0 {
+		missing = expectedPassengerCount
+	}
+	if missing <= 1 {
+		return "Ainda falta o documento de 1 passageiro. Pode enviar o nome completo e CPF ou RG do passageiro faltante. Se preferir, pode mandar foto legivel do documento."
+	}
+	return fmt.Sprintf("Perfeito. Agora pode enviar os nomes completos e os documentos dos %d passageiros faltantes (CPF ou RG). Se preferir, pode mandar fotos legiveis dos documentos.", missing)
+}
+
+func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
+	if len(result.Passengers) == 0 {
+		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF ou RG."
+	}
+	lines := []string{"Consegui identificar estes dados. Estao corretos?"}
+	for index, passenger := range result.Passengers {
+		name := strings.TrimSpace(passenger.Name)
+		docType := strings.TrimSpace(passenger.DocumentType)
+		document := strings.TrimSpace(passenger.Document)
+		if name == "" {
+			name = "nome nao identificado"
+		}
+		if docType == "" {
+			docType = "documento"
+		}
+		if document == "" {
+			document = "numero nao identificado"
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s", index+1, name, docType, document))
+	}
+	if missing := result.ExpectedPassengerCount - len(result.Passengers); missing > 0 {
+		lines = append(lines, buildAskDocumentsReply(missing, 0))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildBookingCreatedReply(result BookingCreateResult) string {
+	if strings.TrimSpace(result.BookingID) == "" && strings.TrimSpace(result.ReservationCode) == "" && strings.TrimSpace(result.Status) == "" {
+		return ""
+	}
+	return askPaymentChoiceReply
+}
+
+func buildBookingCreatedDraftRun(result BookingCreateResult) RunAgentResult {
+	reply := buildBookingCreatedReply(result)
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":          "TEMPLATE_FIRST_REPLY",
+			"template_name": string(TemplateBookingCreated),
+			"tool_name":     toolNameBookingCreate,
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":    reply,
+			"template_name": string(TemplateBookingCreated),
+			"tool_name":     toolNameBookingCreate,
+		},
+	}
+}
+
+func hasBookingCreatedFacts(state CanonicalConversationState) bool {
+	if strings.TrimSpace(state.Booking.BookingID) != "" || strings.TrimSpace(state.Booking.ReservationCode) != "" {
+		return true
+	}
+	return len(asMap(state.LastToolFacts[toolNameBookingCreate])) > 0
 }

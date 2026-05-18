@@ -1,9 +1,6 @@
 package chat
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 type BookingNextAction string
 
@@ -167,10 +164,7 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 		}
 		return "Entendi. A passagem e so para voce ou vai mais alguem junto?"
 	case BookingNextAskPassengerDocuments:
-		if context.PassengerCount <= 1 {
-			return "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento."
-		}
-		return fmt.Sprintf("Perfeito. Agora pode enviar os nomes completos e os documentos dos %d passageiros. Se preferir, pode mandar foto legivel do documento.", context.PassengerCount)
+		return buildAskDocumentsReply(context.PassengerCount, context.PassengerDetailsCount)
 	case BookingNextAskBookingPaymentPreference:
 		return "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
 	default:

@@ -428,22 +428,7 @@ func buildDocumentExtractDraftRun(result DocumentExtractResult) RunAgentResult {
 }
 
 func buildDocumentExtractReply(result DocumentExtractResult) string {
-	if len(result.Passengers) == 0 {
-		return "Messias, nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto, com boa luz e o documento ocupando a maior parte da imagem? Se preferir, pode digitar aqui o nome completo e o documento."
-	}
-
-	lines := []string{"Messias, consegui identificar estes dados. Eles conferem?"}
-	for index, passenger := range result.Passengers {
-		lines = append(lines, fmt.Sprintf("- Passageiro %d: %s | %s | %s", index+1, passenger.Name, passenger.DocumentType, passenger.Document))
-	}
-	if missing := result.ExpectedPassengerCount - len(result.Passengers); missing > 0 {
-		if missing == 1 {
-			lines = append(lines, "", "Ainda falta o documento de 1 passageiro. Pode enviar a foto ou digitar nome completo + documento do passageiro faltante.")
-		} else {
-			lines = append(lines, "", fmt.Sprintf("Ainda faltam os documentos de %d passageiros. Pode enviar as fotos ou digitar nome completo + documento dos passageiros faltantes.", missing))
-		}
-	}
-	return strings.Join(lines, "\n")
+	return buildConfirmExtractedDocumentReply(result)
 }
 
 func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[string]interface{} {

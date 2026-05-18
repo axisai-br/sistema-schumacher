@@ -125,7 +125,7 @@ func TestSCOriginAfterMaranhaoQueryAsksMADestinationWithoutOpenAI(t *testing.T) 
 	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
 		t.Fatalf("expected no availability search before MA destination, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
 	}
-	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Para qual cidade do Maranhao voce quer ir?" {
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Perfeito — Chapeco/SC. Para qual cidade do Maranhao voce quer ir?" {
 		t.Fatalf("expected MA destination question, got %+v", out.Draft)
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskMADestination) {
@@ -827,7 +827,7 @@ func prepareMaranhaoDestinationFollowUp(t *testing.T, svc *Service, store *fakeS
 	if err != nil {
 		t.Fatalf("reprocess SC origin answer: %v", err)
 	}
-	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Para qual cidade do Maranhao voce quer ir?" {
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Perfeito — Chapeco/SC. Para qual cidade do Maranhao voce quer ir?" {
 		t.Fatalf("expected Maranhão destination question, got %+v", out.Draft)
 	}
 	return session
