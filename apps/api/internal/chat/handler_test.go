@@ -3631,8 +3631,8 @@ func TestReprocessUsesAvailabilityToolWhenTurnHasStructuredRoute(t *testing.T) {
 	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-05-20" {
 		t.Fatalf("expected inferred date 2026-05-20, got %+v", searcher.lastInput.TripDate)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "RESULTADO DE FERRAMENTA") {
-		t.Fatalf("expected prompt to include tool result section")
+	if !strings.Contains(runner.lastInput.UserPrompt, "last_validated_tool_facts") {
+		t.Fatalf("expected prompt to include validated tool facts")
 	}
 	if !strings.Contains(runner.lastInput.UserPrompt, "Videira/SC") || !strings.Contains(runner.lastInput.UserPrompt, "Sao Luis/MA") {
 		t.Fatalf("expected prompt to include normalized route")
@@ -3782,11 +3782,11 @@ func TestReprocessUsesPackageAvailabilityForBroadStateDateLookup(t *testing.T) {
 	if searcher.lastInput.Origin != "" || searcher.lastInput.Destination != "" {
 		t.Fatalf("expected package-level search without fixed route, got %+v", searcher.lastInput)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Package consultado: "+packageToSantaCatarina) {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"package_name":"`+packageToSantaCatarina+`"`) {
 		t.Fatalf("expected prompt to expose package-level availability context")
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "priorize listar ate 5 datas futuras") {
-		t.Fatalf("expected prompt to instruct date listing without re-opening collection")
+	if strings.Contains(runner.lastInput.UserPrompt, "priorize listar ate 5 datas futuras") {
+		t.Fatalf("expected prompt not to include legacy date-listing prose")
 	}
 }
 
@@ -3949,11 +3949,11 @@ func TestReprocessDoesNotFallbackUnsupportedForNormalizedSupportedCity(t *testin
 	if strings.Contains(out.Draft.Body, "atendemos apenas viagens dos pacotes Santa Catarina e Maranhao") {
 		t.Fatalf("expected supported city flow, got %q", out.Draft.Body)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Fraiburgo/SC") {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"destination":"Fraiburgo/SC"`) {
 		t.Fatalf("expected prompt to infer Fraiburgo/SC, got %q", runner.lastInput.UserPrompt)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
-		t.Fatalf("expected prompt to ask Maranhao origin, got %q", runner.lastInput.UserPrompt)
+	if strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao") {
+		t.Fatalf("expected prompt not to include legacy direction guardrail prose, got %q", runner.lastInput.UserPrompt)
 	}
 }
 
@@ -4038,11 +4038,11 @@ func TestReprocessAsksOriginAfterBroadStateCitySelection(t *testing.T) {
 	if searcher.calls != 0 {
 		t.Fatalf("expected no availability search before origin is known, got %d", searcher.calls)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Seara/SC") {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"destination":"Seara/SC"`) {
 		t.Fatalf("expected prompt to include inferred destination, got %q", runner.lastInput.UserPrompt)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
-		t.Fatalf("expected prompt to ask Maranhao origin, got %q", runner.lastInput.UserPrompt)
+	if strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao") {
+		t.Fatalf("expected prompt not to include legacy direction guardrail prose, got %q", runner.lastInput.UserPrompt)
 	}
 }
 
@@ -4150,11 +4150,11 @@ func TestReprocessStillAsksOriginWhenDateArrivesBeforeOrigin(t *testing.T) {
 	if searcher.calls != 0 {
 		t.Fatalf("expected no availability search before origin is known, got %d", searcher.calls)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Destino inferido: Seara/SC") {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"destination":"Seara/SC"`) {
 		t.Fatalf("expected prompt to keep inferred destination, got %q", runner.lastInput.UserPrompt)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao: se ainda faltar a origem para essa viagem, a pergunta correta e sobre a cidade de saida no Maranhao.") {
-		t.Fatalf("expected prompt to keep asking Maranhao origin, got %q", runner.lastInput.UserPrompt)
+	if strings.Contains(runner.lastInput.UserPrompt, "Guardrail de direcao") {
+		t.Fatalf("expected prompt not to include legacy direction guardrail prose, got %q", runner.lastInput.UserPrompt)
 	}
 }
 
@@ -4851,7 +4851,7 @@ func TestReprocessUsesPricingQuoteToolAfterAvailabilityForPriceIntent(t *testing
 	if !strings.Contains(runner.lastInput.UserPrompt, toolNamePricingQuote) {
 		t.Fatalf("expected prompt to include pricing quote section")
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "final R$ 250.00 BRL") {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"final_amount":"R$ 250.00"`) {
 		t.Fatalf("expected prompt to include quoted final amount")
 	}
 }
@@ -5317,7 +5317,7 @@ func TestReprocessUsesPaymentStatusToolWhenTurnAsksAboutPix(t *testing.T) {
 	if !strings.Contains(runner.lastInput.UserPrompt, toolNamePaymentStatus) {
 		t.Fatalf("expected prompt to include payment tool section")
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, "Pagamento 1:") {
+	if !strings.Contains(runner.lastInput.UserPrompt, `"payments":[`) {
 		t.Fatalf("expected prompt to include payment item")
 	}
 	if !strings.Contains(runner.lastInput.UserPrompt, "PENDING") {
