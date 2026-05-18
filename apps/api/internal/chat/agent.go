@@ -340,6 +340,10 @@ func containsOperationalAutoSendClaimWithoutTool(text string) bool {
 		return false
 	}
 
+	if looksLikePublicSCTableReply(folded) {
+		return false
+	}
+
 	blockedPhrases := []string{
 		"qual horario prefere",
 		"tem vaga",
