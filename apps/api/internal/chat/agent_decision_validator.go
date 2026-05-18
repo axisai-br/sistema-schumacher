@@ -61,6 +61,8 @@ func validateAgentIntentDecisionReasons(decision IntentDecisionJSON, state Canon
 	switch decision.Action {
 	case jsonDecisionActionTool:
 		reasons = append(reasons, validateAgentToolDecisionReasons(decision, state)...)
+	case jsonDecisionActionSpecialist:
+		reasons = append(reasons, validateAgentSpecialistDecisionReasons(decision)...)
 	case jsonDecisionActionTemplate:
 		if decision.SafeNextStep == "" && decision.BookingInput == nil {
 			reasons = append(reasons, "template_missing_safe_next_step")
@@ -69,6 +71,36 @@ func validateAgentIntentDecisionReasons(decision IntentDecisionJSON, state Canon
 		if len(decision.MissingFields) == 0 && decision.SafeNextStep == "" {
 			reasons = append(reasons, "clarify_missing_fields")
 		}
+	}
+	return reasons
+}
+
+func validateAgentSpecialistDecisionReasons(decision IntentDecisionJSON) []string {
+	reasons := []string{}
+	if decision.AvailabilityInput != nil || decision.PaymentInput != nil || decision.BookingInput != nil {
+		reasons = append(reasons, "specialist_decision_must_not_include_tool_plan")
+	}
+	switch decision.Domain {
+	case jsonDecisionDomainGeneral:
+		switch decision.Intent {
+		case string(IntentAvailabilitySearch):
+		default:
+			reasons = append(reasons, "intent_not_supported_by_general_specialist")
+		}
+	case jsonDecisionDomainScheduling:
+		switch decision.Intent {
+		case string(IntentBookingCreateConfirmation), string(IntentBookingCancel), string(IntentReschedule), string(IntentPassengerCountReply), string(IntentPassengerDocumentsProvided):
+		default:
+			reasons = append(reasons, "intent_not_supported_by_scheduling_specialist")
+		}
+	case jsonDecisionDomainPayments:
+		switch decision.Intent {
+		case string(IntentPaymentPreference), string(IntentPaymentStatusQuery), string(IntentPaymentCreate):
+		default:
+			reasons = append(reasons, "intent_not_supported_by_payments_specialist")
+		}
+	case jsonDecisionDomainHandoff:
+		reasons = append(reasons, "handoff_is_not_specialist")
 	}
 	return reasons
 }

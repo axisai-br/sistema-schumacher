@@ -33,33 +33,66 @@ type IntentDecisionJSON struct {
 }
 
 type GeneralActionPlan struct {
-	TemplateName string   `json:"template_name"`
-	ReasonCode   string   `json:"reason_code"`
-	Fields       []string `json:"fields"`
+	Action             string                  `json:"action,omitempty"`
+	TemplateName       string                  `json:"template_name"`
+	ReasonCode         string                  `json:"reason_code"`
+	Fields             []string                `json:"fields"`
+	MissingFields      []string                `json:"missing_fields,omitempty"`
+	ToolRequests       []SpecialistToolRequest `json:"tool_requests,omitempty"`
+	ReplyPlan          *CustomerReplyPlan      `json:"reply_plan,omitempty"`
+	CustomerFacingText string                  `json:"customer_facing_text,omitempty"`
 }
 
 type SchedulingActionPlan struct {
-	ToolName    string `json:"tool_name"`
-	Origin      string `json:"origin"`
-	Destination string `json:"destination"`
-	PackageName string `json:"package_name"`
-	TripDate    string `json:"trip_date"`
-	Qty         int    `json:"qty"`
-	Limit       int    `json:"limit"`
+	Action             string                  `json:"action,omitempty"`
+	ToolName           string                  `json:"tool_name"`
+	Origin             string                  `json:"origin"`
+	Destination        string                  `json:"destination"`
+	PackageName        string                  `json:"package_name"`
+	TripDate           string                  `json:"trip_date"`
+	Qty                int                     `json:"qty"`
+	Limit              int                     `json:"limit"`
+	MissingFields      []string                `json:"missing_fields,omitempty"`
+	ToolRequests       []SpecialistToolRequest `json:"tool_requests,omitempty"`
+	ReplyPlan          *CustomerReplyPlan      `json:"reply_plan,omitempty"`
+	CustomerFacingText string                  `json:"customer_facing_text,omitempty"`
 }
 
 type PaymentActionPlan struct {
-	ToolName         string  `json:"tool_name"`
-	BookingID        string  `json:"booking_id"`
-	ReservationCode  string  `json:"reservation_code"`
-	PaymentMethod    string  `json:"payment_method"`
-	CustomerDocument string  `json:"customer_document"`
-	Amount           float64 `json:"amount"`
+	Action             string                  `json:"action,omitempty"`
+	ToolName           string                  `json:"tool_name"`
+	BookingID          string                  `json:"booking_id"`
+	ReservationCode    string                  `json:"reservation_code"`
+	PaymentMethod      string                  `json:"payment_method"`
+	CustomerDocument   string                  `json:"customer_document"`
+	Amount             float64                 `json:"amount"`
+	MissingFields      []string                `json:"missing_fields,omitempty"`
+	ToolRequests       []SpecialistToolRequest `json:"tool_requests,omitempty"`
+	ReplyPlan          *CustomerReplyPlan      `json:"reply_plan,omitempty"`
+	CustomerFacingText string                  `json:"customer_facing_text,omitempty"`
 }
 
 type CustomerReplyPlan struct {
 	TemplateName string   `json:"template_name"`
 	Slots        []string `json:"slots"`
+	Message      string   `json:"message,omitempty"`
+	Question     string   `json:"question,omitempty"`
+}
+
+type SpecialistToolRequest struct {
+	ToolName         string  `json:"tool_name"`
+	ReasonCode       string  `json:"reason_code"`
+	Origin           string  `json:"origin,omitempty"`
+	Destination      string  `json:"destination,omitempty"`
+	PackageName      string  `json:"package_name,omitempty"`
+	TripDate         string  `json:"trip_date,omitempty"`
+	Qty              int     `json:"qty,omitempty"`
+	Limit            int     `json:"limit,omitempty"`
+	BookingID        string  `json:"booking_id,omitempty"`
+	ReservationCode  string  `json:"reservation_code,omitempty"`
+	PaymentMethod    string  `json:"payment_method,omitempty"`
+	CustomerDocument string  `json:"customer_document,omitempty"`
+	Amount           float64 `json:"amount,omitempty"`
 }
 
 type CanonicalConversationStateSnapshot struct {
@@ -88,16 +121,6 @@ type JSONDecisionCompactInput struct {
 	CurrentTurn string                             `json:"current_turn"`
 	State       CanonicalConversationStateSnapshot `json:"state"`
 	RecentTurns []string                           `json:"recent_turns,omitempty"`
-}
-
-func buildJSONDecisionSystemPrompt() string {
-	return strings.Join([]string{
-		"You are a backend routing classifier for Schumacher Tur.",
-		"Return only JSON matching the provided schema.",
-		"Do not write customer-facing prose.",
-		"Do not claim dates, prices, seats, bookings, cancellations, or payment status.",
-		"Select tool actions only when the required backend input is present.",
-	}, "\n")
 }
 
 func buildJSONDecisionCompactInput(currentTurn string, state CanonicalConversationState, history []Message) string {

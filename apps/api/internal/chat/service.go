@@ -1103,66 +1103,143 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				validated.Valid,
 			)
 			if validated.Valid {
-				switch {
-				case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentAvailabilitySearch) && validated.Decision.AvailabilityInput != nil:
-					input := availabilityInputFromSchedulingPlan(*validated.Decision.AvailabilityInput)
-					context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, input)
-					if err != nil {
-						return ReprocessResult{}, err
+				if specialistAgentsEnabled() && validated.Decision.Action == jsonDecisionActionSpecialist && s.canRunSpecialistPlanner() {
+					plannerRun, plannerErr := s.runSpecialistPlanner(ctx, validated.Decision, currentTurn, canonicalState, history, draftID)
+					if plannerErr != nil {
+						rolloutMetadata.FallbackReason = "specialist_planner_runner_error"
+						rolloutMetadata.ValidationErrors = append(rolloutMetadata.ValidationErrors, "specialist_planner_runner_error")
+						s.logReprocess(
+							"chat reprocess event=specialist_planner_failed session_id=%s trigger=%s job_run_id=%s domain=%s error=%v",
+							persisted.Session.ID,
+							trigger,
+							jobRunID,
+							validated.Decision.Domain,
+							plannerErr,
+						)
+					} else {
+						memory["specialist_action_plan"] = map[string]interface{}{
+							"domain":               plannerRun.Domain,
+							"valid":                plannerRun.Validation.Valid,
+							"reasons":              plannerRun.Validation.Reasons,
+							"provider_response_id": plannerRun.JSONRun.ProviderResponseID,
+						}
+						agentState["specialist_action_plan"] = memory["specialist_action_plan"]
+						if !plannerRun.Validation.Valid {
+							rolloutMetadata.FallbackReason = strings.Join(plannerRun.Validation.Reasons, ",")
+							rolloutMetadata.ValidationErrors = append(rolloutMetadata.ValidationErrors, plannerRun.Validation.Reasons...)
+							if agentMode == chatAgentModeJSONOnly {
+								run := buildJSONDecisionClarificationDraftRun(AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: plannerRun.Validation.Reasons}, rolloutMetadata)
+								deterministicBookingRun = &run
+								deterministicBookingHandled = true
+							}
+						} else {
+							for _, request := range plannerRun.Validation.ApprovedToolRequests {
+								switch request.ToolName {
+								case toolNameAvailabilitySearch:
+									input := specialistToolRequestToAvailabilityInput(request)
+									context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, input)
+									if err != nil {
+										return ReprocessResult{}, err
+									}
+									toolContext = mergeAgentToolContexts(toolContext, context)
+									toolFacts := map[string]interface{}{}
+									if toolContext.Availability != nil {
+										toolFacts[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*toolContext.Availability)
+									}
+									mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+									agentState["canonical_state"] = canonicalState
+									memory["canonical_state"] = canonicalState
+									toolContext, err = s.executePricingQuoteFromAvailabilityTool(ctx, persisted.Session, toolContext, currentTurn)
+									if err != nil {
+										return ReprocessResult{}, err
+									}
+								case toolNamePaymentCreate:
+									if s.canCreatePayments() {
+										context, err := s.executePaymentCreateTool(ctx, persisted.Session, toolContext, specialistToolRequestToPaymentCreateInput(request))
+										if err != nil {
+											return ReprocessResult{}, err
+										}
+										toolContext = mergeAgentToolContexts(toolContext, context)
+									}
+								}
+							}
+							rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+							rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+							toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+							result.ToolCalls = toolContext.Calls
+							deterministicToolHandled = len(toolContext.Calls) > 0
+							if toolContext.Availability != nil {
+								input := AvailabilitySearchInput{}
+								intentDecision := IntentDecision{Intent: IntentAvailabilitySearch, Source: "general_specialist", Action: "tool", AvailabilityInput: &input}
+								run := buildAvailabilityTemplateDraftRun(intentDecision, *toolContext.Availability)
+								deterministicBookingRun = &run
+								deterministicBookingHandled = true
+							}
+						}
 					}
-					toolContext = mergeAgentToolContexts(toolContext, context)
-					toolFacts := map[string]interface{}{}
-					if toolContext.Availability != nil {
-						toolFacts[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*toolContext.Availability)
-					}
-					mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
-					agentState["canonical_state"] = canonicalState
-					memory["canonical_state"] = canonicalState
-					toolContext, err = s.executePricingQuoteFromAvailabilityTool(ctx, persisted.Session, toolContext, currentTurn)
-					if err != nil {
-						return ReprocessResult{}, err
-					}
-					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
-					rolloutMetadata.ToolCallCount = len(toolContext.Calls)
-					toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
-					result.ToolCalls = toolContext.Calls
-					intentDecision := IntentDecision{
-						Intent:            IntentAvailabilitySearch,
-						Source:            "json_agent",
-						Action:            "tool",
-						AvailabilityInput: &input,
-					}
-					if toolContext.Availability != nil {
-						run := buildAvailabilityTemplateDraftRun(intentDecision, *toolContext.Availability)
-						deterministicBookingRun = &run
-						deterministicBookingHandled = true
-					}
-					deterministicToolHandled = len(toolContext.Calls) > 0
-				case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentPaymentCreate) && validated.Decision.PaymentInput != nil && s.canCreatePayments():
-					input := paymentCreateInputFromPlan(*validated.Decision.PaymentInput)
-					context, err := s.executePaymentCreateTool(ctx, persisted.Session, toolContext, input)
-					if err != nil {
-						return ReprocessResult{}, err
-					}
-					toolContext = mergeAgentToolContexts(toolContext, context)
-					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
-					rolloutMetadata.ToolCallCount = len(toolContext.Calls)
-					toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
-					result.ToolCalls = toolContext.Calls
-					deterministicToolHandled = len(toolContext.Calls) > 0
-					if agentMode == chatAgentModeJSONOnly {
-						validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"payment_template_not_available"}}
-						rolloutMetadata.FallbackReason = "payment_template_not_available"
+				}
+				if !deterministicBookingHandled && !deterministicToolHandled {
+					switch {
+					case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentAvailabilitySearch) && validated.Decision.AvailabilityInput != nil:
+						input := availabilityInputFromSchedulingPlan(*validated.Decision.AvailabilityInput)
+						context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, input)
+						if err != nil {
+							return ReprocessResult{}, err
+						}
+						toolContext = mergeAgentToolContexts(toolContext, context)
+						toolFacts := map[string]interface{}{}
+						if toolContext.Availability != nil {
+							toolFacts[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*toolContext.Availability)
+						}
+						mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+						agentState["canonical_state"] = canonicalState
+						memory["canonical_state"] = canonicalState
+						toolContext, err = s.executePricingQuoteFromAvailabilityTool(ctx, persisted.Session, toolContext, currentTurn)
+						if err != nil {
+							return ReprocessResult{}, err
+						}
+						rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+						rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+						toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+						result.ToolCalls = toolContext.Calls
+						intentDecision := IntentDecision{
+							Intent:            IntentAvailabilitySearch,
+							Source:            "json_agent",
+							Action:            "tool",
+							AvailabilityInput: &input,
+						}
+						if toolContext.Availability != nil {
+							run := buildAvailabilityTemplateDraftRun(intentDecision, *toolContext.Availability)
+							deterministicBookingRun = &run
+							deterministicBookingHandled = true
+						}
+						deterministicToolHandled = len(toolContext.Calls) > 0
+					case validated.Decision.Action == jsonDecisionActionTool && validated.Decision.Intent == string(IntentPaymentCreate) && validated.Decision.PaymentInput != nil && s.canCreatePayments():
+						input := paymentCreateInputFromPlan(*validated.Decision.PaymentInput)
+						context, err := s.executePaymentCreateTool(ctx, persisted.Session, toolContext, input)
+						if err != nil {
+							return ReprocessResult{}, err
+						}
+						toolContext = mergeAgentToolContexts(toolContext, context)
+						rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+						rolloutMetadata.ToolCallCount = len(toolContext.Calls)
+						toolContext = mergeToolCallRequestMetadata(toolContext, rolloutMetadata)
+						result.ToolCalls = toolContext.Calls
+						deterministicToolHandled = len(toolContext.Calls) > 0
+						if agentMode == chatAgentModeJSONOnly {
+							validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"payment_template_not_available"}}
+							rolloutMetadata.FallbackReason = "payment_template_not_available"
+							run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
+							deterministicBookingRun = &run
+							deterministicBookingHandled = true
+						}
+					case agentMode == chatAgentModeJSONOnly:
+						validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"json_decision_action_not_executable"}}
+						rolloutMetadata.FallbackReason = "json_decision_action_not_executable"
 						run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
 						deterministicBookingRun = &run
 						deterministicBookingHandled = true
 					}
-				case agentMode == chatAgentModeJSONOnly:
-					validation := AgentDecisionValidationResult{Decision: validated.Decision, Valid: false, Reasons: []string{"json_decision_action_not_executable"}}
-					rolloutMetadata.FallbackReason = "json_decision_action_not_executable"
-					run := buildJSONDecisionClarificationDraftRun(validation, rolloutMetadata)
-					deterministicBookingRun = &run
-					deterministicBookingHandled = true
 				}
 			} else if agentMode == chatAgentModeJSONOnly {
 				run := buildJSONDecisionClarificationDraftRun(validated, rolloutMetadata)

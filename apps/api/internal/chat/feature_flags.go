@@ -46,6 +46,10 @@ func legacyPromptFallbackEnabled() bool {
 	return chatFeatureEnabled("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", true)
 }
 
+func specialistAgentsEnabled() bool {
+	return chatFeatureEnabled("CHAT_SPECIALIST_AGENTS_ENABLED", false)
+}
+
 func normalizeChatAgentMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case chatAgentModeHybridJSON:
