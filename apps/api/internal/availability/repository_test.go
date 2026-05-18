@@ -22,7 +22,7 @@ func TestNormalizeSearchTextFoldsAccents(t *testing.T) {
 
 func TestNormalizedSearchColumnSQLUsesAccentInsensitiveTranslation(t *testing.T) {
 	got := normalizedSearchColumnSQL("destination_stop.display_name")
-	want := "translate(lower(coalesce(destination_stop.display_name, '')), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')"
+	want := "replace(replace(translate(lower(coalesce(destination_stop.display_name, '')), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn'), ' /', '/'), '/ ', '/')"
 	if got != want {
 		t.Fatalf("unexpected sql expression: %q", got)
 	}

@@ -162,7 +162,7 @@ func normalizedTripStatusSQL(column string) string {
 
 func normalizedSearchColumnSQL(column string) string {
 	return fmt.Sprintf(
-		"translate(lower(coalesce(%s, '')), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')",
+		"replace(replace(translate(lower(coalesce(%s, '')), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn'), ' /', '/'), '/ ', '/')",
 		column,
 	)
 }
