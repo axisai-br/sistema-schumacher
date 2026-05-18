@@ -83,6 +83,45 @@ func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) 
 	}
 }
 
+func TestExecuteAvailabilitySearchEnrichesCanonicalRouteIDs(t *testing.T) {
+	store := newFakeStore()
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{}, searcher)
+	session, _ := store.seedSessionWithMessage("5511999999998", "oi")
+
+	out, err := svc.executeAvailabilitySearchIntentTool(context.Background(), session, AvailabilitySearchInput{
+		Origin:      "Santa Ines/MA",
+		Destination: "Chapeco/SC",
+		PackageName: packageToSantaCatarina,
+		Qty:         1,
+		Limit:       8,
+	})
+	if err != nil {
+		t.Fatalf("execute availability search: %v", err)
+	}
+	if searcher.lastInput.OriginStopID != "MA_SANTA_INES" {
+		t.Fatalf("expected origin stop id MA_SANTA_INES, got %+v", searcher.lastInput)
+	}
+	if searcher.lastInput.DestinationStopID != "SC_CHAPECO" {
+		t.Fatalf("expected destination stop id SC_CHAPECO, got %+v", searcher.lastInput)
+	}
+	if searcher.lastInput.RouteID != "MA_SC" {
+		t.Fatalf("expected route id MA_SC, got %+v", searcher.lastInput)
+	}
+	if len(out.Calls) != 1 {
+		t.Fatalf("expected one tool call, got %+v", out.Calls)
+	}
+	if got := asString(out.Calls[0].RequestPayload["origin_stop_id"]); got != "MA_SANTA_INES" {
+		t.Fatalf("expected request payload origin_stop_id MA_SANTA_INES, got %q", got)
+	}
+	if got := asString(out.Calls[0].RequestPayload["destination_stop_id"]); got != "SC_CHAPECO" {
+		t.Fatalf("expected request payload destination_stop_id SC_CHAPECO, got %q", got)
+	}
+	if got := asString(out.Calls[0].RequestPayload["route_id"]); got != "MA_SC" {
+		t.Fatalf("expected request payload route_id MA_SC, got %q", got)
+	}
+}
+
 func TestParseDirectAvailabilitySearchInputRejectsGenericPassageSentence(t *testing.T) {
 	input, ok := parseDirectAvailabilitySearchInput("gostaria de passagem para sc", time.Now().UTC())
 	if ok {

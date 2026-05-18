@@ -27,6 +27,7 @@ func (t *AvailabilityTool) Search(ctx context.Context, input AvailabilitySearchI
 		return AvailabilitySearchResult{}, ErrAgentToolNotConfigured
 	}
 
+	input = enrichAvailabilitySearchInput(input)
 	filter := availability.SearchFilter{
 		Origin:            input.Origin,
 		Destination:       input.Destination,

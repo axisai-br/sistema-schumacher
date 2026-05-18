@@ -99,8 +99,8 @@ var canonicalStopIDsByLocation = map[string]string{
 }
 
 var routeIDByPackageName = map[string]string{
-	"pacote p/ maranhao":       "SC_MA",
-	"pacote p/ santa catarina": "MA_SC",
+	"pacote p/maranhao":       "SC_MA",
+	"pacote p/santa catarina": "MA_SC",
 }
 
 type agentToolContext struct {
@@ -1674,7 +1674,7 @@ func normalizeSupportedPackageLocation(value string) string {
 }
 
 func canonicalStopIDForLocation(value string) string {
-	key := normalizeCanonicalLocationKey(value)
+	key := normalizeCanonicalLocationKey(normalizeLocationDisplayName(value))
 	if key == "" {
 		return ""
 	}
@@ -1690,7 +1690,16 @@ func routeIDForPackageName(packageName string) string {
 }
 
 func normalizeCanonicalLocationKey(value string) string {
-	folded := foldChatText(NormalizeIncomingCustomerText(value))
+	replacer := strings.NewReplacer(
+		"á", "a", "à", "a", "â", "a", "ã", "a", "ä", "a",
+		"é", "e", "è", "e", "ê", "e", "ë", "e",
+		"í", "i", "ì", "i", "î", "i", "ï", "i",
+		"ó", "o", "ò", "o", "ô", "o", "õ", "o", "ö", "o",
+		"ú", "u", "ù", "u", "û", "u", "ü", "u",
+		"ç", "c",
+	)
+	folded := strings.ToLower(NormalizeIncomingCustomerText(value))
+	folded = replacer.Replace(folded)
 	folded = strings.TrimSpace(folded)
 	if folded == "" {
 		return ""
@@ -2329,6 +2338,7 @@ func (s *Service) executeAvailabilitySearchIntentTool(ctx context.Context, sessi
 		return agentToolContext{}, nil
 	}
 
+	input = enrichAvailabilitySearchInput(input)
 	startedAt := time.Now().UTC()
 	requestPayload := buildAvailabilityToolRequestPayload(input)
 
