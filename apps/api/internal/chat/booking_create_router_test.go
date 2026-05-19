@@ -97,13 +97,13 @@ func TestParseBookingCreateInputUsesHistorySelectionAndPassengerDetailsOnConfirm
 		},
 		{
 			Direction:        "INBOUND",
-			Body:             "joao vitor messias 06645648103\nmarina messias 46643591104",
+			Body:             "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104",
 			ProcessingStatus: "PROCESSED",
 			ReceivedAt:       now.Add(-60 * time.Second),
 		},
 		{
 			Direction:        "OUTBOUND",
-			Body:             "Perfeito - os numeros enviados sao os CPFs do Joao Vitor e da Marina?",
+			Body:             "Perfeito - os numeros enviados sao os CPFs do Joao Vitor e da Ivoneide?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-30 * time.Second),
 		},

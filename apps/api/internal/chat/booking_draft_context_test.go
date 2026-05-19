@@ -177,6 +177,41 @@ func TestPassengerSlotFlowPraMimThenNaoAsksDocuments(t *testing.T) {
 	}
 }
 
+func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testing.T) {
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+
+	context := collectBookingDraftContext(Session{}, history, "eu e mais uma pessoa")
+	if context.PassengerCount != 2 || !context.PassengerCountKnown {
+		t.Fatalf("expected passenger_count=2 known, got %+v", context)
+	}
+	if context.ChildUnder5CountKnown {
+		t.Fatalf("expected child_under_5_count unknown before child answer, got %+v", context)
+	}
+	action := decideNextBookingStep(context)
+	if action != BookingNextAskPassengerClarification {
+		t.Fatalf("expected child question action %s, got %s", BookingNextAskPassengerClarification, action)
+	}
+	if reply := buildBookingContinuationReply(context, action); reply != askChildUnder5Reply {
+		t.Fatalf("expected child question %q, got %q", askChildUnder5Reply, reply)
+	}
+
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "eu e mais uma pessoa", ProcessingStatus: "PROCESSED", ReceivedAt: time.Now().UTC().Add(-90 * time.Second)},
+		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
+	)
+	context = collectBookingDraftContext(Session{}, history, "nao")
+	if context.PassengerCount != 2 || !context.PassengerCountKnown || context.ChildUnder5Count != 0 || !context.ChildUnder5CountKnown {
+		t.Fatalf("expected two passengers and no child under 5, got %+v", context)
+	}
+	action = decideNextBookingStep(context)
+	if action != BookingNextAskPassengerDocuments {
+		t.Fatalf("expected documents action %s, got %s", BookingNextAskPassengerDocuments, action)
+	}
+	if reply := buildBookingContinuationReply(context, action); !strings.Contains(reply, "documentos dos 2 passageiros") {
+		t.Fatalf("expected documents request for two passengers, got %q", reply)
+	}
+}
+
 func TestPassengerSlotFlowSoEuDoesNotAssumeNoChild(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, "Perfeito. A passagem e so para voce ou vai mais alguem junto?")
 

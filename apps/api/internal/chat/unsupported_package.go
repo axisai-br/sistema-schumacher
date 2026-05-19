@@ -23,6 +23,85 @@ func inferUnsupportedPackageQuery(text string) (unsupportedPackageQuery, bool) {
 	return unsupportedPackageQuery{Destination: destination}, true
 }
 
+func inferUnsupportedRouteFollowUp(history []Message, text string) (unsupportedPackageQuery, bool) {
+	body := NormalizeIncomingCustomerText(text)
+	if body == "" || !looksLikePotentialRouteFollowUpAnswer(body) {
+		return unsupportedPackageQuery{}, false
+	}
+
+	switch {
+	case lastAssistantAskedMADestination(history):
+		return unsupportedIfNoSupportedCity(body, maPackageDestinations)
+	case lastAssistantAskedOriginInMaranhao(history):
+		return unsupportedIfNoSupportedCity(body, maPackageDestinations)
+	case lastAssistantAskedOriginInSantaCatarina(history):
+		return unsupportedIfNoSupportedCity(body, scPackageDestinations)
+	default:
+		return unsupportedPackageQuery{}, false
+	}
+}
+
+func unsupportedIfNoSupportedCity(text string, candidates map[string]string) (unsupportedPackageQuery, bool) {
+	if _, ok := findSingleSupportedCityInText(text, candidates); ok {
+		return unsupportedPackageQuery{}, false
+	}
+	return unsupportedPackageQuery{Destination: strings.Join(strings.Fields(strings.TrimSpace(text)), " ")}, true
+}
+
+func lastAssistantAskedMADestination(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !isAssistantRouteQuestionMessage(message) {
+			continue
+		}
+		folded := foldChatText(message.Body)
+		if folded == "" {
+			continue
+		}
+		return strings.Contains(folded, " para qual cidade ") &&
+			(strings.Contains(folded, " maranhao ") || strings.Contains(folded, " ma "))
+	}
+	return false
+}
+
+func looksLikePotentialRouteFollowUpAnswer(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	if looksLikeHumanSupportIntent(folded) ||
+		looksLikeBookingCancelIntent(text) ||
+		looksLikePaymentLookupIntent(text) ||
+		looksLikePaymentCreateIntent(text) ||
+		looksLikeRescheduleIntent(folded) ||
+		looksLikeShortDateFollowUp(text) {
+		return false
+	}
+	if passengerCount, _, ok := parsePassengerCountReply(text); ok && passengerCount > 0 {
+		return false
+	}
+	if _, ok := inferExplicitTravelDestination(text); ok {
+		return true
+	}
+
+	words := strings.Fields(folded)
+	if len(words) == 0 || len(words) > 4 {
+		return false
+	}
+	blocked := map[string]struct{}{
+		"nao": {}, "sei": {}, "sim": {}, "ok": {}, "isso": {}, "pode": {},
+		"quero": {}, "passagem": {}, "valor": {}, "preco": {}, "data": {},
+		"quando": {}, "horario": {}, "tem": {}, "vaga": {}, "vagas": {},
+		"opcao": {}, "primeira": {}, "segunda": {}, "terceira": {},
+	}
+	for _, word := range words {
+		if _, blockedWord := blocked[word]; blockedWord {
+			return false
+		}
+	}
+	return true
+}
+
 func inferExplicitTravelDestination(text string) (string, bool) {
 	body := NormalizeIncomingCustomerText(text)
 	if body == "" {
@@ -135,11 +214,15 @@ func buildUnsupportedPackageDraftRun(query unsupportedPackageQuery) RunAgentResu
 		ReplyText: reply,
 		Model:     "deterministic_unsupported_package",
 		RequestPayload: map[string]interface{}{
-			"mode":        "UNSUPPORTED_PACKAGE_ROUTE",
-			"destination": query.Destination,
+			"mode":          "UNSUPPORTED_PACKAGE_ROUTE",
+			"intent":        string(IntentUnsupportedPackage),
+			"template_name": string(TemplateUnsupportedPackage),
+			"destination":   query.Destination,
 		},
 		ResponsePayload: map[string]interface{}{
-			"reply_text": reply,
+			"reply_text":    reply,
+			"intent":        string(IntentUnsupportedPackage),
+			"template_name": string(TemplateUnsupportedPackage),
 		},
 	}
 }

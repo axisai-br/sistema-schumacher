@@ -10,25 +10,26 @@ import (
 type ResponseTemplateName string
 
 const (
-	TemplateAskPassengerCount ResponseTemplateName = "ASK_PASSENGER_COUNT"
-	TemplateAskChildUnder5    ResponseTemplateName = "ASK_CHILD_UNDER_5"
-	TemplateAskDocuments      ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
-	TemplateAskPaymentChoice  ResponseTemplateName = "ASK_PAYMENT_CHOICE"
-	TemplateAskMAOrigin       ResponseTemplateName = "ASK_MA_ORIGIN"
-	TemplateAskMADestination  ResponseTemplateName = "ASK_MA_DESTINATION"
-	TemplateAskSCOrigin       ResponseTemplateName = "ASK_SC_ORIGIN"
-	TemplateAskSCOriginForMA  ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
-	TemplatePublicSCTable     ResponseTemplateName = "PUBLIC_SC_TABLE"
-	TemplateAvailabilityList  ResponseTemplateName = "AVAILABILITY_LIST"
-	TemplateNoAvailability    ResponseTemplateName = "NO_AVAILABILITY"
-	TemplateUnsupportedCargo  ResponseTemplateName = "UNSUPPORTED_CARGO"
-	TemplateHumanHandoff      ResponseTemplateName = "HUMAN_HANDOFF"
-	TemplateBookingCreated    ResponseTemplateName = "BOOKING_CREATED"
-	TemplateConfirmDocument   ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
+	TemplateAskPassengerCount  ResponseTemplateName = "ASK_PASSENGER_COUNT"
+	TemplateAskChildUnder5     ResponseTemplateName = "ASK_CHILD_UNDER_5"
+	TemplateAskDocuments       ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
+	TemplateAskPaymentChoice   ResponseTemplateName = "ASK_PAYMENT_CHOICE"
+	TemplateAskMAOrigin        ResponseTemplateName = "ASK_MA_ORIGIN"
+	TemplateAskMADestination   ResponseTemplateName = "ASK_MA_DESTINATION"
+	TemplateAskSCOrigin        ResponseTemplateName = "ASK_SC_ORIGIN"
+	TemplateAskSCOriginForMA   ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
+	TemplatePublicSCTable      ResponseTemplateName = "PUBLIC_SC_TABLE"
+	TemplateAvailabilityList   ResponseTemplateName = "AVAILABILITY_LIST"
+	TemplateNoAvailability     ResponseTemplateName = "NO_AVAILABILITY"
+	TemplateUnsupportedCargo   ResponseTemplateName = "UNSUPPORTED_CARGO"
+	TemplateUnsupportedPackage ResponseTemplateName = "UNSUPPORTED_PACKAGE"
+	TemplateHumanHandoff       ResponseTemplateName = "HUMAN_HANDOFF"
+	TemplateBookingCreated     ResponseTemplateName = "BOOKING_CREATED"
+	TemplateConfirmDocument    ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 )
 
 const (
-	askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto?"
+	askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
 	askChildUnder5Reply    = "Tem crianca de 5 anos ou menos viajando?"
 	askPaymentChoiceReply  = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
 	publicSCTableReply     = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
@@ -56,6 +57,8 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return publicSCTableReply, true
 	case TemplateUnsupportedCargo:
 		return unsupportedCargoReply, true
+	case TemplateUnsupportedPackage:
+		return buildUnsupportedPackageReply(), true
 	case TemplateHumanHandoff:
 		return "Vou te encaminhar para um atendente continuar por aqui.", true
 	default:
@@ -249,7 +252,7 @@ func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, conte
 		return false
 	}
 	switch strings.TrimSpace(decision.Source) {
-	case "deterministic_ma_destination_followup":
+	case "deterministic_ma_destination_followup", "deterministic_origin_followup":
 		return true
 	default:
 		return false

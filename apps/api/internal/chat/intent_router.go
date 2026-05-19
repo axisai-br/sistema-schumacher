@@ -20,6 +20,7 @@ const (
 	IntentBookingCancel              Intent = "BOOKING_CANCEL"
 	IntentReschedule                 Intent = "RESCHEDULE"
 	IntentUnsupportedCargo           Intent = "UNSUPPORTED_CARGO"
+	IntentUnsupportedPackage         Intent = "UNSUPPORTED_PACKAGE"
 	IntentHumanSupport               Intent = "HUMAN_SUPPORT"
 )
 
@@ -64,9 +65,6 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if decision, ok := routeBroadStateTemplateIntent(body, folded); ok {
 		return decision
 	}
-	if looksLikeCreateBookingIntent(body) || looksLikeBookingCreateConfirmation(body) {
-		return IntentDecision{Intent: IntentBookingCreateConfirmation, Source: "deterministic", Action: "legacy_tool"}
-	}
 	if index := extractSelectedOptionIndex(body); index > 0 && hasPreviousAvailabilityList(history) {
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
@@ -84,6 +82,9 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			TemplateName:        TemplateAskPassengerCount,
 			Action:              "template",
 		}
+	}
+	if looksLikeCreateBookingIntent(body) || looksLikeBookingCreateConfirmation(body) {
+		return IntentDecision{Intent: IntentBookingCreateConfirmation, Source: "deterministic", Action: "legacy_tool"}
 	}
 	if passengerCount, _, ok := parsePassengerCountReply(body); ok && passengerCount > 0 {
 		return IntentDecision{Intent: IntentPassengerCountReply, Source: "deterministic"}
@@ -113,6 +114,18 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			TemplateName:      TemplateAskMADestination,
 			Action:            "template",
 		}
+	}
+	if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
+		return IntentDecision{
+			Intent:       IntentUnsupportedPackage,
+			Source:       "deterministic_unsupported_followup",
+			TemplateName: TemplateUnsupportedPackage,
+			Action:       "template",
+			TemplateData: map[string]interface{}{"destination": query.Destination},
+		}
+	}
+	if input, ok := parseOriginAnswerAvailabilitySearchInput(history, body, observedAt); ok {
+		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic_origin_followup", AvailabilityInput: &input, Action: "tool"}
 	}
 	if input, ok := parseAvailabilitySearchInput(history, body, observedAt); ok {
 		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic", AvailabilityInput: &input, Action: "tool"}

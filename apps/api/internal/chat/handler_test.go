@@ -5389,7 +5389,7 @@ func TestReprocessReturnsBadGatewayWhenPaymentStatusToolFails(t *testing.T) {
 	}
 }
 
-func TestReprocessUsesBookingCreateToolWhenCustomerChoosesPreviousOption(t *testing.T) {
+func TestReprocessAsksPassengerCountWhenCustomerChoosesPreviousOption(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -5537,29 +5537,20 @@ func TestReprocessUsesBookingCreateToolWhenCustomerChoosesPreviousOption(t *test
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(out.ToolCalls) != 1 {
-		t.Fatalf("expected one tool call, got %d", len(out.ToolCalls))
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no booking tool call before passenger flow, got %d", len(out.ToolCalls))
 	}
-	if out.ToolCalls[0].ToolName != toolNameBookingCreate {
-		t.Fatalf("expected tool name %s, got %s", toolNameBookingCreate, out.ToolCalls[0].ToolName)
-	}
-	if creator.calls != 1 {
-		t.Fatalf("expected one booking create call, got %d", creator.calls)
-	}
-	if creator.lastInput.TripID != "trip-1" || creator.lastInput.BoardStopID != "board-1" || creator.lastInput.AlightStopID != "alight-1" {
-		t.Fatalf("unexpected selected trip input: %+v", creator.lastInput)
-	}
-	if creator.lastInput.SelectedOptionIndex != 1 {
-		t.Fatalf("expected selected option index 1, got %d", creator.lastInput.SelectedOptionIndex)
-	}
-	if len(creator.lastInput.Passengers) != 1 || creator.lastInput.Passengers[0].Document != "06645648105" {
-		t.Fatalf("unexpected passenger input: %+v", creator.lastInput.Passengers)
+	if creator.calls != 0 {
+		t.Fatalf("expected booking create not to be called before passenger flow, got %d", creator.calls)
 	}
 	if runner.calls != 0 {
-		t.Fatalf("expected booking-created template to avoid LLM, got %d calls", runner.calls)
+		t.Fatalf("expected passenger-count template to avoid LLM, got %d calls", runner.calls)
 	}
-	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != askPaymentChoiceReply {
-		t.Fatalf("expected booking-created payment choice template, got %+v", out.Draft)
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != askPassengerCountReply {
+		t.Fatalf("expected passenger-count template, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
 	}
 }
 

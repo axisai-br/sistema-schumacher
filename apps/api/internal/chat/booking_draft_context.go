@@ -164,6 +164,8 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 			return "Tem crianca de 5 anos ou menos viajando?"
 		}
 		return "Entendi. A passagem e so para voce ou vai mais alguem junto?"
+	case BookingNextAwaitTripSelection:
+		return "Antes de criar a reserva, preciso que voce escolha uma opcao de viagem disponivel."
 	case BookingNextAskPassengerDocuments:
 		return buildAskDocumentsReply(context.PassengerCount, context.PassengerDetailsCount)
 	case BookingNextAskBookingPaymentPreference:
@@ -208,6 +210,8 @@ func bookingContinuationTemplateName(action BookingNextAction, context BookingDr
 		return TemplateAskDocuments
 	case BookingNextAskBookingPaymentPreference:
 		return TemplateAskPaymentChoice
+	case BookingNextAwaitTripSelection:
+		return TemplateAvailabilityList
 	default:
 		return ""
 	}

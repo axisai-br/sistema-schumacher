@@ -687,6 +687,9 @@ func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, ob
 	if destination == "" {
 		destination = inferLatestDestinationBeforeOriginQuestion(history)
 	}
+	if destination == "" {
+		destination = inferDestinationFromOriginQuestion(history[questionIndex].Body, originState)
+	}
 	if destination == "" || strings.HasSuffix(strings.ToUpper(destination), "/"+originState) {
 		return AvailabilitySearchInput{}, false
 	}
@@ -1235,6 +1238,19 @@ func inferLatestDestinationBeforeOriginQuestion(history []Message) string {
 	}
 	context := inferLatestRouteContextFromHistory(history[:questionIndex])
 	return context.Destination
+}
+
+func inferDestinationFromOriginQuestion(text string, originState string) string {
+	switch strings.ToUpper(strings.TrimSpace(originState)) {
+	case "MA":
+		destination, _ := findSingleSupportedCityInText(text, scPackageDestinations)
+		return destination
+	case "SC":
+		destination, _ := findSingleSupportedCityInText(text, maPackageDestinations)
+		return destination
+	default:
+		return ""
+	}
 }
 
 func lastConfirmedRouteFromHistory(history []Message) (string, string, bool) {
