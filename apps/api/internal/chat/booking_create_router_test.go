@@ -600,6 +600,18 @@ func TestLastBotAskedPassengerCountIgnoresOlderPassengerQuestionAfterDocumentReq
 	}
 }
 
+func TestRouteAndPassengerCollectionPromptDoesNotActLikePassengerOnlyContext(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Qual a cidade de origem, a data da viagem e quantos passageiros vao viajar?"},
+	}
+	if !lastBotAskedPassengerCount(history) {
+		t.Fatal("expected broad prompt to contain passenger count question")
+	}
+	if !lastBotAskedRouteAndPassengerCollection(history) {
+		t.Fatal("expected broad route/date/passenger prompt to be classified separately")
+	}
+}
+
 func TestParsePassengerCountReply(t *testing.T) {
 	cases := []struct {
 		name       string

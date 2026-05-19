@@ -6,6 +6,7 @@ type BookingNextAction string
 
 const (
 	BookingNextCallCreate                  BookingNextAction = "call_create"
+	BookingNextAwaitTripSelection          BookingNextAction = "await_trip_selection"
 	BookingNextAskPassengerClarification   BookingNextAction = "ask_passenger_clarification"
 	BookingNextAskPassengerDocuments       BookingNextAction = "ask_passenger_documents"
 	BookingNextAskBookingPaymentPreference BookingNextAction = "ask_booking_payment_preference"
@@ -39,9 +40,9 @@ type BookingDraftContext struct {
 
 func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
 	return c.HasAvailabilityShown ||
-		c.AskedPassengerQuestion ||
 		c.RequestedPassengerDocuments ||
 		c.BookingCreated ||
+		c.HasPassengerDetails ||
 		strings.TrimSpace(c.TripID) != ""
 }
 
@@ -148,7 +149,7 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 		strings.TrimSpace(context.Origin) == "" ||
 		strings.TrimSpace(context.Destination) == "" ||
 		strings.TrimSpace(context.TripDate) == "" {
-		return BookingNextCallCreate
+		return BookingNextAwaitTripSelection
 	}
 	if !context.HasPassengerDetails {
 		return BookingNextAskPassengerDocuments

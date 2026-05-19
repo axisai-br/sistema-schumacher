@@ -93,6 +93,70 @@ func TestDecideNextBookingStepDoesNotCallCreateWithoutPassengerDetails(t *testin
 	}
 }
 
+func TestPassengerQuestionAloneDoesNotStartAdvancedBookingFlow(t *testing.T) {
+	context := BookingDraftContext{AskedPassengerQuestion: true}
+	if context.IsAdvancedBookingFlow() {
+		t.Fatalf("expected passenger question alone not to be advanced booking flow, got %+v", context)
+	}
+
+	state := inferConversationPhase(CanonicalConversationState{}, context)
+	if state != ConversationPhaseDiscovery {
+		t.Fatalf("expected discovery phase, got %s", state)
+	}
+}
+
+func TestDecideNextBookingStepCannotCallCreateWithoutSelectedTripData(t *testing.T) {
+	complete := BookingDraftContext{
+		HasAvailabilityShown:  true,
+		TripID:                "trip-1",
+		BoardStopID:           "board-1",
+		AlightStopID:          "alight-1",
+		Origin:                "Igarape do Meio/MA",
+		Destination:           "Petrolandia/SC",
+		TripDate:              "2026-05-11",
+		PassengerCount:        1,
+		ChildUnder5Count:      0,
+		PassengerCountKnown:   true,
+		ChildUnder5CountKnown: true,
+		HasPassengerDetails:   true,
+	}
+
+	if action := decideNextBookingStep(complete); action != BookingNextCallCreate {
+		t.Fatalf("expected complete selected trip to call create, got %s", action)
+	}
+
+	cases := map[string]func(BookingDraftContext) BookingDraftContext{
+		"availability":  func(c BookingDraftContext) BookingDraftContext { c.HasAvailabilityShown = false; return c },
+		"trip_id":       func(c BookingDraftContext) BookingDraftContext { c.TripID = ""; return c },
+		"board_stop_id": func(c BookingDraftContext) BookingDraftContext { c.BoardStopID = ""; return c },
+		"alight_stop_id": func(c BookingDraftContext) BookingDraftContext {
+			c.AlightStopID = ""
+			return c
+		},
+		"origin": func(c BookingDraftContext) BookingDraftContext {
+			c.Origin = ""
+			return c
+		},
+		"destination": func(c BookingDraftContext) BookingDraftContext {
+			c.Destination = ""
+			return c
+		},
+		"trip_date": func(c BookingDraftContext) BookingDraftContext {
+			c.TripDate = ""
+			return c
+		},
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			context := mutate(complete)
+			if action := decideNextBookingStep(context); action == BookingNextCallCreate {
+				t.Fatalf("expected missing %s to block call_create, got %+v", name, context)
+			}
+		})
+	}
+}
+
 func TestPassengerSlotFlowPraMimThenNaoAsksDocuments(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, "Perfeito. A passagem e so para voce ou vai mais alguem junto?")
 	history = append(history,

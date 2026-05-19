@@ -134,18 +134,38 @@ func TestSCOriginAfterMaranhaoQueryAsksMADestinationWithoutOpenAI(t *testing.T) 
 }
 
 func TestBroadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T) {
+	broadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t, "Tem passagem para Santa Catarina?")
+}
+
+func TestBroadSantaCatarinaAbbreviationsReturnPublicTableWithoutOpenAI(t *testing.T) {
+	for _, body := range []string{
+		"quero passagem pra sc",
+		"quero passagem para sc",
+		"quero passagem p/ sc",
+		"passagem sc",
+		"quero passagem para Santa Catarina",
+	} {
+		t.Run(body, func(t *testing.T) {
+			broadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t, body)
+		})
+	}
+}
+
+func broadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T, body string) {
+	t.Helper()
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
 
+	messageKey := strings.NewReplacer(" ", "-", "/", "-").Replace(strings.ToLower(body))
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: "5511999999999",
 		Message: IngestMessagePayload{
 			Direction:         "INBOUND",
-			ProviderMessageID: "msg-broad-sc-1",
-			IdempotencyKey:    "idem-broad-sc-1",
-			Body:              "Tem passagem para Santa Catarina?",
+			ProviderMessageID: "msg-broad-sc-" + messageKey,
+			IdempotencyKey:    "idem-broad-sc-" + messageKey,
+			Body:              body,
 		},
 	})
 	if err != nil {
@@ -167,6 +187,46 @@ func TestBroadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T) {
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePublicSCTable) {
 		t.Fatalf("expected template %s, got %q", TemplatePublicSCTable, got)
+	}
+}
+
+func TestSCDestinationAfterPublicTableAsksMAOriginWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedPublicSCTableContext(t, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-sc-destination-videira-1",
+			IdempotencyKey:    "idem-sc-destination-videira-1",
+			Body:              "quero ir para videira",
+		},
+	}); err != nil {
+		t.Fatalf("ingest SC destination: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess SC destination: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected SC destination template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no availability search before MA origin, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != "Perfeito — Videira/SC. De qual cidade do Maranhao voce vai sair?" {
+		t.Fatalf("expected MA origin question, got %+v", out.Draft)
+	}
+	if strings.Contains(strings.ToLower(out.Draft.Body), "passage") && strings.Contains(strings.ToLower(out.Draft.Body), "voce") {
+		t.Fatalf("expected route follow-up, not passenger question: %q", out.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskMAOrigin) {
+		t.Fatalf("expected template %s, got %q", TemplateAskMAOrigin, got)
 	}
 }
 

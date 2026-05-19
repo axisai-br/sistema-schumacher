@@ -136,7 +136,8 @@ func inferConversationPhase(state CanonicalConversationState, draft BookingDraft
 	if draft.HasPassengerDetails {
 		return ConversationPhaseBookingPending
 	}
-	if draft.AskedPassengerQuestion || state.Passengers.ExpectedCount > 0 {
+	if (draft.AskedPassengerQuestion || state.Passengers.ExpectedCount > 0) &&
+		(draft.HasAvailabilityShown || strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0) {
 		return ConversationPhasePassengerCollection
 	}
 	if strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0 {

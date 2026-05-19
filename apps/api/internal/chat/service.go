@@ -869,6 +869,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		return result, nil
 	}
 	passengerCountContext := lastBotAskedPassengerCount(history)
+	if passengerCountContext {
+		passengerCountContext = !lastBotAskedRouteAndPassengerCollection(history)
+	}
 
 	var deterministicBookingRun *RunAgentResult
 	var deterministicBookingHandled bool

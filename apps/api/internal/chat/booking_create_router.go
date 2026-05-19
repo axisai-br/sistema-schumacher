@@ -793,6 +793,42 @@ func lastBotAskedPassengerCount(history []Message) bool {
 	return false
 }
 
+func lastBotAskedRouteAndPassengerCollection(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.TrimSpace(message.Body)
+		if body == "" {
+			continue
+		}
+		return looksLikePassengerCountQuestion(body) && looksLikeRouteCollectionPrompt(body)
+	}
+	return false
+}
+
+func looksLikeRouteCollectionPrompt(text string) bool {
+	if isBookingRegressionDraftText(text) {
+		return true
+	}
+
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	hasDateCue := strings.Contains(folded, " data") ||
+		strings.Contains(folded, " quando") ||
+		strings.Contains(folded, " dia ")
+	hasRouteCue := strings.Contains(folded, " origem") ||
+		strings.Contains(folded, " destino") ||
+		strings.Contains(folded, " de qual cidade") ||
+		strings.Contains(folded, " para qual cidade") ||
+		strings.Contains(folded, " cidade de saida") ||
+		strings.Contains(folded, " cidade voce sai")
+	return hasDateCue && hasRouteCue
+}
+
 func looksLikePassengerCountQuestion(text string) bool {
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
 	if folded == "" {

@@ -1583,11 +1583,17 @@ func looksLikeBroadStateScheduleLookup(text string) bool {
 }
 
 func detectBroadTravelState(folded string) string {
+	text := " " + strings.Join(strings.Fields(folded), " ") + " "
+
 	switch {
-	case strings.Contains(folded, "santa catarina") || strings.Contains(folded, " sc "):
+	case strings.Contains(text, " santa catarina ") ||
+		strings.Contains(text, " sc "):
 		return "SC"
-	case strings.Contains(folded, "maranhao") || strings.Contains(folded, " ma "):
+
+	case strings.Contains(text, " maranhao ") ||
+		strings.Contains(text, " ma "):
 		return "MA"
+
 	default:
 		return ""
 	}
