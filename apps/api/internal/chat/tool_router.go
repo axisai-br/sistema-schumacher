@@ -83,7 +83,7 @@ var maPackageDestinations = map[string]string{
 
 var canonicalStopIDsByLocation = map[string]string{
 	"fraiburgo/sc":    "SC_FRAIBURGO",
-	"monte carlo/sc":  "SC_MONTE_CARLO",
+	"monte carlo/sc":  "SC_MONTECARLO",
 	"videira/sc":      "SC_VIDEIRA",
 	"campos novos/sc": "SC_CAMPOS_NOVOS",
 	"chapeco/sc":      "SC_CHAPECO",
