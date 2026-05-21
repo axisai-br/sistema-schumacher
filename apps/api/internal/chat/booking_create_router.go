@@ -9,17 +9,20 @@ import (
 )
 
 var (
-	optionIndexPattern           = regexp.MustCompile(`(?i)\bop[cç][aã]o\s*0?([1-5])\b`)
-	passengerNamePattern         = regexp.MustCompile(`(?i)\bnome(?:\s+completo)?\s*(?:é|e|:|-)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
-	passengerAltNamePattern      = regexp.MustCompile(`(?i)\b(?:meu nome|sou)\s*(?:é|e)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
-	passengerCPFPattern          = regexp.MustCompile(`(?i)\bcpf\b[^0-9]*([0-9.\-]{11,14})`)
-	passengerRGPattern           = regexp.MustCompile(`(?i)\brg\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
-	passengerCNHPattern          = regexp.MustCompile(`(?i)\bcnh\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
-	passengerBirthRecordPattern  = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9.\-]{8,40})`)
-	passengerLooseCPFLinePattern = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+([0-9.\-]{11,14})\s*$`)
-	passengerWordQtyPattern      = regexp.MustCompile(`\b(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
-	passengerDigitQtyPattern     = regexp.MustCompile(`\b([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
-	childUnder5AgePattern        = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
+	optionIndexPattern             = regexp.MustCompile(`(?i)\bop[cç][aã]o\s*0?([1-5])\b`)
+	passengerNamePattern           = regexp.MustCompile(`(?i)\bnome(?:\s+completo)?\s*(?:é|e|:|-)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
+	passengerAltNamePattern        = regexp.MustCompile(`(?i)\b(?:meu nome|sou)\s*(?:é|e)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula)\b|$)`)
+	passengerCPFPattern            = regexp.MustCompile(`(?i)\bcpf\b[^0-9]*([0-9.\-]{11,14})`)
+	passengerRGPattern             = regexp.MustCompile(`(?i)\brg\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
+	passengerCNHPattern            = regexp.MustCompile(`(?i)\bcnh\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
+	passengerBirthRecordPattern    = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9.\-]{8,40})`)
+	passengerLooseCPFLinePattern   = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+([0-9.\-]{11,14})\s*$`)
+	passengerWordQtyPattern        = regexp.MustCompile(`\b(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	passengerDigitQtyPattern       = regexp.MustCompile(`\b([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	passengerSomosEmQtyPattern     = regexp.MustCompile(`\bsomos\s+em\s+([1-9])\b`)
+	passengerMePlusDigitQtyPattern = regexp.MustCompile(`\b(?:eu|pra mim|para mim)\s+e\s+mais\s+([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	passengerMePlusWordQtyPattern  = regexp.MustCompile(`\b(?:eu|pra mim|para mim)\s+e\s+mais\s+(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	childUnder5AgePattern          = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
 )
 
 type PassengerClarificationSlots struct {
@@ -1009,84 +1012,85 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 
 	slots := PassengerClarificationSlots{}
 
-	switch {
-	case containsAnyFolded(
-		folded,
-		"eu e mais uma pessoa",
-		"eu e mais uma",
-		"eu e mais um passageiro",
-		"eu e mais um acompanhante",
-		"eu e outra pessoa",
-		"eu e outra",
-		"eu e minha",
-		"eu e meu",
-		"eu e minha esposa",
-		"eu e meu esposo",
-		"eu e minha filha",
-		"eu e meu filho",
-		"eu e minha mulher",
-		"eu e meu marido",
+	if match := passengerMePlusDigitQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+		if extra := passengerDigitNumber(match[1]); extra > 0 {
+			slots.PassengerCount = extra + 1
+			slots.PassengerCountKnown = true
+		}
+	}
 
-		// novos casos
-		"pra mim e pra minha",
-		"pra mim e pro meu",
-		"pra mim e para minha",
-		"pra mim e para meu",
-		"pra mim e minha",
-		"pra mim e meu",
-		"pra mim e pra minha filha",
-		"pra mim e pro meu filho",
-		"pra mim e minha filha",
-		"pra mim e meu filho",
-		"para mim e para minha",
-		"para mim e para meu",
-		"para mim e minha",
-		"para mim e meu",
-		"para mim e minha filha",
-		"para mim e meu filho",
-	):
-		slots.PassengerCount = 2
-		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "pra mim",
-		"para mim",
-		"so pra mim",
-		"so para mim",
-		"e so pra mim",
-		"eh so pra mim",
-		"e so para mim",
-		"eh so para mim",
-		"passagem so para mim",
-		"so eu", "somente eu",
-		"e so eu",
-		"eh so eu",
-		"sou eu",
-		"sou so eu",
-		"sozinho",
-		"vou sozinho",
-		"vou so",
-		"eu",
-		"uma pessoa",
-		"1 pessoa",
-		"um passageiro"):
-		slots.PassengerCount = 1
-		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "duas pessoas", "dois passageiros", "2 pessoas", "2 passageiros", "as duas", "os dois", "nos duas", "nos dois", "dos dois", "das duas"):
-		slots.PassengerCount = 2
-		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "tres pessoas", "3 pessoas", "tres passageiros", "3 passageiros"):
-		slots.PassengerCount = 3
-		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "quatro pessoas", "4 pessoas", "quatro passageiros", "4 passageiros"):
-		slots.PassengerCount = 4
-		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "cinco pessoas", "5 pessoas", "cinco passageiros", "5 passageiros"):
-		slots.PassengerCount = 5
-		slots.PassengerCountKnown = true
+	if !slots.PassengerCountKnown {
+		if match := passengerMePlusWordQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+			if extra := passengerWordNumber(match[1]); extra > 0 {
+				slots.PassengerCount = extra + 1
+				slots.PassengerCountKnown = true
+			}
+		}
+	}
+
+	if !slots.PassengerCountKnown {
+		switch {
+		case containsAnyFolded(
+			folded,
+			"eu e mais uma pessoa",
+			"eu e mais uma",
+			"eu e mais um passageiro",
+			"eu e mais um acompanhante",
+			"eu e outra pessoa",
+			"eu e outra",
+			"eu e minha",
+			"eu e meu",
+			"eu e minha esposa",
+			"eu e meu esposo",
+			"eu e minha filha",
+			"eu e meu filho",
+			"eu e minha mulher",
+			"eu e meu marido",
+
+			// novos casos
+			"pra mim e pra minha",
+			"pra mim e pro meu",
+			"pra mim e para minha",
+			"pra mim e para meu",
+			"pra mim e minha",
+			"pra mim e meu",
+			"pra mim e pra minha filha",
+			"pra mim e pro meu filho",
+			"pra mim e minha filha",
+			"pra mim e meu filho",
+			"para mim e para minha",
+			"para mim e para meu",
+			"para mim e minha",
+			"para mim e meu",
+			"para mim e minha filha",
+			"para mim e meu filho",
+		):
+			slots.PassengerCount = 2
+			slots.PassengerCountKnown = true
+		case isSoloPassengerReply(folded):
+			slots.PassengerCount = 1
+			slots.PassengerCountKnown = true
+		case containsAnyFolded(folded, "uma pessoa", "1 pessoa", "um passageiro"):
+			slots.PassengerCount = 1
+			slots.PassengerCountKnown = true
+		case containsAnyFolded(folded, "duas pessoas", "dois passageiros", "2 pessoas", "2 passageiros", "as duas", "os dois", "nos duas", "nos dois", "dos dois", "das duas"):
+			slots.PassengerCount = 2
+			slots.PassengerCountKnown = true
+		case containsAnyFolded(folded, "tres pessoas", "3 pessoas", "tres passageiros", "3 passageiros"):
+			slots.PassengerCount = 3
+			slots.PassengerCountKnown = true
+		case containsAnyFolded(folded, "quatro pessoas", "4 pessoas", "quatro passageiros", "4 passageiros"):
+			slots.PassengerCount = 4
+			slots.PassengerCountKnown = true
+		case containsAnyFolded(folded, "cinco pessoas", "5 pessoas", "cinco passageiros", "5 passageiros"):
+			slots.PassengerCount = 5
+			slots.PassengerCountKnown = true
+		}
 	}
 
 	if !slots.PassengerCountKnown {
 		if match := passengerDigitQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
-			if qty := readInt(match[1]); qty > 0 {
+			if qty := passengerDigitNumber(match[1]); qty > 0 {
 				slots.PassengerCount = qty
 				slots.PassengerCountKnown = true
 			}
@@ -1095,19 +1099,17 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 
 	if !slots.PassengerCountKnown {
 		if match := passengerWordQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
-			switch match[1] {
-			case "um", "uma":
-				slots.PassengerCount = 1
-			case "dois", "duas":
-				slots.PassengerCount = 2
-			case "tres":
-				slots.PassengerCount = 3
-			case "quatro":
-				slots.PassengerCount = 4
-			case "cinco":
-				slots.PassengerCount = 5
-			}
+			slots.PassengerCount = passengerWordNumber(match[1])
 			slots.PassengerCountKnown = slots.PassengerCount > 0
+		}
+	}
+
+	if !slots.PassengerCountKnown {
+		if match := passengerSomosEmQtyPattern.FindStringSubmatch(folded); len(match) == 2 {
+			if qty := passengerDigitNumber(match[1]); qty > 0 {
+				slots.PassengerCount = qty
+				slots.PassengerCountKnown = true
+			}
 		}
 	}
 
@@ -1153,6 +1155,58 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 	}
 
 	return slots
+}
+
+func isSoloPassengerReply(folded string) bool {
+	switch strings.TrimSpace(folded) {
+	case "eu",
+		"pra mim",
+		"para mim",
+		"so eu",
+		"somente eu",
+		"sou eu",
+		"sou so eu",
+		"sozinho",
+		"vou sozinho",
+		"vou so",
+		"so pra mim",
+		"so para mim",
+		"e so pra mim",
+		"eh so pra mim",
+		"e so para mim",
+		"eh so para mim",
+		"passagem so para mim",
+		"e so eu",
+		"eh so eu":
+		return true
+	default:
+		return false
+	}
+}
+
+func passengerWordNumber(value string) int {
+	switch strings.TrimSpace(value) {
+	case "um", "uma":
+		return 1
+	case "dois", "duas":
+		return 2
+	case "tres":
+		return 3
+	case "quatro":
+		return 4
+	case "cinco":
+		return 5
+	default:
+		return 0
+	}
+}
+
+func passengerDigitNumber(value string) int {
+	value = strings.TrimSpace(value)
+	if len(value) != 1 || value[0] < '1' || value[0] > '9' {
+		return 0
+	}
+	return int(value[0] - '0')
 }
 
 func isShortNoReply(folded string) bool {

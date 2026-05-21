@@ -702,6 +702,61 @@ func TestParsePassengerClarificationSlotsPraMim(t *testing.T) {
 	}
 }
 
+func TestParsePassengerClarificationSlotsMePlusAndExplicitTotals(t *testing.T) {
+	cases := []struct {
+		name       string
+		text       string
+		passengers int
+	}{
+		{name: "me_plus_1_digit", text: "eu e mais 1 pessoa", passengers: 2},
+		{name: "me_plus_1_word", text: "eu e mais uma pessoa", passengers: 2},
+		{name: "me_plus_2_digit", text: "eu e mais 2 pessoas", passengers: 3},
+		{name: "me_plus_2_word", text: "eu e mais duas pessoas", passengers: 3},
+		{name: "me_plus_3_digit", text: "eu e mais 3 pessoas", passengers: 4},
+		{name: "me_plus_3_word", text: "eu e mais tres pessoas", passengers: 4},
+		{name: "pra_mim_plus_2_digit", text: "pra mim e mais 2 pessoas", passengers: 3},
+		{name: "para_mim_plus_2_word", text: "para mim e mais duas pessoas", passengers: 3},
+		{name: "me_plus_3_passengers", text: "eu e mais 3 passageiros", passengers: 4},
+		{name: "three_people", text: "3 pessoas", passengers: 3},
+		{name: "three_people_total", text: "3 pessoas no total", passengers: 3},
+		{name: "somos_three_people", text: "somos 3 pessoas", passengers: 3},
+		{name: "somos_em_three", text: "somos em 3", passengers: 3},
+		{name: "vai_three_people", text: "vai 3 pessoas", passengers: 3},
+		{name: "four_passengers", text: "4 passageiros", passengers: 4},
+		{name: "two_people_word", text: "duas pessoas", passengers: 2},
+		{name: "three_people_word", text: "tres pessoas", passengers: 3},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			slots := parsePassengerClarificationSlots(tc.text)
+			if !slots.PassengerCountKnown || slots.PassengerCount != tc.passengers {
+				t.Fatalf("expected passenger_count=%d known for %q, got %+v", tc.passengers, tc.text, slots)
+			}
+		})
+	}
+}
+
+func TestParsePassengerClarificationSlotsMePlusDoesNotBecomeSolo(t *testing.T) {
+	slots := parsePassengerClarificationSlots("eu e mais 3 pessoas")
+	if slots.PassengerCount == 1 {
+		t.Fatalf("expected me-plus reply not to become solo, got %+v", slots)
+	}
+	if !slots.PassengerCountKnown || slots.PassengerCount != 4 {
+		t.Fatalf("expected passenger_count=4 known, got %+v", slots)
+	}
+}
+
+func TestParsePassengerClarificationSlotsExplicitTotalWithChild(t *testing.T) {
+	slots := parsePassengerClarificationSlots("3 pessoas no total, uma crianca de 4 anos")
+	if !slots.PassengerCountKnown || slots.PassengerCount != 3 {
+		t.Fatalf("expected passenger_count=3 known, got %+v", slots)
+	}
+	if !slots.ChildUnder5CountKnown || slots.ChildUnder5Count != 1 {
+		t.Fatalf("expected child_under_5_count=1 known, got %+v", slots)
+	}
+}
+
 func TestParsePassengerClarificationSlotsNaoChild(t *testing.T) {
 	cases := []string{
 		"nao",

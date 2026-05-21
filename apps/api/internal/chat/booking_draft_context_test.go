@@ -212,6 +212,42 @@ func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testin
 	}
 }
 
+func TestPassengerSlotFlowEuEMaisTresThenSimAsksDocumentsForFour(t *testing.T) {
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+
+	context := collectBookingDraftContext(Session{}, history, "eu e mais 3 pessoas")
+	if context.PassengerCount != 4 || !context.PassengerCountKnown {
+		t.Fatalf("expected passenger_count=4 known, got %+v", context)
+	}
+	if context.ChildUnder5CountKnown {
+		t.Fatalf("expected child_under_5_count unknown before child answer, got %+v", context)
+	}
+	action := decideNextBookingStep(context)
+	if action != BookingNextAskPassengerClarification {
+		t.Fatalf("expected child question action %s, got %s", BookingNextAskPassengerClarification, action)
+	}
+	if reply := buildBookingContinuationReply(context, action); reply != askChildUnder5Reply {
+		t.Fatalf("expected child question %q, got %q", askChildUnder5Reply, reply)
+	}
+
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "eu e mais 3 pessoas", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-90 * time.Second)},
+		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-60 * time.Second)},
+	)
+	context = collectBookingDraftContext(Session{}, history, "sim")
+	if context.PassengerCount != 4 || !context.PassengerCountKnown || context.ChildUnder5Count != 1 || !context.ChildUnder5CountKnown {
+		t.Fatalf("expected four passengers and one child under 5, got %+v", context)
+	}
+	action = decideNextBookingStep(context)
+	if action != BookingNextAskPassengerDocuments {
+		t.Fatalf("expected documents action %s, got %s", BookingNextAskPassengerDocuments, action)
+	}
+	if reply := buildBookingContinuationReply(context, action); !strings.Contains(reply, "documentos dos 4 passageiros") {
+		t.Fatalf("expected documents request for four passengers, got %q", reply)
+	}
+}
+
 func TestTypedPassengerDocsWithoutChildLabelAskLapChildAssignment(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 	now := time.Now().UTC()
