@@ -85,7 +85,7 @@ var canonicalStopIDsByLocation = map[string]string{
 	"fraiburgo/sc":    "SC_FRAIBURGO",
 	"monte carlo/sc":  "SC_MONTECARLO",
 	"videira/sc":      "SC_VIDEIRA",
-	"campos novos/sc": "SC_CAMPOS_NOVOS",
+	"campos novos/sc": "SC_CAMPOSNOVOS",
 	"chapeco/sc":      "SC_CHAPECO",
 	"concordia/sc":    "SC_CONCORDIA",
 	"ipumirim/sc":     "SC_IPUMIRIM",
