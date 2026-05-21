@@ -1007,6 +1007,36 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
+	if !deterministicBookingHandled && !deterministicToolHandled && s.canCreatePayments() {
+		paymentInput, ok := parsePaymentCreateInput(
+			persisted.Session,
+			history,
+			currentTurn,
+			nil,
+			nil,
+		)
+		if ok {
+			updatedContext, err := s.executePaymentCreateTool(
+				ctx,
+				persisted.Session,
+				toolContext,
+				paymentInput,
+			)
+			if err != nil {
+				return ReprocessResult{}, err
+			}
+
+			toolContext = updatedContext
+			result.ToolCalls = toolContext.Calls
+			deterministicToolHandled = len(toolContext.Calls) > 0
+
+			if toolContext.PaymentCreate != nil {
+				run := buildPaymentCreateDraftRun(*toolContext.PaymentCreate)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
+		}
+	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
 	if passengerCountContext {
 		if unsupportedPackageHandled {

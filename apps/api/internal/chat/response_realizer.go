@@ -27,6 +27,7 @@ const (
 	TemplateHumanHandoff          ResponseTemplateName = "HUMAN_HANDOFF"
 	TemplateBookingCreated        ResponseTemplateName = "BOOKING_CREATED"
 	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
+	TemplatePaymentCreate         ResponseTemplateName = "PAYMENT_CREATE"
 )
 
 const (
@@ -402,4 +403,72 @@ func hasBookingCreatedFacts(state CanonicalConversationState) bool {
 		return true
 	}
 	return len(asMap(state.LastToolFacts[toolNameBookingCreate])) > 0
+}
+
+func buildPaymentCreateDraftRun(result PaymentCreateResult) RunAgentResult {
+	reply := buildPaymentCreateReply(result)
+
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":          "TEMPLATE_FIRST_REPLY",
+			"template_name": string(TemplatePaymentCreate),
+			"tool_name":     toolNamePaymentCreate,
+			"payment_type":  strings.TrimSpace(result.PaymentType),
+			"amount_due":    result.AmountDue,
+			"mode_result":   strings.TrimSpace(result.Mode),
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":    reply,
+			"template_name": string(TemplatePaymentCreate),
+			"tool_name":     toolNamePaymentCreate,
+			"payment_type":  strings.TrimSpace(result.PaymentType),
+			"amount_due":    result.AmountDue,
+			"mode_result":   strings.TrimSpace(result.Mode),
+		},
+	}
+}
+
+func buildPaymentCreateReply(result PaymentCreateResult) string {
+	mode := strings.TrimSpace(result.Mode)
+
+	if mode == "pix_sent" && strings.TrimSpace(result.PixCode) != "" {
+		amount := formatTemplatePrice(result.AmountDue)
+		if amount == "" {
+			amount = "o valor combinado"
+		}
+
+		return fmt.Sprintf(
+			"Perfeito. Gere o PIX de %s.\n\nPIX copia e cola:\n%s",
+			amount,
+			strings.TrimSpace(result.PixCode),
+		)
+	}
+
+	switch mode {
+	case "manual_review_required_missing_payer_document":
+		return "Para gerar o PIX, preciso do CPF do pagador."
+
+	case "manual_review_required_missing_payer_phone":
+		return "Para gerar o PIX, preciso confirmar um telefone do pagador com DDD."
+
+	case "manual_review_required_booking_not_found":
+		return "Nao consegui localizar a reserva para gerar o PIX. Vou deixar para o atendimento verificar."
+
+	case "manual_review_required_booking_ineligible":
+		return "Essa reserva nao pode receber cobranca automaticamente. Vou deixar para o atendimento verificar."
+
+	case "manual_review_required_nothing_due":
+		return "Nao encontrei valor pendente para gerar um novo PIX dessa reserva."
+
+	case "manual_review_required_provider_error":
+		return "A cobranca foi criada, mas o codigo PIX nao voltou corretamente. Vou deixar para o atendimento verificar."
+	}
+
+	if len(result.Errors) > 0 {
+		return strings.Join(result.Errors, " ")
+	}
+
+	return "Nao consegui gerar o PIX com seguranca. Vou deixar para o atendimento verificar."
 }

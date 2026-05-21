@@ -115,6 +115,17 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			Action:            "template",
 		}
 	}
+	if state.Phase == ConversationPhaseBooked {
+		if detectRequestedPaymentType(body) != "" ||
+			looksLikePixOnlyPaymentReply(folded) ||
+			looksLikePaymentCreateConfirmationReply(folded) {
+			return IntentDecision{
+				Intent: IntentPaymentCreate,
+				Source: "deterministic_payment_context",
+				Action: "tool",
+			}
+		}
+	}
 	if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
 		return IntentDecision{
 			Intent:       IntentUnsupportedPackage,
