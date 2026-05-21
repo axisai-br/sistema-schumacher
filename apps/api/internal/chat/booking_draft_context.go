@@ -130,7 +130,12 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 			}
 		}
 	}
-
+	if context.PassengerDetailsCount > 0 &&
+		context.PassengerDetailsCount > context.PassengerCount &&
+		context.ChildUnder5Count > 0 {
+		context.PassengerCount = context.PassengerDetailsCount
+		context.PassengerCountKnown = true
+	}
 	if context.PassengerCount == 0 && context.RequestedPassengerDocuments {
 		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, passengerDetailsText)
 		context.PassengerCountKnown = context.PassengerCount > 0

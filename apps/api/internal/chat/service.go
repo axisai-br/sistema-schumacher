@@ -957,6 +957,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 				}
+			} else {
+				reply := "Recebi a informacao, mas nao consegui montar a reserva com seguranca. Pode reenviar os nomes completos e documentos dos passageiros, indicando qual deles e a crianca de ate 5 anos?"
+				run := buildBookingContinuationDraftRun(reply, BookingNextAskPassengerDocuments, bookingDraft)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
 			}
 		}
 

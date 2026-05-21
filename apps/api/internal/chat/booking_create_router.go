@@ -114,7 +114,7 @@ func parseBookingCreateFromLapChildAssignment(session Session, history []Message
 		return BookingCreateInput{}, false
 	}
 	expected := context.PassengerCount
-	if expected <= 0 {
+	if expected <= 0 || expected < len(passengers) {
 		expected = len(passengers)
 	}
 	if expected <= 0 || len(passengers) != expected {
@@ -383,7 +383,7 @@ func shouldBlockBookingCreateBecausePaymentFlow(history []Message, currentTurn s
 	}
 
 	switch folded {
-	case "pix", "integral", "sinal", "entrada", "deposito":
+	case "pix", "integral", "sinal", "entrada":
 		return true
 	default:
 		return false
@@ -468,6 +468,12 @@ func looksLikePaymentFlowShortReply(folded string) bool {
 	switch folded {
 	case "sim",
 		"ok",
+		"ss",
+		"s",
+		"positivo",
+		"posi",
+		"joia",
+		"claro",
 		"okay",
 		"certo",
 		"isso",
@@ -485,8 +491,7 @@ func looksLikePaymentFlowShortReply(folded string) bool {
 		"pelo pix",
 		"integral",
 		"sinal",
-		"entrada",
-		"deposito":
+		"entrada":
 		return true
 	}
 
@@ -510,7 +515,7 @@ func looksLikePaymentFlowShortReply(folded string) bool {
 func looksLikeBookingCreateConfirmation(text string) bool {
 	folded := strings.TrimSpace(foldChatText(text))
 	switch folded {
-	case "sim", "isso", "isso mesmo", "pode seguir", "pode reservar", "confirmo", "confirmado", "ok", "certo",
+	case "sim", "ss", "s", "posi", "exato", "positivo", "isso", "isso mesmo", "pode seguir", "pode reservar", "confirmo", "confirmado", "ok", "certo",
 		"sim esta correto", "esta correto", "sim correto", "pode prosseguir", "pode criar", "pode fazer a reserva":
 		return true
 	default:
@@ -1005,10 +1010,64 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 	slots := PassengerClarificationSlots{}
 
 	switch {
-	case containsAnyFolded(folded, "eu e mais uma pessoa", "eu e mais uma", "eu e mais um passageiro", "eu e mais um acompanhante", "eu e outra pessoa", "eu e outra", "eu e minha", "eu e meu", "eu e minha esposa", "eu e meu esposo", "eu e minha filha", "eu e meu filho", "eu e minha mulher", "eu e meu marido"):
+	case containsAnyFolded(
+		folded,
+		"eu e mais uma pessoa",
+		"eu e mais uma",
+		"eu e mais um passageiro",
+		"eu e mais um acompanhante",
+		"eu e outra pessoa",
+		"eu e outra",
+		"eu e minha",
+		"eu e meu",
+		"eu e minha esposa",
+		"eu e meu esposo",
+		"eu e minha filha",
+		"eu e meu filho",
+		"eu e minha mulher",
+		"eu e meu marido",
+
+		// novos casos
+		"pra mim e pra minha",
+		"pra mim e pro meu",
+		"pra mim e para minha",
+		"pra mim e para meu",
+		"pra mim e minha",
+		"pra mim e meu",
+		"pra mim e pra minha filha",
+		"pra mim e pro meu filho",
+		"pra mim e minha filha",
+		"pra mim e meu filho",
+		"para mim e para minha",
+		"para mim e para meu",
+		"para mim e minha",
+		"para mim e meu",
+		"para mim e minha filha",
+		"para mim e meu filho",
+	):
 		slots.PassengerCount = 2
 		slots.PassengerCountKnown = true
-	case containsAnyFolded(folded, "pra mim", "para mim", "so pra mim", "so para mim", "e so pra mim", "eh so pra mim", "e so para mim", "eh so para mim", "passagem so para mim", "so eu", "somente eu", "e so eu", "eh so eu", "sou eu", "sou so eu", "sozinho", "vou sozinho", "vou so", "uma pessoa", "1 pessoa", "um passageiro"):
+	case containsAnyFolded(folded, "pra mim",
+		"para mim",
+		"so pra mim",
+		"so para mim",
+		"e so pra mim",
+		"eh so pra mim",
+		"e so para mim",
+		"eh so para mim",
+		"passagem so para mim",
+		"so eu", "somente eu",
+		"e so eu",
+		"eh so eu",
+		"sou eu",
+		"sou so eu",
+		"sozinho",
+		"vou sozinho",
+		"vou so",
+		"eu",
+		"uma pessoa",
+		"1 pessoa",
+		"um passageiro"):
 		slots.PassengerCount = 1
 		slots.PassengerCountKnown = true
 	case containsAnyFolded(folded, "duas pessoas", "dois passageiros", "2 pessoas", "2 passageiros", "as duas", "os dois", "nos duas", "nos dois", "dos dois", "das duas"):
