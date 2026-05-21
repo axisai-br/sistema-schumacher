@@ -873,6 +873,8 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		passengerCountContext = !lastBotAskedRouteAndPassengerCollection(history)
 	}
 
+	toolContext := agentToolContext{}
+
 	var deterministicBookingRun *RunAgentResult
 	var deterministicBookingHandled bool
 	var deterministicToolHandled bool
@@ -933,6 +935,31 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			bookingDraft.ChildUnder5CountKnown,
 		)
 
+		if deterministicBookingAction == BookingNextCallCreate {
+			updatedContext, used, err := s.resolveContextualActionTools(
+				ctx,
+				persisted.Session,
+				history,
+				currentTurn,
+				toolContext,
+			)
+			if err != nil {
+				return ReprocessResult{}, err
+			}
+
+			if used {
+				toolContext = updatedContext
+				result.ToolCalls = toolContext.Calls
+				deterministicToolHandled = len(toolContext.Calls) > 0
+
+				if toolContext.BookingCreate != nil {
+					run := buildBookingCreatedDraftRun(*toolContext.BookingCreate)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				}
+			}
+		}
+
 		if deterministicBookingAction != BookingNextCallCreate {
 			reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
 			if strings.TrimSpace(reply) != "" {
@@ -952,6 +979,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			bookingDraft.ChildUnder5Count,
 			bookingDraft.ChildUnder5CountKnown,
 		)
+
 	}
 	if !passengerCountContext && !deterministicBookingHandled {
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
@@ -986,7 +1014,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 		unsupportedPackageHandled = false
 	}
-	toolContext := agentToolContext{}
 	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
 		if intentRouterEnabled() && templateRealizerEnabled() {
 			decision := routeDeterministicIntent(history, currentTurn, canonicalState, observedAt)

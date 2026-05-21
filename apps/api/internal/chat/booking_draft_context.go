@@ -150,7 +150,13 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 func isShortYesReply(text string) bool {
 	switch strings.Join(strings.Fields(foldChatText(text)), " ") {
-	case "sim", "s", "tem", "tem sim", "sim tem":
+	case "sim", "s", "ss", "positivo", "posi", "tem", "tem sim", "sim tem",
+		"sim ela", "sim ele",
+		"ela", "ele",
+		"ela sim", "ele sim",
+		"isso ela", "isso ele",
+		"e ela", "eh ela", "é ela",
+		"e ele", "eh ele", "é ele":
 		return true
 	default:
 		return false
