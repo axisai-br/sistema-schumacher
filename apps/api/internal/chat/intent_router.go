@@ -83,6 +83,17 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			Action:              "template",
 		}
 	}
+	if looksLikeBookingCreateConfirmation(body) &&
+		state.Phase == ConversationPhaseTripSelection &&
+		hasPreviousAvailabilityList(history) {
+		return IntentDecision{
+			Intent:              IntentSelectAvailabilityOption,
+			Source:              "deterministic_trip_confirmation_recovery",
+			SelectedOptionIndex: firstAvailableOptionIndex(history),
+			TemplateName:        TemplateAskPassengerCount,
+			Action:              "template",
+		}
+	}
 	if looksLikeCreateBookingIntent(body) || looksLikeBookingCreateConfirmation(body) {
 		return IntentDecision{Intent: IntentBookingCreateConfirmation, Source: "deterministic", Action: "legacy_tool"}
 	}

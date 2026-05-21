@@ -1065,7 +1065,34 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					decision.TemplateName,
 				)
 			}
-			if decision.Action == "tool" && decision.Intent == IntentAvailabilitySearch && decision.AvailabilityInput != nil {
+
+			if decision.Intent == IntentSelectAvailabilityOption &&
+				decision.SelectedOptionIndex > 0 &&
+				decision.TemplateName == TemplateAskPassengerCount &&
+				hasPreviousAvailabilityList(history) {
+
+				reply, ok := realizeIntentResponseTemplate(decision)
+				if ok && strings.TrimSpace(reply) != "" {
+					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
+					agentState["canonical_state"] = canonicalState
+					memory["canonical_state"] = canonicalState
+					memory["intent_decision"] = map[string]interface{}{
+						"intent":                string(decision.Intent),
+						"intent_source":         decision.Source,
+						"selected_option_index": decision.SelectedOptionIndex,
+						"template_name":         string(decision.TemplateName),
+						"action":                decision.Action,
+					}
+
+					run := buildTemplateDraftRunFromDecision(decision, reply)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "deterministic"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				}
+			}
+			if !deterministicBookingHandled && decision.Action == "tool" && decision.Intent == IntentAvailabilitySearch && decision.AvailabilityInput != nil {
 				context, err := s.executeAvailabilitySearchIntentTool(ctx, persisted.Session, *decision.AvailabilityInput)
 				if err != nil {
 					return ReprocessResult{}, err
@@ -1110,7 +1137,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					}
 				}
 			}
-			if canRealizeWithoutLLM(decision, canonicalState) {
+			if !deterministicBookingHandled && canRealizeWithoutLLM(decision, canonicalState) {
 				reply, ok := realizeIntentResponseTemplate(decision)
 				if ok {
 					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
