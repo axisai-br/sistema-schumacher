@@ -907,6 +907,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			"passenger_count_known":          bookingDraft.PassengerCountKnown,
 			"child_under_5_count":            bookingDraft.ChildUnder5Count,
 			"child_under_5_count_known":      bookingDraft.ChildUnder5CountKnown,
+			"lap_child_assignment_known":     bookingDraft.LapChildAssignmentKnown,
+			"lap_child_passenger_indexes":    bookingDraft.LapChildPassengerIndexes,
+			"needs_lap_child_assignment":     bookingDraft.NeedsLapChildAssignment,
 			"has_availability_shown":         bookingDraft.HasAvailabilityShown,
 			"asked_passenger_question":       bookingDraft.AskedPassengerQuestion,
 			"passenger_count_context_active": bookingDraft.PassengerCountContextActive,
@@ -949,6 +952,27 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			bookingDraft.ChildUnder5Count,
 			bookingDraft.ChildUnder5CountKnown,
 		)
+	}
+	if !passengerCountContext && !deterministicBookingHandled {
+		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+		if decideNextBookingStep(bookingDraft) == BookingNextAskLapChildAssignment {
+			reply := buildBookingContinuationReply(bookingDraft, BookingNextAskLapChildAssignment)
+			if strings.TrimSpace(reply) != "" {
+				run := buildBookingContinuationDraftRun(reply, BookingNextAskLapChildAssignment, bookingDraft)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+				memory["booking_draft_context"] = map[string]interface{}{
+					"passenger_count":             bookingDraft.PassengerCount,
+					"passenger_count_known":       bookingDraft.PassengerCountKnown,
+					"child_under_5_count":         bookingDraft.ChildUnder5Count,
+					"child_under_5_count_known":   bookingDraft.ChildUnder5CountKnown,
+					"lap_child_assignment_known":  bookingDraft.LapChildAssignmentKnown,
+					"lap_child_passenger_indexes": bookingDraft.LapChildPassengerIndexes,
+					"needs_lap_child_assignment":  bookingDraft.NeedsLapChildAssignment,
+					"passenger_details_count":     bookingDraft.PassengerDetailsCount,
+				}
+			}
+		}
 	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
 	if passengerCountContext {
@@ -1361,8 +1385,21 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	} else if toolContext.BookingCreate != nil {
 		run = buildBookingCreatedDraftRun(*toolContext.BookingCreate)
 	} else if documentHandled && toolContext.DocumentExtract != nil {
-		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
-		run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)
+		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+		documentPassengers := bookingPassengersFromDocumentExtract(*toolContext.DocumentExtract, persisted.Session, bookingDraft.TripDate)
+		if strings.EqualFold(strings.TrimSpace(toolContext.DocumentExtract.Mode), "EXTRACTED") &&
+			bookingDraft.ChildUnder5Count > 0 &&
+			len(documentPassengers) > 0 &&
+			countLapChildPassengers(documentPassengers) == 0 {
+			bookingDraft.HasPassengerDetails = true
+			bookingDraft.PassengerDetails = documentPassengers
+			bookingDraft.PassengerDetailsCount = len(documentPassengers)
+			bookingDraft.NeedsLapChildAssignment = true
+			run = buildBookingContinuationDraftRun(buildAskLapChildAssignmentReply(bookingDraft), BookingNextAskLapChildAssignment, bookingDraft)
+		} else {
+			userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
+			run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)
+		}
 	} else {
 		userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 		s.logReprocess(

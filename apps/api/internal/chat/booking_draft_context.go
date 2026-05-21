@@ -1,6 +1,9 @@
 package chat
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type BookingNextAction string
 
@@ -9,6 +12,7 @@ const (
 	BookingNextAwaitTripSelection          BookingNextAction = "await_trip_selection"
 	BookingNextAskPassengerClarification   BookingNextAction = "ask_passenger_clarification"
 	BookingNextAskPassengerDocuments       BookingNextAction = "ask_passenger_documents"
+	BookingNextAskLapChildAssignment       BookingNextAction = "ask_lap_child_assignment"
 	BookingNextAskBookingPaymentPreference BookingNextAction = "ask_booking_payment_preference"
 )
 
@@ -27,9 +31,13 @@ type BookingDraftContext struct {
 	ChildUnder5Count            int
 	PassengerCountKnown         bool
 	ChildUnder5CountKnown       bool
+	LapChildAssignmentKnown     bool
+	LapChildPassengerIndexes    []int
+	NeedsLapChildAssignment     bool
 	HasPassengerDetails         bool
 	PassengerDetailsCount       int
 	PassengerDetailsText        string
+	PassengerDetails            []BookingCreatePassengerInput
 	HasAvailabilityShown        bool
 	AskedPassengerQuestion      bool
 	PassengerCountContextActive bool
@@ -52,7 +60,12 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		PassengerCountContextActive: lastBotAskedPassengerCount(history),
 	}
 
-	context = mergePassengerClarificationSlotsIntoBookingDraft(context, parsePassengerClarificationSlots(currentTurn))
+	currentSlots := parsePassengerClarificationSlots(currentTurn)
+	if !currentSlots.ChildUnder5CountKnown && isShortYesReply(currentTurn) && lastAssistantAskedChildUnder5(history) {
+		currentSlots.ChildUnder5Count = 1
+		currentSlots.ChildUnder5CountKnown = true
+	}
+	context = mergePassengerClarificationSlotsIntoBookingDraft(context, currentSlots)
 
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
@@ -73,7 +86,12 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
 			(!context.PassengerCountKnown || !context.ChildUnder5CountKnown) {
-			context = mergePassengerClarificationSlotsIntoBookingDraft(context, parsePassengerClarificationSlots(body))
+			slots := parsePassengerClarificationSlots(body)
+			if !slots.ChildUnder5CountKnown && isShortYesReply(body) && previousAssistantAskedChildUnder5(history, i) {
+				slots.ChildUnder5Count = 1
+				slots.ChildUnder5CountKnown = true
+			}
+			context = mergePassengerClarificationSlotsIntoBookingDraft(context, slots)
 		}
 
 		for _, toolContext := range messageToolContexts(message) {
@@ -93,18 +111,78 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 	passengerDetailsText := findLatestPassengerDetailsText(history, session)
 	passengers := extractBookingCreatePassengers(passengerDetailsText, session)
+	if len(passengers) == 0 {
+		if extract := findLatestDocumentExtractContext(history); extract != nil && strings.EqualFold(strings.TrimSpace(extract.Mode), "EXTRACTED") {
+			passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
+		}
+	}
 	if len(passengers) > 0 {
 		context.HasPassengerDetails = true
 		context.PassengerDetailsCount = len(passengers)
 		context.PassengerDetailsText = passengerDetailsText
+		context.PassengerDetails = passengers
+		context.LapChildPassengerIndexes = lapChildIndexesFromPassengers(passengers)
+		if len(context.LapChildPassengerIndexes) > 0 {
+			context.LapChildAssignmentKnown = true
+			if !context.ChildUnder5CountKnown {
+				context.ChildUnder5Count = len(context.LapChildPassengerIndexes)
+				context.ChildUnder5CountKnown = true
+			}
+		}
 	}
 
 	if context.PassengerCount == 0 && context.RequestedPassengerDocuments {
 		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, passengerDetailsText)
 		context.PassengerCountKnown = context.PassengerCount > 0
 	}
+	if context.ChildUnder5Count > 0 && len(passengers) > 0 && !context.LapChildAssignmentKnown {
+		if indexes, ok := inferLapChildAssignmentIndexes(history, currentTurn, passengers, context.ChildUnder5Count); ok {
+			context.LapChildPassengerIndexes = indexes
+			context.LapChildAssignmentKnown = true
+		}
+	}
+	context.NeedsLapChildAssignment = context.ChildUnder5Count > 0 &&
+		context.HasPassengerDetails &&
+		!context.LapChildAssignmentKnown
 
 	return context
+}
+
+func isShortYesReply(text string) bool {
+	switch strings.Join(strings.Fields(foldChatText(text)), " ") {
+	case "sim", "s", "tem", "tem sim", "sim tem":
+		return true
+	default:
+		return false
+	}
+}
+
+func lastAssistantAskedChildUnder5(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		return looksLikeChildUnder5Question(history[i].Body)
+	}
+	return false
+}
+
+func previousAssistantAskedChildUnder5(history []Message, beforeIndex int) bool {
+	for i := beforeIndex - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		return looksLikeChildUnder5Question(history[i].Body)
+	}
+	return false
+}
+
+func looksLikeChildUnder5Question(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	return strings.Contains(folded, "crianca de ate 5 anos") ||
+		strings.Contains(folded, "crianca de 5 anos ou menos") ||
+		strings.Contains(folded, "tem ate 5 anos") ||
+		strings.Contains(folded, "ate 5 anos viajando")
 }
 
 func mergePassengerReplyIntoBookingDraft(context BookingDraftContext, passengerCount int, childUnder5Count int) BookingDraftContext {
@@ -154,6 +232,9 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 	if !context.HasPassengerDetails {
 		return BookingNextAskPassengerDocuments
 	}
+	if context.NeedsLapChildAssignment {
+		return BookingNextAskLapChildAssignment
+	}
 	return BookingNextCallCreate
 }
 
@@ -168,11 +249,34 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 		return "Antes de criar a reserva, preciso que voce escolha uma opcao de viagem disponivel."
 	case BookingNextAskPassengerDocuments:
 		return buildAskDocumentsReply(context.PassengerCount, context.PassengerDetailsCount)
+	case BookingNextAskLapChildAssignment:
+		return buildAskLapChildAssignmentReply(context)
 	case BookingNextAskBookingPaymentPreference:
 		return "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
 	default:
 		return ""
 	}
+}
+
+func buildAskLapChildAssignmentReply(context BookingDraftContext) string {
+	passengers := context.PassengerDetails
+	if len(passengers) == 0 {
+		passengers = extractBookingCreatePassengers(context.PassengerDetailsText, Session{})
+	}
+	if len(passengers) == 0 {
+		return "Recebi os dados dos passageiros. Qual deles e a crianca de ate 5 anos?"
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("Recebi os dados dos %d passageiros. Qual deles e a crianca de ate 5 anos?", len(passengers)))
+	for i, passenger := range passengers {
+		name := strings.TrimSpace(passenger.Name)
+		if name == "" {
+			name = fmt.Sprintf("Passageiro %d", i+1)
+		}
+		builder.WriteString(fmt.Sprintf("\n%d. %s", i+1, name))
+	}
+	return builder.String()
 }
 
 func buildBookingContinuationDraftRun(reply string, action BookingNextAction, context BookingDraftContext) RunAgentResult {
@@ -182,13 +286,16 @@ func buildBookingContinuationDraftRun(reply string, action BookingNextAction, co
 		ReplyText: reply,
 		Model:     "template_realizer",
 		RequestPayload: map[string]interface{}{
-			"mode":                  "TEMPLATE_FIRST_REPLY",
-			"intent":                string(IntentPassengerCountReply),
-			"action":                string(action),
-			"template_name":         string(templateName),
-			"passenger_count":       context.PassengerCount,
-			"child_under_5_count":   context.ChildUnder5Count,
-			"passenger_count_known": context.PassengerCountKnown,
+			"mode":                        "TEMPLATE_FIRST_REPLY",
+			"intent":                      string(IntentPassengerCountReply),
+			"action":                      string(action),
+			"template_name":               string(templateName),
+			"passenger_count":             context.PassengerCount,
+			"child_under_5_count":         context.ChildUnder5Count,
+			"passenger_count_known":       context.PassengerCountKnown,
+			"lap_child_assignment_known":  context.LapChildAssignmentKnown,
+			"lap_child_passenger_indexes": context.LapChildPassengerIndexes,
+			"needs_lap_child_assignment":  context.NeedsLapChildAssignment,
 		},
 		ResponsePayload: map[string]interface{}{
 			"reply_text":    reply,
@@ -208,6 +315,8 @@ func bookingContinuationTemplateName(action BookingNextAction, context BookingDr
 		return TemplateAskPassengerCount
 	case BookingNextAskPassengerDocuments:
 		return TemplateAskDocuments
+	case BookingNextAskLapChildAssignment:
+		return TemplateAskLapChildAssignment
 	case BookingNextAskBookingPaymentPreference:
 		return TemplateAskPaymentChoice
 	case BookingNextAwaitTripSelection:

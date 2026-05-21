@@ -212,6 +212,41 @@ func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testin
 	}
 }
 
+func TestTypedPassengerDocsWithoutChildLabelAskLapChildAssignment(t *testing.T) {
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "eu e meu filho de 4 anos", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	)
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.PassengerCount != 2 || context.ChildUnder5Count != 1 || !context.NeedsLapChildAssignment {
+		t.Fatalf("expected pending lap child assignment, got %+v", context)
+	}
+	action := decideNextBookingStep(context)
+	if action != BookingNextAskLapChildAssignment {
+		t.Fatalf("expected next action %s, got %s", BookingNextAskLapChildAssignment, action)
+	}
+	reply := buildBookingContinuationReply(context, action)
+	if !strings.Contains(reply, "Qual deles e a crianca de ate 5 anos?") ||
+		!strings.Contains(reply, "1. Joao Vitor Messias") ||
+		!strings.Contains(reply, "2. Ivoneide Messias") {
+		t.Fatalf("unexpected lap child assignment reply: %q", reply)
+	}
+}
+
+func TestParsePassengerClarificationSlotsEuEMeuFilhoDe4Anos(t *testing.T) {
+	slots := parsePassengerClarificationSlots("eu e meu filho de 4 anos")
+	if !slots.PassengerCountKnown || slots.PassengerCount != 2 {
+		t.Fatalf("expected passenger_count=2, got %+v", slots)
+	}
+	if !slots.ChildUnder5CountKnown || slots.ChildUnder5Count != 1 {
+		t.Fatalf("expected child_under_5_count=1, got %+v", slots)
+	}
+}
+
 func TestPassengerSlotFlowSoEuDoesNotAssumeNoChild(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, "Perfeito. A passagem e so para voce ou vai mais alguem junto?")
 

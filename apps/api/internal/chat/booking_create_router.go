@@ -64,7 +64,9 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 	if qty != len(passengers) {
 		return BookingCreateInput{}, false
 	}
-	applyLapChildFlags(passengers, inferLapChildCount(history))
+	if !validateLapChildStateForBooking(history, body, passengers) {
+		return BookingCreateInput{}, false
+	}
 
 	input := BookingCreateInput{
 		SelectedOptionIndex:    selectedOptionIndex,
@@ -80,6 +82,50 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
 		Passengers:             passengers,
 	}
+	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
+	return input, true
+}
+
+func validateLapChildStateForBooking(history []Message, currentTurn string, passengers []BookingCreatePassengerInput) bool {
+	context := collectBookingDraftContext(Session{}, history, currentTurn)
+	if context.ChildUnder5Count <= 0 {
+		return true
+	}
+	if len(context.LapChildPassengerIndexes) > 0 {
+		applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
+	}
+	return hasExpectedLapChildCount(passengers, context.ChildUnder5Count)
+}
+
+func parseBookingCreateFromLapChildAssignment(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
+	if !lastAssistantAskedLapChildAssignment(history) {
+		return BookingCreateInput{}, false
+	}
+	context := collectBookingDraftContext(session, history, currentTurn)
+	if !context.LapChildAssignmentKnown || context.ChildUnder5Count <= 0 {
+		return BookingCreateInput{}, false
+	}
+
+	passengers := extractBookingCreatePassengers(context.PassengerDetailsText, session)
+	if len(passengers) == 0 {
+		passengers = append([]BookingCreatePassengerInput(nil), context.PassengerDetails...)
+	}
+	if len(passengers) == 0 {
+		return BookingCreateInput{}, false
+	}
+	expected := context.PassengerCount
+	if expected <= 0 {
+		expected = len(passengers)
+	}
+	if expected <= 0 || len(passengers) != expected {
+		return BookingCreateInput{}, false
+	}
+	applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
+	if !hasExpectedLapChildCount(passengers, context.ChildUnder5Count) {
+		return BookingCreateInput{}, false
+	}
+
+	input := buildBookingCreateInputFromDraftContext(session, context, passengers, expected)
 	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
 	return input, true
 }
@@ -126,15 +172,13 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 			return BookingCreateInput{}, false
 		}
 
-		passengers = make([]BookingCreatePassengerInput, 0, len(extract.Passengers))
-		for _, extracted := range extract.Passengers {
-			passenger := bookingPassengerFromDocumentExtract(extracted, session)
+		passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
+		for _, passenger := range passengers {
 			if strings.TrimSpace(passenger.Name) == "" ||
 				strings.TrimSpace(passenger.DocumentType) == "" ||
 				strings.TrimSpace(passenger.Document) == "" {
 				return BookingCreateInput{}, false
 			}
-			passengers = append(passengers, passenger)
 		}
 	} else {
 		passengerSource := context.PassengerDetailsText
@@ -156,22 +200,18 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 	if expected <= 0 || len(passengers) != expected {
 		return BookingCreateInput{}, false
 	}
-	applyLapChildFlags(passengers, context.ChildUnder5Count)
-
-	input := BookingCreateInput{
-		SelectedOptionIndex:    context.SelectedOptionIndex,
-		TripID:                 strings.TrimSpace(context.TripID),
-		BoardStopID:            strings.TrimSpace(context.BoardStopID),
-		AlightStopID:           strings.TrimSpace(context.AlightStopID),
-		OriginDisplayName:      strings.TrimSpace(context.Origin),
-		DestinationDisplayName: strings.TrimSpace(context.Destination),
-		TripDate:               strings.TrimSpace(context.TripDate),
-		DepartureTime:          strings.TrimSpace(context.DepartureTime),
-		Qty:                    expected,
-		CustomerName:           firstNonEmpty(strings.TrimSpace(session.CustomerName), strings.TrimSpace(passengers[0].Name)),
-		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
-		Passengers:             passengers,
+	if len(context.LapChildPassengerIndexes) > 0 {
+		applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
 	}
+	if count := countLapChildPassengers(passengers); count > 0 && !context.ChildUnder5CountKnown {
+		context.ChildUnder5Count = count
+		context.ChildUnder5CountKnown = true
+	}
+	if context.ChildUnder5Count > 0 && !hasExpectedLapChildCount(passengers, context.ChildUnder5Count) {
+		return BookingCreateInput{}, false
+	}
+
+	input := buildBookingCreateInputFromDraftContext(session, context, passengers, expected)
 	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
 	return input, true
 }
@@ -184,6 +224,35 @@ func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, ses
 		DocumentType: documentType,
 		Document:     document,
 		Phone:        strings.TrimSpace(session.CustomerPhone),
+	}
+}
+
+func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session Session, tripDate string) []BookingCreatePassengerInput {
+	passengers := make([]BookingCreatePassengerInput, 0, len(result.Passengers))
+	for _, extracted := range result.Passengers {
+		passenger := bookingPassengerFromDocumentExtract(extracted, session)
+		if isLapChildFromBirthDate(extracted.BirthDate, tripDate) {
+			passenger.IsLapChild = true
+		}
+		passengers = append(passengers, passenger)
+	}
+	return passengers
+}
+
+func buildBookingCreateInputFromDraftContext(session Session, context BookingDraftContext, passengers []BookingCreatePassengerInput, expected int) BookingCreateInput {
+	return BookingCreateInput{
+		SelectedOptionIndex:    context.SelectedOptionIndex,
+		TripID:                 strings.TrimSpace(context.TripID),
+		BoardStopID:            strings.TrimSpace(context.BoardStopID),
+		AlightStopID:           strings.TrimSpace(context.AlightStopID),
+		OriginDisplayName:      strings.TrimSpace(context.Origin),
+		DestinationDisplayName: strings.TrimSpace(context.Destination),
+		TripDate:               strings.TrimSpace(context.TripDate),
+		DepartureTime:          strings.TrimSpace(context.DepartureTime),
+		Qty:                    expected,
+		CustomerName:           firstNonEmpty(strings.TrimSpace(session.CustomerName), strings.TrimSpace(passengers[0].Name)),
+		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
+		Passengers:             passengers,
 	}
 }
 
@@ -258,10 +327,29 @@ func lastAssistantAskedBookingProceedConfirmation(history []Message) bool {
 		}
 		return strings.Contains(body, "posso prosseguir") ||
 			strings.Contains(body, "posso seguir") ||
+			strings.Contains(body, "esta tudo correto para eu confirmar") ||
+			strings.Contains(body, "seguir com o proximo passo") ||
 			strings.Contains(body, "seguir com a reserva") ||
 			strings.Contains(body, "criar a reserva") ||
 			strings.Contains(body, "fazer a reserva") ||
 			strings.Contains(body, "prosseguir e criar")
+	}
+	return false
+}
+
+func lastAssistantAskedLapChildAssignment(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(message.Body)), " ")
+		if body == "" {
+			continue
+		}
+		return strings.Contains(body, "qual deles e a crianca") ||
+			strings.Contains(body, "qual passageiro e a crianca") ||
+			strings.Contains(body, "crianca de ate 5 anos")
 	}
 	return false
 }
@@ -562,6 +650,7 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 
 	passengers := make([]BookingCreatePassengerInput, 0, len(segments))
 	for _, segment := range segments {
+		cleanSegment, lapChildLabelKnown, isLapChild := stripPassengerLapChildLabel(segment)
 		if match := passengerLooseCPFLinePattern.FindStringSubmatch(segment); len(match) == 3 {
 			name := normalizePassengerName(match[1])
 			document := normalizeDigits(match[2])
@@ -573,11 +662,30 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 				Document:     document,
 				DocumentType: "CPF",
 				Phone:        strings.TrimSpace(session.CustomerPhone),
+				IsLapChild:   lapChildLabelKnown && isLapChild,
+			})
+			continue
+		}
+		if match := passengerLooseCPFLinePattern.FindStringSubmatch(cleanSegment); len(match) == 3 {
+			name := normalizePassengerName(match[1])
+			document := normalizeDigits(match[2])
+			if name == "" || len(document) != 11 {
+				return nil
+			}
+			passengers = append(passengers, BookingCreatePassengerInput{
+				Name:         name,
+				Document:     document,
+				DocumentType: "CPF",
+				Phone:        strings.TrimSpace(session.CustomerPhone),
+				IsLapChild:   lapChildLabelKnown && isLapChild,
 			})
 			continue
 		}
 
-		if passenger, ok := parseStructuredPassengerLine(segment, session); ok {
+		if passenger, ok := parseStructuredPassengerLine(cleanSegment, session); ok {
+			if lapChildLabelKnown {
+				passenger.IsLapChild = isLapChild
+			}
 			passengers = append(passengers, passenger)
 			continue
 		}
@@ -586,6 +694,30 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 		return nil
 	}
 	return passengers
+}
+
+func stripPassengerLapChildLabel(segment string) (string, bool, bool) {
+	trimmed := strings.TrimSpace(segment)
+	trimmed = strings.TrimLeft(trimmed, "-* ")
+	if idx := strings.Index(trimmed, "."); idx > 0 && idx <= 3 {
+		if readInt(strings.TrimSpace(trimmed[:idx])) > 0 {
+			trimmed = strings.TrimSpace(trimmed[idx+1:])
+		}
+	}
+	idx := strings.Index(trimmed, ":")
+	if idx < 0 {
+		return segment, false, false
+	}
+	label := strings.Join(strings.Fields(foldChatText(trimmed[:idx])), " ")
+	value := strings.TrimSpace(trimmed[idx+1:])
+	switch label {
+	case "crianca", "filho", "filha", "menino", "menina", "bebe":
+		return value, true, true
+	case "adulto", "adulta", "mae", "pai", "responsavel":
+		return value, true, false
+	default:
+		return segment, false, false
+	}
 }
 
 func parseStructuredPassengerLine(segment string, session Session) (BookingCreatePassengerInput, bool) {
@@ -1063,6 +1195,161 @@ func applyLapChildFlags(passengers []BookingCreatePassengerInput, lapChildCount 
 			passengers[i].IsLapChild = true
 		}
 	}
+}
+
+func lapChildIndexesFromPassengers(passengers []BookingCreatePassengerInput) []int {
+	indexes := []int{}
+	for i, passenger := range passengers {
+		if passenger.IsLapChild {
+			indexes = append(indexes, i+1)
+		}
+	}
+	return indexes
+}
+
+func applyLapChildPassengerIndexes(passengers []BookingCreatePassengerInput, indexes []int) {
+	for i := range passengers {
+		passengers[i].IsLapChild = false
+	}
+	for _, index := range indexes {
+		zeroBased := index - 1
+		if zeroBased >= 0 && zeroBased < len(passengers) {
+			passengers[zeroBased].IsLapChild = true
+		}
+	}
+}
+
+func countLapChildPassengers(passengers []BookingCreatePassengerInput) int {
+	count := 0
+	for _, passenger := range passengers {
+		if passenger.IsLapChild {
+			count++
+		}
+	}
+	return count
+}
+
+func hasExpectedLapChildCount(passengers []BookingCreatePassengerInput, expected int) bool {
+	if expected <= 0 {
+		return true
+	}
+	return countLapChildPassengers(passengers) == expected
+}
+
+func inferLapChildAssignmentIndexes(history []Message, currentTurn string, passengers []BookingCreatePassengerInput, expected int) ([]int, bool) {
+	if expected <= 0 || len(passengers) == 0 {
+		return nil, false
+	}
+	if indexes := lapChildIndexesFromPassengers(passengers); len(indexes) == expected {
+		return indexes, true
+	}
+
+	if lastAssistantAskedLapChildAssignment(history) {
+		if indexes, ok := parseLapChildAssignmentAnswer(currentTurn, passengers, expected); ok {
+			return indexes, true
+		}
+	}
+
+	for i := len(history) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(history[i].Body)), " ")
+		if !strings.Contains(body, "qual deles e a crianca") && !strings.Contains(body, "qual passageiro e a crianca") {
+			continue
+		}
+		for j := i + 1; j < len(history); j++ {
+			if strings.EqualFold(strings.TrimSpace(history[j].Direction), "INBOUND") {
+				if indexes, ok := parseLapChildAssignmentAnswer(history[j].Body, passengers, expected); ok {
+					return indexes, true
+				}
+			}
+		}
+		break
+	}
+	return nil, false
+}
+
+func parseLapChildAssignmentAnswer(text string, passengers []BookingCreatePassengerInput, expected int) ([]int, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" || expected <= 0 {
+		return nil, false
+	}
+
+	indexes := []int{}
+	seen := map[int]bool{}
+	add := func(index int) {
+		if index <= 0 || index > len(passengers) || seen[index] {
+			return
+		}
+		seen[index] = true
+		indexes = append(indexes, index)
+	}
+
+	for _, field := range strings.Fields(folded) {
+		switch field {
+		case "1", "01", "primeiro", "primeira":
+			add(1)
+		case "2", "02", "segundo", "segunda":
+			add(2)
+		case "3", "03", "terceiro", "terceira":
+			add(3)
+		case "4", "04", "quarto", "quarta":
+			add(4)
+		case "5", "05", "quinto", "quinta":
+			add(5)
+		}
+	}
+	if len(indexes) == expected {
+		return indexes, true
+	}
+
+	for i, passenger := range passengers {
+		name := strings.Join(strings.Fields(foldChatText(passenger.Name)), " ")
+		if name == "" {
+			continue
+		}
+		first := strings.Fields(name)[0]
+		if folded == name || folded == first || strings.Contains(folded, name) || strings.Contains(folded, "o "+first) || strings.Contains(folded, "a "+first) {
+			add(i + 1)
+		}
+	}
+	if len(indexes) == expected {
+		return indexes, true
+	}
+	return nil, false
+}
+
+func isLapChildFromBirthDate(birthDate string, tripDate string) bool {
+	birthDate = strings.TrimSpace(birthDate)
+	tripDate = strings.TrimSpace(tripDate)
+	if birthDate == "" || tripDate == "" {
+		return false
+	}
+	birth, ok := parseFlexibleDate(birthDate)
+	if !ok {
+		return false
+	}
+	trip, ok := parseFlexibleDate(tripDate)
+	if !ok {
+		return false
+	}
+	age := trip.Year() - birth.Year()
+	if trip.Month() < birth.Month() || (trip.Month() == birth.Month() && trip.Day() < birth.Day()) {
+		age--
+	}
+	return age >= 0 && age <= 5
+}
+
+func parseFlexibleDate(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{"2006-01-02", "02/01/2006", time.RFC3339, time.RFC3339Nano} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func normalizePassengerDocumentType(value string) string {

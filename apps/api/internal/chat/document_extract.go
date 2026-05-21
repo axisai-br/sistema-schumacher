@@ -12,6 +12,7 @@ type DocumentExtractPassenger struct {
 	Name         string  `json:"name"`
 	Document     string  `json:"document"`
 	DocumentType string  `json:"document_type"`
+	BirthDate    string  `json:"birth_date,omitempty"`
 	Confidence   float64 `json:"confidence"`
 }
 
@@ -229,12 +230,12 @@ Priorize documentos nesta ordem quando houver mais de um numero: CPF, RG, CNH, C
 		Atualmente existem 2 versoes de Identidade que podem ser enviadas:
 		- A mais recente possui um campo do nome completo da pessoa e o CPF ja na parte da frente do documento. Alem disso esse novo formato nao contem mais o numero do RG
 		- A antiga as informacoes ficam atras: com o nome completo da pessoa + CPF + RG, nesse caso a prioridade de leitura para extracao continua sendo nome + CPF.
-		A intencao eh apenas extrair essas informacoes: Nome completo + numero do documento
+		A intencao eh apenas extrair essas informacoes: Nome completo + numero do documento + data de nascimento quando estiver visivel
 Formato:
 {
   "mode": "EXTRACTED" | "PARTIAL" | "LOW_CONFIDENCE",
   "passengers": [
-    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero sem pontuacao desnecessaria", "confidence": 0.0}
+    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero sem pontuacao desnecessaria", "birth_date": "YYYY-MM-DD quando disponivel", "confidence": 0.0}
   ],
   "failure_reason": ""
 }
@@ -319,8 +320,25 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		Name:         name,
 		Document:     document,
 		DocumentType: documentType,
+		BirthDate:    normalizeDocumentBirthDate(raw),
 		Confidence:   normalizeDocumentConfidence(asFloat64(raw["confidence"])),
 	}
+}
+
+func normalizeDocumentBirthDate(raw map[string]interface{}) string {
+	value := strings.TrimSpace(firstNonEmpty(
+		asString(raw["birth_date"]),
+		asString(raw["date_of_birth"]),
+		asString(raw["data_nascimento"]),
+		asString(raw["nascimento"]),
+	))
+	if value == "" {
+		return ""
+	}
+	if parsed, ok := parseFlexibleDate(value); ok {
+		return parsed.Format("2006-01-02")
+	}
+	return value
 }
 
 func parseDocumentExtractContextPayload(payload map[string]interface{}) DocumentExtractResult {
@@ -438,6 +456,7 @@ func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[strin
 			"name":          passenger.Name,
 			"document":      passenger.Document,
 			"document_type": passenger.DocumentType,
+			"birth_date":    passenger.BirthDate,
 			"confidence":    passenger.Confidence,
 		})
 	}

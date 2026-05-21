@@ -10,22 +10,23 @@ import (
 type ResponseTemplateName string
 
 const (
-	TemplateAskPassengerCount  ResponseTemplateName = "ASK_PASSENGER_COUNT"
-	TemplateAskChildUnder5     ResponseTemplateName = "ASK_CHILD_UNDER_5"
-	TemplateAskDocuments       ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
-	TemplateAskPaymentChoice   ResponseTemplateName = "ASK_PAYMENT_CHOICE"
-	TemplateAskMAOrigin        ResponseTemplateName = "ASK_MA_ORIGIN"
-	TemplateAskMADestination   ResponseTemplateName = "ASK_MA_DESTINATION"
-	TemplateAskSCOrigin        ResponseTemplateName = "ASK_SC_ORIGIN"
-	TemplateAskSCOriginForMA   ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
-	TemplatePublicSCTable      ResponseTemplateName = "PUBLIC_SC_TABLE"
-	TemplateAvailabilityList   ResponseTemplateName = "AVAILABILITY_LIST"
-	TemplateNoAvailability     ResponseTemplateName = "NO_AVAILABILITY"
-	TemplateUnsupportedCargo   ResponseTemplateName = "UNSUPPORTED_CARGO"
-	TemplateUnsupportedPackage ResponseTemplateName = "UNSUPPORTED_PACKAGE"
-	TemplateHumanHandoff       ResponseTemplateName = "HUMAN_HANDOFF"
-	TemplateBookingCreated     ResponseTemplateName = "BOOKING_CREATED"
-	TemplateConfirmDocument    ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
+	TemplateAskPassengerCount     ResponseTemplateName = "ASK_PASSENGER_COUNT"
+	TemplateAskChildUnder5        ResponseTemplateName = "ASK_CHILD_UNDER_5"
+	TemplateAskDocuments          ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
+	TemplateAskLapChildAssignment ResponseTemplateName = "ASK_LAP_CHILD_ASSIGNMENT"
+	TemplateAskPaymentChoice      ResponseTemplateName = "ASK_PAYMENT_CHOICE"
+	TemplateAskMAOrigin           ResponseTemplateName = "ASK_MA_ORIGIN"
+	TemplateAskMADestination      ResponseTemplateName = "ASK_MA_DESTINATION"
+	TemplateAskSCOrigin           ResponseTemplateName = "ASK_SC_ORIGIN"
+	TemplateAskSCOriginForMA      ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
+	TemplatePublicSCTable         ResponseTemplateName = "PUBLIC_SC_TABLE"
+	TemplateAvailabilityList      ResponseTemplateName = "AVAILABILITY_LIST"
+	TemplateNoAvailability        ResponseTemplateName = "NO_AVAILABILITY"
+	TemplateUnsupportedCargo      ResponseTemplateName = "UNSUPPORTED_CARGO"
+	TemplateUnsupportedPackage    ResponseTemplateName = "UNSUPPORTED_PACKAGE"
+	TemplateHumanHandoff          ResponseTemplateName = "HUMAN_HANDOFF"
+	TemplateBookingCreated        ResponseTemplateName = "BOOKING_CREATED"
+	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 )
 
 const (
@@ -43,6 +44,8 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return askChildUnder5Reply, true
 	case TemplateAskDocuments:
 		return buildAskDocumentsReply(1, 0), true
+	case TemplateAskLapChildAssignment:
+		return "", false
 	case TemplateAskPaymentChoice:
 		return askPaymentChoiceReply, true
 	case TemplateAskMAOrigin:
@@ -347,7 +350,7 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 	if len(result.Passengers) == 0 {
 		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF ou RG."
 	}
-	lines := []string{"Consegui identificar estes dados. Estao corretos?"}
+	lines := []string{"Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?"}
 	for index, passenger := range result.Passengers {
 		name := strings.TrimSpace(passenger.Name)
 		docType := strings.TrimSpace(passenger.DocumentType)

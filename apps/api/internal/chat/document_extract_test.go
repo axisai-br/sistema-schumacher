@@ -56,6 +56,28 @@ func TestParseDocumentExtractResultUsesCPFWhenDocumentTypeIsImplicit(t *testing.
 	}
 }
 
+func TestParseDocumentExtractResultKeepsBirthDate(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Joao Vitor Messias",
+			"document":"066.456.481-03",
+			"birth_date":"21/05/2022",
+			"confidence":0.9
+		}]
+	}`)
+
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	if result.Passengers[0].BirthDate != "2022-05-21" {
+		t.Fatalf("expected normalized birth date, got %+v", result.Passengers[0])
+	}
+	if !isLapChildFromBirthDate(result.Passengers[0].BirthDate, "2026-05-25") {
+		t.Fatalf("expected birth date to identify lap child at trip date")
+	}
+}
+
 func TestParseDocumentExtractResultMarksPartialWhenPassengerIsIncomplete(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"LOW_CONFIDENCE",

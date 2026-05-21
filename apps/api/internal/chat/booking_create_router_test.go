@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestParseBookingCreateInputUsesHistorySelectionAndPassengerDetailsOnConfirmation(t *testing.T) {
+func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
 		ContactKey:    "5549988709047",
@@ -109,37 +109,47 @@ func TestParseBookingCreateInputUsesHistorySelectionAndPassengerDetailsOnConfirm
 		},
 	}
 
-	input, ok := parseBookingCreateInput(session, history, "isso", nil)
+	if input, ok := parseBookingCreateInput(session, history, "isso", nil); ok {
+		t.Fatalf("expected booking create to be blocked until lap child assignment, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputUsesExplicitLapChildLabel(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := lapChildBookingHistory(now, "Criança: Joao Vitor Messias 06645648103\nAdulto: Ivoneide Messias 46643591104")
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
 	if !ok {
-		t.Fatalf(
-			"expected booking create input from confirmation history: selected_option=%d availability=%v passenger_text=%q passengers=%+v lap_child_count=%d",
-			findLatestSelectedOptionIndex(history),
-			findLatestAvailabilityContext(history) != nil,
-			findLatestPassengerDetailsText(history, session),
-			extractBookingCreatePassengers(findLatestPassengerDetailsText(history, session), session),
-			inferLapChildCount(history),
-		)
+		t.Fatalf("expected booking create with explicit lap child label")
 	}
-	if input.SelectedOptionIndex != 1 {
-		t.Fatalf("expected selected option 1, got %d", input.SelectedOptionIndex)
+	if len(input.Passengers) != 2 || !input.Passengers[0].IsLapChild || input.Passengers[1].IsLapChild {
+		t.Fatalf("expected first passenger as lap child only, got %+v", input.Passengers)
 	}
-	if input.TripID != "trip-1" || input.BoardStopID != "board-1" || input.AlightStopID != "alight-1" {
-		t.Fatalf("unexpected selected trip data: %+v", input)
+	payload := buildBookingCreateRequestPayload(input)
+	rawPassengers := asInterfaceSliceMaps(payload["passengers"])
+	if len(rawPassengers) != 2 || rawPassengers[0]["is_lap_child"] != true || rawPassengers[1]["is_lap_child"] == true {
+		t.Fatalf("expected request payload to preserve lap child assignment, got %+v", rawPassengers)
 	}
-	if input.OriginDisplayName != "Moncao/MA" || input.DestinationDisplayName != "Petrolandia/SC" {
-		t.Fatalf("unexpected route: %+v", input)
+}
+
+func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := lapChildBookingHistory(now, "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104")
+	history = append(history, Message{
+		Direction:        "OUTBOUND",
+		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
+		ProcessingStatus: messageStatusAutomationDraft,
+		ReceivedAt:       now.Add(-30 * time.Second),
+	})
+
+	input, ok := parseBookingCreateFromLapChildAssignment(session, history, "1")
+	if !ok {
+		t.Fatalf("expected booking create from lap child assignment")
 	}
-	if input.Qty != 2 {
-		t.Fatalf("expected qty 2, got %d", input.Qty)
-	}
-	if len(input.Passengers) != 2 {
-		t.Fatalf("expected two passengers, got %+v", input.Passengers)
-	}
-	if input.Passengers[0].Document != "06645648103" || input.Passengers[1].Document != "46643591104" {
-		t.Fatalf("unexpected passengers: %+v", input.Passengers)
-	}
-	if input.Passengers[1].IsLapChild != true {
-		t.Fatalf("expected second passenger marked as lap child, got %+v", input.Passengers)
+	if len(input.Passengers) != 2 || !input.Passengers[0].IsLapChild || input.Passengers[1].IsLapChild {
+		t.Fatalf("expected first passenger as lap child only, got %+v", input.Passengers)
 	}
 }
 
@@ -587,6 +597,35 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 		})
 	}
 	return history
+}
+
+func lapChildBookingHistory(now time.Time, passengerDetails string) []Message {
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Opcoes para Santa Ines/MA -> Monte Carlo/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-7 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Monte Carlo/SC", Qty: 2, Limit: 5},
+						Results: []AvailabilitySearchItem{{
+							TripID: "trip-lap-1", BoardStopID: "board-lap-1", AlightStopID: "alight-lap-1",
+							OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Monte Carlo/SC",
+							OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
+						}},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "INBOUND", Body: "eu e meu filho de 4 anos", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		{Direction: "INBOUND", Body: passengerDetails, ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
+	}
 }
 
 func TestLastBotAskedPassengerCountIgnoresOlderPassengerQuestionAfterDocumentRequest(t *testing.T) {
