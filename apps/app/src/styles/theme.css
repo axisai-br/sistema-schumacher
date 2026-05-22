@@ -3537,7 +3537,8 @@ textarea.input {
 }
 
 .atendimentos-session-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   flex: 1 1 auto;
   min-height: 0;
@@ -3549,9 +3550,7 @@ textarea.input {
   border-top: 1px solid var(--border-light);
   scrollbar-width: thin;
   scrollbar-color: rgba(184, 134, 11, 0.55) rgba(255, 255, 255, 0.04);
-  align-content: start;
-  align-items: start;
-  grid-auto-rows: max-content;
+  align-items: stretch;
 }
 
 .atendimentos-session-list::-webkit-scrollbar {
@@ -3585,6 +3584,7 @@ textarea.input {
     box-shadow var(--duration-fast) var(--ease-smooth);
   align-self: start;
   height: auto;
+  width: 100%;
 }
 
 .atendimento-session-item:hover {
@@ -3686,7 +3686,15 @@ textarea.input {
 .atendimento-session-meta {
   display: inline-flex;
   flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
   gap: 8px;
+}
+
+.atendimento-session-meta .status-badge {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  line-height: 1.2;
 }
 
 .atendimento-chat-header {
