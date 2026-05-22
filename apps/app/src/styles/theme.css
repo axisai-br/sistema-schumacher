@@ -3549,6 +3549,9 @@ textarea.input {
   border-top: 1px solid var(--border-light);
   scrollbar-width: thin;
   scrollbar-color: rgba(184, 134, 11, 0.55) rgba(255, 255, 255, 0.04);
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
 }
 
 .atendimentos-session-list::-webkit-scrollbar {
@@ -3580,6 +3583,8 @@ textarea.input {
   transition: transform var(--duration-fast) var(--ease-smooth),
     border-color var(--duration-fast) var(--ease-smooth),
     box-shadow var(--duration-fast) var(--ease-smooth);
+  align-self: start;
+  height: auto;
 }
 
 .atendimento-session-item:hover {
@@ -3637,6 +3642,7 @@ textarea.input {
   min-width: 0;
   display: grid;
   gap: 6px;
+  align-content: start;
 }
 
 .atendimento-session-top {
