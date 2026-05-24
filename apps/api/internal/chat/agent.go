@@ -233,10 +233,11 @@ func candidateMediaMemory(messages []Message) []map[string]interface{} {
 	items := make([]map[string]interface{}, 0, len(messages))
 	for _, item := range collectCandidateMedia(messages) {
 		items = append(items, map[string]interface{}{
-			"kind":       item.Kind,
-			"url":        item.URL,
-			"mime_type":  item.MimeType,
-			"message_id": item.MessageID,
+			"kind":        item.Kind,
+			"url_present": strings.TrimSpace(item.URL) != "",
+			"mime_type":   item.MimeType,
+			"message_id":  item.MessageID,
+			"file_name":   item.FileName,
 		})
 	}
 	return items
@@ -286,6 +287,8 @@ func collectCandidateMedia(messages []Message) []AgentMediaInput {
 
 		case "DOCUMENT":
 			mimeType := strings.TrimSpace(asString(normalized["document_mime_type"]))
+			fileName := strings.TrimSpace(asString(normalized["document_file_name"]))
+
 			if strings.HasPrefix(strings.ToLower(mimeType), "image/") {
 				if url := strings.TrimSpace(asString(normalized["document_url"])); isHTTPURL(url) {
 					items = append(items, AgentMediaInput{
@@ -293,6 +296,34 @@ func collectCandidateMedia(messages []Message) []AgentMediaInput {
 						URL:       url,
 						MimeType:  mimeType,
 						MessageID: message.ID,
+						FileName:  fileName,
+					})
+				}
+				continue
+			}
+
+			if strings.EqualFold(mimeType, "application/pdf") {
+				dataURL := strings.TrimSpace(asString(normalized["document_data_url"]))
+				documentURL := strings.TrimSpace(asString(normalized["document_url"]))
+
+				if strings.HasPrefix(strings.ToLower(dataURL), "data:application/pdf") {
+					items = append(items, AgentMediaInput{
+						Kind:      "PDF",
+						URL:       dataURL,
+						MimeType:  mimeType,
+						MessageID: message.ID,
+						FileName:  fileName,
+					})
+					continue
+				}
+
+				if isHTTPURL(documentURL) {
+					items = append(items, AgentMediaInput{
+						Kind:      "PDF",
+						URL:       documentURL,
+						MimeType:  mimeType,
+						MessageID: message.ID,
+						FileName:  fileName,
 					})
 				}
 			}

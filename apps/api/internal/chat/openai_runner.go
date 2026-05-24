@@ -141,6 +141,12 @@ func (r *OpenAIRunner) buildRequestPayload(ctx context.Context, input RunAgentIn
 		"input":        buildOpenAIInputContent(ctx, r.client, input),
 	}
 
+	if len(input.TextFormat) > 0 {
+		payload["text"] = map[string]interface{}{
+			"format": input.TextFormat,
+		}
+	}
+
 	continuity := readOpenAIContinuityMetadata(input.Session.Metadata)
 	if allowContinuity && r.continuityEnabled {
 		if continuity.ProviderResponseID != "" && openAIModelsCompatible(model, continuity.ProviderModel) {
@@ -262,6 +268,13 @@ func buildOpenAIInputContent(ctx context.Context, client *http.Client, input Run
 		if !strings.EqualFold(strings.TrimSpace(item.Kind), "IMAGE") {
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(item.Kind), "PDF") {
+			fileInput := buildOpenAIFileInput(item)
+			if fileInput != nil {
+				content = append(content, fileInput)
+			}
+			continue
+		}
 		imageURL := resolveOpenAIImageURL(ctx, client, item)
 		if imageURL == "" {
 			continue
@@ -281,6 +294,36 @@ func buildOpenAIInputContent(ctx context.Context, client *http.Client, input Run
 			"content": content,
 		},
 	}
+}
+
+func buildOpenAIFileInput(item AgentMediaInput) map[string]interface{} {
+	url := strings.TrimSpace(item.URL)
+	if url == "" {
+		return nil
+	}
+
+	filename := strings.TrimSpace(item.FileName)
+	if filename == "" {
+		filename = "documento.pdf"
+	}
+
+	if strings.HasPrefix(strings.ToLower(url), "data:application/pdf") {
+		return map[string]interface{}{
+			"type":      "input_file",
+			"filename":  filename,
+			"file_data": url,
+		}
+	}
+
+	if isHTTPURL(url) {
+		return map[string]interface{}{
+			"type":     "input_file",
+			"filename": filename,
+			"file_url": url,
+		}
+	}
+
+	return nil
 }
 
 func resolveOpenAIImageURL(ctx context.Context, client *http.Client, item AgentMediaInput) string {
