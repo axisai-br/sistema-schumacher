@@ -15,14 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
-
-	"github.com/jackc/pgx/v5"
 	"schumacher-tur/api/internal/bookings"
 	"schumacher-tur/api/internal/chat"
 	"schumacher-tur/api/internal/payments"
 	"schumacher-tur/api/internal/shared/config"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var (
@@ -110,6 +110,7 @@ func NewService(store Store, chatSvc ChatIngestor, cfg config.Config, deps ...in
 const (
 	maxEvolutionInlineImageBytes = 8 * 1024 * 1024
 	maxEvolutionInlineAudioBytes = 25 * 1024 * 1024
+	maxEvolutionInlinePDFBytes   = 10 * 1024 * 1024
 )
 
 func (s *Service) fetchEvolutionMediaDataURL(
@@ -512,6 +513,39 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 			normalized["image_source"] = "evolution_url_fallback"
 			if mediaErr != nil {
 				normalized["image_base64_error"] = mediaErr.Error()
+			}
+		}
+	}
+
+	if strings.EqualFold(messageType, "documentMessage") &&
+		strings.EqualFold(strings.TrimSpace(stringValue(normalized["document_mime_type"])), "application/pdf") {
+
+		keyID := strings.TrimSpace(payload.Data.Key.ID)
+		remoteJID := strings.TrimSpace(payload.Data.Key.RemoteJID)
+		if remoteJID == "" {
+			remoteJID = strings.TrimSpace(payload.Data.Key.RemoteJIDAlt)
+		}
+
+		normalized["evolution_message_id"] = keyID
+		normalized["evolution_remote_jid"] = remoteJID
+		normalized["evolution_from_me"] = payload.Data.Key.FromMe
+
+		dataURL, mediaErr := s.fetchEvolutionMediaDataURL(
+			ctx,
+			keyID,
+			remoteJID,
+			payload.Data.Key.FromMe,
+			"application/pdf",
+			maxEvolutionInlinePDFBytes,
+		)
+
+		if mediaErr == nil && strings.TrimSpace(dataURL) != "" {
+			normalized["document_data_url"] = dataURL
+			normalized["document_source"] = "evolution_get_base64"
+		} else {
+			normalized["document_source"] = "evolution_url_fallback"
+			if mediaErr != nil {
+				normalized["document_base64_error"] = mediaErr.Error()
 			}
 		}
 	}
