@@ -183,6 +183,7 @@ func (s *Service) runDocumentExtract(ctx context.Context, session Session, candi
 		SystemPrompt:     buildDocumentExtractSystemPrompt(),
 		UserPrompt:       buildDocumentExtractUserPrompt(expected),
 		IdempotencyKey:   strings.TrimSpace(draftID) + "-document-extract",
+		TextFormat:       buildDocumentExtractTextFormat(),
 	})
 	if err != nil {
 		/* Log fails */
@@ -219,18 +220,21 @@ func (s *Service) runDocumentExtract(ctx context.Context, session Session, candi
 }
 
 func buildDocumentExtractSystemPrompt() string {
-	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto para uma reserva de passagem.
+	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto ou PDF para uma reserva de passagem.
 Responda exclusivamente em JSON valido, sem markdown.
 Priorize documentos nesta ordem quando houver mais de um numero: CPF, RG, CNH, CERTIDAO_NASCIMENTO.
-		Estrutura de cada documento:
-		- CPF: "xxx.xxx.xxx-xx" 
-		- RG: "x.xxx.xxx"
-		- Matricula certidao_nascimento: "xxxxxx xx xx xxxx x xxxxx xxx xxxxxxx-xx"
-		- CNH: "xxxxxxxxxxx"
-		Atualmente existem 2 versoes de Identidade que podem ser enviadas:
-		- A mais recente possui um campo do nome completo da pessoa e o CPF ja na parte da frente do documento. Alem disso esse novo formato nao contem mais o numero do RG
-		- A antiga as informacoes ficam atras: com o nome completo da pessoa + CPF + RG, nesse caso a prioridade de leitura para extracao continua sendo nome + CPF.
-		A intencao eh apenas extrair essas informacoes: Nome completo + numero do documento + data de nascimento quando estiver visivel
+
+Extraia apenas:
+- nome completo
+- tipo do documento
+- numero do documento
+- data de nascimento quando estiver visivel
+- confianca da leitura
+
+Quando houver PDF com mais de uma pagina, trate as paginas como partes do mesmo envio.
+Quando houver frente e verso do documento, combine as informacoes com cuidado.
+Nunca invente dados ausentes.
+
 Formato:
 {
   "mode": "EXTRACTED" | "PARTIAL" | "LOW_CONFIDENCE",
@@ -239,7 +243,7 @@ Formato:
   ],
   "failure_reason": ""
 }
-Use LOW_CONFIDENCE apenas quando a imagem estiver ilegivel ou sem nome/documento suficiente.`)
+Use LOW_CONFIDENCE apenas quando o arquivo estiver ilegivel ou sem nome/documento suficiente.`)
 }
 
 func buildDocumentExtractUserPrompt(expected int) string {
@@ -247,6 +251,56 @@ func buildDocumentExtractUserPrompt(expected int) string {
 		return fmt.Sprintf("Extraia nome completo e documento da foto recebida. A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
 	}
 	return "Extraia o maximo de informacao legivel. Nao classifique como LOW_CONFIDENCE se pelo menos nome ou algum documento puder ser lido parcialmente. Use PARTIAL quando algum campo faltar ou estiver incerto. Retorne LOW_CONFIDENCE somente se nenhum dado util puder ser lido. Se houver CPF visivel, sempre priorize CPF mesmo que tambem exista RG/CNH. Se o nome estiver parcialmente visivel, retorne o trecho lido e marque confidence menor. Nunca invente numeros ausentes."
+}
+
+func buildDocumentExtractTextFormat() map[string]interface{} {
+	return map[string]interface{}{
+		"type":   "json_schema",
+		"name":   "document_extract_result",
+		"strict": true,
+		"schema": map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]interface{}{
+				"mode": map[string]interface{}{
+					"type": "string",
+					"enum": []string{"EXTRACTED", "PARTIAL", "LOW_CONFIDENCE"},
+				},
+				"passengers": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]interface{}{
+							"name": map[string]interface{}{
+								"type": "string",
+							},
+							"document_type": map[string]interface{}{
+								"type": "string",
+								"enum": []string{"CPF", "RG", "CNH", "CERTIDAO_NASCIMENTO", "UNKNOWN"},
+							},
+							"document": map[string]interface{}{
+								"type": "string",
+							},
+							"birth_date": map[string]interface{}{
+								"type": "string",
+							},
+							"confidence": map[string]interface{}{
+								"type":    "number",
+								"minimum": 0,
+								"maximum": 1,
+							},
+						},
+						"required": []string{"name", "document_type", "document", "birth_date", "confidence"},
+					},
+				},
+				"failure_reason": map[string]interface{}{
+					"type": "string",
+				},
+			},
+			"required": []string{"mode", "passengers", "failure_reason"},
+		},
+	}
 }
 
 func hasIncompletePassenger(passengers []DocumentExtractPassenger) bool {

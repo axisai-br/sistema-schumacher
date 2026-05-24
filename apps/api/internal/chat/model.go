@@ -490,6 +490,7 @@ type AgentMediaInput struct {
 	URL       string
 	MimeType  string
 	MessageID string
+	FileName  string
 }
 
 type RunAgentInput struct {
@@ -499,6 +500,7 @@ type RunAgentInput struct {
 	SystemPrompt     string
 	UserPrompt       string
 	IdempotencyKey   string
+	TextFormat       map[string]interface{}
 }
 
 type RunAgentResult struct {
