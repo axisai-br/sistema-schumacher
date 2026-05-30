@@ -248,7 +248,7 @@ Use LOW_CONFIDENCE apenas quando o arquivo estiver ilegivel ou sem nome/document
 
 func buildDocumentExtractUserPrompt(expected int) string {
 	if expected > 1 {
-		return fmt.Sprintf("Extraia nome completo e documento da foto recebida. A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
+		return fmt.Sprintf("Extraia nome completo e documento do arquivo recebido (foto ou PDF). A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
 	}
 	return "Extraia o maximo de informacao legivel. Nao classifique como LOW_CONFIDENCE se pelo menos nome ou algum documento puder ser lido parcialmente. Use PARTIAL quando algum campo faltar ou estiver incerto. Retorne LOW_CONFIDENCE somente se nenhum dado util puder ser lido. Se houver CPF visivel, sempre priorize CPF mesmo que tambem exista RG/CNH. Se o nome estiver parcialmente visivel, retorne o trecho lido e marque confidence menor. Nunca invente numeros ausentes."
 }

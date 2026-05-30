@@ -620,6 +620,89 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	}
 }
 
+func TestReprocessExtractsPDFBeforeUnsupportedRouteRouter(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Maria Silva","document_type":"CPF","document":"123.456.789-09","confidence":0.94}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-extract-pdf-1",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709048",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-pdf-route-out-1",
+			IdempotencyKey:    "idem-pdf-route-out-1",
+			Body:              "Para qual cidade no Maranhao voce vai?",
+		},
+	}); err != nil {
+		t.Fatalf("ingest route outbound: %v", err)
+	}
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709048",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-pdf-doc-out-1",
+			IdempotencyKey:    "idem-pdf-doc-out-1",
+			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest document request outbound: %v", err)
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709048",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "DOCUMENT",
+			ProviderMessageID: "msg-pdf-doc-1",
+			IdempotencyKey:    "idem-pdf-doc-1",
+			Body:              "Salvador",
+			NormalizedPayload: map[string]interface{}{
+				"document_data_url":  "data:application/pdf;base64,JVBERi0xLjQ=",
+				"document_file_name": "rg-salvador.pdf",
+				"document_mime_type": "application/pdf",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest PDF: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess message: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
+	}
+	if len(runner.lastInput.CurrentTurnMedia) != 1 {
+		t.Fatalf("expected one current turn media item, got %+v", runner.lastInput.CurrentTurnMedia)
+	}
+	media := runner.lastInput.CurrentTurnMedia[0]
+	if media.Kind != "PDF" || media.FileName != "rg-salvador.pdf" {
+		t.Fatalf("expected PDF media with file name, got %+v", media)
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | CPF | 12345678909") {
+		t.Fatalf("expected extracted PDF confirmation, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
+	}
+	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
+	}
+	if readDraftAutoSendStatus(*reprocessed.Draft) != draftAutoSendStatusEligible {
+		t.Fatalf("expected PDF document confirmation to be auto-send eligible, got %s", readDraftAutoSendStatus(*reprocessed.Draft))
+	}
+}
+
 func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{

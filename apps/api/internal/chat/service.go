@@ -879,6 +879,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	var deterministicBookingHandled bool
 	var deterministicToolHandled bool
 	var deterministicBookingAction BookingNextAction
+	documentCollectionMediaTurn := shouldRunDocumentExtract(memory) && s.canRunAgent()
 	if passengerCountContext {
 		s.logReprocess(
 			"chat reprocess event=passenger_count_context_detected session_id=%s trigger=%s job_run_id=%s",
@@ -1038,7 +1039,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
-	if passengerCountContext {
+	if documentCollectionMediaTurn {
+		if unsupportedPackageHandled {
+			s.logReprocess(
+				"chat reprocess event=fallback_out_of_service_blocked_reason=document_collection_media_turn session_id=%s trigger=%s job_run_id=%s",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+			)
+		}
+		unsupportedPackageHandled = false
+	} else if passengerCountContext {
 		if unsupportedPackageHandled {
 			s.logReprocess(
 				"chat reprocess event=fallback_out_of_service_blocked_reason=passenger_count_context session_id=%s trigger=%s job_run_id=%s",
@@ -1049,7 +1060,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 		unsupportedPackageHandled = false
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !documentCollectionMediaTurn {
 		if intentRouterEnabled() && templateRealizerEnabled() {
 			decision := routeDeterministicIntent(history, currentTurn, canonicalState, observedAt)
 			if decision.Intent != IntentUnknown {
@@ -1159,7 +1170,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && jsonDecisionLayerEnabledForMode(agentMode) && s.canRunJSONDecisionAgent() {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn && jsonDecisionLayerEnabledForMode(agentMode) && s.canRunJSONDecisionAgent() {
 		compactInput := buildJSONDecisionCompactInput(currentTurn, canonicalState, history)
 		decision, jsonRun, err := s.jsonRunner.RunIntentDecision(ctx, RunJSONDecisionInput{
 			SystemPrompt:   buildJSONDecisionSystemPrompt(),
@@ -1375,7 +1386,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && agentMode == chatAgentModeJSONOnly && !s.canRunJSONDecisionAgent() {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn && agentMode == chatAgentModeJSONOnly && !s.canRunJSONDecisionAgent() {
 		rolloutMetadata.DecisionSource = "json_agent"
 		rolloutMetadata.DecisionValid = boolPtr(false)
 		rolloutMetadata.ValidationErrors = []string{"json_decision_runner_unavailable"}
@@ -1389,7 +1400,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		deterministicBookingRun = &run
 		deterministicBookingHandled = true
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !s.canRunAgent() {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn && !s.canRunAgent() {
 		if jsonDecisionLayerEnabledForMode(agentMode) {
 			if rolloutMetadata.DecisionSource == "" {
 				rolloutMetadata.DecisionSource = "json_agent"
@@ -1415,7 +1426,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			return result, nil
 		}
 	}
-	if !freeFormLLMFallbackEnabledForMode(agentMode) && deterministicBookingHandled == false && !deterministicToolHandled && !unsupportedCargoHandled && !unsupportedPackageHandled {
+	if !freeFormLLMFallbackEnabledForMode(agentMode) && deterministicBookingHandled == false && !deterministicToolHandled && !unsupportedCargoHandled && !unsupportedPackageHandled && !documentCollectionMediaTurn {
 		s.logReprocess(
 			"chat reprocess event=legacy_prompt_fallback_disabled session_id=%s trigger=%s job_run_id=%s",
 			persisted.Session.ID,
@@ -1424,7 +1435,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		)
 		return result, nil
 	}
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn {
 		var err error
 		s.logReprocess(
 			"chat reprocess event=resolve_agent_tool_context_start session_id=%s trigger=%s job_run_id=%s",

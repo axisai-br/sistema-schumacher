@@ -289,6 +289,67 @@ func TestOpenAIRunnerRunIncludesImageInputWhenCurrentTurnHasMedia(t *testing.T) 
 	}
 }
 
+func TestOpenAIRunnerRunIncludesPDFInputFileWhenCurrentTurnHasMedia(t *testing.T) {
+	pdfDataURL := "data:application/pdf;base64," + base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 fake"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload["model"] != "gpt-vision-test" {
+			t.Fatalf("expected vision model gpt-vision-test, got %v", payload["model"])
+		}
+
+		items, ok := payload["input"].([]interface{})
+		if !ok || len(items) != 1 {
+			t.Fatalf("expected structured input with one message, got %#v", payload["input"])
+		}
+		message, ok := items[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected input message map, got %#v", items[0])
+		}
+		content, ok := message["content"].([]interface{})
+		if !ok || len(content) != 2 {
+			t.Fatalf("expected text + file content, got %#v", message["content"])
+		}
+		file, ok := content[1].(map[string]interface{})
+		if !ok || file["type"] != "input_file" || file["filename"] != "rg-cliente.pdf" || file["file_data"] != pdfDataURL {
+			t.Fatalf("unexpected file payload: %#v", content[1])
+		}
+		if _, ok := file["file_url"]; ok {
+			t.Fatalf("did not expect file_url for inline PDF payload: %#v", file)
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":          "resp_pdf_1",
+			"output_text": `{"mode":"EXTRACTED","passengers":[],"failure_reason":""}`,
+		})
+	}))
+	defer server.Close()
+
+	runner := NewOpenAIRunner(config.Config{
+		OpenAIAPIKey:      "sk-test",
+		OpenAIModel:       "gpt-test",
+		OpenAIVisionModel: "gpt-vision-test",
+	})
+	runner.baseURL = server.URL
+
+	result, err := runner.Run(context.Background(), RunAgentInput{
+		SystemPrompt: "system",
+		UserPrompt:   "user",
+		CurrentTurnMedia: []AgentMediaInput{
+			{Kind: "PDF", URL: pdfDataURL, MimeType: "application/pdf", FileName: "rg-cliente.pdf"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("run agent: %v", err)
+	}
+	if result.ProviderResponseID != "resp_pdf_1" {
+		t.Fatalf("expected provider response id resp_pdf_1, got %s", result.ProviderResponseID)
+	}
+}
+
 func TestOpenAIRunnerRunFallsBackToTextWhenImageRequestFails(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -39,6 +39,23 @@ func TestIntentRouterAvailabilitySearch(t *testing.T) {
 	}
 }
 
+func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringPassengerCollection(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},
+		{Direction: "OUTBOUND", Body: "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso."},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	got := routeDeterministicIntent(history, "Salvador", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentUnsupportedPackage {
+		t.Fatalf("did not expect unsupported package during passenger collection, got %+v", got)
+	}
+	if got.Intent != IntentUnknown {
+		t.Fatalf("expected unknown intent during passenger collection, got %+v", got)
+	}
+}
+
 func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
 	history := []Message{
 		{Direction: "INBOUND", Body: "Passagem para Santa Catarina"},

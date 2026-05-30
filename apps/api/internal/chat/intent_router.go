@@ -137,13 +137,15 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			}
 		}
 	}
-	if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
-		return IntentDecision{
-			Intent:       IntentUnsupportedPackage,
-			Source:       "deterministic_unsupported_followup",
-			TemplateName: TemplateUnsupportedPackage,
-			Action:       "template",
-			TemplateData: map[string]interface{}{"destination": query.Destination},
+	if state.Phase != ConversationPhasePassengerCollection {
+		if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
+			return IntentDecision{
+				Intent:       IntentUnsupportedPackage,
+				Source:       "deterministic_unsupported_followup",
+				TemplateName: TemplateUnsupportedPackage,
+				Action:       "template",
+				TemplateData: map[string]interface{}{"destination": query.Destination},
+			}
 		}
 	}
 	if input, ok := parseOriginAnswerAvailabilitySearchInput(history, body, observedAt); ok {

@@ -350,7 +350,7 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, rep
 	if len(toolCalls) > 0 && !hasOnlyAutoSendSafeToolCalls(toolCalls) {
 		reasons = append(reasons, draftAutoSendReasonToolCall)
 	}
-	if hasBlockingNonTextCandidate(candidates) {
+	if hasBlockingNonTextCandidate(candidates, hasCompletedDocumentExtractToolCall(toolCalls)) {
 		reasons = append(reasons, draftAutoSendReasonNonTextTurn)
 	}
 	if len(toolCalls) == 0 && containsOperationalAutoSendClaimWithoutTool(replyText) {
@@ -442,6 +442,16 @@ func hasOnlyAutoSendSafeToolCalls(toolCalls []ToolCall) bool {
 	return true
 }
 
+func hasCompletedDocumentExtractToolCall(toolCalls []ToolCall) bool {
+	for _, call := range toolCalls {
+		if strings.TrimSpace(call.ToolName) == toolNameDocumentExtract &&
+			strings.EqualFold(strings.TrimSpace(call.Status), "COMPLETED") {
+			return true
+		}
+	}
+	return false
+}
+
 // Until there is an operator UI for approving payment/reservation drafts, these
 // completed tool calls are allowed to proceed through auto-send.
 func isAutoSendSafeToolCall(call ToolCall) bool {
@@ -461,7 +471,7 @@ func isAutoSendSafeToolCall(call ToolCall) bool {
 	}
 }
 
-func hasBlockingNonTextCandidate(candidates []Message) bool {
+func hasBlockingNonTextCandidate(candidates []Message, allowExtractedDocumentMedia bool) bool {
 	for _, message := range candidates {
 		kind := normalizedCandidateKind(message)
 		normalized := message.NormalizedPayload
@@ -474,7 +484,22 @@ func hasBlockingNonTextCandidate(candidates []Message) bool {
 			}
 		case "IMAGE":
 			continue
+		case "DOCUMENT":
+			if allowExtractedDocumentMedia && isExtractableDocumentCandidate(message) {
+				continue
+			}
+			return true
 		default:
+			return true
+		}
+	}
+	return false
+}
+
+func isExtractableDocumentCandidate(message Message) bool {
+	for _, item := range collectCandidateMedia([]Message{message}) {
+		switch strings.ToUpper(strings.TrimSpace(item.Kind)) {
+		case "IMAGE", "PDF":
 			return true
 		}
 	}

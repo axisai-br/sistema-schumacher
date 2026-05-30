@@ -265,25 +265,23 @@ func buildOpenAIInputContent(ctx context.Context, client *http.Client, input Run
 		},
 	}
 	for _, item := range input.CurrentTurnMedia {
-		if !strings.EqualFold(strings.TrimSpace(item.Kind), "IMAGE") {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(item.Kind), "PDF") {
+		switch strings.ToUpper(strings.TrimSpace(item.Kind)) {
+		case "PDF":
 			fileInput := buildOpenAIFileInput(item)
 			if fileInput != nil {
 				content = append(content, fileInput)
 			}
-			continue
+		case "IMAGE":
+			imageURL := resolveOpenAIImageURL(ctx, client, item)
+			if imageURL == "" {
+				continue
+			}
+			content = append(content, map[string]interface{}{
+				"type":      "input_image",
+				"image_url": imageURL,
+				"detail":    "high",
+			})
 		}
-		imageURL := resolveOpenAIImageURL(ctx, client, item)
-		if imageURL == "" {
-			continue
-		}
-		content = append(content, map[string]interface{}{
-			"type":      "input_image",
-			"image_url": imageURL,
-			"detail":    "high",
-		})
 	}
 	if len(content) == 1 {
 		return input.UserPrompt
