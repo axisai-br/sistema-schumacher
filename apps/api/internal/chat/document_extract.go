@@ -12,6 +12,9 @@ type DocumentExtractPassenger struct {
 	Name         string  `json:"name"`
 	Document     string  `json:"document"`
 	DocumentType string  `json:"document_type"`
+	CPF          string  `json:"cpf,omitempty"`
+	CNH          string  `json:"cnh,omitempty"`
+	RG           string  `json:"rg,omitempty"`
 	BirthDate    string  `json:"birth_date,omitempty"`
 	Confidence   float64 `json:"confidence"`
 }
@@ -228,8 +231,15 @@ Extraia apenas:
 - nome completo
 - tipo do documento
 - numero do documento
+- CPF, CNH e RG em campos separados quando estiverem visiveis no mesmo arquivo
 - data de nascimento quando estiver visivel
 - confianca da leitura
+
+Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
+- document_type deve ser "CPF"
+- document deve ser o CPF sem pontuacao
+- cpf deve repetir o CPF sem pontuacao
+- cnh deve preservar o numero da CNH quando visivel
 
 Quando houver PDF com mais de uma pagina, trate as paginas como partes do mesmo envio.
 Quando houver frente e verso do documento, combine as informacoes com cuidado.
@@ -239,7 +249,7 @@ Formato:
 {
   "mode": "EXTRACTED" | "PARTIAL" | "LOW_CONFIDENCE",
   "passengers": [
-    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero sem pontuacao desnecessaria", "birth_date": "YYYY-MM-DD quando disponivel", "confidence": 0.0}
+    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero principal sem pontuacao desnecessaria", "cpf": "CPF quando visivel", "cnh": "CNH quando visivel", "rg": "RG quando visivel", "birth_date": "YYYY-MM-DD quando disponivel", "confidence": 0.0}
   ],
   "failure_reason": ""
 }
@@ -282,6 +292,15 @@ func buildDocumentExtractTextFormat() map[string]interface{} {
 							"document": map[string]interface{}{
 								"type": "string",
 							},
+							"cpf": map[string]interface{}{
+								"type": "string",
+							},
+							"cnh": map[string]interface{}{
+								"type": "string",
+							},
+							"rg": map[string]interface{}{
+								"type": "string",
+							},
 							"birth_date": map[string]interface{}{
 								"type": "string",
 							},
@@ -291,7 +310,7 @@ func buildDocumentExtractTextFormat() map[string]interface{} {
 								"maximum": 1,
 							},
 						},
-						"required": []string{"name", "document_type", "document", "birth_date", "confidence"},
+						"required": []string{"name", "document_type", "document", "cpf", "cnh", "rg", "birth_date", "confidence"},
 					},
 				},
 				"failure_reason": map[string]interface{}{
@@ -369,11 +388,18 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		asString(raw["nome_completo"]),
 	))
 
-	documentType, document := selectDocumentByPriority(raw)
+	documents := extractDocumentFields(raw)
+	documentType, document := selectDocumentByPriority(raw, documents)
+	if documentType != "" && document != "" && documents[documentType] == "" {
+		documents[documentType] = document
+	}
 	return DocumentExtractPassenger{
 		Name:         name,
 		Document:     document,
 		DocumentType: documentType,
+		CPF:          documents["CPF"],
+		CNH:          documents["CNH"],
+		RG:           documents["RG"],
 		BirthDate:    normalizeDocumentBirthDate(raw),
 		Confidence:   normalizeDocumentConfidence(asFloat64(raw["confidence"])),
 	}
@@ -414,8 +440,16 @@ func parseDocumentExtractContextPayload(payload map[string]interface{}) Document
 	return result
 }
 
-func selectDocumentByPriority(raw map[string]interface{}) (string, string) {
-	candidates := []struct {
+func extractDocumentFields(raw map[string]interface{}) map[string]string {
+	documents := map[string]string{}
+	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))
+	explicitDocument := firstNonEmpty(asString(raw["document"]), asString(raw["numero"]), asString(raw["number"]), asString(raw["document_number"]))
+	if explicitType != "" {
+		if document := normalizePassengerDocumentValue(explicitDocument, explicitType); document != "" {
+			documents[explicitType] = document
+		}
+	}
+	for _, candidate := range []struct {
 		Type string
 		Keys []string
 	}{
@@ -423,14 +457,31 @@ func selectDocumentByPriority(raw map[string]interface{}) (string, string) {
 		{"RG", []string{"rg"}},
 		{"CNH", []string{"cnh"}},
 		{"CERTIDAO_NASCIMENTO", []string{"certidao", "certidao_nascimento", "birth_certificate", "matricula"}},
+	} {
+		for _, key := range candidate.Keys {
+			if document := normalizePassengerDocumentValue(asString(raw[key]), candidate.Type); document != "" {
+				documents[candidate.Type] = document
+				break
+			}
+		}
+	}
+	return documents
+}
+
+func selectDocumentByPriority(raw map[string]interface{}, documents map[string]string) (string, string) {
+	candidates := []struct {
+		Type string
+	}{
+		{"CPF"},
+		{"RG"},
+		{"CNH"},
+		{"CERTIDAO_NASCIMENTO"},
 	}
 	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))
 	explicitDocument := firstNonEmpty(asString(raw["document"]), asString(raw["numero"]), asString(raw["number"]), asString(raw["document_number"]))
 	for _, candidate := range candidates {
-		for _, key := range candidate.Keys {
-			if document := normalizePassengerDocumentValue(asString(raw[key]), candidate.Type); document != "" {
-				return candidate.Type, document
-			}
+		if document := documents[candidate.Type]; document != "" {
+			return candidate.Type, document
 		}
 		if explicitType == "" {
 			if document := normalizePassengerDocumentValue(explicitDocument, candidate.Type); document != "" {
@@ -510,6 +561,9 @@ func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[strin
 			"name":          passenger.Name,
 			"document":      passenger.Document,
 			"document_type": passenger.DocumentType,
+			"cpf":           passenger.CPF,
+			"cnh":           passenger.CNH,
+			"rg":            passenger.RG,
 			"birth_date":    passenger.BirthDate,
 			"confidence":    passenger.Confidence,
 		})

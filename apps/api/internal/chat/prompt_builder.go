@@ -201,6 +201,9 @@ func compactPromptToolFacts(tools agentToolContext) map[string]interface{} {
 				"name":          strings.TrimSpace(item.Name),
 				"document_type": strings.TrimSpace(item.DocumentType),
 				"document":      strings.TrimSpace(item.Document),
+				"cpf":           strings.TrimSpace(item.CPF),
+				"cnh":           strings.TrimSpace(item.CNH),
+				"rg":            strings.TrimSpace(item.RG),
 				"confidence":    item.Confidence,
 			}))
 		}

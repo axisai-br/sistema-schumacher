@@ -133,6 +133,29 @@ func TestParseBookingCreateInputUsesExplicitLapChildLabel(t *testing.T) {
 	}
 }
 
+func TestBookingPassengerFromDocumentExtractUsesVisibleCPFOnCNH(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passenger := bookingPassengerFromDocumentExtract(DocumentExtractPassenger{
+		Name:         "Claudecir Schumacher",
+		DocumentType: "CNH",
+		Document:     "99999999999",
+		CPF:          "066.456.481-03",
+		CNH:          "99999999999",
+		BirthDate:    "1970-01-02",
+		Confidence:   0.92,
+	}, session)
+
+	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+		t.Fatalf("expected visible CPF as primary passenger document, got %+v", passenger)
+	}
+	if passenger.Phone != "5549999999999" {
+		t.Fatalf("expected passenger phone from session, got %+v", passenger)
+	}
+	if passenger.Notes != "Documentos secundarios extraidos: CNH: 99999999999" {
+		t.Fatalf("expected CNH preserved in notes, got %+v", passenger)
+	}
+}
+
 func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}

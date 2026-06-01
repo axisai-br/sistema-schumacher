@@ -222,12 +222,40 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, session Session) BookingCreatePassengerInput {
 	documentType := normalizePassengerDocumentType(extracted.DocumentType)
 	document := normalizePassengerDocumentValue(extracted.Document, documentType)
+	if cpf := normalizePassengerDocumentValue(extracted.CPF, "CPF"); cpf != "" {
+		documentType = "CPF"
+		document = cpf
+	}
 	return BookingCreatePassengerInput{
 		Name:         strings.TrimSpace(extracted.Name),
 		DocumentType: documentType,
 		Document:     document,
 		Phone:        strings.TrimSpace(session.CustomerPhone),
+		Notes:        buildSecondaryDocumentNotes(extracted, documentType, document),
 	}
+}
+
+func buildSecondaryDocumentNotes(extracted DocumentExtractPassenger, primaryType string, primaryDocument string) string {
+	secondary := make([]string, 0, 2)
+	for _, item := range []struct {
+		Type     string
+		Document string
+	}{
+		{"CNH", normalizePassengerDocumentValue(extracted.CNH, "CNH")},
+		{"RG", normalizePassengerDocumentValue(extracted.RG, "RG")},
+	} {
+		if item.Document == "" {
+			continue
+		}
+		if item.Type == primaryType && item.Document == primaryDocument {
+			continue
+		}
+		secondary = append(secondary, item.Type+": "+item.Document)
+	}
+	if len(secondary) == 0 {
+		return ""
+	}
+	return "Documentos secundarios extraidos: " + strings.Join(secondary, " | ")
 }
 
 func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session Session, tripDate string) []BookingCreatePassengerInput {
