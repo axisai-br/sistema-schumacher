@@ -88,6 +88,62 @@ func TestVerifyWebhookSignature(t *testing.T) {
 	}
 }
 
+func TestVerifyWebhookAuthenticationAcceptsValidBasicAuth(t *testing.T) {
+	handler := NewHandler(nil, "ignored-hmac-secret", "pagarme-user", "pagarme-pass")
+	req := httptest.NewRequest("POST", "/webhooks/pagarme", nil)
+	req.SetBasicAuth("pagarme-user", "pagarme-pass")
+
+	if !handler.verifyWebhookAuthentication(req, []byte(`{"type":"charge.paid"}`)) {
+		t.Fatalf("expected valid basic auth to be accepted")
+	}
+}
+
+func TestVerifyWebhookAuthenticationRejectsInvalidBasicAuth(t *testing.T) {
+	secret := "super-secret"
+	body := []byte(`{"type":"charge.paid"}`)
+	handler := NewHandler(nil, secret, "pagarme-user", "pagarme-pass")
+	req := httptest.NewRequest("POST", "/webhooks/pagarme", nil)
+	req.SetBasicAuth("pagarme-user", "wrong-pass")
+	req.Header.Set("X-Hub-Signature", signPayloads(secret, body)[0])
+
+	if handler.verifyWebhookAuthentication(req, body) {
+		t.Fatalf("expected invalid basic auth to be rejected when basic auth is configured")
+	}
+}
+
+func TestVerifyWebhookAuthenticationRejectsMissingBasicAuth(t *testing.T) {
+	handler := NewHandler(nil, "", "pagarme-user", "pagarme-pass")
+	req := httptest.NewRequest("POST", "/webhooks/pagarme", nil)
+
+	if handler.verifyWebhookAuthentication(req, []byte(`{"type":"charge.paid"}`)) {
+		t.Fatalf("expected missing basic auth to be rejected")
+	}
+}
+
+func TestVerifyWebhookAuthenticationFallsBackToHMAC(t *testing.T) {
+	secret := "super-secret"
+	body := []byte(`{"type":"charge.paid"}`)
+	handler := NewHandler(nil, secret, "", "")
+	req := httptest.NewRequest("POST", "/webhooks/pagarme", nil)
+	req.Header.Set("X-Hub-Signature-256", signPayloads(secret, body)[1])
+
+	if !handler.verifyWebhookAuthentication(req, body) {
+		t.Fatalf("expected valid hmac signature to be accepted when basic auth is not configured")
+	}
+}
+
+func TestWebhookSecurityConfigured(t *testing.T) {
+	if NewHandler(nil, "", "", "").webhookSecurityConfigured() {
+		t.Fatalf("expected empty webhook security config to be disabled")
+	}
+	if !NewHandler(nil, "", "pagarme-user", "pagarme-pass").webhookSecurityConfigured() {
+		t.Fatalf("expected basic auth config to enable webhook security")
+	}
+	if !NewHandler(nil, "super-secret", "", "").webhookSecurityConfigured() {
+		t.Fatalf("expected hmac secret to enable webhook security")
+	}
+}
+
 func signPayloads(key string, body []byte) []string {
 	sha1Mac := hmac.New(sha1.New, []byte(key))
 	sha1Mac.Write(body)

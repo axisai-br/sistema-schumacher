@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log"
@@ -16,10 +17,17 @@ import (
 type Handler struct {
 	svc       *Service
 	secretKey string
+	basicUser string
+	basicPass string
 }
 
-func NewHandler(svc *Service, secretKey string) *Handler {
-	return &Handler{svc: svc, secretKey: strings.TrimSpace(secretKey)}
+func NewHandler(svc *Service, secretKey string, basicUser string, basicPass string) *Handler {
+	return &Handler{
+		svc:       svc,
+		secretKey: strings.TrimSpace(secretKey),
+		basicUser: strings.TrimSpace(basicUser),
+		basicPass: strings.TrimSpace(basicPass),
+	}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -198,13 +206,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	if h.secretKey == "" {
+	if !h.webhookSecurityConfigured() {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "WEBHOOK_NOT_CONFIGURED", "webhook security not configured", nil)
 		return
 	}
 
 	body, _ := io.ReadAll(r.Body)
-	if !verifyWebhookSignature(r, body, h.secretKey) {
+	if h.basicAuthConfigured() && !h.verifyWebhookBasicAuth(r) {
+		log.Printf("event=webhook_rejected reason=invalid_authentication path=%s remote=%s", r.URL.Path, r.RemoteAddr)
+		httpx.WriteError(w, http.StatusUnauthorized, "INVALID_AUTHENTICATION", "invalid webhook authentication", nil)
+		return
+	}
+	if !h.basicAuthConfigured() && !verifyWebhookSignature(r, body, h.secretKey) {
 		log.Printf("event=webhook_rejected reason=invalid_signature path=%s remote=%s", r.URL.Path, r.RemoteAddr)
 		httpx.WriteError(w, http.StatusUnauthorized, "INVALID_SIGNATURE", "invalid webhook signature", nil)
 		return
@@ -222,6 +235,31 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) webhookSecurityConfigured() bool {
+	return h.basicAuthConfigured() || strings.TrimSpace(h.secretKey) != ""
+}
+
+func (h *Handler) basicAuthConfigured() bool {
+	return strings.TrimSpace(h.basicUser) != "" && strings.TrimSpace(h.basicPass) != ""
+}
+
+func (h *Handler) verifyWebhookAuthentication(r *http.Request, body []byte) bool {
+	if h.basicAuthConfigured() {
+		return h.verifyWebhookBasicAuth(r)
+	}
+	return verifyWebhookSignature(r, body, h.secretKey)
+}
+
+func (h *Handler) verifyWebhookBasicAuth(r *http.Request) bool {
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		return false
+	}
+	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(h.basicUser)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(password), []byte(h.basicPass)) == 1
+	return userOK && passOK
 }
 
 func verifyWebhookSignature(r *http.Request, body []byte, secret string) bool {

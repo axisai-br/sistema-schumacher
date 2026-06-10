@@ -98,7 +98,7 @@ func main() {
 
 	paymentsRepo := payments.NewRepository(pool)
 	paymentsSvc := payments.NewService(paymentsRepo, cfg)
-	paymentsHandler := payments.NewHandler(paymentsSvc, cfg.PagarmeWebhookSecret)
+	paymentsHandler := payments.NewHandler(paymentsSvc, cfg.PagarmeWebhookSecret, cfg.PagarmeWebhookBasicUser, cfg.PagarmeWebhookBasicPass)
 	paymentsHandler.RegisterWebhooks(r)
 	affiliateSvc := affiliate.NewService(affiliate.NewRepository(pool), cfg)
 	affiliateHandler := affiliate.NewHandler(affiliateSvc)
