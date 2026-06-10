@@ -27,6 +27,7 @@ type Config struct {
 	PagarmeAPIBaseURL          string
 	PagarmePaymentRecipientID  string
 	PagarmeDebugRecipientID    string
+	PagarmeWebhookSecret       string
 	PagarmeWebhookBasicUser    string
 	PagarmeWebhookBasicPass    string
 	AbacatePayAPIKey           string
@@ -84,6 +85,7 @@ func Load() (Config, error) {
 		PagarmeAPIBaseURL:                  getEnv("PAGARME_API_BASE_URL", getEnv("PAGARME_BASE_URL", "https://api.pagar.me/core/v5")),
 		PagarmePaymentRecipientID:          strings.TrimSpace(os.Getenv("PAGARME_PAYMENT_RECIPIENT_ID")),
 		PagarmeDebugRecipientID:            strings.TrimSpace(os.Getenv("PAGARME_DEBUG_RECIPIENT_ID")),
+		PagarmeWebhookSecret:               strings.TrimSpace(os.Getenv("PAGARME_WEBHOOK_SECRET")),
 		PagarmeWebhookBasicUser:            os.Getenv("PAGARME_WEBHOOK_BASIC_USER"),
 		PagarmeWebhookBasicPass:            os.Getenv("PAGARME_WEBHOOK_BASIC_PASS"),
 		AbacatePayAPIKey:                   os.Getenv("ABACATEPAY_API_KEY"),

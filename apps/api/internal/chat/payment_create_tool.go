@@ -171,7 +171,7 @@ func (t *PaymentCreateTool) Create(ctx context.Context, input PaymentCreateInput
 	if payment.ProviderRef != nil {
 		result.ProviderRef = strings.TrimSpace(*payment.ProviderRef)
 	}
-	result.CheckoutURL, result.PixCode = extractPaymentCreateProviderFields(raw)
+	result.CheckoutURL, result.PixCode = payments.ExtractCheckoutAndPix(raw)
 
 	if strings.TrimSpace(result.PixCode) == "" {
 		result.Mode = "manual_review_required_provider_error"
@@ -242,12 +242,7 @@ func resolvePaymentPayerPhone(explicit string, passenger bookings.BookingPasseng
 }
 
 func isSupportedPaymentDocument(document string) bool {
-	switch len(normalizeDigits(document)) {
-	case 11, 14:
-		return true
-	default:
-		return false
-	}
+	return payments.IsSupportedDocument(document)
 }
 
 func buildMissingPayerDocumentMessage(documentType string) string {
@@ -270,68 +265,6 @@ func isPaymentBlockedBookingStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func extractPaymentCreateProviderFields(raw json.RawMessage) (string, string) {
-	if len(raw) == 0 {
-		return "", ""
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", ""
-	}
-
-	checkoutURL := firstNonEmpty(readStringPath(payload, "qr_code_url"), readStringPath(payload, "checkout_url"))
-	pixCode := firstNonEmpty(readStringPath(payload, "qr_code"), readStringPath(payload, "pix_code"))
-	if checkoutURL != "" || pixCode != "" {
-		return checkoutURL, pixCode
-	}
-
-	if data, ok := payload["data"].(map[string]interface{}); ok {
-		checkoutURL = firstNonEmpty(readStringPath(data, "url"), readStringPath(data, "qr_code_url"))
-		pixCode = firstNonEmpty(readStringPath(data, "pixQrCode"), readStringPath(data, "qr_code"))
-		if checkoutURL != "" || pixCode != "" {
-			return checkoutURL, pixCode
-		}
-	}
-
-	charges, _ := payload["charges"].([]interface{})
-	for _, rawCharge := range charges {
-		charge, ok := rawCharge.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		lastTransaction, _ := charge["last_transaction"].(map[string]interface{})
-		if len(lastTransaction) == 0 {
-			continue
-		}
-		checkoutURL = firstNonEmpty(
-			readStringPath(lastTransaction, "qr_code_url"),
-			readStringPath(lastTransaction, "checkout_url"),
-		)
-		pixCode = firstNonEmpty(
-			readStringPath(lastTransaction, "qr_code"),
-			readStringPath(lastTransaction, "pix_code"),
-		)
-		if checkoutURL != "" || pixCode != "" {
-			return checkoutURL, pixCode
-		}
-	}
-
-	return "", ""
-}
-
-func readStringPath(payload map[string]interface{}, key string) string {
-	value, ok := payload[key]
-	if !ok {
-		return ""
-	}
-	text, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(text)
 }
 
 func normalizePaymentType(value string) string {

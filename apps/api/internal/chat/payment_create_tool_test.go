@@ -59,7 +59,7 @@ func TestPaymentCreateToolCreatesIntegralPixFromRemainder(t *testing.T) {
 			},
 			Passenger: bookings.BookingPassenger{
 				Name:         "Maria Silva",
-				Document:     "06645648105",
+				Document:     "52998224725",
 				DocumentType: "CPF",
 				Phone:        "48999999999",
 			},
@@ -86,8 +86,40 @@ func TestPaymentCreateToolCreatesIntegralPixFromRemainder(t *testing.T) {
 	if paymentSvc.lastInput.Amount != 650 {
 		t.Fatalf("expected payment amount 650, got %.2f", paymentSvc.lastInput.Amount)
 	}
-	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "06645648105" {
+	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "52998224725" {
 		t.Fatalf("expected customer document propagated, got %+v", paymentSvc.lastInput.Customer)
+	}
+}
+
+func TestPaymentCreateToolRejectsInvalidCPFWithElevenDigits(t *testing.T) {
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-ABC123456",
+				Status:          "PENDING",
+				ReservationCode: "ABC12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passenger: bookings.BookingPassenger{
+				Name:         "Maria Silva",
+				Document:     "12345678901",
+				DocumentType: "CPF",
+				Phone:        "48999999999",
+			},
+		},
+	}, &fakePaymentCreatePaymentsService{})
+
+	result, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:       "BK-ABC123456",
+		ReservationCode: "ABC12345",
+		PaymentType:     "sinal",
+	})
+	if err != nil {
+		t.Fatalf("expected operational result, got %v", err)
+	}
+	if result.Mode != "manual_review_required_missing_payer_document" {
+		t.Fatalf("expected missing payer document mode, got %s", result.Mode)
 	}
 }
 

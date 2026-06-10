@@ -156,6 +156,33 @@ func TestBookingPassengerFromDocumentExtractUsesVisibleCPFOnCNH(t *testing.T) {
 	}
 }
 
+func TestBookingPassengerFromDocumentExtractRejectsInvalidCPFOnCNH(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passenger := bookingPassengerFromDocumentExtract(DocumentExtractPassenger{
+		Name:         "Claudecir Schumacher",
+		DocumentType: "CNH",
+		Document:     "99999999999",
+		CPF:          "123.456.789-01",
+		CNH:          "99999999999",
+		Confidence:   0.92,
+	}, session)
+
+	if passenger.DocumentType != "CNH" || passenger.Document != "99999999999" {
+		t.Fatalf("expected invalid CPF to keep CNH as primary document, got %+v", passenger)
+	}
+	if passenger.Notes != "" {
+		t.Fatalf("did not expect CNH duplicated in notes, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingPassengerDocumentRejectsInvalidCPF(t *testing.T) {
+	document, documentType := extractBookingPassengerDocument("CPF 123.456.789-01")
+
+	if document != "" || documentType != "" {
+		t.Fatalf("expected invalid CPF to be ignored, got document=%q type=%q", document, documentType)
+	}
+}
+
 func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}

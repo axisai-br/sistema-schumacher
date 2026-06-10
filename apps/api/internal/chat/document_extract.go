@@ -226,6 +226,7 @@ func buildDocumentExtractSystemPrompt() string {
 	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto ou PDF para uma reserva de passagem.
 Responda exclusivamente em JSON valido, sem markdown.
 Priorize documentos nesta ordem quando houver mais de um numero: CPF, RG, CNH, CERTIDAO_NASCIMENTO.
+CPF brasileiro tem 11 digitos e dois digitos verificadores; nao trate como CPF um numero apenas por ter 11 digitos.
 
 Extraia apenas:
 - nome completo
@@ -240,6 +241,9 @@ Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
 - document deve ser o CPF sem pontuacao
 - cpf deve repetir o CPF sem pontuacao
 - cnh deve preservar o numero da CNH quando visivel
+
+Em CNH/CNH-e/PDF, nao confunda numero de registro da CNH, numero lateral, espelho, QR Code, RENACH, MRZ, codigo de seguranca ou protocolo com CPF.
+Se houver duvida entre CPF e outro numero da CNH/CNH-e, deixe cpf vazio, use document_type "CNH" e preserve o numero de CNH em cnh/document quando legivel.
 
 Quando houver PDF com mais de uma pagina, trate as paginas como partes do mesmo envio.
 Quando houver frente e verso do documento, combine as informacoes com cuidado.

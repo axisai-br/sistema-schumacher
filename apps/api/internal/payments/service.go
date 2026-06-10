@@ -75,12 +75,24 @@ func (s *Service) Create(ctx context.Context, input CreatePaymentInput) (Payment
 		},
 	}
 	if input.Customer != nil {
+		if !IsSupportedDocument(input.Customer.Document) {
+			return Payment{}, nil, errors.New("customer document must be a valid CPF or CNPJ")
+		}
 		orderReq.Customer = BuildCustomer(input.Customer, input.BookingID)
 	}
 
 	order, raw, err := s.client.CreateOrder(ctx, orderReq)
 	if err != nil {
 		return Payment{}, nil, err
+	}
+	if _, pixCode := ExtractCheckoutAndPix(raw); strings.TrimSpace(pixCode) == "" && strings.TrimSpace(order.ID) != "" {
+		fetchedOrder, fetchedRaw, fetchErr := s.client.GetOrderByID(ctx, order.ID)
+		if fetchErr != nil {
+			log.Printf("event=pagarme_order_fetch_after_create_failed order_id=%s error=%v", strings.TrimSpace(order.ID), fetchErr)
+		} else if _, fetchedPixCode := ExtractCheckoutAndPix(fetchedRaw); strings.TrimSpace(fetchedPixCode) != "" {
+			order = fetchedOrder
+			raw = fetchedRaw
+		}
 	}
 
 	providerRef := strings.TrimSpace(order.PrimaryChargeID())
@@ -207,6 +219,18 @@ func parseProviderData(raw []byte) (interface{}, *string, *string) {
 
 	checkout, pixCode := extractPagarmeCheckoutAndPix(obj)
 	return parsed, checkout, pixCode
+}
+
+func ExtractCheckoutAndPix(raw json.RawMessage) (string, string) {
+	_, checkout, pixCode := parseProviderData(raw)
+	return stringValue(checkout), stringValue(pixCode)
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func readStringFromMap(obj map[string]interface{}, key string) *string {

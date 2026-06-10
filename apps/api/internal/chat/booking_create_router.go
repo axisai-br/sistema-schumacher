@@ -829,7 +829,7 @@ func normalizePassengerName(value string) string {
 func extractBookingPassengerDocument(text string) (string, string) {
 	if match := passengerCPFPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
 		document := normalizeDigits(match[1])
-		if len(document) == 11 {
+		if isValidCPF(document) {
 			return document, "CPF"
 		}
 	}
@@ -1513,7 +1513,7 @@ func normalizePassengerDocumentValue(value string, documentType string) string {
 	switch documentType {
 	case "CPF":
 		document := normalizeDigits(value)
-		if len(document) == 11 {
+		if isValidCPF(document) {
 			return document
 		}
 		return ""
@@ -1522,6 +1522,39 @@ func normalizePassengerDocumentValue(value string, documentType string) string {
 	default:
 		return ""
 	}
+}
+
+func isValidCPF(value string) bool {
+	digits := normalizeDigits(value)
+	if len(digits) != 11 {
+		return false
+	}
+	allEqual := true
+	for i := 1; i < len(digits); i++ {
+		if digits[i] != digits[0] {
+			allEqual = false
+			break
+		}
+	}
+	if allEqual {
+		return false
+	}
+
+	return cpfCheckDigit(digits[:9], 10) == int(digits[9]-'0') &&
+		cpfCheckDigit(digits[:10], 11) == int(digits[10]-'0')
+}
+
+func cpfCheckDigit(digits string, weight int) int {
+	sum := 0
+	for _, char := range digits {
+		sum += int(char-'0') * weight
+		weight--
+	}
+	remainder := (sum * 10) % 11
+	if remainder == 10 {
+		return 0
+	}
+	return remainder
 }
 
 func buildBookingCreateIdempotencyKey(session Session, input BookingCreateInput) string {

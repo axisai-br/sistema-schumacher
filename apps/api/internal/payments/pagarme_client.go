@@ -194,7 +194,7 @@ func BuildCustomer(input *CustomerInput, bookingID string) *OrderCustomer {
 	}
 
 	document := digitsOnly(input.Document)
-	if document == "" {
+	if !IsSupportedDocument(document) {
 		return nil
 	}
 
@@ -216,6 +216,73 @@ func BuildCustomer(input *CustomerInput, bookingID string) *OrderCustomer {
 		customer.Phones = &CustomerPhones{MobilePhone: phone}
 	}
 	return customer
+}
+
+func IsSupportedDocument(document string) bool {
+	digits := digitsOnly(document)
+	switch len(digits) {
+	case 11:
+		return isValidCPF(digits)
+	case 14:
+		return isValidCNPJ(digits)
+	default:
+		return false
+	}
+}
+
+func isValidCPF(value string) bool {
+	digits := digitsOnly(value)
+	if len(digits) != 11 || allDigitsEqual(digits) {
+		return false
+	}
+	return cpfCheckDigit(digits[:9], 10) == int(digits[9]-'0') &&
+		cpfCheckDigit(digits[:10], 11) == int(digits[10]-'0')
+}
+
+func cpfCheckDigit(digits string, weight int) int {
+	sum := 0
+	for _, char := range digits {
+		sum += int(char-'0') * weight
+		weight--
+	}
+	remainder := (sum * 10) % 11
+	if remainder == 10 {
+		return 0
+	}
+	return remainder
+}
+
+func isValidCNPJ(value string) bool {
+	digits := digitsOnly(value)
+	if len(digits) != 14 || allDigitsEqual(digits) {
+		return false
+	}
+	return cnpjCheckDigit(digits[:12], []int{5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}) == int(digits[12]-'0') &&
+		cnpjCheckDigit(digits[:13], []int{6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}) == int(digits[13]-'0')
+}
+
+func cnpjCheckDigit(digits string, weights []int) int {
+	sum := 0
+	for i, char := range digits {
+		sum += int(char-'0') * weights[i]
+	}
+	remainder := sum % 11
+	if remainder < 2 {
+		return 0
+	}
+	return 11 - remainder
+}
+
+func allDigitsEqual(digits string) bool {
+	if digits == "" {
+		return false
+	}
+	for i := 1; i < len(digits); i++ {
+		if digits[i] != digits[0] {
+			return false
+		}
+	}
+	return true
 }
 
 func BuildSingleRecipientSplit(recipientID string) []SplitRule {
