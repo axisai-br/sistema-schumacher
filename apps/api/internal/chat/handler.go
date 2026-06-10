@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"schumacher-tur/api/internal/auth"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
-	"schumacher-tur/api/internal/auth"
 	httpx "schumacher-tur/api/internal/shared/http"
 )
 
