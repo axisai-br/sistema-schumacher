@@ -25,6 +25,13 @@ var (
 	childUnder5AgePattern          = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
 )
 
+var rgIssuerSuffixes = []string{
+	"SSPAC", "SSPAL", "SSPAP", "SSPAM", "SSPBA", "SSPCE", "SSPDF", "SSPES", "SSPGO",
+	"SSPMA", "SSPMT", "SSPMS", "SSPMG", "SSPPA", "SSPPB", "SSPPR", "SSPPE", "SSPPI",
+	"SSPRJ", "SSPRN", "SSPRS", "SSPRO", "SSPRR", "SSPR", "SSPSC", "SSPSE", "SSPTO",
+	"SESP", "SSP", "SDS", "IFP", "PC",
+}
+
 type PassengerClarificationSlots struct {
 	PassengerCount        int
 	PassengerCountKnown   bool
@@ -834,7 +841,7 @@ func extractBookingPassengerDocument(text string) (string, string) {
 		}
 	}
 	if match := passengerRGPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		document := normalizeAlphaNumeric(match[1])
+		document := normalizePassengerDocumentValue(match[1], "RG")
 		if document != "" {
 			return document, "RG"
 		}
@@ -1276,6 +1283,27 @@ func normalizeAlphaNumeric(value string) string {
 	return builder.String()
 }
 
+func normalizeRGDocument(value string) string {
+	document := normalizeAlphaNumeric(value)
+	for {
+		changed := false
+		for _, suffix := range rgIssuerSuffixes {
+			if strings.HasSuffix(document, suffix) {
+				document = strings.TrimSuffix(document, suffix)
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	if len(document) < 4 {
+		return ""
+	}
+	return document
+}
+
 func findLatestSelectedOptionIndex(history []Message) int {
 	for i := len(history) - 1; i >= 0; i-- {
 		body := strings.TrimSpace(history[i].Body)
@@ -1517,7 +1545,9 @@ func normalizePassengerDocumentValue(value string, documentType string) string {
 			return document
 		}
 		return ""
-	case "RG", "CNH", "CERTIDAO_NASCIMENTO":
+	case "RG":
+		return normalizeRGDocument(value)
+	case "CNH", "CERTIDAO_NASCIMENTO":
 		return normalizeAlphaNumeric(value)
 	default:
 		return ""

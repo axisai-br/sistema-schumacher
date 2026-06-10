@@ -183,6 +183,26 @@ func TestExtractBookingPassengerDocumentRejectsInvalidCPF(t *testing.T) {
 	}
 }
 
+func TestNormalizePassengerDocumentValueCleansRGIssuer(t *testing.T) {
+	cases := []struct {
+		value    string
+		expected string
+	}{
+		{value: "2817314 SSP SC", expected: "2817314"},
+		{value: "2817314SSPSC", expected: "2817314"},
+		{value: "12.345.678-9 SSP/SC", expected: "123456789"},
+		{value: "SSP/SC", expected: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			if document := normalizePassengerDocumentValue(tc.value, "RG"); document != tc.expected {
+				t.Fatalf("expected %q, got %q", tc.expected, document)
+			}
+		})
+	}
+}
+
 func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}

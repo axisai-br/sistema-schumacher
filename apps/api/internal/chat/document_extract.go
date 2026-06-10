@@ -242,8 +242,15 @@ Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
 - cpf deve repetir o CPF sem pontuacao
 - cnh deve preservar o numero da CNH quando visivel
 
+Para RG, document deve conter apenas o numero do RG.
+Nao inclua orgao emissor/UF no numero do RG.
+Nao junte SSP, SSP/SC, SSPSC, SDS, SESP, IFP ou PC ao numero do RG.
+Exemplo: 2817314 SSP SC deve virar document "2817314", nunca "2817314SSPSC".
+
 Em CNH/CNH-e/PDF, nao confunda numero de registro da CNH, numero lateral, espelho, QR Code, RENACH, MRZ, codigo de seguranca ou protocolo com CPF.
-Se houver duvida entre CPF e outro numero da CNH/CNH-e, deixe cpf vazio, use document_type "CNH" e preserve o numero de CNH em cnh/document quando legivel.
+Em CNH-e, se CPF estiver visivel, CPF deve ser documento principal.
+Se houver duvida entre CPF, RG e CNH, retorne mode "PARTIAL".
+Se o CPF nao estiver visivel e a CNH estiver legivel, use document_type "CNH" e preserve o numero de CNH em cnh/document.
 
 Quando houver PDF com mais de uma pagina, trate as paginas como partes do mesmo envio.
 Quando houver frente e verso do documento, combine as informacoes com cuidado.
@@ -361,6 +368,7 @@ func parseDocumentExtractResult(text string) DocumentExtractResult {
 			rawPassengers = []map[string]interface{}{payload}
 		}
 	}
+	needsReview := false
 	for _, raw := range rawPassengers {
 		passenger := parseDocumentExtractPassenger(raw)
 		if passenger.Name == "" && passenger.Document == "" {
@@ -369,10 +377,13 @@ func parseDocumentExtractResult(text string) DocumentExtractResult {
 		if passenger.Document != "" && passenger.DocumentType == "" {
 			passenger.DocumentType = "UNKNOWN"
 		}
+		if documentExtractPassengerNeedsReview(raw, passenger) {
+			needsReview = true
+		}
 		result.Passengers = append(result.Passengers, passenger)
 	}
 	if len(result.Passengers) > 0 {
-		if hasIncompletePassenger(result.Passengers) {
+		if needsReview || hasIncompletePassenger(result.Passengers) {
 			result.Mode = "PARTIAL"
 		} else {
 			result.Mode = "EXTRACTED"
@@ -397,6 +408,10 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 	if documentType != "" && document != "" && documents[documentType] == "" {
 		documents[documentType] = document
 	}
+	if cpf := documents["CPF"]; isValidCPF(cpf) {
+		documentType = "CPF"
+		document = cpf
+	}
 	return DocumentExtractPassenger{
 		Name:         name,
 		Document:     document,
@@ -407,6 +422,27 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		BirthDate:    normalizeDocumentBirthDate(raw),
 		Confidence:   normalizeDocumentConfidence(asFloat64(raw["confidence"])),
 	}
+}
+
+func documentExtractPassengerNeedsReview(raw map[string]interface{}, passenger DocumentExtractPassenger) bool {
+	if passenger.Confidence > 0 && passenger.Confidence < 0.75 {
+		return true
+	}
+	if passenger.DocumentType == "CPF" && !isValidCPF(passenger.Document) {
+		return true
+	}
+	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))
+	if explicitType != "CPF" {
+		return false
+	}
+	if passenger.CPF != "" {
+		return false
+	}
+	explicitDocument := firstNonEmpty(asString(raw["document"]), asString(raw["numero"]), asString(raw["number"]), asString(raw["document_number"]))
+	if explicitDocument == "" {
+		return true
+	}
+	return normalizePassengerDocumentValue(explicitDocument, "CPF") == ""
 }
 
 func normalizeDocumentBirthDate(raw map[string]interface{}) string {
@@ -498,7 +534,7 @@ func selectDocumentByPriority(raw map[string]interface{}, documents map[string]s
 			return explicitType, document
 		}
 	}
-	if explicitDocument != "" {
+	if explicitDocument != "" && explicitType == "" {
 		for _, candidate := range candidates {
 			if document := normalizePassengerDocumentValue(explicitDocument, candidate.Type); document != "" {
 				return candidate.Type, document

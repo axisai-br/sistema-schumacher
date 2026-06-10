@@ -38,6 +38,40 @@ func TestParseDocumentExtractResultPrioritizesCPFOverOtherDocuments(t *testing.T
 	}
 }
 
+func TestParseDocumentExtractResultCNHePrioritizesVisibleCPFAndCleansRG(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"CLAUDECIR SCHUMACHER",
+			"document_type":"RG",
+			"document":"2817314 SSP SC",
+			"cpf":"845.617.189-15",
+			"cnh":"01235234139",
+			"rg":"2817314 SSP SC",
+			"birth_date":"",
+			"confidence":0.9
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CPF" || passenger.Document != "84561718915" || passenger.CPF != "84561718915" {
+		t.Fatalf("expected visible CPF as primary document, got %+v", passenger)
+	}
+	if passenger.CNH != "01235234139" {
+		t.Fatalf("expected CNH preserved as secondary document, got %+v", passenger)
+	}
+	if passenger.RG != "2817314" {
+		t.Fatalf("expected RG without issuer suffix, got %+v", passenger)
+	}
+}
+
 func TestDocumentExtractResponsePayloadPreservesSecondaryDocuments(t *testing.T) {
 	payload := buildDocumentExtractResponsePayload(DocumentExtractResult{
 		Mode: "EXTRACTED",
@@ -116,6 +150,95 @@ func TestParseDocumentExtractResultUsesCPFWhenDocumentTypeIsImplicit(t *testing.
 	passenger := result.Passengers[0]
 	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
 		t.Fatalf("expected CPF priority for implicit document, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultCleansRGIssuerSuffix(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"RG",
+			"document":"2817314SSPSC",
+			"confidence":0.9
+		}]
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "RG" || passenger.Document != "2817314" {
+		t.Fatalf("expected cleaned RG as primary document, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultAllowsCNHWithoutCPF(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"CNH",
+			"document":"01235234139",
+			"cnh":"01235234139",
+			"confidence":0.9
+		}]
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CNH" || passenger.Document != "01235234139" || passenger.CNH != "01235234139" {
+		t.Fatalf("expected legible CNH as primary document, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultMarksPartialForLowConfidence(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"RG",
+			"document":"2817314",
+			"confidence":0.7
+		}]
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 || result.Passengers[0].Document != "2817314" {
+		t.Fatalf("expected passenger data preserved for review, got %+v", result.Passengers)
+	}
+}
+
+func TestParseDocumentExtractResultMarksPartialForInvalidCPF(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"CPF",
+			"document":"123.456.789-01",
+			"confidence":0.9
+		}]
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger for review, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "" || passenger.Document != "" || passenger.CPF != "" {
+		t.Fatalf("expected invalid CPF not to become a trusted document, got %+v", passenger)
 	}
 }
 
