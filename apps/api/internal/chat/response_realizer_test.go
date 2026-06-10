@@ -179,7 +179,7 @@ func TestConfirmExtractedDocumentTemplate(t *testing.T) {
 			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "06645648103"},
 		},
 	})
-	if !containsAll(reply, "Joao Vitor Messias", "CPF", "06645648103", "Eles conferem? Posso prosseguir e criar a reserva?") {
+	if !containsAll(reply, "Joao Vitor Messias", "CPF", "066.***.***-03", "Eles conferem? Posso prosseguir e criar a reserva?") {
 		t.Fatalf("unexpected document confirmation reply: %q", reply)
 	}
 	assertNoInternalIDs(t, reply)

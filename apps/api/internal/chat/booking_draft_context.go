@@ -111,10 +111,14 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 
 	passengerDetailsText := findLatestPassengerDetailsText(history, session)
 	passengers := extractBookingCreatePassengers(passengerDetailsText, session)
+	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
 	if len(passengers) == 0 {
-		if extract := findLatestDocumentExtractContext(history); extract != nil && strings.EqualFold(strings.TrimSpace(extract.Mode), "EXTRACTED") {
+		if extract := findLatestDocumentExtractContext(history); extract != nil && (strings.EqualFold(strings.TrimSpace(extract.Mode), "EXTRACTED") || hasCorrection) {
 			passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
 		}
+	}
+	if hasCorrection {
+		passengers = applyPassengerDocumentCorrection(passengers, correction)
 	}
 	if len(passengers) > 0 {
 		context.HasPassengerDetails = true

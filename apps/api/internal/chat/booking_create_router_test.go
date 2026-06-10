@@ -1,8 +1,14 @@
 package chat
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"schumacher-tur/api/internal/bookings"
+	"schumacher-tur/api/internal/payments"
 )
 
 func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
@@ -189,6 +195,7 @@ func TestNormalizePassengerDocumentValueCleansRGIssuer(t *testing.T) {
 		expected string
 	}{
 		{value: "2817314 SSP SC", expected: "2817314"},
+		{value: "2817314 SSP/SC", expected: "2817314"},
 		{value: "2817314SSPSC", expected: "2817314"},
 		{value: "12.345.678-9 SSP/SC", expected: "123456789"},
 		{value: "SSP/SC", expected: ""},
@@ -417,6 +424,122 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	}
 	if input.IdempotencyKey == "" {
 		t.Fatalf("expected idempotency key")
+	}
+}
+
+func TestParsePassengerDocumentCorrectionPreservesNameAndReplacesRGWithCPF(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ID:            "session-document-correction",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Claudecir",
+	}
+	history := documentCorrectionBookingHistory(now)
+
+	correction, ok := findLatestPassengerDocumentCorrection(history, "sim")
+	if !ok {
+		t.Fatalf("expected document correction to be detected")
+	}
+	if !correction.NameConfirmed || correction.DocumentType != "CPF" || correction.Document != "52998224725" {
+		t.Fatalf("unexpected correction: %+v", correction)
+	}
+	namedCorrection, ok := parsePassengerDocumentCorrection("Claudecir Schumacher 52998224725")
+	if !ok || namedCorrection.Name != "Claudecir Schumacher" || namedCorrection.Document != "52998224725" {
+		t.Fatalf("expected name + CPF correction to be parsed, got ok=%v correction=%+v", ok, namedCorrection)
+	}
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected booking create from corrected document confirmation")
+	}
+	if len(input.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", input.Passengers)
+	}
+	passenger := input.Passengers[0]
+	if passenger.Name != "Claudecir Schumacher" {
+		t.Fatalf("expected previous extracted name to be preserved, got %+v", passenger)
+	}
+	if passenger.DocumentType != "CPF" || passenger.Document != "52998224725" {
+		t.Fatalf("expected corrected CPF as passenger document, got %+v", passenger)
+	}
+	if passenger.Document == "2817314" || passenger.DocumentType == "RG" {
+		t.Fatalf("old RG must not survive after CPF correction, got %+v", passenger)
+	}
+}
+
+func TestTranscriptCNHeCorrectionCreatesBookingAndPaymentUsesReservationCPF(t *testing.T) {
+	extract := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"CLAUDECIR SCHUMACHER",
+			"document_type":"RG",
+			"document":"2817314 SSP SC",
+			"cpf":"529.982.247-25",
+			"cnh":"01235234139",
+			"rg":"2817314 SSP SC",
+			"confidence":0.92
+		}]
+	}`)
+	if extract.Mode != "EXTRACTED" {
+		t.Fatalf("expected extracted CNH-e payload, got %+v", extract)
+	}
+	if len(extract.Passengers) != 1 || extract.Passengers[0].DocumentType != "CPF" || extract.Passengers[0].Document != "52998224725" {
+		t.Fatalf("expected visible CPF as primary document, got %+v", extract.Passengers)
+	}
+	reply := buildDocumentExtractReply(extract)
+	if !containsAll(reply, "CLAUDECIR SCHUMACHER | CPF | 529.***.***-25") || strings.Contains(reply, "SSPSC") {
+		t.Fatalf("expected masked CPF confirmation without issuer suffix, got %q", reply)
+	}
+
+	now := time.Now().UTC()
+	session := Session{ID: "session-transcript", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Claudecir"}
+	history := documentCorrectionBookingHistory(now)
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected corrected booking create input")
+	}
+	if len(input.Passengers) != 1 || input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "52998224725" {
+		t.Fatalf("expected booking passenger with corrected CPF, got %+v", input.Passengers)
+	}
+
+	paymentSvc := &fakePaymentCreatePaymentsService{
+		payment: payments.Payment{ID: "pay-transcript", BookingID: "BK-TRANSCRIPT", Status: "PENDING", CreatedAt: now},
+		raw:     json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201TRANSCRIPT","qr_code_url":"https://provider/pix"}}]}`),
+	}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-TRANSCRIPT",
+				Status:          "PENDING",
+				ReservationCode: "TR123456",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passengers: []bookings.BookingPassenger{
+				{
+					Name:         input.Passengers[0].Name,
+					Document:     input.Passengers[0].Document,
+					DocumentType: input.Passengers[0].DocumentType,
+					Phone:        "48999999999",
+				},
+			},
+		},
+	}, paymentSvc)
+
+	payment, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:       "BK-TRANSCRIPT",
+		ReservationCode: "TR123456",
+		PaymentType:     "integral",
+	})
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if payment.Mode != "pix_sent" || payment.PixCode != "000201TRANSCRIPT" {
+		t.Fatalf("expected PIX generated from reservation CPF, got %+v", payment)
+	}
+	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "52998224725" {
+		t.Fatalf("expected payment to reuse reservation passenger CPF, got %+v", paymentSvc.lastInput.Customer)
 	}
 }
 
@@ -665,6 +788,69 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 			ProcessingStatus: messageStatusAutomationDraft,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 		})
+	}
+	return history
+}
+
+func documentCorrectionBookingHistory(now time.Time) []Message {
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Opções para Monção/MA -> Fraiburgo/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-8 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{
+							Origin:      "Monção/MA",
+							Destination: "Fraiburgo/SC",
+							Qty:         1,
+							Limit:       5,
+						},
+						Results: []AvailabilitySearchItem{
+							{
+								TripID:                 "trip-correction-1",
+								BoardStopID:            "board-correction-1",
+								AlightStopID:           "alight-correction-1",
+								OriginDisplayName:      "Monção/MA",
+								DestinationDisplayName: "Fraiburgo/SC",
+								OriginDepartTime:       "09:00",
+								TripDate:               "2026-05-11",
+								Price:                  950,
+								Currency:               "BRL",
+							},
+						},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de ate 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Tem crianca de 5 anos ou menos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "INBOUND", Body: "nao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-150 * time.Second)},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Claudecir Schumacher | RG | 2817314",
+			ProcessingStatus: messageStatusAutomationDraft,
+			ReceivedAt:       now.Add(-120 * time.Second),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
+						Mode:                   "EXTRACTED",
+						ExpectedPassengerCount: 1,
+						MediaCount:             1,
+						Passengers: []DocumentExtractPassenger{
+							{Name: "Claudecir Schumacher", DocumentType: "RG", Document: "2817314", RG: "2817314", Confidence: 0.9},
+						},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "o nome está certo, mas quero que use o cpf 52998224725", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-90 * time.Second)},
+		{Direction: "OUTBOUND", Body: "Vou usar o CPF 529*******25. Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-60 * time.Second)},
 	}
 	return history
 }

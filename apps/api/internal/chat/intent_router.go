@@ -59,6 +59,13 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		}
 		return IntentDecision{Intent: intent, Source: "deterministic"}
 	}
+	if isPaymentDocumentReplyPhase(state.Phase) && lastAssistantAskedPayerCPF(history) && looksLikeBareCPF(body) {
+		return IntentDecision{
+			Intent: IntentPaymentCreate,
+			Source: "deterministic_payer_document_reply",
+			Action: "tool",
+		}
+	}
 	if looksLikeRescheduleIntent(folded) {
 		return IntentDecision{Intent: IntentReschedule, Source: "deterministic"}
 	}
@@ -155,6 +162,10 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		return IntentDecision{Intent: IntentAvailabilitySearch, Source: "deterministic", AvailabilityInput: &input, Action: "tool"}
 	}
 	return IntentDecision{Intent: IntentUnknown, Source: "deterministic"}
+}
+
+func isPaymentDocumentReplyPhase(phase ConversationPhase) bool {
+	return phase == ConversationPhaseBooked || phase == ConversationPhasePaymentPending
 }
 
 func routeBroadStateTemplateIntent(body string, folded string) (IntentDecision, bool) {

@@ -56,6 +56,52 @@ func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringPassengerCollection(t 
 	}
 }
 
+func TestIntentRouterRoutesBareCPFAsPaymentAfterPayerCPFRequest(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},
+		{Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador."},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "52998224725", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentPaymentCreate {
+		t.Fatalf("expected payment create intent, got %+v", got)
+	}
+	if got.Source != "deterministic_payer_document_reply" || got.Action != "tool" {
+		t.Fatalf("unexpected payer document route decision: %+v", got)
+	}
+	if got.Intent == IntentUnsupportedPackage {
+		t.Fatalf("CPF reply must not become unsupported package: %+v", got)
+	}
+}
+
+func TestIntentRouterDoesNotRouteBareCPFWithoutPaymentContext(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "52998224725", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentPaymentCreate {
+		t.Fatalf("did not expect payment create without payer CPF prompt, got %+v", got)
+	}
+}
+
+func TestIntentRouterDoesNotRouteInvalidBareCPF(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador."},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "12345678901", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentPaymentCreate {
+		t.Fatalf("did not expect invalid CPF to route to payment create, got %+v", got)
+	}
+}
+
 func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
 	history := []Message{
 		{Direction: "INBOUND", Body: "Passagem para Santa Catarina"},

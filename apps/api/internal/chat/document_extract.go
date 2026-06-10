@@ -383,7 +383,7 @@ func parseDocumentExtractResult(text string) DocumentExtractResult {
 		result.Passengers = append(result.Passengers, passenger)
 	}
 	if len(result.Passengers) > 0 {
-		if needsReview || hasIncompletePassenger(result.Passengers) {
+		if needsReview || hasIncompletePassenger(result.Passengers) || hasUnreliablePassengerDocument(result.Passengers) {
 			result.Mode = "PARTIAL"
 		} else {
 			result.Mode = "EXTRACTED"
@@ -412,7 +412,7 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		documentType = "CPF"
 		document = cpf
 	}
-	return DocumentExtractPassenger{
+	return normalizeDocumentExtractPassenger(DocumentExtractPassenger{
 		Name:         name,
 		Document:     document,
 		DocumentType: documentType,
@@ -421,7 +421,128 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		RG:           documents["RG"],
 		BirthDate:    normalizeDocumentBirthDate(raw),
 		Confidence:   normalizeDocumentConfidence(asFloat64(raw["confidence"])),
+	})
+}
+
+func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) DocumentExtractPassenger {
+	passenger.Name = normalizePassengerName(passenger.Name)
+	documentType := normalizePassengerDocumentType(passenger.DocumentType)
+	rawDocument := strings.TrimSpace(passenger.Document)
+	passenger.DocumentType = documentType
+	passenger.CPF = normalizePassengerDocumentValue(passenger.CPF, "CPF")
+	passenger.CNH = normalizePassengerDocumentValue(passenger.CNH, "CNH")
+	passenger.RG = normalizePassengerDocumentValue(passenger.RG, "RG")
+
+	switch documentType {
+	case "CPF":
+		passenger.CPF = firstNonEmpty(passenger.CPF, normalizePassengerDocumentValue(rawDocument, "CPF"))
+	case "CNH":
+		passenger.CNH = firstNonEmpty(passenger.CNH, normalizePassengerDocumentValue(rawDocument, "CNH"))
+	case "RG":
+		passenger.RG = firstNonEmpty(passenger.RG, normalizePassengerDocumentValue(rawDocument, "RG"))
+	case "CERTIDAO_NASCIMENTO":
+		passenger.Document = normalizePassengerDocumentValue(rawDocument, "CERTIDAO_NASCIMENTO")
+	default:
+		passenger.CPF = firstNonEmpty(passenger.CPF, normalizePassengerDocumentValue(rawDocument, "CPF"))
+		if passenger.CPF == "" {
+			passenger.RG = firstNonEmpty(passenger.RG, normalizePassengerDocumentValue(rawDocument, "RG"))
+		}
 	}
+
+	if passenger.CPF != "" {
+		passenger.DocumentType = "CPF"
+		passenger.Document = passenger.CPF
+		return passenger
+	}
+
+	switch passenger.DocumentType {
+	case "CNH":
+		passenger.Document = firstNonEmpty(passenger.CNH, normalizePassengerDocumentValue(passenger.Document, "CNH"))
+		passenger.CNH = firstNonEmpty(passenger.CNH, passenger.Document)
+	case "RG":
+		passenger.Document = firstNonEmpty(passenger.RG, normalizePassengerDocumentValue(passenger.Document, "RG"))
+		passenger.RG = firstNonEmpty(passenger.RG, passenger.Document)
+	case "CERTIDAO_NASCIMENTO":
+		passenger.Document = normalizePassengerDocumentValue(passenger.Document, "CERTIDAO_NASCIMENTO")
+	default:
+		if looksLikeCNHEExtract(passenger) && passenger.CNH != "" {
+			passenger.DocumentType = "CNH"
+			passenger.Document = passenger.CNH
+		} else if passenger.RG != "" {
+			passenger.DocumentType = "RG"
+			passenger.Document = passenger.RG
+		} else if passenger.CNH != "" {
+			passenger.DocumentType = "CNH"
+			passenger.Document = passenger.CNH
+		} else {
+			passenger.Document = ""
+		}
+	}
+
+	if looksLikeCNHEExtract(passenger) && passenger.CPF == "" && passenger.CNH != "" {
+		passenger.DocumentType = "CNH"
+		passenger.Document = passenger.CNH
+	}
+	return passenger
+}
+
+func looksLikeCNHEExtract(passenger DocumentExtractPassenger) bool {
+	if strings.TrimSpace(passenger.CNH) != "" {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(passenger.DocumentType), "CNH") {
+		return true
+	}
+	return strings.TrimSpace(passenger.CPF) != "" &&
+		strings.TrimSpace(passenger.CNH) != "" &&
+		strings.TrimSpace(passenger.RG) != ""
+}
+
+func hasUnreliablePassengerDocument(passengers []DocumentExtractPassenger) bool {
+	for _, passenger := range passengers {
+		if passenger.Confidence > 0 && passenger.Confidence < 0.75 {
+			return true
+		}
+		documentType := normalizePassengerDocumentType(passenger.DocumentType)
+		switch documentType {
+		case "CPF":
+			if !isValidCPF(passenger.Document) {
+				return true
+			}
+		case "RG":
+			if normalizePassengerDocumentValue(passenger.Document, "RG") == "" || rgDocumentContainsIssuer(passenger.Document) {
+				return true
+			}
+			if looksLikeCNHEExtract(passenger) && passenger.CPF == "" && passenger.CNH == "" && passenger.Confidence < 0.9 {
+				return true
+			}
+		case "CNH", "CERTIDAO_NASCIMENTO":
+			if normalizePassengerDocumentValue(passenger.Document, documentType) == "" {
+				return true
+			}
+		default:
+			return true
+		}
+		if looksLikeCNHEExtract(passenger) && passenger.CPF != "" && (documentType != "CPF" || passenger.Document != passenger.CPF) {
+			return true
+		}
+	}
+	return false
+}
+
+func rgDocumentContainsIssuer(value string) bool {
+	normalized := normalizeAlphaNumeric(value)
+	for _, suffix := range rgIssuerSuffixes {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	for _, issuer := range rgIssuerTokens {
+		if strings.Contains(normalized, issuer) {
+			return true
+		}
+	}
+	return false
 }
 
 func documentExtractPassengerNeedsReview(raw map[string]interface{}, passenger DocumentExtractPassenger) bool {
@@ -429,6 +550,9 @@ func documentExtractPassengerNeedsReview(raw map[string]interface{}, passenger D
 		return true
 	}
 	if passenger.DocumentType == "CPF" && !isValidCPF(passenger.Document) {
+		return true
+	}
+	if rawCPF := strings.TrimSpace(asString(raw["cpf"])); rawCPF != "" && normalizePassengerDocumentValue(rawCPF, "CPF") == "" {
 		return true
 	}
 	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))

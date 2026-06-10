@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"strings"
 
@@ -87,10 +88,7 @@ func (t *PaymentCreateTool) Create(ctx context.Context, input PaymentCreateInput
 	if len(passengers) == 0 && (details.Passenger.ID != "" || strings.TrimSpace(details.Passenger.Name) != "") {
 		passengers = []bookings.BookingPassenger{details.Passenger}
 	}
-	primaryPassenger := bookings.BookingPassenger{}
-	if len(passengers) > 0 {
-		primaryPassenger = passengers[0]
-	}
+	primaryPassenger := firstChargeablePaymentPassenger(passengers)
 
 	depositPerPerson := input.DepositPerPerson
 	if depositPerPerson <= 0 {
@@ -117,13 +115,26 @@ func (t *PaymentCreateTool) Create(ctx context.Context, input PaymentCreateInput
 		return result, nil
 	}
 
-	customerDocument := resolvePaymentPayerDocument(strings.TrimSpace(input.CustomerDocument), primaryPassenger)
+	customerDocument, customerDocumentSource := resolvePaymentPayerDocument(strings.TrimSpace(input.CustomerDocument), strings.TrimSpace(input.CustomerDocumentSource), passengers)
 	if !isSupportedPaymentDocument(customerDocument) {
+		log.Printf(
+			"event=payment_create_missing_payer_document booking_id=%s reservation_code=%s passenger_document_type=%s",
+			result.BookingID,
+			result.ReservationCode,
+			strings.TrimSpace(primaryPassenger.DocumentType),
+		)
 		result.Mode = "manual_review_required_missing_payer_document"
 		result.Errors = []string{buildMissingPayerDocumentMessage(primaryPassenger.DocumentType)}
 		result.MessageForAgent = "Para gerar o PIX, primeiro peca o CPF do pagador em formato numerico."
 		return result, nil
 	}
+	log.Printf(
+		"event=payment_create_payer_document_resolved booking_id=%s reservation_code=%s source=%s document=%s",
+		result.BookingID,
+		result.ReservationCode,
+		customerDocumentSource,
+		maskDocumentForLog(customerDocument),
+	)
 
 	customerPhone := resolvePaymentPayerPhone(strings.TrimSpace(input.CustomerPhone), primaryPassenger)
 	if len(customerPhone) < 10 {
@@ -172,6 +183,13 @@ func (t *PaymentCreateTool) Create(ctx context.Context, input PaymentCreateInput
 		result.ProviderRef = strings.TrimSpace(*payment.ProviderRef)
 	}
 	result.CheckoutURL, result.PixCode = payments.ExtractCheckoutAndPix(raw)
+	log.Printf(
+		"event=payment_create_done booking_id=%s reservation_code=%s payment_id=%s has_pix_code=%t",
+		result.BookingID,
+		result.ReservationCode,
+		result.PaymentID,
+		strings.TrimSpace(result.PixCode) != "",
+	)
 
 	if strings.TrimSpace(result.PixCode) == "" {
 		result.Mode = "manual_review_required_provider_error"
@@ -223,16 +241,47 @@ func countChargeableBookingPassengers(passengers []bookings.BookingPassenger) in
 	return count
 }
 
-func resolvePaymentPayerDocument(explicit string, passenger bookings.BookingPassenger) string {
+func firstChargeablePaymentPassenger(passengers []bookings.BookingPassenger) bookings.BookingPassenger {
+	for _, passenger := range passengers {
+		if !passenger.IsLapChild {
+			return passenger
+		}
+	}
+	if len(passengers) > 0 {
+		return passengers[0]
+	}
+	return bookings.BookingPassenger{}
+}
+
+func resolvePaymentPayerDocument(explicit string, explicitSource string, passengers []bookings.BookingPassenger) (string, string) {
+	for _, passenger := range passengers {
+		if passenger.IsLapChild {
+			continue
+		}
+		if document := supportedPassengerCPFDocument(passenger); document != "" {
+			return document, "booking"
+		}
+	}
+	for _, passenger := range passengers {
+		if document := supportedPassengerCPFDocument(passenger); document != "" {
+			return document, "booking"
+		}
+	}
 	document := normalizeDigits(explicit)
 	if isSupportedPaymentDocument(document) {
-		return document
+		source := firstNonEmpty(strings.TrimSpace(explicitSource), "input")
+		return document, source
 	}
-	if strings.EqualFold(strings.TrimSpace(passenger.DocumentType), "CPF") {
-		document = normalizeDigits(passenger.Document)
-		if isSupportedPaymentDocument(document) {
-			return document
-		}
+	return "", ""
+}
+
+func supportedPassengerCPFDocument(passenger bookings.BookingPassenger) string {
+	if !strings.EqualFold(strings.TrimSpace(passenger.DocumentType), "CPF") {
+		return ""
+	}
+	document := normalizeDigits(passenger.Document)
+	if isSupportedPaymentDocument(document) {
+		return document
 	}
 	return ""
 }

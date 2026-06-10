@@ -784,17 +784,18 @@ type PaymentCreator interface {
 }
 
 type PaymentCreateInput struct {
-	BookingID        string
-	ReservationCode  string
-	PaymentType      string
-	ConfirmPaid      bool
-	PaidAmount       float64
-	DepositPerPerson float64
-	CustomerName     string
-	CustomerPhone    string
-	CustomerDocument string
-	CustomerEmail    string
-	Note             string
+	BookingID              string
+	ReservationCode        string
+	PaymentType            string
+	ConfirmPaid            bool
+	PaidAmount             float64
+	DepositPerPerson       float64
+	CustomerName           string
+	CustomerPhone          string
+	CustomerDocument       string
+	CustomerDocumentSource string
+	CustomerEmail          string
+	Note                   string
 }
 
 type PaymentCreateResult struct {

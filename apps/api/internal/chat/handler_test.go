@@ -609,7 +609,7 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	if runner.calls != 1 {
 		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 06645648103") {
+	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 066.***.***-03") {
 		t.Fatalf("expected extracted CPF confirmation, got %q", reprocessed.Draft.Body)
 	}
 	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
@@ -689,7 +689,7 @@ func TestReprocessExtractsPDFBeforeUnsupportedRouteRouter(t *testing.T) {
 	if media.Kind != "PDF" || media.FileName != "rg-salvador.pdf" {
 		t.Fatalf("expected PDF media with file name, got %+v", media)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | CPF | 12345678909") {
+	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | CPF | 123.***.***-09") {
 		t.Fatalf("expected extracted PDF confirmation, got %q", reprocessed.Draft.Body)
 	}
 	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
@@ -751,7 +751,7 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 	if reprocessed.Draft == nil {
 		t.Fatalf("expected draft to be generated")
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 06645648103") {
+	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 066.***.***-03") {
 		t.Fatalf("expected extracted passenger confirmation, got %q", reprocessed.Draft.Body)
 	}
 	if !strings.Contains(reprocessed.Draft.Body, "Ainda falta o documento de 1 passageiro") {
@@ -5828,7 +5828,7 @@ func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testi
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-payment-create-2",
 			IdempotencyKey:    "idem-payment-create-2",
-			Body:              "pode gerar o pix? cpf: 06645648105",
+			Body:              "pode gerar o pix? cpf: 52998224725",
 		},
 	})
 	if err != nil {
@@ -5860,7 +5860,7 @@ func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testi
 	if paymentCreator.lastInput.BookingID != "BK-ABC123456" {
 		t.Fatalf("expected booking id from previous booking create context, got %s", paymentCreator.lastInput.BookingID)
 	}
-	if paymentCreator.lastInput.CustomerDocument != "06645648105" {
+	if paymentCreator.lastInput.CustomerDocument != "52998224725" {
 		t.Fatalf("expected explicit cpf propagated, got %s", paymentCreator.lastInput.CustomerDocument)
 	}
 }

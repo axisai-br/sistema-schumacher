@@ -27,9 +27,11 @@ type fakePaymentCreatePaymentsService struct {
 	raw       json.RawMessage
 	err       error
 	lastInput payments.CreatePaymentInput
+	calls     int
 }
 
 func (f *fakePaymentCreatePaymentsService) Create(_ context.Context, input payments.CreatePaymentInput) (payments.Payment, json.RawMessage, error) {
+	f.calls++
 	f.lastInput = input
 	if f.err != nil {
 		return payments.Payment{}, nil, f.err
@@ -155,5 +157,201 @@ func TestPaymentCreateToolRequiresPayerCPFWhenBookingUsesRG(t *testing.T) {
 	}
 	if len(result.Errors) != 1 {
 		t.Fatalf("expected one operational error, got %+v", result.Errors)
+	}
+}
+
+func TestPaymentCreateToolUsesCurrentTurnCPFWhenBookingUsesRG(t *testing.T) {
+	paymentSvc := &fakePaymentCreatePaymentsService{
+		payment: payments.Payment{
+			ID:        "pay-current",
+			BookingID: "BK-ABC123456",
+			Status:    "PENDING",
+			CreatedAt: time.Now().UTC(),
+		},
+		raw: json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201CURRENT","qr_code_url":"https://provider/pix"}}]}`),
+	}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-ABC123456",
+				Status:          "PENDING",
+				ReservationCode: "ABC12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passenger: bookings.BookingPassenger{
+				Name:         "Maria Silva",
+				Document:     "2817314",
+				DocumentType: "RG",
+				Phone:        "48999999999",
+			},
+		},
+	}, paymentSvc)
+
+	result, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:              "BK-ABC123456",
+		ReservationCode:        "ABC12345",
+		PaymentType:            "integral",
+		CustomerDocument:       "52998224725",
+		CustomerDocumentSource: "current_turn",
+	})
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if result.Mode != "pix_sent" {
+		t.Fatalf("expected pix_sent mode, got %s", result.Mode)
+	}
+	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "52998224725" {
+		t.Fatalf("expected current-turn CPF as customer document, got %+v", paymentSvc.lastInput.Customer)
+	}
+}
+
+func TestPaymentCreateToolUsesHistoryCPFWhenBookingUsesRG(t *testing.T) {
+	paymentSvc := &fakePaymentCreatePaymentsService{
+		payment: payments.Payment{
+			ID:        "pay-history",
+			BookingID: "BK-ABC123456",
+			Status:    "PENDING",
+			CreatedAt: time.Now().UTC(),
+		},
+		raw: json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201HISTORY","qr_code_url":"https://provider/pix"}}]}`),
+	}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-ABC123456",
+				Status:          "PENDING",
+				ReservationCode: "ABC12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passenger: bookings.BookingPassenger{
+				Name:         "Maria Silva",
+				Document:     "2817314",
+				DocumentType: "RG",
+				Phone:        "48999999999",
+			},
+		},
+	}, paymentSvc)
+
+	result, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:              "BK-ABC123456",
+		ReservationCode:        "ABC12345",
+		PaymentType:            "sinal",
+		CustomerDocument:       "529.982.247-25",
+		CustomerDocumentSource: "history",
+	})
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if result.Mode != "pix_sent" {
+		t.Fatalf("expected pix_sent mode, got %s", result.Mode)
+	}
+	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "52998224725" {
+		t.Fatalf("expected history CPF as customer document, got %+v", paymentSvc.lastInput.Customer)
+	}
+}
+
+func TestPaymentCreateToolRejectsInvalidCurrentTurnCPFWithoutCallingPayments(t *testing.T) {
+	paymentSvc := &fakePaymentCreatePaymentsService{}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-ABC123456",
+				Status:          "PENDING",
+				ReservationCode: "ABC12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passenger: bookings.BookingPassenger{
+				Name:         "Maria Silva",
+				Document:     "2817314",
+				DocumentType: "RG",
+				Phone:        "48999999999",
+			},
+		},
+	}, paymentSvc)
+
+	result, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:              "BK-ABC123456",
+		ReservationCode:        "ABC12345",
+		PaymentType:            "sinal",
+		CustomerDocument:       "12345678901",
+		CustomerDocumentSource: "current_turn",
+	})
+	if err != nil {
+		t.Fatalf("expected operational result, got %v", err)
+	}
+	if result.Mode != "manual_review_required_missing_payer_document" {
+		t.Fatalf("expected missing payer document mode, got %s", result.Mode)
+	}
+	if paymentSvc.calls != 0 {
+		t.Fatalf("expected invalid CPF not to call payment service, got %d calls", paymentSvc.calls)
+	}
+}
+
+func TestTranscriptBareCPFAfterPayerPromptGeneratesPIX(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{CustomerName: "Maria Silva", CustomerPhone: "48999999999"}
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Reserva criada com sucesso. Codigo ABC12345.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameBookingCreate: buildBookingCreateResponsePayload(BookingCreateResult{
+						Mode:            "created",
+						BookingID:       "BK-ABC123456",
+						ReservationCode: "ABC12345",
+						Status:          "PENDING",
+						Passengers: []BookingCreatePassengerResult{
+							{Name: "Maria Silva", DocumentType: "RG", Document: "2817314"},
+						},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "integral", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	input, ok := parsePaymentCreateInput(session, history, "52998224725", nil, nil)
+	if !ok {
+		t.Fatalf("expected payment input from bare CPF")
+	}
+	if input.CustomerDocument != "52998224725" || input.CustomerDocumentSource != "current_turn" {
+		t.Fatalf("expected current-turn CPF on payment input, got %+v", input)
+	}
+
+	paymentSvc := &fakePaymentCreatePaymentsService{
+		payment: payments.Payment{ID: "pay-bare-cpf", BookingID: "BK-ABC123456", Status: "PENDING", CreatedAt: now},
+		raw:     json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201BARECPF","qr_code_url":"https://provider/pix"}}]}`),
+	}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-ABC123456",
+				Status:          "PENDING",
+				ReservationCode: "ABC12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passenger: bookings.BookingPassenger{
+				Name:         "Maria Silva",
+				Document:     "2817314",
+				DocumentType: "RG",
+				Phone:        "48999999999",
+			},
+		},
+	}, paymentSvc)
+
+	result, err := tool.Create(context.Background(), input)
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if result.Mode != "pix_sent" || result.PixCode != "000201BARECPF" {
+		t.Fatalf("expected PIX generated after bare CPF, got %+v", result)
 	}
 }

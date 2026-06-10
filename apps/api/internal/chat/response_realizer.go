@@ -351,6 +351,34 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 	if len(result.Passengers) == 0 {
 		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF ou RG."
 	}
+	if strings.EqualFold(strings.TrimSpace(result.Mode), "PARTIAL") {
+		lines := []string{"Consegui ler parte do documento, mas preciso confirmar antes de seguir:"}
+		cnhLike := false
+		for index, passenger := range result.Passengers {
+			name := strings.TrimSpace(passenger.Name)
+			docType := strings.TrimSpace(passenger.DocumentType)
+			document := strings.TrimSpace(passenger.Document)
+			if name == "" {
+				name = "nao identificado"
+			}
+			if docType == "" {
+				docType = "documento"
+			}
+			if document == "" {
+				document = "numero nao identificado"
+			}
+			if looksLikeCNHEExtract(passenger) {
+				cnhLike = true
+			}
+			lines = append(lines, fmt.Sprintf("%d. Nome: %s\n   Documento lido: %s %s", index+1, name, docType, maskDocumentForDisplay(document, docType)))
+		}
+		if cnhLike {
+			lines = append(lines, "Como parece uma CNH-e e nao consegui confirmar o CPF com seguranca, envie o CPF do passageiro ou confirme o documento correto.")
+		} else {
+			lines = append(lines, "Envie o CPF do passageiro ou confirme o documento correto para eu seguir com a reserva.")
+		}
+		return strings.Join(lines, "\n")
+	}
 	lines := []string{"Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?"}
 	for index, passenger := range result.Passengers {
 		name := strings.TrimSpace(passenger.Name)
@@ -365,7 +393,7 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 		if document == "" {
 			document = "numero nao identificado"
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s", index+1, name, docType, document))
+		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s", index+1, name, docType, maskDocumentForDisplay(document, docType)))
 	}
 	if missing := result.ExpectedPassengerCount - len(result.Passengers); missing > 0 {
 		lines = append(lines, buildAskDocumentsReply(missing, 0))

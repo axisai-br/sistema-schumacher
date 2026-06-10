@@ -764,6 +764,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		canonicalState = deriveCanonicalConversationState(session, history, currentTurn)
 		agentState["canonical_state"] = canonicalState
 	}
+	if looksLikeBareCPF(currentTurn) {
+		s.logReprocess(
+			"chat reprocess event=cpf_reply_detected session_id=%s trigger=%s job_run_id=%s phase=%s last_bot_asked_payer_cpf=%t document=%s",
+			session.ID,
+			trigger,
+			jobRunID,
+			canonicalState.Phase,
+			lastAssistantAskedPayerCPF(history),
+			maskDocumentForLog(currentTurn),
+		)
+	}
 
 	messageMetadata := map[string]interface{}{
 		"agent_ready_for_automation": true,
@@ -1074,6 +1085,19 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					canonicalState.Phase,
 					decision.Action,
 					decision.TemplateName,
+				)
+			}
+			if looksLikeBareCPF(currentTurn) {
+				s.logReprocess(
+					"chat reprocess event=cpf_reply_routed session_id=%s trigger=%s job_run_id=%s phase=%s last_bot_asked_payer_cpf=%t intent=%s intent_source=%s document=%s",
+					persisted.Session.ID,
+					trigger,
+					jobRunID,
+					canonicalState.Phase,
+					lastAssistantAskedPayerCPF(history),
+					decision.Intent,
+					decision.Source,
+					maskDocumentForLog(currentTurn),
 				)
 			}
 
@@ -2496,11 +2520,13 @@ func (s *Service) maybeAutoSendDraft(ctx context.Context, result ReprocessResult
 
 	if result.Draft != nil {
 		if reason := detectBookingAutoSendBlockReason(messages, *result.Draft); reason != "" {
+			blockState := deriveCanonicalConversationState(result.Session, messages, "")
 			s.logReprocess(
-				"chat reprocess event=auto_send_blocked_reason=%s session_id=%s draft_message_id=%s",
+				"chat reprocess event=auto_send_blocked reason=%s session_id=%s draft_message_id=%s phase=%s",
 				reason,
 				result.Session.ID,
 				result.Draft.ID,
+				blockState.Phase,
 			)
 			return s.markDraftAutoSendReviewRequired(ctx, result, reason)
 		}

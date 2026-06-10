@@ -19,16 +19,18 @@ func parsePaymentCreateInput(session Session, history []Message, text string, cu
 	}
 
 	paymentType := resolveRequestedPaymentType(history, body)
+	customerDocument, customerDocumentSource := resolvePaymentCreateCustomerDocument(history, body)
 
 	input := PaymentCreateInput{
-		BookingID:        bookingID,
-		ReservationCode:  reservationCode,
-		PaymentType:      paymentType,
-		DepositPerPerson: 250,
-		CustomerName:     strings.TrimSpace(session.CustomerName),
-		CustomerPhone:    strings.TrimSpace(session.CustomerPhone),
-		CustomerDocument: extractExplicitPaymentDocument(body),
-		Note:             buildPaymentCreateNoteForType(bookingID, reservationCode, paymentType),
+		BookingID:              bookingID,
+		ReservationCode:        reservationCode,
+		PaymentType:            paymentType,
+		DepositPerPerson:       250,
+		CustomerName:           strings.TrimSpace(session.CustomerName),
+		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
+		CustomerDocument:       customerDocument,
+		CustomerDocumentSource: customerDocumentSource,
+		Note:                   buildPaymentCreateNoteForType(bookingID, reservationCode, paymentType),
 	}
 	return input, true
 }
@@ -75,6 +77,10 @@ func looksLikeContextualPaymentCreateIntent(history []Message, text string) bool
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
 	if folded == "" {
 		return false
+	}
+
+	if lastAssistantAskedPayerCPF(history) && looksLikeBareCPF(text) {
+		return true
 	}
 
 	if looksLikePaymentCreateConfirmationReply(folded) && historyMentionsPixConfirmation(history) {
@@ -142,6 +148,23 @@ func looksLikePixOnlyPaymentReply(folded string) bool {
 	}
 
 	return len(strings.Fields(folded)) <= 4 && strings.Contains(folded, "pix")
+}
+
+func lastAssistantAskedPayerCPF(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
+		if body == "" {
+			continue
+		}
+		return strings.Contains(body, "cpf do pagador") ||
+			(strings.Contains(body, "preciso do cpf") && (strings.Contains(body, "pix") || strings.Contains(body, "pagador") || strings.Contains(body, "pagamento"))) ||
+			(strings.Contains(body, "para gerar o pix") && strings.Contains(body, "cpf"))
+	}
+	return false
 }
 
 func resolveRequestedPaymentType(history []Message, text string) string {
@@ -218,9 +241,53 @@ func extractRequestedPaymentType(text string) string {
 
 func extractExplicitPaymentDocument(text string) string {
 	if match := passengerCPFPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		return normalizeDigits(match[1])
+		return normalizePassengerDocumentValue(match[1], "CPF")
+	}
+	if looksLikeBareCPF(text) {
+		return normalizeDigits(text)
 	}
 	return ""
+}
+
+func resolvePaymentCreateCustomerDocument(history []Message, text string) (string, string) {
+	if document := extractExplicitPaymentDocument(text); document != "" {
+		return document, "current_turn"
+	}
+	if document := findLatestPaymentCPFInHistory(history); document != "" {
+		return document, "history"
+	}
+	return "", ""
+}
+
+func findLatestPaymentCPFInHistory(history []Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		body := strings.TrimSpace(messageTurnText(message))
+		if body == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			if correction, ok := parsePassengerDocumentCorrection(body); ok && correction.DocumentType == "CPF" {
+				return correction.Document
+			}
+			if previousAssistantAskedPayerCPF(history, i) {
+				if document := extractExplicitPaymentDocument(body); document != "" {
+					return document
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func previousAssistantAskedPayerCPF(history []Message, beforeIndex int) bool {
+	for i := beforeIndex - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		return lastAssistantAskedPayerCPF(history[:i+1])
+	}
+	return false
 }
 
 func resolvePaymentCreateTarget(text string, history []Message, currentBooking *BookingLookupResult, currentBookingCreate *BookingCreateResult) (string, string) {
@@ -344,17 +411,18 @@ func parseBookingLookupContextPayload(payload map[string]interface{}) BookingLoo
 
 func buildPaymentCreateRequestPayload(input PaymentCreateInput) map[string]interface{} {
 	payload := map[string]interface{}{
-		"booking_id":         strings.TrimSpace(input.BookingID),
-		"reservation_code":   strings.TrimSpace(input.ReservationCode),
-		"payment_type":       normalizePaymentType(input.PaymentType),
-		"confirm_paid":       input.ConfirmPaid,
-		"paid_amount":        input.PaidAmount,
-		"deposit_per_person": input.DepositPerPerson,
-		"customer_name":      strings.TrimSpace(input.CustomerName),
-		"customer_phone":     strings.TrimSpace(input.CustomerPhone),
-		"customer_document":  strings.TrimSpace(input.CustomerDocument),
-		"customer_email":     strings.TrimSpace(input.CustomerEmail),
-		"note":               strings.TrimSpace(input.Note),
+		"booking_id":               strings.TrimSpace(input.BookingID),
+		"reservation_code":         strings.TrimSpace(input.ReservationCode),
+		"payment_type":             normalizePaymentType(input.PaymentType),
+		"confirm_paid":             input.ConfirmPaid,
+		"paid_amount":              input.PaidAmount,
+		"deposit_per_person":       input.DepositPerPerson,
+		"customer_name":            strings.TrimSpace(input.CustomerName),
+		"customer_phone":           strings.TrimSpace(input.CustomerPhone),
+		"customer_document":        strings.TrimSpace(input.CustomerDocument),
+		"customer_document_source": strings.TrimSpace(input.CustomerDocumentSource),
+		"customer_email":           strings.TrimSpace(input.CustomerEmail),
+		"note":                     strings.TrimSpace(input.Note),
 	}
 	return payload
 }

@@ -25,11 +25,18 @@ var (
 	childUnder5AgePattern          = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
 )
 
-var rgIssuerSuffixes = []string{
-	"SSPAC", "SSPAL", "SSPAP", "SSPAM", "SSPBA", "SSPCE", "SSPDF", "SSPES", "SSPGO",
-	"SSPMA", "SSPMT", "SSPMS", "SSPMG", "SSPPA", "SSPPB", "SSPPR", "SSPPE", "SSPPI",
-	"SSPRJ", "SSPRN", "SSPRS", "SSPRO", "SSPRR", "SSPR", "SSPSC", "SSPSE", "SSPTO",
-	"SESP", "SSP", "SDS", "IFP", "PC",
+var (
+	brazilianUFs       = []string{"AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"}
+	rgIssuerTokens     = []string{"SSP", "SDS", "SESP", "IFP", "PC"}
+	rgIssuerSuffixes   = buildRGIssuerSuffixes()
+	cpfCandidateRegexp = regexp.MustCompile(`[0-9][0-9.\-\s]{9,20}[0-9]`)
+)
+
+type PassengerDocumentCorrection struct {
+	NameConfirmed bool
+	Name          string
+	DocumentType  string
+	Document      string
 }
 
 type PassengerClarificationSlots struct {
@@ -167,9 +174,10 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 
 	expected := context.PassengerCount
 	var passengers []BookingCreatePassengerInput
+	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
 
 	if extract := findLatestDocumentExtractContext(history); extract != nil {
-		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" {
+		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" && !hasCorrection {
 			return BookingCreateInput{}, false
 		}
 		if expected <= 0 {
@@ -183,6 +191,9 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 		}
 
 		passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
+		if hasCorrection {
+			passengers = applyPassengerDocumentCorrection(passengers, correction)
+		}
 		for _, passenger := range passengers {
 			if strings.TrimSpace(passenger.Name) == "" ||
 				strings.TrimSpace(passenger.DocumentType) == "" ||
@@ -204,6 +215,9 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 		}
 		if expected <= 0 {
 			expected = len(passengers)
+		}
+		if hasCorrection {
+			passengers = applyPassengerDocumentCorrection(passengers, correction)
 		}
 	}
 
@@ -227,6 +241,7 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 }
 
 func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, session Session) BookingCreatePassengerInput {
+	extracted = normalizeDocumentExtractPassenger(extracted)
 	documentType := normalizePassengerDocumentType(extracted.DocumentType)
 	document := normalizePassengerDocumentValue(extracted.Document, documentType)
 	if cpf := normalizePassengerDocumentValue(extracted.CPF, "CPF"); cpf != "" {
@@ -275,6 +290,131 @@ func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session 
 		passengers = append(passengers, passenger)
 	}
 	return passengers
+}
+
+func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection, bool) {
+	body := strings.TrimSpace(text)
+	if body == "" {
+		return PassengerDocumentCorrection{}, false
+	}
+
+	document := extractValidCPF(body)
+	if document == "" {
+		return PassengerDocumentCorrection{}, false
+	}
+
+	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	looseNameCPF := passengerLooseCPFLinePattern.FindStringSubmatch(body)
+	hasCorrectionCue := looksLikeBareCPF(body) ||
+		len(looseNameCPF) == 3 ||
+		strings.Contains(folded, "cpf") ||
+		strings.Contains(folded, "documento correto") ||
+		strings.Contains(folded, "documento certo") ||
+		strings.Contains(folded, "usar esse documento") ||
+		strings.Contains(folded, "use esse documento")
+	if !hasCorrectionCue {
+		return PassengerDocumentCorrection{}, false
+	}
+
+	correction := PassengerDocumentCorrection{
+		NameConfirmed: strings.Contains(folded, "nome esta certo") ||
+			strings.Contains(folded, "nome ta certo") ||
+			strings.Contains(folded, "nome correto") ||
+			strings.Contains(folded, "nome esta correto"),
+		DocumentType: "CPF",
+		Document:     document,
+	}
+
+	if len(looseNameCPF) == 3 {
+		correction.Name = normalizePassengerName(looseNameCPF[1])
+	}
+	if correction.Name == "" && !correction.NameConfirmed {
+		correction.Name = extractBookingPassengerName(body, "")
+	}
+
+	return correction, true
+}
+
+func extractValidCPF(text string) string {
+	if match := passengerCPFPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
+		if document := normalizePassengerDocumentValue(match[1], "CPF"); document != "" {
+			return document
+		}
+	}
+	for _, candidate := range cpfCandidateRegexp.FindAllString(text, -1) {
+		if document := normalizePassengerDocumentValue(candidate, "CPF"); document != "" {
+			return document
+		}
+	}
+	digits := normalizeDigits(text)
+	if isValidCPF(digits) {
+		return digits
+	}
+	return ""
+}
+
+func findLatestPassengerDocumentCorrection(history []Message, currentTurn string) (PassengerDocumentCorrection, bool) {
+	if correction, ok := parsePassengerDocumentCorrection(currentTurn); ok {
+		return correction, true
+	}
+
+	inCorrectionWindow := false
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		body := strings.TrimSpace(messageTurnText(message))
+		if body == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+			if strings.Contains(folded, "vou usar") ||
+				strings.Contains(folded, "usando o cpf") ||
+				strings.Contains(folded, "posso prosseguir") ||
+				strings.Contains(folded, "eles conferem") ||
+				strings.Contains(folded, "preciso confirmar antes de seguir") {
+				inCorrectionWindow = true
+				continue
+			}
+			if looksLikePassengerDocumentRequest(folded) {
+				break
+			}
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			continue
+		}
+		if !inCorrectionWindow {
+			continue
+		}
+		if correction, ok := parsePassengerDocumentCorrection(body); ok {
+			return correction, true
+		}
+	}
+	return PassengerDocumentCorrection{}, false
+}
+
+func applyPassengerDocumentCorrection(passengers []BookingCreatePassengerInput, correction PassengerDocumentCorrection) []BookingCreatePassengerInput {
+	if len(passengers) == 0 || strings.TrimSpace(correction.DocumentType) == "" || strings.TrimSpace(correction.Document) == "" {
+		return passengers
+	}
+
+	out := append([]BookingCreatePassengerInput(nil), passengers...)
+	target := 0
+	if correction.Name != "" {
+		for i, passenger := range out {
+			if strings.EqualFold(strings.Join(strings.Fields(foldChatText(passenger.Name)), " "), strings.Join(strings.Fields(foldChatText(correction.Name)), " ")) {
+				target = i
+				break
+			}
+		}
+	}
+
+	if correction.Name != "" {
+		out[target].Name = correction.Name
+	}
+	out[target].DocumentType = normalizePassengerDocumentType(correction.DocumentType)
+	out[target].Document = normalizePassengerDocumentValue(correction.Document, out[target].DocumentType)
+	return out
 }
 
 func buildBookingCreateInputFromDraftContext(session Session, context BookingDraftContext, passengers []BookingCreatePassengerInput, expected int) BookingCreateInput {
@@ -346,6 +486,8 @@ func lastAssistantAskedDocumentConfirmation(history []Message) bool {
 			continue
 		}
 		return strings.Contains(body, "consegui identificar estes dados") ||
+			strings.Contains(body, "consegui ler parte do documento") ||
+			strings.Contains(body, "preciso confirmar antes de seguir") ||
 			strings.Contains(body, "eles conferem") ||
 			strings.Contains(body, "dados conferem") ||
 			strings.Contains(body, "confere")
@@ -1283,6 +1425,17 @@ func normalizeAlphaNumeric(value string) string {
 	return builder.String()
 }
 
+func buildRGIssuerSuffixes() []string {
+	suffixes := make([]string, 0, len(rgIssuerTokens)*(len(brazilianUFs)+1))
+	for _, issuer := range rgIssuerTokens {
+		for _, uf := range brazilianUFs {
+			suffixes = append(suffixes, issuer+uf)
+		}
+	}
+	suffixes = append(suffixes, rgIssuerTokens...)
+	return suffixes
+}
+
 func normalizeRGDocument(value string) string {
 	document := normalizeAlphaNumeric(value)
 	for {
@@ -1302,6 +1455,43 @@ func normalizeRGDocument(value string) string {
 		return ""
 	}
 	return document
+}
+
+func maskDocumentForLog(doc string) string {
+	digits := normalizeDigits(doc)
+	if len(digits) < 5 {
+		return "[documento]"
+	}
+	prefix := digits
+	if len(prefix) > 3 {
+		prefix = prefix[:3]
+	}
+	return prefix + "*******" + digits[len(digits)-2:]
+}
+
+func maskDocumentForDisplay(document string, documentType string) string {
+	if !strings.EqualFold(strings.TrimSpace(documentType), "CPF") {
+		return strings.TrimSpace(document)
+	}
+	digits := normalizeDigits(document)
+	if len(digits) != 11 {
+		return strings.TrimSpace(document)
+	}
+	return digits[:3] + ".***.***-" + digits[9:]
+}
+
+func looksLikeBareCPF(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	for _, char := range trimmed {
+		if (char >= '0' && char <= '9') || char == '.' || char == '-' || char == ' ' || char == '\t' || char == '\n' {
+			continue
+		}
+		return false
+	}
+	return isValidCPF(normalizeDigits(trimmed))
 }
 
 func findLatestSelectedOptionIndex(history []Message) int {

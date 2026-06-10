@@ -176,6 +176,28 @@ func TestParseDocumentExtractResultCleansRGIssuerSuffix(t *testing.T) {
 	}
 }
 
+func TestParseDocumentExtractResultMarksPartialForIssuerOnlyRG(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"RG",
+			"document":"SSP/SC",
+			"confidence":0.9
+		}]
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger for review, got %+v", result.Passengers)
+	}
+	if result.Passengers[0].Document != "" {
+		t.Fatalf("expected issuer-only RG to be blank after normalization, got %+v", result.Passengers[0])
+	}
+}
+
 func TestParseDocumentExtractResultAllowsCNHWithoutCPF(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
@@ -242,6 +264,27 @@ func TestParseDocumentExtractResultMarksPartialForInvalidCPF(t *testing.T) {
 	}
 }
 
+func TestParseDocumentExtractResultMarksPartialForInvalidCPFField(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Claudecir Schumacher",
+			"document_type":"RG",
+			"document":"2817314 SSP/SC",
+			"cpf":"123.456.789-01",
+			"confidence":0.9
+		}]
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL mode, got %s", result.Mode)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "RG" || passenger.Document != "2817314" || passenger.CPF != "" {
+		t.Fatalf("expected invalid CPF not to be promoted and RG to be cleaned, got %+v", passenger)
+	}
+}
+
 func TestParseDocumentExtractResultKeepsBirthDate(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
@@ -297,8 +340,24 @@ func TestBuildDocumentExtractReplyAsksOnlyMissingPassengerDocuments(t *testing.T
 		},
 	})
 
-	if !containsAll(reply, "Joao Vitor Messias | CPF | 06645648103", "passageiro faltante", "CPF ou RG") {
+	if !containsAll(reply, "Joao Vitor Messias | CPF | 066.***.***-03", "passageiro faltante", "CPF ou RG") {
 		t.Fatalf("unexpected reply: %q", reply)
+	}
+}
+
+func TestBuildDocumentExtractReplyForPartialDoesNotConfirmAsCertain(t *testing.T) {
+	reply := buildDocumentExtractReply(DocumentExtractResult{
+		Mode: "PARTIAL",
+		Passengers: []DocumentExtractPassenger{
+			{Name: "CLAUDECIR SCHUMACHER", DocumentType: "RG", Document: "2817314", CNH: "01235234139", Confidence: 0.7},
+		},
+	})
+
+	if !containsAll(reply, "Consegui ler parte do documento", "Documento lido: RG 2817314", "envie o CPF do passageiro") {
+		t.Fatalf("unexpected partial reply: %q", reply)
+	}
+	if strings.Contains(reply, "Eles conferem? Posso prosseguir") {
+		t.Fatalf("partial reply must not confirm as certain: %q", reply)
 	}
 }
 
