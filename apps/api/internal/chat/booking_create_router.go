@@ -23,6 +23,7 @@ var (
 	passengerSomosEmQtyPattern     = regexp.MustCompile(`\bsomos\s+em\s+([1-9])\b`)
 	passengerMePlusDigitQtyPattern = regexp.MustCompile(`\b(?:eu|pra mim|para mim)\s+e\s+mais\s+([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
 	passengerMePlusWordQtyPattern  = regexp.MustCompile(`\b(?:eu|pra mim|para mim)\s+e\s+mais\s+(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
+	soloPassengerReplyPattern      = regexp.MustCompile(`\b(?:(?:e|eh)\s+)?(?:so|somente|apenas)\s+(?:eu|pra mim|para mim|mim|pra ele|para ele|ele|pra ela|para ela|ela|pra voce|para voce|voce)\b`)
 	childUnder5AgePattern          = regexp.MustCompile(`\b(?:meu|minha|filho|filha|crianca|menino|menina|bebe)\s+(?:filho|filha|crianca|menino|menina|bebe)?\s*(?:tem|de)\s+([0-5])(?:\s+anos?)?\b`)
 )
 
@@ -1257,7 +1258,7 @@ func parsePassengerCountReply(currentTurn string) (int, int, bool) {
 }
 
 func parsePassengerClarificationSlots(currentTurn string) PassengerClarificationSlots {
-	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
+	folded := strings.Join(strings.Fields(foldChatText(NormalizeIncomingCustomerText(currentTurn))), " ")
 	if folded == "" {
 		return PassengerClarificationSlots{}
 	}
@@ -1383,6 +1384,10 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 			"criança não",
 			"nao vai crianca",
 			"não vai criança",
+			"nao tem crianca de 5 anos",
+			"não tem criança de 5 anos",
+			"nao tem crianca nao",
+			"não tem criança não",
 			"nao leva crianca",
 			"não leva criança",
 			"nao leva crianca de 5 anos",
@@ -1410,6 +1415,7 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 }
 
 func isSoloPassengerReply(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
 	switch strings.TrimSpace(folded) {
 	case "eu",
 		"pra mim",
@@ -1419,21 +1425,55 @@ func isSoloPassengerReply(folded string) bool {
 		"sou eu",
 		"sou so eu",
 		"sozinho",
+		"eu sozinho",
+		"eu vou sozinho",
 		"vou sozinho",
 		"vou so",
 		"so pra mim",
 		"so para mim",
+		"so eu mesmo",
+		"so pra mim mesmo",
+		"so para mim mesmo",
+		"pra mim mesmo",
+		"para mim mesmo",
 		"e so pra mim",
 		"eh so pra mim",
 		"e so para mim",
 		"eh so para mim",
+		"passagem so pra mim",
 		"passagem so para mim",
 		"e so eu",
 		"eh so eu":
 		return true
-	default:
+	}
+
+	if hasAdditionalPassengerCue(folded) {
 		return false
 	}
+
+	return soloPassengerReplyPattern.MatchString(folded)
+}
+
+func hasAdditionalPassengerCue(folded string) bool {
+	return containsAnyFolded(
+		folded,
+		"e mais",
+		"mais uma pessoa",
+		"mais um passageiro",
+		"outra pessoa",
+		"outro passageiro",
+		"acompanhante",
+		"duas pessoas",
+		"dois passageiros",
+		"2 pessoas",
+		"2 passageiros",
+		"minha esposa",
+		"meu esposo",
+		"minha filha",
+		"meu filho",
+		"minha mulher",
+		"meu marido",
+	)
 }
 
 func passengerWordNumber(value string) int {

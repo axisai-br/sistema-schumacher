@@ -19,6 +19,10 @@ var customerTextReplacements = []textReplacement{
 		pattern:     regexp.MustCompile(`(?i)\b(?:freiburg|freiburgo|fraiburg|fraiburgo|frei burgo)\b`),
 		replacement: "Fraiburgo",
 	},
+	{
+		pattern:     regexp.MustCompile(`(?i)\b(pra|para)\s+min\b`),
+		replacement: "$1 mim",
+	},
 }
 
 // NormalizeIncomingCustomerText fixes common ASR mistakes and travel-city variants

@@ -898,6 +898,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			trigger,
 			jobRunID,
 		)
+		currentTurnSlots := parsePassengerClarificationSlots(currentTurn)
+		currentTurnAudioTranscript := currentTurnHasCompletedAudioTranscript(candidates)
+		currentTurnSlotsDetected := currentTurnSlots.PassengerCountKnown || currentTurnSlots.ChildUnder5CountKnown
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
 		memory["passenger_count_reply_context"] = "true"
 		memory["passenger_count_reply_parsed"] = bookingDraft.PassengerCountKnown || bookingDraft.ChildUnder5CountKnown
@@ -947,6 +950,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			bookingDraft.ChildUnder5CountKnown,
 		)
 
+		if deterministicBookingAction == BookingNextAskPassengerClarification &&
+			currentTurnAudioTranscript &&
+			!currentTurnSlotsDetected {
+			reply := "Nao consegui entender o audio com seguranca. Pode escrever se a passagem e so para voce ou se vai mais alguem junto? Exemplo: so eu ou eu e mais uma pessoa."
+			run := buildBookingContinuationDraftRun(reply, deterministicBookingAction, bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+			memory["audio_passenger_slots_detected"] = false
+			memory["passenger_count_reply_parsed"] = false
+		}
+
 		if deterministicBookingAction == BookingNextCallCreate {
 			updatedContext, used, err := s.resolveContextualActionTools(
 				ctx,
@@ -977,7 +991,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 
-		if deterministicBookingAction != BookingNextCallCreate {
+		if !deterministicBookingHandled && deterministicBookingAction != BookingNextCallCreate {
 			reply := buildBookingContinuationReply(bookingDraft, deterministicBookingAction)
 			if strings.TrimSpace(reply) != "" {
 				run := buildBookingContinuationDraftRun(reply, deterministicBookingAction, bookingDraft)

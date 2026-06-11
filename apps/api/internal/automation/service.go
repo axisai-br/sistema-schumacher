@@ -263,7 +263,7 @@ func (s *Service) transcribeOpenAIAudioFromDataURL(ctx context.Context, dataURL 
 		return "", err
 	}
 
-	log.Printf("audio_transcription_openai_file_ready path=%s mime=%s bytes=%d", tmpFile.Name(), normalizedMime, len(decoded))
+	log.Printf("audio_transcription_openai_file_ready transcription_status=file_ready")
 	text, err := s.transcribeOpenAIAudioFile(ctx, tmpFile.Name(), normalizedMime, model)
 	if err == nil {
 		return text, nil
@@ -280,7 +280,7 @@ func (s *Service) transcribeOpenAIAudioFromDataURL(ctx context.Context, dataURL 
 		_ = os.Remove(fallbackPath)
 	}()
 
-	log.Printf("audio_transcription_openai_file_ready path=%s mime=%s bytes=%d fallback=ffmpeg", fallbackPath, "audio/wav", len(decoded))
+	log.Printf("audio_transcription_openai_file_ready transcription_status=file_ready")
 	return s.transcribeOpenAIAudioFile(ctx, fallbackPath, "audio/wav", model)
 }
 
@@ -323,7 +323,7 @@ func (s *Service) transcribeOpenAIAudioFile(ctx context.Context, filePath string
 		_ = writer.Close()
 		return "", err
 	}
-	if err := writer.WriteField("prompt", "Português do Brasil. Atendimento Schumacher Tur. Destinos comuns em Santa Catarina: Fraiburgo, Monte Carlo, Videira, Campos Novos, Chapecó, Concórdia, Ipumirim, Petrolândia, Ituporanga, Seara. Origens comuns no Maranhão: Santa Inês, Monção, Igarapé do Meio. Transcreva nomes de cidades conforme essa lista."); err != nil {
+	if err := writer.WriteField("prompt", "Português do Brasil. Atendimento Schumacher Tur. O cliente pode responder perguntas de reserva. Destinos comuns em Santa Catarina: Fraiburgo, Monte Carlo, Videira, Campos Novos, Chapecó, Concórdia, Ipumirim, Petrolândia, Ituporanga, Seara. Origens comuns no Maranhão: Santa Inês, Monção, Igarapé do Meio. Preserve de forma literal respostas curtas sobre passageiros e crianças, como 'só eu', 'só pra mim', 'é só pra mim', 'a passagem é só pra mim', 'vou sozinho', 'sou só eu', 'não tem criança', 'sem criança', 'não vai criança' e 'tem uma criança'. Não troque 'só pra mim' por uma frase ambígua. Transcreva nomes de cidades conforme essa lista."); err != nil {
 		_ = writer.Close()
 		return "", err
 	}
@@ -576,17 +576,21 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 		normalized["evolution_from_me"] = payload.Data.Key.FromMe
 		normalized["audio_mimetype"] = audioMime
 
-		log.Printf("audio_transcription_start contact_key=%s instance=%s message_id=%s message_type=%s", contactKey, strings.TrimSpace(payload.Instance), keyID, messageType)
-		log.Printf("audio_transcription_media_fetch_start contact_key=%s instance=%s message_id=%s", contactKey, strings.TrimSpace(payload.Instance), keyID)
+		log.Printf("audio_transcription_start transcription_status=STARTED")
+		log.Printf("audio_transcription_media_fetch_start transcription_status=STARTED")
 		dataURL, mediaErr := s.fetchEvolutionMediaDataURL(ctx, keyID, remoteJID, payload.Data.Key.FromMe, audioMime, maxEvolutionInlineAudioBytes)
-		log.Printf("audio_transcription_media_fetch_done contact_key=%s instance=%s message_id=%s success=%t", contactKey, strings.TrimSpace(payload.Instance), keyID, mediaErr == nil)
+		mediaFetchStatus := "COMPLETED"
+		if mediaErr != nil {
+			mediaFetchStatus = "FAILED"
+		}
+		log.Printf("audio_transcription_media_fetch_done transcription_status=%s", mediaFetchStatus)
 		if mediaErr != nil {
 			normalized["audio_source"] = "evolution_url_fallback"
 			normalized["audio_base64_error"] = mediaErr.Error()
 			normalized["transcription_status"] = "FAILED"
 			normalized["transcription_error"] = mediaErr.Error()
 			processingStatus = "REVIEW_REQUIRED"
-			log.Printf("audio_transcription_failed stage=media_fetch contact_key=%s instance=%s message_id=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, mediaErr)
+			log.Printf("audio_transcription_failed transcription_status=FAILED")
 		} else {
 			normalized["audio_source"] = "evolution_get_base64"
 			normalized["audio_data_url"] = dataURL
@@ -597,12 +601,12 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 				model = "gpt-4o-mini-transcribe"
 			}
 
-			log.Printf("audio_transcription_openai_start contact_key=%s instance=%s message_id=%s model=%s mime=%s", contactKey, strings.TrimSpace(payload.Instance), keyID, model, audioMime)
+			log.Printf("audio_transcription_openai_start transcription_status=STARTED")
 			transcriptionText, transcribeErr := s.transcribeOpenAIAudioFromDataURL(ctx, dataURL, audioMime, model)
 			if transcribeErr != nil {
 				normalized["transcription_status"] = "FAILED"
 				normalized["transcription_error"] = transcribeErr.Error()
-				log.Printf("audio_transcription_failed stage=openai contact_key=%s instance=%s message_id=%s model=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, model, transcribeErr)
+				log.Printf("audio_transcription_failed transcription_status=FAILED")
 			} else {
 				transcriptionText = chat.NormalizeIncomingCustomerText(transcriptionText)
 				if transcriptionText == "" {
@@ -610,7 +614,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 					normalized["transcription_status"] = "FAILED"
 					normalized["transcription_error"] = emptyErr.Error()
 					processingStatus = "REVIEW_REQUIRED"
-					log.Printf("audio_transcription_failed stage=openai contact_key=%s instance=%s message_id=%s model=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), keyID, model, emptyErr)
+					log.Printf("audio_transcription_failed transcription_status=FAILED")
 				} else {
 					textBody = transcriptionText
 					kind = "TEXT"
@@ -619,7 +623,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 					normalized["transcription_text"] = transcriptionText
 					normalized["transcription_model"] = model
 					processingStatus = "READY_FOR_AUTOMATION"
-					log.Printf("audio_transcription_openai_done contact_key=%s instance=%s message_id=%s model=%s text_len=%d", contactKey, strings.TrimSpace(payload.Instance), keyID, model, len(transcriptionText))
+					log.Printf("audio_transcription_openai_done transcription_status=COMPLETED text_len=%d", len(transcriptionText))
 				}
 			}
 		}
@@ -656,8 +660,7 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 	}
 
 	if strings.EqualFold(processingStatus, "READY_FOR_AUTOMATION") && strings.TrimSpace(textBody) != "" {
-		providerMessageID := strings.TrimSpace(payload.Data.Key.ID)
-		log.Printf("audio_transcription_message_update_start contact_key=%s instance=%s message_id=%s chat_message_id=%s", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID)
+		log.Printf("audio_transcription_message_update_start transcription_status=COMPLETED")
 		updatedMessage, updateErr := s.chat.UpdateMessage(ctx, chat.UpdateMessageInput{
 			MessageID: result.Message.ID,
 			Body:      textBody,
@@ -671,11 +674,11 @@ func (s *Service) HandleEvolutionMessages(ctx context.Context, body []byte) (Evo
 			ProcessingStatus: processingStatus,
 		})
 		if updateErr != nil {
-			log.Printf("audio_transcription_message_update_failed contact_key=%s instance=%s message_id=%s chat_message_id=%s error=%v", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID, updateErr)
+			log.Printf("audio_transcription_message_update_failed transcription_status=FAILED")
 			return EvolutionWebhookResult{}, updateErr
 		}
 		result.Message = updatedMessage
-		log.Printf("audio_transcription_message_update_done contact_key=%s instance=%s message_id=%s chat_message_id=%s text_len=%d", contactKey, strings.TrimSpace(payload.Instance), providerMessageID, result.Message.ID, len(textBody))
+		log.Printf("audio_transcription_message_update_done transcription_status=COMPLETED text_len=%d", len(textBody))
 	}
 
 	return EvolutionWebhookResult{

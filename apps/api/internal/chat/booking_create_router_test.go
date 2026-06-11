@@ -996,13 +996,29 @@ func TestParsePassengerClarificationSlotsPraMim(t *testing.T) {
 	cases := []string{
 		"pra mim",
 		"para mim",
+		"A passagem é só pra mim.",
+		"A passagem é só para mim.",
+		"É só pra mim.",
+		"É só para mim.",
 		"so pra mim",
 		"só pra mim",
 		"eh so pra mim",
 		"so eu",
 		"só eu",
 		"sou eu",
+		"Sou só eu.",
+		"Só eu mesmo.",
+		"Só pra mim mesmo.",
+		"Pra mim mesmo.",
 		"sozinho",
+		"Eu vou sozinho.",
+		"Vou sozinho.",
+		"Eu sozinho.",
+		"Passagem só pra mim.",
+		"a passagem é só para mim mesmo",
+		"a passagem é só para ele",
+		"só pra min",
+		"somente para mim",
 	}
 
 	for _, text := range cases {
@@ -1013,6 +1029,55 @@ func TestParsePassengerClarificationSlotsPraMim(t *testing.T) {
 			}
 			if slots.ChildUnder5CountKnown {
 				t.Fatalf("expected child slot unknown for %q, got %+v", text, slots)
+			}
+		})
+	}
+}
+
+func TestParsePassengerClarificationSlotsSoloAndNoChild(t *testing.T) {
+	cases := []struct {
+		text          string
+		wantPassenger bool
+		wantChild     bool
+	}{
+		{text: "A passagem é só pra mim, não tem criança.", wantPassenger: true, wantChild: true},
+		{text: "Só eu, sem criança.", wantPassenger: true, wantChild: true},
+		{text: "Não tem criança.", wantChild: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			slots := parsePassengerClarificationSlots(tc.text)
+			if tc.wantPassenger {
+				if !slots.PassengerCountKnown || slots.PassengerCount != 1 {
+					t.Fatalf("expected passenger_count=1 known for %q, got %+v", tc.text, slots)
+				}
+			} else if slots.PassengerCountKnown {
+				t.Fatalf("expected passenger slot unknown for %q, got %+v", tc.text, slots)
+			}
+			if tc.wantChild {
+				if !slots.ChildUnder5CountKnown || slots.ChildUnder5Count != 0 {
+					t.Fatalf("expected child_under_5_count=0 known for %q, got %+v", tc.text, slots)
+				}
+			} else if slots.ChildUnder5CountKnown {
+				t.Fatalf("expected child slot unknown for %q, got %+v", tc.text, slots)
+			}
+		})
+	}
+}
+
+func TestParsePassengerClarificationSlotsSoloDoesNotOverrideCompanion(t *testing.T) {
+	cases := []string{
+		"só eu e mais uma pessoa",
+		"somente eu e minha filha",
+		"a passagem é só para mim e meu filho",
+	}
+
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			slots := parsePassengerClarificationSlots(text)
+			if slots.PassengerCountKnown && slots.PassengerCount == 1 {
+				t.Fatalf("expected companion cue not to become passenger_count=1 for %q, got %+v", text, slots)
 			}
 		})
 	}
@@ -1080,6 +1145,9 @@ func TestParsePassengerClarificationSlotsNaoChild(t *testing.T) {
 		"sem criança",
 		"nao tem criança",
 		"não tem criança",
+		"não vai criança",
+		"não tem criança de 5 anos",
+		"não tem criança não",
 	}
 
 	for _, text := range cases {

@@ -225,6 +225,13 @@ func hasCompletedAudioTranscription(message Message) bool {
 	return strings.TrimSpace(asString(message.NormalizedPayload["transcription_text"])) != ""
 }
 
+func currentTurnHasCompletedAudioTranscript(candidates []Message) bool {
+	if len(candidates) == 0 {
+		return false
+	}
+	return hasCompletedAudioTranscription(candidates[len(candidates)-1])
+}
+
 func hasFailedAudioTranscription(message Message) bool {
 	return strings.EqualFold(strings.TrimSpace(asString(message.NormalizedPayload["transcription_status"])), "FAILED")
 }

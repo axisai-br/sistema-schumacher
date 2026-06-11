@@ -4881,6 +4881,185 @@ func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *te
 	}
 }
 
+func TestPassengerCountContextParsesTranscribedAudioSoloEle(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "AUDIO",
+			ProviderMessageID: "msg-audio-solo-ele",
+			IdempotencyKey:    "idem-audio-solo-ele",
+			Body:              "",
+			NormalizedPayload: map[string]interface{}{
+				"transcription_status": "COMPLETED",
+				"transcription_text":   "A passagem é só para ele mesmo.",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected transcribed passenger audio to avoid LLM, got %d calls", runner.calls)
+	}
+	if got := asInt(out.Memory["passenger_count"]); got != 1 {
+		t.Fatalf("expected passenger_count=1, got %d", got)
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != "Tem crianca de 5 anos ou menos viajando?" {
+		t.Fatalf("expected child-only deterministic reply, got %q", got)
+	}
+}
+
+func TestPassengerCountContextParsesTranscribedAudioSoloMim(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "TEXT",
+			ProviderMessageID: "msg-audio-solo-mim",
+			IdempotencyKey:    "idem-audio-solo-mim",
+			Body:              "A passagem é só pra mim.",
+			NormalizedPayload: map[string]interface{}{
+				"transcription_status": "COMPLETED",
+				"transcription_text":   "A passagem é só pra mim.",
+				"message_text":         "A passagem é só pra mim.",
+			},
+			ProcessingStatus: "READY_FOR_AUTOMATION",
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected transcribed passenger audio to avoid LLM, got %d calls", runner.calls)
+	}
+	if got := asInt(out.Memory["passenger_count"]); got != 1 {
+		t.Fatalf("expected passenger_count=1, got %d", got)
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != "Tem crianca de 5 anos ou menos viajando?" {
+		t.Fatalf("expected child-only deterministic reply, got %q", got)
+	}
+	if strings.Contains(out.Draft.Body, "A passagem e so para voce ou vai mais alguem junto") {
+		t.Fatalf("expected not to repeat passenger question, got %q", out.Draft.Body)
+	}
+}
+
+func TestPassengerCountContextParsesTranscribedAudioSoloNoChildAsksDocuments(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedPassengerCountContextWithAvailability(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "TEXT",
+			ProviderMessageID: "msg-audio-solo-no-child",
+			IdempotencyKey:    "idem-audio-solo-no-child",
+			Body:              "A passagem é só pra mim, não tem criança.",
+			NormalizedPayload: map[string]interface{}{
+				"transcription_status": "COMPLETED",
+				"transcription_text":   "A passagem é só pra mim, não tem criança.",
+				"message_text":         "A passagem é só pra mim, não tem criança.",
+			},
+			ProcessingStatus: "READY_FOR_AUTOMATION",
+		},
+	}); err != nil {
+		t.Fatalf("ingest passenger reply: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected transcribed passenger audio to avoid LLM, got %d calls", runner.calls)
+	}
+	if got := asInt(out.Memory["passenger_count"]); got != 1 {
+		t.Fatalf("expected passenger_count=1, got %d", got)
+	}
+	if got := asInt(out.Memory["child_under_5_count"]); got != 0 {
+		t.Fatalf("expected child_under_5_count=0, got %d", got)
+	}
+	if got := strings.TrimSpace(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected document request, got %q", got)
+	}
+	if strings.Contains(out.Draft.Body, "A passagem e so para voce ou vai mais alguem junto") {
+		t.Fatalf("expected not to repeat passenger question, got %q", out.Draft.Body)
+	}
+}
+
+func TestPassengerCountContextTranscribedAudioAmbiguousUsesFallback(t *testing.T) {
+	cases := []string{"sim", "ok", "hum"}
+
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+			session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+
+			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					Kind:              "TEXT",
+					ProviderMessageID: "msg-audio-ambiguous-" + text,
+					IdempotencyKey:    "idem-audio-ambiguous-" + text,
+					Body:              text,
+					NormalizedPayload: map[string]interface{}{
+						"transcription_status": "COMPLETED",
+						"transcription_text":   text,
+						"message_text":         text,
+					},
+					ProcessingStatus: "READY_FOR_AUTOMATION",
+				},
+			}); err != nil {
+				t.Fatalf("ingest passenger reply: %v", err)
+			}
+
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+			if err != nil {
+				t.Fatalf("reprocess: %v", err)
+			}
+			if runner.calls != 0 {
+				t.Fatalf("expected ambiguous transcribed audio to avoid LLM, got %d calls", runner.calls)
+			}
+			if got := asInt(out.Memory["passenger_count"]); got != 0 {
+				t.Fatalf("expected not to infer passenger_count, got %d", got)
+			}
+			if got, _ := out.Memory["child_under_5_count_known"].(bool); got {
+				t.Fatalf("expected not to infer child_under_5_count from ambiguous audio")
+			}
+			if got := strings.TrimSpace(out.Draft.Body); !strings.Contains(got, "Nao consegui entender o audio com seguranca") || !strings.Contains(got, "Exemplo: so eu ou eu e mais uma pessoa") {
+				t.Fatalf("expected audio clarification fallback, got %q", got)
+			}
+			if got := strings.TrimSpace(out.Draft.Body); got == "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?" {
+				t.Fatalf("expected not to repeat exact passenger question, got %q", got)
+			}
+		})
+	}
+}
+
 func TestSCDestinationFollowUpAsksMAOrigin(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
@@ -5009,6 +5188,75 @@ func seedPassengerCountContext(t *testing.T, store *fakeStore, question string) 
 	})
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             question,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed passenger question: %v", err)
+	}
+	return session
+}
+
+func seedPassengerCountContextWithAvailability(t *testing.T, store *fakeStore, question string) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999999",
+		CustomerPhone:  "5511999999999",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             "Encontrei estas opcoes para Santa Ines/MA -> Fraiburgo/SC.",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-4 * time.Minute),
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+					Filter: AvailabilitySearchInput{
+						Origin:      "Santa Ines/MA",
+						Destination: "Fraiburgo/SC",
+						Qty:         1,
+						Limit:       5,
+					},
+					Results: []AvailabilitySearchItem{{
+						TripID:                 "trip-1",
+						BoardStopID:            "board-1",
+						AlightStopID:           "alight-1",
+						OriginDisplayName:      "Santa Ines/MA",
+						DestinationDisplayName: "Fraiburgo/SC",
+						OriginDepartTime:       "12:00",
+						TripDate:               "2026-05-25",
+						Price:                  950,
+						Currency:               "BRL",
+					}},
+				}),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed availability: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		Body:             "primeira opcao",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed selected option: %v", err)
 	}
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,

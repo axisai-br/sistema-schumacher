@@ -89,7 +89,7 @@ func TestHandleEvolutionMessagesTranscribesAudioAndNormalizesRouteText(t *testin
 		if got := r.FormValue("language"); got != "pt" {
 			t.Fatalf("unexpected language: %s", got)
 		}
-		if got := r.FormValue("prompt"); !strings.Contains(got, "Fraiburgo") || !strings.Contains(got, "Santa Inês") {
+		if got := r.FormValue("prompt"); !strings.Contains(got, "Fraiburgo") || !strings.Contains(got, "Santa Inês") || !strings.Contains(got, "perguntas de reserva") || !strings.Contains(got, "só pra mim") || !strings.Contains(got, "a passagem é só pra mim") || !strings.Contains(got, "não tem criança") {
 			t.Fatalf("unexpected prompt: %s", got)
 		}
 		file, header, err := r.FormFile("file")

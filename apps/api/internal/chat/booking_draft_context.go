@@ -61,7 +61,10 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 	}
 
 	currentSlots := parsePassengerClarificationSlots(currentTurn)
-	if !currentSlots.ChildUnder5CountKnown && isShortYesReply(currentTurn) && lastAssistantAskedChildUnder5(history) {
+	if !currentSlots.ChildUnder5CountKnown &&
+		isShortYesReply(currentTurn) &&
+		lastAssistantAskedChildUnder5(history) &&
+		!lastAssistantAskedPassengerAndChildCombined(history) {
 		currentSlots.ChildUnder5Count = 1
 		currentSlots.ChildUnder5CountKnown = true
 	}
@@ -87,7 +90,10 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
 			(!context.PassengerCountKnown || !context.ChildUnder5CountKnown) {
 			slots := parsePassengerClarificationSlots(body)
-			if !slots.ChildUnder5CountKnown && isShortYesReply(body) && previousAssistantAskedChildUnder5(history, i) {
+			if !slots.ChildUnder5CountKnown &&
+				isShortYesReply(body) &&
+				previousAssistantAskedChildUnder5(history, i) &&
+				!previousAssistantAskedPassengerAndChildCombined(history, i) {
 				slots.ChildUnder5Count = 1
 				slots.ChildUnder5CountKnown = true
 			}
@@ -190,6 +196,40 @@ func previousAssistantAskedChildUnder5(history []Message, beforeIndex int) bool 
 		return looksLikeChildUnder5Question(history[i].Body)
 	}
 	return false
+}
+
+func lastAssistantAskedPassengerAndChildCombined(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		return looksLikePassengerAndChildCombinedQuestion(history[i].Body)
+	}
+	return false
+}
+
+func previousAssistantAskedPassengerAndChildCombined(history []Message, beforeIndex int) bool {
+	for i := beforeIndex - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		return looksLikePassengerAndChildCombinedQuestion(history[i].Body)
+	}
+	return false
+}
+
+func looksLikePassengerAndChildCombinedQuestion(text string) bool {
+	return looksLikePassengerQuantityQuestion(text) && looksLikeChildUnder5Question(text)
+}
+
+func looksLikePassengerQuantityQuestion(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	return strings.Contains(folded, "a passagem e so para voce") ||
+		strings.Contains(folded, "e so para voce") ||
+		strings.Contains(folded, "tem mais alguem") ||
+		strings.Contains(folded, "quantas pessoas") ||
+		strings.Contains(folded, "quantos passageiros") ||
+		strings.Contains(folded, "passageiros")
 }
 
 func looksLikeChildUnder5Question(text string) bool {
