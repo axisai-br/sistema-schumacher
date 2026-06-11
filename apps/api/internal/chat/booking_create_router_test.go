@@ -181,6 +181,34 @@ func TestBookingPassengerFromDocumentExtractRejectsInvalidCPFOnCNH(t *testing.T)
 	}
 }
 
+func TestExtractBookingCreatePassengersParsesLooseNameCPF(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Nome Sobrenome 06645648103", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Nome Sobrenome" || passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+		t.Fatalf("unexpected passenger parsed from loose name CPF: %+v", passenger)
+	}
+	if passenger.Phone != "5549999999999" {
+		t.Fatalf("expected passenger phone from session, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersRejectsInvalidLooseCPF(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Nome Sobrenome 12345678901", session)
+
+	if len(passengers) != 0 {
+		t.Fatalf("expected invalid CPF to be rejected, got %+v", passengers)
+	}
+	if !looksLikeInvalidPassengerCPF("Nome Sobrenome 12345678901") {
+		t.Fatalf("expected invalid loose CPF to be detected for correction prompt")
+	}
+}
+
 func TestExtractBookingPassengerDocumentRejectsInvalidCPF(t *testing.T) {
 	document, documentType := extractBookingPassengerDocument("CPF 123.456.789-01")
 

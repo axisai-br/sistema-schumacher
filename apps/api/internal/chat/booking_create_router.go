@@ -798,7 +798,7 @@ func extractBookingCreatePassengers(text string, session Session) []BookingCreat
 	if match := passengerLooseCPFLinePattern.FindStringSubmatch(text); len(match) == 3 {
 		name := normalizePassengerName(match[1])
 		document := normalizeDigits(match[2])
-		if name != "" && len(document) == 11 {
+		if name != "" && isValidCPF(document) {
 			return []BookingCreatePassengerInput{
 				{
 					Name:         name,
@@ -839,7 +839,7 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 		if match := passengerLooseCPFLinePattern.FindStringSubmatch(segment); len(match) == 3 {
 			name := normalizePassengerName(match[1])
 			document := normalizeDigits(match[2])
-			if name == "" || len(document) != 11 {
+			if name == "" || !isValidCPF(document) {
 				return nil
 			}
 			passengers = append(passengers, BookingCreatePassengerInput{
@@ -854,7 +854,7 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 		if match := passengerLooseCPFLinePattern.FindStringSubmatch(cleanSegment); len(match) == 3 {
 			name := normalizePassengerName(match[1])
 			document := normalizeDigits(match[2])
-			if name == "" || len(document) != 11 {
+			if name == "" || !isValidCPF(document) {
 				return nil
 			}
 			passengers = append(passengers, BookingCreatePassengerInput{
@@ -1001,6 +1001,50 @@ func extractBookingPassengerDocument(text string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+func looksLikePassengerDocumentText(text string, session Session) bool {
+	if len(extractBookingCreatePassengers(text, session)) > 0 {
+		return true
+	}
+	if _, ok := parsePassengerDocumentCorrection(text); ok {
+		return true
+	}
+	if extractValidCPF(text) != "" {
+		return true
+	}
+	return looksLikeInvalidPassengerCPF(text)
+}
+
+func looksLikeInvalidPassengerCPF(text string) bool {
+	body := strings.TrimSpace(text)
+	if body == "" || extractValidCPF(body) != "" {
+		return false
+	}
+	if match := passengerCPFPattern.FindStringSubmatch(strings.ToUpper(body)); len(match) == 2 && len(normalizeDigits(match[1])) == 11 {
+		return true
+	}
+	if match := passengerLooseCPFLinePattern.FindStringSubmatch(body); len(match) == 3 && len(normalizeDigits(match[2])) == 11 {
+		return true
+	}
+	if isBareDocumentDigits(body) && len(normalizeDigits(body)) == 11 {
+		return true
+	}
+	return false
+}
+
+func isBareDocumentDigits(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	for _, char := range trimmed {
+		if (char >= '0' && char <= '9') || char == '.' || char == '-' || char == ' ' || char == '\t' || char == '\n' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func inferExpectedPassengerCount(history []Message, texts ...string) int {

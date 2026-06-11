@@ -72,6 +72,96 @@ func TestParseDocumentExtractResultCNHePrioritizesVisibleCPFAndCleansRG(t *testi
 	}
 }
 
+func TestParseDocumentExtractResultPrioritizesCPFWhenModelKeepsRGAsDocument(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Nome Sobrenome",
+			"document_type":"RG",
+			"document":"2873144",
+			"cpf":"066.456.481-03",
+			"rg":"2873144",
+			"cnh":"",
+			"birth_date":"",
+			"confidence":0.93
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" || passenger.CPF != "06645648103" {
+		t.Fatalf("expected CPF to win over model RG document, got %+v", passenger)
+	}
+	if passenger.RG != "2873144" {
+		t.Fatalf("expected RG preserved as secondary document, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultCNHeWithoutValidCPFUsesLegibleCNH(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Nome Sobrenome",
+			"document_type":"CNH",
+			"document":"01235234139",
+			"cpf":"",
+			"cnh":"01235234139",
+			"rg":"",
+			"birth_date":"",
+			"confidence":0.91
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode for legible CNH without CPF, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CNH" || passenger.Document != "01235234139" || passenger.CPF != "" {
+		t.Fatalf("expected CNH without invented CPF, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultInvalidCPFNeedsReview(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Nome Sobrenome",
+			"document_type":"CPF",
+			"document":"12345678901",
+			"cpf":"12345678901",
+			"cnh":"",
+			"rg":"",
+			"birth_date":"",
+			"confidence":0.94
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL for invalid CPF, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected passenger retained for correction, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType == "CPF" && passenger.Document != "" {
+		t.Fatalf("invalid CPF must not be accepted as primary document, got %+v", passenger)
+	}
+	if passenger.CPF != "" {
+		t.Fatalf("invalid CPF must not be normalized into cpf field, got %+v", passenger)
+	}
+}
+
 func TestDocumentExtractResponsePayloadPreservesSecondaryDocuments(t *testing.T) {
 	payload := buildDocumentExtractResponsePayload(DocumentExtractResult{
 		Mode: "EXTRACTED",

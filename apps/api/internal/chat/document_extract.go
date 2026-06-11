@@ -241,6 +241,7 @@ Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
 - document deve ser o CPF sem pontuacao
 - cpf deve repetir o CPF sem pontuacao
 - cnh deve preservar o numero da CNH quando visivel
+Em PDF de CNH Digital/CNH-e, examine os campos visuais renderizados da pagina, nao apenas texto extraivel/metadados. Procure explicitamente o rotulo visual "CPF".
 
 Para RG, document deve conter apenas o numero do RG.
 Nao inclua orgao emissor/UF no numero do RG.

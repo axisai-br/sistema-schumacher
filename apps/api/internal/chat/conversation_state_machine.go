@@ -160,7 +160,7 @@ func allowedNextActionsForPhase(phase ConversationPhase) []string {
 	case ConversationPhasePassengerCollection:
 		return []string{string(IntentPassengerCountReply), string(IntentPassengerDocumentsProvided), string(IntentHumanSupport)}
 	case ConversationPhaseBookingPending:
-		return []string{string(IntentBookingCreateConfirmation), string(IntentHumanSupport)}
+		return []string{string(IntentBookingCreateConfirmation), string(IntentPassengerDocumentsProvided), string(IntentHumanSupport)}
 	case ConversationPhaseBooked:
 		return []string{string(IntentPaymentPreference), string(IntentPaymentCreate), string(IntentPaymentStatusQuery), string(IntentBookingCancel), string(IntentHumanSupport)}
 	case ConversationPhasePaymentPending:

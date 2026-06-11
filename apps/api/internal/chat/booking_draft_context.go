@@ -321,6 +321,155 @@ func buildBookingContinuationDraftRun(reply string, action BookingNextAction, co
 	}
 }
 
+func shouldDraftPassengerDocumentConfirmation(session Session, history []Message, currentTurn string, context BookingDraftContext) bool {
+	if !context.HasPassengerDetails || len(context.PassengerDetails) == 0 {
+		return false
+	}
+	if looksLikeDocumentConfirmation(currentTurn) {
+		return false
+	}
+	if _, ok := parsePassengerDocumentCorrection(currentTurn); ok {
+		return true
+	}
+	if !context.RequestedPassengerDocuments &&
+		!lastAssistantAskedDocumentConfirmation(history) &&
+		!lastAssistantAskedBookingProceedConfirmation(history) {
+		return false
+	}
+	return len(extractBookingCreatePassengers(currentTurn, session)) > 0
+}
+
+func shouldAskPassengerNameAfterCPF(session Session, currentTurn string, context BookingDraftContext) bool {
+	if context.HasPassengerDetails || looksLikeDocumentConfirmation(currentTurn) {
+		return false
+	}
+	if extractValidCPF(currentTurn) == "" {
+		return false
+	}
+	return len(extractBookingCreatePassengers(currentTurn, session)) == 0
+}
+
+func buildInvalidPassengerCPFDraftRun(context BookingDraftContext) RunAgentResult {
+	reply := "O CPF informado parece invalido. Pode reenviar o CPF correto com 11 digitos ou mandar uma foto legivel do documento?"
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":            "TEMPLATE_FIRST_REPLY",
+			"intent":          string(IntentPassengerDocumentsProvided),
+			"action":          "ask_valid_passenger_cpf",
+			"template_name":   string(TemplateAskDocuments),
+			"passenger_count": context.PassengerCount,
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":     reply,
+			"intent":         string(IntentPassengerDocumentsProvided),
+			"action":         "ask_valid_passenger_cpf",
+			"template_name":  string(TemplateAskDocuments),
+			"needs_document": true,
+		},
+	}
+}
+
+func buildAskPassengerNameAfterCPFDraftRun(context BookingDraftContext) RunAgentResult {
+	reply := "Recebi o CPF. Pode enviar tambem o nome completo do passageiro para eu conferir antes de criar a reserva?"
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":            "TEMPLATE_FIRST_REPLY",
+			"intent":          string(IntentPassengerDocumentsProvided),
+			"action":          "ask_passenger_name_for_cpf",
+			"template_name":   string(TemplateAskDocuments),
+			"passenger_count": context.PassengerCount,
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":    reply,
+			"intent":        string(IntentPassengerDocumentsProvided),
+			"action":        "ask_passenger_name_for_cpf",
+			"template_name": string(TemplateAskDocuments),
+		},
+	}
+}
+
+func buildPassengerDocumentConfirmationDraftRun(context BookingDraftContext) RunAgentResult {
+	result := documentExtractResultFromBookingDraft(context)
+	reply := buildConfirmExtractedDocumentReply(result)
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":                     "TEMPLATE_FIRST_REPLY",
+			"template_name":            string(TemplateConfirmDocument),
+			"intent":                   string(IntentPassengerDocumentsProvided),
+			"action":                   "confirm_passenger_documents",
+			"passenger_count":          context.PassengerCount,
+			"expected_passenger_count": result.ExpectedPassengerCount,
+			"passenger_details_count":  len(result.Passengers),
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":               reply,
+			"template_name":            string(TemplateConfirmDocument),
+			"intent":                   string(IntentPassengerDocumentsProvided),
+			"action":                   "confirm_passenger_documents",
+			"expected_passenger_count": result.ExpectedPassengerCount,
+			"passenger_details_count":  len(result.Passengers),
+		},
+	}
+}
+
+func documentExtractResultFromBookingDraft(context BookingDraftContext) DocumentExtractResult {
+	expected := context.PassengerCount
+	if expected <= 0 {
+		expected = len(context.PassengerDetails)
+	}
+	passengers := make([]DocumentExtractPassenger, 0, len(context.PassengerDetails))
+	for _, passenger := range context.PassengerDetails {
+		docType := normalizePassengerDocumentType(passenger.DocumentType)
+		document := normalizePassengerDocumentValue(passenger.Document, docType)
+		item := DocumentExtractPassenger{
+			Name:         strings.TrimSpace(passenger.Name),
+			DocumentType: docType,
+			Document:     document,
+			Confidence:   1,
+		}
+		switch docType {
+		case "CPF":
+			item.CPF = document
+		case "RG":
+			item.RG = document
+		case "CNH":
+			item.CNH = document
+		}
+		passengers = append(passengers, item)
+	}
+	return DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: expected,
+		Passengers:             passengers,
+	}
+}
+
+func shouldTreatAsPassengerDocumentFlow(phase ConversationPhase, history []Message, currentTurn string, session Session) bool {
+	if phase == ConversationPhaseBookingPending || phase == ConversationPhasePassengerCollection {
+		return true
+	}
+	if lastAssistantAskedDocumentConfirmation(history) || lastAssistantAskedBookingProceedConfirmation(history) {
+		return true
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(history[i].Direction), "OUTBOUND") {
+			continue
+		}
+		folded := strings.Join(strings.Fields(foldChatText(history[i].Body)), " ")
+		if looksLikePassengerDocumentRequest(folded) {
+			return true
+		}
+		break
+	}
+	return looksLikePassengerDocumentText(currentTurn, session)
+}
+
 func bookingContinuationTemplateName(action BookingNextAction, context BookingDraftContext) ResponseTemplateName {
 	switch action {
 	case BookingNextAskPassengerClarification:

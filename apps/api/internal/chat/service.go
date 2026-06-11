@@ -1000,10 +1000,53 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 	if !passengerCountContext && !deterministicBookingHandled {
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
-		if decideNextBookingStep(bookingDraft) == BookingNextAskLapChildAssignment {
-			reply := buildBookingContinuationReply(bookingDraft, BookingNextAskLapChildAssignment)
+		passengerDocumentFlowContext := shouldTreatAsPassengerDocumentFlow(canonicalState.Phase, history, currentTurn, persisted.Session)
+		bookingAction := decideNextBookingStep(bookingDraft)
+		canHandlePassengerDocumentTurn := bookingAction != BookingNextAskPassengerClarification && bookingAction != BookingNextAwaitTripSelection
+		if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && looksLikeInvalidPassengerCPF(currentTurn) {
+			run := buildInvalidPassengerCPFDraftRun(bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		} else if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && shouldAskPassengerNameAfterCPF(persisted.Session, currentTurn, bookingDraft) {
+			run := buildAskPassengerNameAfterCPFDraftRun(bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		}
+		if !deterministicBookingHandled && bookingAction == BookingNextCallCreate {
+			updatedContext, used, err := s.resolveContextualActionTools(
+				ctx,
+				persisted.Session,
+				history,
+				currentTurn,
+				toolContext,
+			)
+			if err != nil {
+				return ReprocessResult{}, err
+			}
+			if used {
+				toolContext = updatedContext
+				result.ToolCalls = toolContext.Calls
+				deterministicToolHandled = len(toolContext.Calls) > 0
+
+				if toolContext.BookingCreate != nil {
+					run := buildBookingCreatedDraftRun(*toolContext.BookingCreate)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				} else if toolContext.PaymentCreate != nil {
+					run := buildPaymentCreateDraftRun(*toolContext.PaymentCreate)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+				}
+			} else if shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
+				run := buildPassengerDocumentConfirmationDraftRun(bookingDraft)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
+		}
+		if !deterministicBookingHandled && bookingAction == BookingNextAskLapChildAssignment {
+			reply := buildBookingContinuationReply(bookingDraft, bookingAction)
 			if strings.TrimSpace(reply) != "" {
-				run := buildBookingContinuationDraftRun(reply, BookingNextAskLapChildAssignment, bookingDraft)
+				run := buildBookingContinuationDraftRun(reply, bookingAction, bookingDraft)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
 				memory["booking_draft_context"] = map[string]interface{}{
@@ -1067,6 +1110,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				persisted.Session.ID,
 				trigger,
 				jobRunID,
+			)
+		}
+		unsupportedPackageHandled = false
+	} else if shouldTreatAsPassengerDocumentFlow(canonicalState.Phase, history, currentTurn, persisted.Session) {
+		if unsupportedPackageHandled {
+			s.logReprocess(
+				"chat reprocess event=fallback_out_of_service_blocked_reason=passenger_document_flow session_id=%s trigger=%s job_run_id=%s phase=%s",
+				persisted.Session.ID,
+				trigger,
+				jobRunID,
+				canonicalState.Phase,
 			)
 		}
 		unsupportedPackageHandled = false

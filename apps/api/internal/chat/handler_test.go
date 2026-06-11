@@ -703,6 +703,373 @@ func TestReprocessExtractsPDFBeforeUnsupportedRouteRouter(t *testing.T) {
 	}
 }
 
+func TestReprocessConfirmsTextPassengerDocumentBeforeGenericRunner(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          buildUnsupportedPackageReply(),
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-text-document-should-not-run",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709049")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-text-doc-1",
+			IdempotencyKey:    "idem-text-doc-1",
+			Body:              "Claudecir Schumacher 52998224725",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest text document: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess text document: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected text passenger document to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected document confirmation draft")
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Claudecir Schumacher | CPF | 529.***.***-25") {
+		t.Fatalf("expected passenger document confirmation, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["intent"])); got != string(IntentPassengerDocumentsProvided) {
+		t.Fatalf("expected passenger documents intent, got %q", got)
+	}
+	if got := readDraftAutoSendStatus(*reprocessed.Draft); got != draftAutoSendStatusEligible {
+		t.Fatalf("expected text document confirmation to be auto-send eligible, got %s", got)
+	}
+}
+
+func TestReprocessCPFOnlyPassengerDocumentAsksNameBeforeGenericRunner(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          buildUnsupportedPackageReply(),
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-cpf-only-should-not-run",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709052")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-cpf-only-1",
+			IdempotencyKey:    "idem-cpf-only-1",
+			Body:              "cpf 06645648103",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest cpf-only document: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess cpf-only document: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected cpf-only passenger document to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft asking passenger name")
+	}
+	if !strings.Contains(strings.ToLower(reprocessed.Draft.Body), "nome completo") {
+		t.Fatalf("expected CPF-only reply to ask for passenger name, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessConfirmsCorrectedCPFBeforeGenericRunner(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          buildUnsupportedPackageReply(),
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-correction-should-not-run",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCorrectionBookingHistory(t, store, "5549988709050")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-text-correction-1",
+			IdempotencyKey:    "idem-text-correction-1",
+			Body:              "o nome está certo, mas quero que use o cpf 52998224725",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest correction: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess correction: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected correction to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected corrected document confirmation draft")
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Claudecir Schumacher | CPF | 529.***.***-25") {
+		t.Fatalf("expected corrected CPF confirmation, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, "2817314") || strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("expected old RG and unsupported reply to be absent, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessInvalidCorrectedCPFAsksCorrectionBeforeGenericRunner(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          buildUnsupportedPackageReply(),
+			Model:              "gpt-test",
+			ProviderResponseID: "resp-invalid-cpf-should-not-run",
+		},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCorrectionBookingHistory(t, store, "5549988709053")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-invalid-cpf-correction-1",
+			IdempotencyKey:    "idem-invalid-cpf-correction-1",
+			Body:              "o nome está certo, mas quero que use o cpf 12345678901",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest invalid correction: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess invalid correction: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected invalid correction to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected invalid correction not to create booking, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected invalid CPF correction draft")
+	}
+	body := strings.Join(strings.Fields(strings.ToLower(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "cpf") || !strings.Contains(body, "invalido") {
+		t.Fatalf("expected invalid CPF correction reply, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessCreatesBookingAfterCorrectedDocumentConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{
+		enabled: true,
+		result: BookingCreateResult{
+			Mode:            "created",
+			BookingID:       "BK-CORRECTED",
+			ReservationCode: "CORR1234",
+			Status:          "PENDING",
+			TotalAmount:     950,
+			RemainderAmount: 950,
+			Passengers: []BookingCreatePassengerResult{
+				{Name: "Claudecir Schumacher", Document: "52998224725", DocumentType: "CPF", Phone: "5549988709051"},
+			},
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCorrectionBookingHistory(t, store, "5549988709051")
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-70 * time.Second),
+		Body:             "Claudecir Schumacher 52998224725",
+	}); err != nil {
+		t.Fatalf("seed correction inbound: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-60 * time.Second),
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Claudecir Schumacher | CPF | 529.***.***-25",
+	}); err != nil {
+		t.Fatalf("seed corrected confirmation outbound: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-correction-confirm-1",
+			IdempotencyKey:    "idem-correction-confirm-1",
+			Body:              "sim",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest correction confirmation: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess correction confirmation: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected booking create template before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 1 {
+		t.Fatalf("expected one booking create call, got %d", creator.calls)
+	}
+	if len(creator.lastInput.Passengers) != 1 ||
+		creator.lastInput.Passengers[0].DocumentType != "CPF" ||
+		creator.lastInput.Passengers[0].Document != "52998224725" {
+		t.Fatalf("expected corrected CPF passenger on booking input, got %+v", creator.lastInput.Passengers)
+	}
+	if reprocessed.Draft == nil || !strings.Contains(reprocessed.Draft.Body, "valor integral") {
+		t.Fatalf("expected payment preference draft after booking creation, got %+v", reprocessed.Draft)
+	}
+}
+
+func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:       "WHATSAPP",
+		ContactKey:    contactKey,
+		CustomerPhone: contactKey,
+		CustomerName:  "Claudecir",
+		LastMessageAt: &now,
+		LastInboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Moncao/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-doc-text-1",
+				BoardStopID:            "board-doc-text-1",
+				AlightStopID:           "alight-doc-text-1",
+				OriginDisplayName:      "Moncao/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "09:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+				PackageName:            packageToSantaCatarina,
+			},
+		},
+	})
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-doc-text-availability-" + contactKey,
+		Body:             "Encontrei uma opcao para Moncao/MA -> Fraiburgo/SC.",
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: availabilityPayload,
+			},
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: availabilityPayload,
+			},
+		},
+		RecordedAt: now.Add(-8 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed availability draft: %v", err)
+	}
+
+	messages := []CreateMessageInput{
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute), Body: "1"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "so eu"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "Tem crianca de 5 anos ou menos viajando?"},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: "nao"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento."},
+	}
+	for _, message := range messages {
+		if _, err := store.CreateMessage(context.Background(), message); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
+	}
+	return session
+}
+
+func seedDocumentCorrectionBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
+	t.Helper()
+	session := seedDocumentCollectionBookingHistory(t, store, contactKey)
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-90 * time.Second),
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Claudecir Schumacher | RG | 2817314",
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
+					Mode:                   "EXTRACTED",
+					ExpectedPassengerCount: 1,
+					MediaCount:             1,
+					Passengers: []DocumentExtractPassenger{
+						{Name: "Claudecir Schumacher", DocumentType: "RG", Document: "2817314", RG: "2817314", Confidence: 0.9},
+					},
+				}),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed document confirmation: %v", err)
+	}
+	return session
+}
+
 func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
