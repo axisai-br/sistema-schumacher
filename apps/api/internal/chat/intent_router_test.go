@@ -56,6 +56,33 @@ func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringPassengerCollection(t 
 	}
 }
 
+func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringBookingPending(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "De qual cidade do Maranhao voce vai sair?"},
+		{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?"},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "Mas eu já enviei.", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentUnsupportedPackage {
+		t.Fatalf("did not expect unsupported package during booking pending, got %+v", got)
+	}
+	if got.Intent != IntentUnknown {
+		t.Fatalf("expected unknown intent during booking pending, got %+v", got)
+	}
+}
+
+func TestDiscoveryUnsupportedPackageQueryStillMatches(t *testing.T) {
+	query, ok := inferUnsupportedPackageQuery("quero passagem para Bahia")
+	if !ok {
+		t.Fatal("expected unsupported package query in discovery")
+	}
+	if query.Destination != "bahia" {
+		t.Fatalf("expected destination bahia, got %+v", query)
+	}
+}
+
 func TestIntentRouterRoutesBareCPFAsPaymentAfterPayerCPFRequest(t *testing.T) {
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},

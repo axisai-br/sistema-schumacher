@@ -450,6 +450,8 @@ func looksLikeDocumentConfirmation(text string) bool {
 		"sim esta correto",
 		"esta correto",
 		"sim correto",
+		"sim esta certo",
+		"sim ta certo",
 		"esta certo",
 		"ta certo",
 		"tá certo",
@@ -1089,12 +1091,12 @@ func inferExpectedPassengerCount(history []Message, texts ...string) int {
 		if history[i].Direction != "INBOUND" {
 			continue
 		}
-		if qty := inferPassengerQuantityFromFreeText(history[i].Body); qty > 0 {
+		if qty := inferPassengerQuantityFromFreeText(messageTurnText(history[i])); qty > 0 {
 			return qty
 		}
 	}
 	for i := len(history) - 1; i >= 0; i-- {
-		if qty := inferPassengerQuantityFromFreeText(history[i].Body); qty > 0 {
+		if qty := inferPassengerQuantityFromFreeText(messageTurnText(history[i])); qty > 0 {
 			return qty
 		}
 	}
@@ -1611,7 +1613,7 @@ func looksLikeBareCPF(text string) bool {
 
 func findLatestSelectedOptionIndex(history []Message) int {
 	for i := len(history) - 1; i >= 0; i-- {
-		body := strings.TrimSpace(history[i].Body)
+		body := strings.TrimSpace(messageTurnText(history[i]))
 		if body == "" {
 			continue
 		}
@@ -1625,7 +1627,7 @@ func findLatestSelectedOptionIndex(history []Message) int {
 func findLatestPassengerDetailsText(history []Message, session Session) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
-		body := strings.TrimSpace(message.Body)
+		body := strings.TrimSpace(messageTurnText(message))
 		if body == "" || looksLikeBookingCreateConfirmation(body) {
 			continue
 		}

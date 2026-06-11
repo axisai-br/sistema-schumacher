@@ -144,7 +144,8 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			}
 		}
 	}
-	if state.Phase != ConversationPhasePassengerCollection {
+	if state.Phase != ConversationPhasePassengerCollection &&
+		state.Phase != ConversationPhaseBookingPending {
 		if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
 			return IntentDecision{
 				Intent:       IntentUnsupportedPackage,

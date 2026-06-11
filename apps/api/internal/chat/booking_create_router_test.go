@@ -197,6 +197,19 @@ func TestExtractBookingCreatePassengersParsesLooseNameCPF(t *testing.T) {
 	}
 }
 
+func TestExtractBookingCreatePassengersParsesObservedNameCPF(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Joao Vitor Messias 06645648103", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Joao Vitor Messias" || passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+		t.Fatalf("unexpected passenger parsed from observed name CPF: %+v", passenger)
+	}
+}
+
 func TestExtractBookingCreatePassengersParsesNameAndRG(t *testing.T) {
 	session := Session{CustomerPhone: "5549999999999"}
 	passengers := extractBookingCreatePassengers("Nome: Maria Silva RG 2817314 SSP SC", session)
@@ -607,6 +620,8 @@ func TestLooksLikeDocumentConfirmationAcceptsNaturalConfirmations(t *testing.T) 
 	cases := []string{
 		"sim esta correto",
 		"sim está correto",
+		"Sim, tá certo.",
+		"sim ta certo",
 		"esta correto",
 		"está correto",
 		"pode prosseguir",

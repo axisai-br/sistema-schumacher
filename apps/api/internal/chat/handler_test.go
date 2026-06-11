@@ -966,6 +966,151 @@ func TestReprocessCreatesBookingAfterCorrectedDocumentConfirmation(t *testing.T)
 	}
 }
 
+func TestReprocessCreatesBookingAfterTranscribedAudioDocumentConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{
+		enabled: true,
+		result: BookingCreateResult{
+			Mode:            "created",
+			BookingID:       "BK-AUDIO",
+			ReservationCode: "AUD1234",
+			Status:          "PENDING",
+			TotalAmount:     950,
+			RemainderAmount: 950,
+			Passengers: []BookingCreatePassengerResult{
+				{Name: "Claudecir Schumacher", Document: "52998224725", DocumentType: "CPF", Phone: "5549988709054"},
+			},
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709054")
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-70 * time.Second),
+		Body:             "Claudecir Schumacher 52998224725",
+	}); err != nil {
+		t.Fatalf("seed passenger document inbound: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-60 * time.Second),
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Claudecir Schumacher | CPF | 529.***.***-25",
+	}); err != nil {
+		t.Fatalf("seed document confirmation outbound: %v", err)
+	}
+
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         session.ID,
+		Direction:         "INBOUND",
+		Kind:              "AUDIO",
+		ProcessingStatus:  "RECEIVED",
+		ProviderMessageID: "msg-audio-booking-confirm-1",
+		IdempotencyKey:    "idem-audio-booking-confirm-1",
+		ReceivedAt:        now,
+		Body:              "",
+		NormalizedPayload: map[string]interface{}{
+			"transcription_status": "COMPLETED",
+			"transcription_text":   "Sim, tá certo.",
+		},
+	}); err != nil {
+		t.Fatalf("seed audio confirmation inbound: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess audio confirmation: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected booking create template before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 1 {
+		t.Fatalf("expected one booking create call, got %d", creator.calls)
+	}
+	if reprocessed.Draft == nil || strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("expected booking-created draft without unsupported package reply, got %+v", reprocessed.Draft)
+	}
+	if got := strings.TrimSpace(creator.lastInput.TripID); got != "trip-doc-text-1" {
+		t.Fatalf("expected booking trip from pending draft, got %+v", creator.lastInput)
+	}
+}
+
+func TestReprocessBookingPendingAlreadySentStaysInDocumentFlow(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709055")
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-70 * time.Second),
+		Body:             "Joao Vitor Messias 06645648103",
+	}); err != nil {
+		t.Fatalf("seed passenger document inbound: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-60 * time.Second),
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Joao Vitor Messias | CPF | 066.***.***-03",
+	}); err != nil {
+		t.Fatalf("seed document confirmation outbound: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-already-sent-1",
+			IdempotencyKey:    "idem-already-sent-1",
+			Body:              "Mas eu já enviei.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest already sent reply: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess already sent reply: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected booking document flow before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected no booking create without explicit confirmation, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected document-flow draft")
+	}
+	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
+	}
+	folded := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(folded, "falta confirmar") || !strings.Contains(folded, "criar a reserva") {
+		t.Fatalf("expected confirmation-missing reply, got %q", reprocessed.Draft.Body)
+	}
+}
+
 func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
 	t.Helper()
 	now := time.Now().UTC()

@@ -313,6 +313,54 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 	}
 }
 
+func buildBookingCreateMissingDataReply(context BookingDraftContext) string {
+	missing := missingBookingCreateDataLabels(context)
+	if len(missing) == 0 {
+		return "Recebi os dados do passageiro, mas ainda falta confirmar se eles conferem para criar a reserva."
+	}
+	if len(missing) == 1 {
+		return "Recebi a confirmacao, mas ainda falta este dado para criar a reserva: " + missing[0] + "."
+	}
+	return "Recebi a confirmacao, mas ainda faltam estes dados para criar a reserva: " + strings.Join(missing, ", ") + "."
+}
+
+func missingBookingCreateDataLabels(context BookingDraftContext) []string {
+	missing := []string{}
+	if !context.HasAvailabilityShown || strings.TrimSpace(context.TripID) == "" {
+		missing = append(missing, "opcao de viagem")
+	}
+	if strings.TrimSpace(context.BoardStopID) == "" {
+		missing = append(missing, "ponto de embarque")
+	}
+	if strings.TrimSpace(context.AlightStopID) == "" {
+		missing = append(missing, "ponto de desembarque")
+	}
+	if strings.TrimSpace(context.Origin) == "" {
+		missing = append(missing, "cidade de origem")
+	}
+	if strings.TrimSpace(context.Destination) == "" {
+		missing = append(missing, "cidade de destino")
+	}
+	if strings.TrimSpace(context.TripDate) == "" {
+		missing = append(missing, "data da viagem")
+	}
+	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
+		missing = append(missing, "quantidade de passageiros")
+	}
+	if !context.ChildUnder5CountKnown {
+		missing = append(missing, "confirmacao se ha crianca de ate 5 anos")
+	}
+	if !context.HasPassengerDetails || context.PassengerDetailsCount <= 0 {
+		missing = append(missing, "nome completo e documento dos passageiros")
+	} else if context.PassengerCount > 0 && context.PassengerDetailsCount != context.PassengerCount {
+		missing = append(missing, "documentos de todos os passageiros")
+	}
+	if context.NeedsLapChildAssignment {
+		missing = append(missing, "qual passageiro e a crianca de ate 5 anos")
+	}
+	return missing
+}
+
 func buildAskLapChildAssignmentReply(context BookingDraftContext) string {
 	passengers := context.PassengerDetails
 	if len(passengers) == 0 {

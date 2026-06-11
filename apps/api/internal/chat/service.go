@@ -984,7 +984,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					deterministicBookingHandled = true
 				}
 			} else {
-				reply := "Recebi a informacao, mas nao consegui montar a reserva com seguranca. Pode reenviar os nomes completos e documentos dos passageiros, indicando qual deles e a crianca de ate 5 anos?"
+				reply := buildBookingCreateMissingDataReply(bookingDraft)
 				run := buildBookingContinuationDraftRun(reply, BookingNextAskPassengerDocuments, bookingDraft)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
@@ -1057,6 +1057,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				}
 			} else if shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
 				run := buildPassengerDocumentConfirmationDraftRun(bookingDraft)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			} else if passengerDocumentFlowContext && canHandlePassengerDocumentTurn {
+				reply := buildBookingCreateMissingDataReply(bookingDraft)
+				run := buildBookingContinuationDraftRun(reply, BookingNextAskPassengerDocuments, bookingDraft)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
 			}
@@ -1387,6 +1392,16 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 									if err != nil {
 										return ReprocessResult{}, err
 									}
+								case toolNameBookingCreate:
+									if s.canCreateBookings() {
+										context, used, err := s.resolveContextualActionTools(ctx, persisted.Session, history, currentTurn, toolContext)
+										if err != nil {
+											return ReprocessResult{}, err
+										}
+										if used {
+											toolContext = context
+										}
+									}
 								case toolNamePaymentCreate:
 									if s.canCreatePayments() {
 										context, err := s.executePaymentCreateTool(ctx, persisted.Session, toolContext, specialistToolRequestToPaymentCreateInput(request))
@@ -1406,6 +1421,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 								input := AvailabilitySearchInput{}
 								intentDecision := IntentDecision{Intent: IntentAvailabilitySearch, Source: "general_specialist", Action: "tool", AvailabilityInput: &input}
 								run := buildAvailabilityTemplateDraftRun(intentDecision, *toolContext.Availability)
+								deterministicBookingRun = &run
+								deterministicBookingHandled = true
+							} else if toolContext.BookingCreate != nil {
+								run := buildBookingCreatedDraftRun(*toolContext.BookingCreate)
 								deterministicBookingRun = &run
 								deterministicBookingHandled = true
 							}

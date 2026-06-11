@@ -470,7 +470,7 @@ func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *
 	}
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
 
-	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "conferem", agentToolContext{})
+	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "Sim, tá certo.", agentToolContext{})
 	if err != nil {
 		t.Fatalf("resolve contextual tools: %v", err)
 	}

@@ -336,6 +336,38 @@ func TestBuildBookingContinuationReplyDoesNotRepeatComboQuestionWhenPassengerKno
 	}
 }
 
+func TestBuildBookingCreateMissingDataReplyListsExactMissingFields(t *testing.T) {
+	context := BookingDraftContext{
+		HasAvailabilityShown:    true,
+		TripID:                  "trip-1",
+		BoardStopID:             "board-1",
+		Origin:                  "Santa Ines/MA",
+		Destination:             "Fraiburgo/SC",
+		PassengerCount:          2,
+		PassengerCountKnown:     true,
+		ChildUnder5CountKnown:   true,
+		HasPassengerDetails:     true,
+		PassengerDetailsCount:   1,
+		NeedsLapChildAssignment: true,
+	}
+
+	reply := buildBookingCreateMissingDataReply(context)
+
+	for _, want := range []string{
+		"ponto de desembarque",
+		"data da viagem",
+		"documentos de todos os passageiros",
+		"qual passageiro e a crianca de ate 5 anos",
+	} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("expected missing field %q in reply %q", want, reply)
+		}
+	}
+	if strings.Contains(reply, unsupportedPackageSupportPhone) {
+		t.Fatalf("did not expect unsupported package reply, got %q", reply)
+	}
+}
+
 func TestPassengerCountContextAsksOnlyChildWhenPassengerKnown(t *testing.T) {
 	context := BookingDraftContext{
 		PassengerCount:      1,
