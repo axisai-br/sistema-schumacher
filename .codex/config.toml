@@ -1,0 +1,11 @@
+# .codex/config.toml
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+# Ajuste o modelo conforme o que sua conta disponibiliza.
+# Use /model dentro da sessão para verificar e trocar.
+# model = "gpt-5.5"
+
+[tui]
+raw_output_mode = true

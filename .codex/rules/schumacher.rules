@@ -1,0 +1,39 @@
+# .codex/rules/schumacher.rules
+
+# Bloquear deploy direto. Deploy é operação humana, não freestyle do Codex.
+prefix_rule(
+    pattern = ["docker", "stack", "deploy"],
+    decision = "forbidden",
+    justification = "Deploy em produção deve ser feito manualmente após revisão humana.",
+    match = [
+        "docker stack deploy -c infra/swarm/schumacher-api.yml schumacher-api",
+    ],
+)
+
+# Bloquear comandos destrutivos óbvios.
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "forbidden",
+    justification = "Comando destrutivo bloqueado. Use remoção pontual e revisável.",
+    match = [
+        "rm -rf /tmp/test",
+    ],
+)
+
+# Pedir confirmação para git push.
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Push altera remoto e deve ser revisado.",
+    match = [
+        "git push origin main",
+        "git push",
+    ],
+)
+
+# Pedir confirmação para mexer em envs.
+prefix_rule(
+    pattern = ["cp", ".env"],
+    decision = "prompt",
+    justification = "Arquivos de ambiente podem conter secrets.",
+)
