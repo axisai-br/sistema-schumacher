@@ -350,7 +350,9 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, rep
 	if len(toolCalls) > 0 && !hasOnlyAutoSendSafeToolCalls(toolCalls) {
 		reasons = append(reasons, draftAutoSendReasonToolCall)
 	}
-	if hasBlockingNonTextCandidate(candidates, hasCompletedDocumentExtractToolCall(toolCalls)) {
+	allowHandledDocumentMedia := hasCompletedDocumentExtractToolCall(toolCalls) ||
+		strings.TrimSpace(replyText) == unsupportedPDFDocumentReply
+	if hasBlockingNonTextCandidate(candidates, allowHandledDocumentMedia) {
 		reasons = append(reasons, draftAutoSendReasonNonTextTurn)
 	}
 	if len(toolCalls) == 0 && containsOperationalAutoSendClaimWithoutTool(replyText) {

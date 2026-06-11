@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestBuildDocumentExtractPromptsOnlyAcceptPhotos(t *testing.T) {
+	systemPrompt := buildDocumentExtractSystemPrompt()
+	userPrompt := buildDocumentExtractUserPrompt(2)
+	combined := strings.ToLower(systemPrompt + "\n" + userPrompt)
+
+	if strings.Contains(combined, "pdf") {
+		t.Fatalf("document extract prompts must not offer PDF extraction, got %q", combined)
+	}
+	if !strings.Contains(combined, "foto") {
+		t.Fatalf("expected document extract prompt to request photo input, got %q", combined)
+	}
+}
+
 func TestParseDocumentExtractResultPrioritizesCPFOverOtherDocuments(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",

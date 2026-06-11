@@ -38,6 +38,7 @@ func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Ses
 	if len(media) == 0 || (!isWaitingForPassengerDocuments(recent) && !hasRecentDocumentRequest(recent)) {
 		return agentToolContext{}, false, nil
 	}
+	extractableMedia := documentExtractImageMedia(media)
 
 	expected := inferExpectedPassengerCountFromMemory(
 		strings.TrimSpace(asString(memory["current_turn_body"])),
@@ -74,7 +75,18 @@ func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Ses
 		)
 	}
 
-	run, result, runErr := s.runDocumentExtract(ctx, session, candidates, media, expected, draftID)
+	if len(extractableMedia) == 0 && hasDocumentExtractPDFMedia(media) {
+		result := DocumentExtractResult{
+			Mode:                   "LOW_CONFIDENCE",
+			ExpectedPassengerCount: expected,
+			MediaCount:             len(media),
+			FailureReason:          "unsupported_pdf",
+			Model:                  "document_extract_guardrail",
+		}
+		return agentToolContext{DocumentExtract: &result}, true, nil
+	}
+
+	run, result, runErr := s.runDocumentExtract(ctx, session, candidates, extractableMedia, expected, draftID)
 	finishedAt := time.Now().UTC()
 	finishedAtPtr := &finishedAt
 
@@ -150,6 +162,28 @@ func shouldRunDocumentExtract(memory map[string]interface{}) bool {
 	return len(media) > 0 && (isWaitingForPassengerDocuments(recent) || hasRecentDocumentRequest(recent))
 }
 
+func documentExtractImageMedia(media []AgentMediaInput) []AgentMediaInput {
+	items := make([]AgentMediaInput, 0, len(media))
+	for _, item := range media {
+		if strings.EqualFold(strings.TrimSpace(item.Kind), "IMAGE") ||
+			strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.MimeType)), "image/") {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func hasDocumentExtractPDFMedia(media []AgentMediaInput) bool {
+	for _, item := range media {
+		if strings.EqualFold(strings.TrimSpace(item.Kind), "PDF") ||
+			strings.EqualFold(strings.TrimSpace(item.MimeType), "application/pdf") ||
+			strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.URL)), "data:application/pdf") {
+			return true
+		}
+	}
+	return false
+}
+
 func hasRecentDocumentRequest(recent []map[string]interface{}) bool {
 	for i := len(recent) - 1; i >= 0; i-- {
 		if !strings.EqualFold(strings.TrimSpace(asString(recent[i]["direction"])), "OUTBOUND") {
@@ -223,7 +257,7 @@ func (s *Service) runDocumentExtract(ctx context.Context, session Session, candi
 }
 
 func buildDocumentExtractSystemPrompt() string {
-	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto ou PDF para uma reserva de passagem.
+	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto nitida para uma reserva de passagem.
 Responda exclusivamente em JSON valido, sem markdown.
 Priorize documentos nesta ordem quando houver mais de um numero: CPF, RG, CNH, CERTIDAO_NASCIMENTO.
 CPF brasileiro tem 11 digitos e dois digitos verificadores; nao trate como CPF um numero apenas por ter 11 digitos.
@@ -241,19 +275,17 @@ Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
 - document deve ser o CPF sem pontuacao
 - cpf deve repetir o CPF sem pontuacao
 - cnh deve preservar o numero da CNH quando visivel
-Em PDF de CNH Digital/CNH-e, examine os campos visuais renderizados da pagina, nao apenas texto extraivel/metadados. Procure explicitamente o rotulo visual "CPF".
 
 Para RG, document deve conter apenas o numero do RG.
 Nao inclua orgao emissor/UF no numero do RG.
 Nao junte SSP, SSP/SC, SSPSC, SDS, SESP, IFP ou PC ao numero do RG.
 Exemplo: 2817314 SSP SC deve virar document "2817314", nunca "2817314SSPSC".
 
-Em CNH/CNH-e/PDF, nao confunda numero de registro da CNH, numero lateral, espelho, QR Code, RENACH, MRZ, codigo de seguranca ou protocolo com CPF.
+Em CNH/CNH-e, nao confunda numero de registro da CNH, numero lateral, espelho, QR Code, RENACH, MRZ, codigo de seguranca ou protocolo com CPF.
 Em CNH-e, se CPF estiver visivel, CPF deve ser documento principal.
 Se houver duvida entre CPF, RG e CNH, retorne mode "PARTIAL".
 Se o CPF nao estiver visivel e a CNH estiver legivel, use document_type "CNH" e preserve o numero de CNH em cnh/document.
 
-Quando houver PDF com mais de uma pagina, trate as paginas como partes do mesmo envio.
 Quando houver frente e verso do documento, combine as informacoes com cuidado.
 Nunca invente dados ausentes.
 
@@ -270,7 +302,7 @@ Use LOW_CONFIDENCE apenas quando o arquivo estiver ilegivel ou sem nome/document
 
 func buildDocumentExtractUserPrompt(expected int) string {
 	if expected > 1 {
-		return fmt.Sprintf("Extraia nome completo e documento do arquivo recebido (foto ou PDF). A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
+		return fmt.Sprintf("Extraia nome completo e documento da foto recebida. A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
 	}
 	return "Extraia o maximo de informacao legivel. Nao classifique como LOW_CONFIDENCE se pelo menos nome ou algum documento puder ser lido parcialmente. Use PARTIAL quando algum campo faltar ou estiver incerto. Retorne LOW_CONFIDENCE somente se nenhum dado util puder ser lido. Se houver CPF visivel, sempre priorize CPF mesmo que tambem exista RG/CNH. Se o nome estiver parcialmente visivel, retorne o trecho lido e marque confidence menor. Nunca invente numeros ausentes."
 }

@@ -103,7 +103,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 		},
 		{
 			Direction:        "INBOUND",
-			Body:             "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104",
+			Body:             "Joao Vitor Messias  84960815086\nIvoneide Messias 04822340082",
 			ProcessingStatus: "PROCESSED",
 			ReceivedAt:       now.Add(-60 * time.Second),
 		},
@@ -123,7 +123,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 func TestParseBookingCreateInputUsesExplicitLapChildLabel(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
-	history := lapChildBookingHistory(now, "Criança: Joao Vitor Messias 06645648103\nAdulto: Ivoneide Messias 46643591104")
+	history := lapChildBookingHistory(now, "Criança: Joao Vitor Messias 84960815086\nAdulto: Ivoneide Messias 04822340082")
 
 	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
 	if !ok {
@@ -145,13 +145,13 @@ func TestBookingPassengerFromDocumentExtractUsesVisibleCPFOnCNH(t *testing.T) {
 		Name:         "Claudecir Schumacher",
 		DocumentType: "CNH",
 		Document:     "99999999999",
-		CPF:          "066.456.481-03",
+		CPF:          "849.608.150-86",
 		CNH:          "99999999999",
 		BirthDate:    "1970-01-02",
 		Confidence:   0.92,
 	}, session)
 
-	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+	if passenger.DocumentType != "CPF" || passenger.Document != "84960815086" {
 		t.Fatalf("expected visible CPF as primary passenger document, got %+v", passenger)
 	}
 	if passenger.Phone != "5549999999999" {
@@ -183,14 +183,46 @@ func TestBookingPassengerFromDocumentExtractRejectsInvalidCPFOnCNH(t *testing.T)
 
 func TestExtractBookingCreatePassengersParsesLooseNameCPF(t *testing.T) {
 	session := Session{CustomerPhone: "5549999999999"}
-	passengers := extractBookingCreatePassengers("Nome Sobrenome 06645648103", session)
+	passengers := extractBookingCreatePassengers("Nome Sobrenome 84960815086", session)
 
 	if len(passengers) != 1 {
 		t.Fatalf("expected one passenger, got %+v", passengers)
 	}
 	passenger := passengers[0]
-	if passenger.Name != "Nome Sobrenome" || passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+	if passenger.Name != "Nome Sobrenome" || passenger.DocumentType != "CPF" || passenger.Document != "84960815086" {
 		t.Fatalf("unexpected passenger parsed from loose name CPF: %+v", passenger)
+	}
+	if passenger.Phone != "5549999999999" {
+		t.Fatalf("expected passenger phone from session, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesNameAndRG(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Nome: Maria Silva RG 2817314 SSP SC", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Maria Silva" || passenger.DocumentType != "RG" || passenger.Document != "2817314" {
+		t.Fatalf("unexpected passenger parsed from name and RG: %+v", passenger)
+	}
+	if passenger.Phone != "5549999999999" {
+		t.Fatalf("expected passenger phone from session, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesLooseNameRG(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Nome Sobrenome RG 2873144", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Nome Sobrenome" || passenger.DocumentType != "RG" || passenger.Document != "2873144" {
+		t.Fatalf("unexpected passenger parsed from loose name RG: %+v", passenger)
 	}
 	if passenger.Phone != "5549999999999" {
 		t.Fatalf("expected passenger phone from session, got %+v", passenger)
@@ -241,7 +273,7 @@ func TestNormalizePassengerDocumentValueCleansRGIssuer(t *testing.T) {
 func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
-	history := lapChildBookingHistory(now, "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104")
+	history := lapChildBookingHistory(now, "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082")
 	history = append(history, Message{
 		Direction:        "OUTBOUND",
 		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
@@ -302,7 +334,7 @@ func TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHis
 		},
 		{
 			Direction:        "OUTBOUND",
-			Body:             "Consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103",
+			Body:             "Consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 84960815086",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 		},
@@ -327,7 +359,7 @@ func TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHis
 	if input.Passengers[0].Name != "Joao Vitor Messias" {
 		t.Fatalf("unexpected passenger name: %+v", input.Passengers[0])
 	}
-	if input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "06645648103" {
+	if input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "84960815086" {
 		t.Fatalf("unexpected passenger document: %+v", input.Passengers[0])
 	}
 }
@@ -372,7 +404,7 @@ func TestParseBookingCreateInputRejectsConfirmationWhenPassengerCountStillIncomp
 		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou ha mais passageiros? Tem crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
 		{Direction: "INBOUND", Body: "eu e minha filha", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-90 * time.Second)},
 		{Direction: "OUTBOUND", Body: "Pode enviar os nomes completos e os documentos dos dois.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-60 * time.Second)},
-		{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-30 * time.Second)},
+		{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 84960815086", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-30 * time.Second)},
 	}
 
 	if input, ok := parseBookingCreateInput(session, history, "isso", nil); ok {
@@ -447,7 +479,7 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	if input.Passengers[0].Name != "Joao Vitor Messias" {
 		t.Fatalf("unexpected passenger name: %+v", input.Passengers[0])
 	}
-	if input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "06645648103" {
+	if input.Passengers[0].DocumentType != "CPF" || input.Passengers[0].Document != "84960815086" {
 		t.Fatalf("unexpected passenger document: %+v", input.Passengers[0])
 	}
 	if input.IdempotencyKey == "" {
@@ -636,7 +668,7 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
 		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
-		{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Nome e CPF confirmados. Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
@@ -654,7 +686,7 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 		t.Fatalf("expected one passenger, got %+v", input.Passengers)
 	}
 	passenger := input.Passengers[0]
-	if passenger.Name != "Joao Vitor Messias" || passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
+	if passenger.Name != "Joao Vitor Messias" || passenger.DocumentType != "CPF" || passenger.Document != "84960815086" {
 		t.Fatalf("unexpected passenger: %+v", passenger)
 	}
 	if passenger.Phone != "5549988709047" {
@@ -690,7 +722,7 @@ func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
 		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
 		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
-		{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
@@ -788,7 +820,7 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 	if includeDocumentExtract {
 		history = append(history, Message{
 			Direction:        "OUTBOUND",
-			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103",
+			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 84960815086",
 			ProcessingStatus: messageStatusAutomationDraft,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 			Payload: map[string]interface{}{
@@ -801,7 +833,7 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 							{
 								Name:         "Joao Vitor Messias",
 								DocumentType: "CPF",
-								Document:     "06645648103",
+								Document:     "84960815086",
 								Confidence:   0.98,
 							},
 						},
@@ -812,7 +844,7 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 	} else {
 		history = append(history, Message{
 			Direction:        "OUTBOUND",
-			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 06645648103",
+			Body:             "Messias, consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 84960815086",
 			ProcessingStatus: messageStatusAutomationDraft,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 		})

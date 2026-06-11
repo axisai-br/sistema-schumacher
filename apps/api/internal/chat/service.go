@@ -1003,7 +1003,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		passengerDocumentFlowContext := shouldTreatAsPassengerDocumentFlow(canonicalState.Phase, history, currentTurn, persisted.Session)
 		bookingAction := decideNextBookingStep(bookingDraft)
 		canHandlePassengerDocumentTurn := bookingAction != BookingNextAskPassengerClarification && bookingAction != BookingNextAwaitTripSelection
-		if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && looksLikeInvalidPassengerCPF(currentTurn) {
+		if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && hasDocumentExtractPDFMedia(collectCandidateMedia(candidates)) {
+			run := buildUnsupportedPDFDocumentDraftRun(bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		} else if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && looksLikeInvalidPassengerCPF(currentTurn) {
 			run := buildInvalidPassengerCPFDraftRun(bookingDraft)
 			deterministicBookingRun = &run
 			deterministicBookingHandled = true
@@ -1536,7 +1540,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	result.ToolCalls = toolContext.Calls
 
 	documentHandled := false
-	if !unsupportedCargoHandled && !unsupportedPackageHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
 		documentContext, handled, err := s.resolveDocumentExtractContext(ctx, persisted.Session, candidates, memory, draftID)
 		if err != nil {
 			return ReprocessResult{}, err

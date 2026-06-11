@@ -609,6 +609,9 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	if runner.calls != 1 {
 		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
 	}
+	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].Kind != "IMAGE" {
+		t.Fatalf("expected one image media item for document extraction, got %+v", runner.lastInput.CurrentTurnMedia)
+	}
 	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 066.***.***-03") {
 		t.Fatalf("expected extracted CPF confirmation, got %q", reprocessed.Draft.Body)
 	}
@@ -620,7 +623,7 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	}
 }
 
-func TestReprocessExtractsPDFBeforeUnsupportedRouteRouter(t *testing.T) {
+func TestReprocessRejectsPDFDocumentInsteadOfExtracting(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -679,27 +682,23 @@ func TestReprocessExtractsPDFBeforeUnsupportedRouteRouter(t *testing.T) {
 	if reprocessed.Draft == nil {
 		t.Fatalf("expected draft to be generated")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("expected PDF not to be sent to document extraction runner, got %d calls", runner.calls)
 	}
-	if len(runner.lastInput.CurrentTurnMedia) != 1 {
-		t.Fatalf("expected one current turn media item, got %+v", runner.lastInput.CurrentTurnMedia)
-	}
-	media := runner.lastInput.CurrentTurnMedia[0]
-	if media.Kind != "PDF" || media.FileName != "rg-salvador.pdf" {
-		t.Fatalf("expected PDF media with file name, got %+v", media)
-	}
-	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | CPF | 123.***.***-09") {
-		t.Fatalf("expected extracted PDF confirmation, got %q", reprocessed.Draft.Body)
+	if reprocessed.Draft.Body != unsupportedPDFDocumentReply {
+		t.Fatalf("expected PDF rejection with photo/text alternatives, got %q", reprocessed.Draft.Body)
 	}
 	if strings.Contains(reprocessed.Draft.Body, unsupportedPackageSupportPhone) {
 		t.Fatalf("did not expect unsupported package reply, got %q", reprocessed.Draft.Body)
 	}
-	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
-		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("did not expect document_extract tool call for PDF, got %+v", reprocessed.ToolCalls)
+	}
+	if len(store.toolCallOrder) != 0 {
+		t.Fatalf("did not expect stored tool_call for PDF, got %+v", store.toolCallOrder)
 	}
 	if readDraftAutoSendStatus(*reprocessed.Draft) != draftAutoSendStatusEligible {
-		t.Fatalf("expected PDF document confirmation to be auto-send eligible, got %s", readDraftAutoSendStatus(*reprocessed.Draft))
+		t.Fatalf("expected PDF guidance to be auto-send eligible, got %s", readDraftAutoSendStatus(*reprocessed.Draft))
 	}
 }
 
@@ -772,7 +771,7 @@ func TestReprocessCPFOnlyPassengerDocumentAsksNameBeforeGenericRunner(t *testing
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-cpf-only-1",
 			IdempotencyKey:    "idem-cpf-only-1",
-			Body:              "cpf 06645648103",
+			Body:              "cpf 52998224725",
 		},
 	})
 	if err != nil {

@@ -17,6 +17,7 @@ var (
 	passengerCNHPattern            = regexp.MustCompile(`(?i)\bcnh\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
 	passengerBirthRecordPattern    = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9.\-]{8,40})`)
 	passengerLooseCPFLinePattern   = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+([0-9.\-]{11,14})\s*$`)
+	passengerLooseTypedLinePattern = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+(cpf|rg|cnh|certid[aã]o(?: de nascimento)?|matr[ií]cula)\s+([A-Z0-9.\- ]{4,40})\s*$`)
 	passengerWordQtyPattern        = regexp.MustCompile(`\b(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
 	passengerDigitQtyPattern       = regexp.MustCompile(`\b([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
 	passengerSomosEmQtyPattern     = regexp.MustCompile(`\bsomos\s+em\s+([1-9])\b`)
@@ -809,6 +810,9 @@ func extractBookingCreatePassengers(text string, session Session) []BookingCreat
 			}
 		}
 	}
+	if passenger, ok := parseLooseTypedPassengerDocument(text, session); ok {
+		return []BookingCreatePassengerInput{passenger}
+	}
 	document, documentType := extractBookingPassengerDocument(text)
 	if document == "" || documentType == "" {
 		return nil
@@ -867,6 +871,14 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 			continue
 		}
 
+		if passenger, ok := parseLooseTypedPassengerDocument(cleanSegment, session); ok {
+			if lapChildLabelKnown {
+				passenger.IsLapChild = isLapChild
+			}
+			passengers = append(passengers, passenger)
+			continue
+		}
+
 		if passenger, ok := parseStructuredPassengerLine(cleanSegment, session); ok {
 			if lapChildLabelKnown {
 				passenger.IsLapChild = isLapChild
@@ -879,6 +891,25 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 		return nil
 	}
 	return passengers
+}
+
+func parseLooseTypedPassengerDocument(segment string, session Session) (BookingCreatePassengerInput, bool) {
+	match := passengerLooseTypedLinePattern.FindStringSubmatch(segment)
+	if len(match) != 4 {
+		return BookingCreatePassengerInput{}, false
+	}
+	name := normalizePassengerName(match[1])
+	documentType := normalizePassengerDocumentType(match[2])
+	document := normalizePassengerDocumentValue(match[3], documentType)
+	if name == "" || documentType == "" || document == "" {
+		return BookingCreatePassengerInput{}, false
+	}
+	return BookingCreatePassengerInput{
+		Name:         name,
+		Document:     document,
+		DocumentType: documentType,
+		Phone:        strings.TrimSpace(session.CustomerPhone),
+	}, true
 }
 
 func stripPassengerLapChildLabel(segment string) (string, bool, bool) {

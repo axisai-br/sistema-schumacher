@@ -186,6 +186,20 @@ func TestConfirmExtractedDocumentTemplate(t *testing.T) {
 	assertNoEmptyTemplateArtifacts(t, reply)
 }
 
+func TestPaymentCreateReplyKeepsPixCodeEasyToCopy(t *testing.T) {
+	reply := buildPaymentCreateReply(PaymentCreateResult{
+		Mode:      "pix_sent",
+		AmountDue: 250,
+		PixCode:   "000201PIXCODE",
+	})
+
+	if reply != "000201PIXCODE" {
+		t.Fatalf("expected PIX-only reply, got %q", reply)
+	}
+	assertNoInternalIDs(t, reply)
+	assertNoEmptyTemplateArtifacts(t, reply)
+}
+
 func assertNoInternalIDs(t *testing.T, reply string) {
 	t.Helper()
 	blocked := []string{"trip-secret", "route-secret", "segment-secret", "board-secret", "alight-secret", "booking-1"}

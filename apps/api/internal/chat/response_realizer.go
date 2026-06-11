@@ -31,10 +31,11 @@ const (
 )
 
 const (
-	askPassengerCountReply = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
-	askChildUnder5Reply    = "Tem crianca de 5 anos ou menos viajando?"
-	askPaymentChoiceReply  = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
-	publicSCTableReply     = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
+	askPassengerCountReply      = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
+	askChildUnder5Reply         = "Tem crianca de 5 anos ou menos viajando?"
+	askPaymentChoiceReply       = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
+	publicSCTableReply          = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
+	unsupportedPDFDocumentReply = "Não consigo ler PDF com segurança por aqui. Por favor, envie uma foto nítida do documento ou escreva o nome completo e CPF/RG do passageiro."
 )
 
 func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
@@ -349,6 +350,9 @@ func buildAskDocumentsReply(expectedPassengerCount int, collectedDocumentCount i
 
 func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 	if len(result.Passengers) == 0 {
+		if strings.EqualFold(strings.TrimSpace(result.FailureReason), "unsupported_pdf") {
+			return unsupportedPDFDocumentReply
+		}
 		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF ou RG."
 	}
 	if strings.EqualFold(strings.TrimSpace(result.Mode), "PARTIAL") {
@@ -462,16 +466,7 @@ func buildPaymentCreateReply(result PaymentCreateResult) string {
 	mode := strings.TrimSpace(result.Mode)
 
 	if mode == "pix_sent" && strings.TrimSpace(result.PixCode) != "" {
-		amount := formatTemplatePrice(result.AmountDue)
-		if amount == "" {
-			amount = "o valor combinado"
-		}
-
-		return fmt.Sprintf(
-			"Perfeito. Gere o PIX de %s.\n\nPIX copia e cola:\n%s",
-			amount,
-			strings.TrimSpace(result.PixCode),
-		)
+		return strings.TrimSpace(result.PixCode)
 	}
 
 	switch mode {

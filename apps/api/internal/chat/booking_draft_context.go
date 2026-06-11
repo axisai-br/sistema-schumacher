@@ -392,6 +392,27 @@ func buildAskPassengerNameAfterCPFDraftRun(context BookingDraftContext) RunAgent
 	}
 }
 
+func buildUnsupportedPDFDocumentDraftRun(context BookingDraftContext) RunAgentResult {
+	reply := unsupportedPDFDocumentReply
+	return RunAgentResult{
+		ReplyText: reply,
+		Model:     "template_realizer",
+		RequestPayload: map[string]interface{}{
+			"mode":            "TEMPLATE_FIRST_REPLY",
+			"intent":          string(IntentPassengerDocumentsProvided),
+			"action":          "ask_photo_or_typed_document_after_pdf",
+			"template_name":   string(TemplateAskDocuments),
+			"passenger_count": context.PassengerCount,
+		},
+		ResponsePayload: map[string]interface{}{
+			"reply_text":    reply,
+			"intent":        string(IntentPassengerDocumentsProvided),
+			"action":        "ask_photo_or_typed_document_after_pdf",
+			"template_name": string(TemplateAskDocuments),
+		},
+	}
+}
+
 func buildPassengerDocumentConfirmationDraftRun(context BookingDraftContext) RunAgentResult {
 	result := documentExtractResultFromBookingDraft(context)
 	reply := buildConfirmExtractedDocumentReply(result)
