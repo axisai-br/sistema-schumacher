@@ -198,13 +198,16 @@ func compactPromptToolFacts(tools agentToolContext) map[string]interface{} {
 		passengers := make([]map[string]interface{}, 0, len(tools.DocumentExtract.Passengers))
 		for _, item := range tools.DocumentExtract.Passengers {
 			passengers = append(passengers, compactInterfaceFields(map[string]interface{}{
-				"name":          strings.TrimSpace(item.Name),
-				"document_type": strings.TrimSpace(item.DocumentType),
-				"document":      strings.TrimSpace(item.Document),
-				"cpf":           strings.TrimSpace(item.CPF),
-				"cnh":           strings.TrimSpace(item.CNH),
-				"rg":            strings.TrimSpace(item.RG),
-				"confidence":    item.Confidence,
+				"name":                     strings.TrimSpace(item.Name),
+				"document_type":            strings.TrimSpace(item.DocumentType),
+				"document":                 strings.TrimSpace(item.Document),
+				"cpf":                      strings.TrimSpace(item.CPF),
+				"cnh":                      strings.TrimSpace(item.CNH),
+				"rg":                       strings.TrimSpace(item.RG),
+				"birth_date":               strings.TrimSpace(item.BirthDate),
+				"birth_certificate_number": strings.TrimSpace(item.BirthCertificateNumber),
+				"birth_city":               strings.TrimSpace(item.BirthCity),
+				"confidence":               item.Confidence,
 			}))
 		}
 		facts[toolNameDocumentExtract] = compactInterfaceFields(map[string]interface{}{
@@ -317,9 +320,15 @@ func compactBookingCreateFact(result BookingCreateResult) map[string]interface{}
 	passengers := make([]map[string]interface{}, 0, len(result.Passengers))
 	for _, item := range result.Passengers {
 		passengers = append(passengers, compactInterfaceFields(map[string]interface{}{
-			"name":          strings.TrimSpace(item.Name),
-			"document_type": strings.TrimSpace(item.DocumentType),
-			"document":      strings.TrimSpace(item.Document),
+			"name":                     strings.TrimSpace(item.Name),
+			"document_type":            strings.TrimSpace(item.DocumentType),
+			"document":                 strings.TrimSpace(item.Document),
+			"cpf":                      strings.TrimSpace(item.CPF),
+			"rg":                       strings.TrimSpace(item.RG),
+			"cnh":                      strings.TrimSpace(item.CNH),
+			"birth_date":               strings.TrimSpace(item.BirthDate),
+			"birth_certificate_number": strings.TrimSpace(item.BirthCertificateNumber),
+			"birth_city":               strings.TrimSpace(item.BirthCity),
 		}))
 	}
 	return compactInterfaceFields(map[string]interface{}{

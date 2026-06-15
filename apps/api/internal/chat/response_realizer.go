@@ -374,7 +374,7 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 			if looksLikeCNHEExtract(passenger) {
 				cnhLike = true
 			}
-			lines = append(lines, fmt.Sprintf("%d. Nome: %s\n   Documento lido: %s %s", index+1, name, docType, maskDocumentForDisplay(document, docType)))
+			lines = append(lines, fmt.Sprintf("%d. Nome: %s\n   Documento lido: %s %s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(passenger)))
 		}
 		if cnhLike {
 			lines = append(lines, "Como parece uma CNH-e e nao consegui confirmar o CPF com seguranca, envie o CPF do passageiro ou confirme o documento correto.")
@@ -397,12 +397,59 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 		if document == "" {
 			document = "numero nao identificado"
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s", index+1, name, docType, maskDocumentForDisplay(document, docType)))
+		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(passenger)))
 	}
 	if missing := result.ExpectedPassengerCount - len(result.Passengers); missing > 0 {
 		lines = append(lines, buildAskDocumentsReply(missing, 0))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatPassengerAdditionalIdentityForConfirmation(passenger DocumentExtractPassenger) string {
+	primaryType := normalizePassengerDocumentType(passenger.DocumentType)
+	primaryDocument := normalizePassengerDocumentValue(passenger.Document, primaryType)
+	details := make([]string, 0, 6)
+	for _, item := range []struct {
+		label        string
+		documentType string
+		document     string
+	}{
+		{label: "CPF", documentType: "CPF", document: passenger.CPF},
+		{label: "RG", documentType: "RG", document: passenger.RG},
+		{label: "CNH", documentType: "CNH", document: passenger.CNH},
+	} {
+		if primaryType == "CPF" && item.documentType != "CPF" {
+			continue
+		}
+		document := normalizePassengerDocumentValue(item.document, item.documentType)
+		if document == "" || (primaryType == item.documentType && primaryDocument == document) {
+			continue
+		}
+		details = append(details, item.label+" "+maskDocumentForDisplay(document, item.documentType))
+	}
+	if birthDate := strings.TrimSpace(passenger.BirthDate); birthDate != "" {
+		details = append(details, "nascimento "+formatBirthDateForDisplay(birthDate))
+	}
+	if birthCertificate := normalizePassengerDocumentValue(passenger.BirthCertificateNumber, "CERTIDAO_NASCIMENTO"); birthCertificate != "" {
+		if primaryType != "CERTIDAO_NASCIMENTO" || primaryDocument != birthCertificate {
+			details = append(details, "certidao "+maskDocumentForDisplay(birthCertificate, "CERTIDAO_NASCIMENTO"))
+		}
+	}
+	if birthCity := normalizePassengerBirthCity(passenger.BirthCity); birthCity != "" {
+		details = append(details, "naturalidade "+birthCity)
+	}
+	if len(details) == 0 {
+		return ""
+	}
+	return " | " + strings.Join(details, " | ")
+}
+
+func formatBirthDateForDisplay(value string) string {
+	parsed, ok := parseFlexibleDate(value)
+	if !ok {
+		return strings.TrimSpace(value)
+	}
+	return parsed.Format("02-01-2006")
 }
 
 func buildBookingCreatedReply(result BookingCreateResult) string {

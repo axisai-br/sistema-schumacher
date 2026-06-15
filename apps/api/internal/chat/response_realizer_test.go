@@ -176,14 +176,84 @@ func TestConfirmExtractedDocumentTemplate(t *testing.T) {
 	reply := buildConfirmExtractedDocumentReply(DocumentExtractResult{
 		ExpectedPassengerCount: 1,
 		Passengers: []DocumentExtractPassenger{
-			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "06645648103"},
+			{
+				Name:                   "Joao Vitor Messias",
+				DocumentType:           "CPF",
+				Document:               "06645648103",
+				BirthDate:              "2022-05-21",
+				BirthCertificateNumber: testBirthCertificateNumber,
+				BirthCity:              "Santa Ines",
+			},
 		},
 	})
-	if !containsAll(reply, "Joao Vitor Messias", "CPF", "066.***.***-03", "Eles conferem? Posso prosseguir e criar a reserva?") {
+	if !containsAll(reply, "Joao Vitor Messias", "CPF", "066.***.***-03", "nascimento 21-05-2022", "certidao "+testBirthCertificateNumber, "naturalidade Santa Ines", "Eles conferem? Posso prosseguir e criar a reserva?") {
 		t.Fatalf("unexpected document confirmation reply: %q", reply)
 	}
 	assertNoInternalIDs(t, reply)
 	assertNoEmptyTemplateArtifacts(t, reply)
+}
+
+func TestConfirmExtractedDocumentShowsAdditionalDocuments(t *testing.T) {
+	tests := []struct {
+		name      string
+		passenger DocumentExtractPassenger
+		want      []string
+		notWant   []string
+	}{
+		{
+			name: "cnh with additional cpf",
+			passenger: DocumentExtractPassenger{
+				Name:         "Passageiro Teste",
+				DocumentType: "CNH",
+				Document:     "99999999999",
+				CNH:          "99999999999",
+				CPF:          syntheticValidCPFForTests(),
+			},
+			want:    []string{"Passageiro Teste | CNH | 99999999999", "CPF 849.***.***-86"},
+			notWant: []string{"CNH 99999999999 | CNH 99999999999"},
+		},
+		{
+			name: "birth certificate with additional cpf",
+			passenger: DocumentExtractPassenger{
+				Name:                   "Passageiro Teste",
+				DocumentType:           "CERTIDAO_NASCIMENTO",
+				Document:               testBirthCertificateNumber,
+				BirthCertificateNumber: testBirthCertificateNumber,
+				CPF:                    syntheticValidCPFForTests(),
+			},
+			want:    []string{"Passageiro Teste | CERTIDAO_NASCIMENTO | " + testBirthCertificateNumber, "CPF 849.***.***-86"},
+			notWant: []string{"certidao " + testBirthCertificateNumber},
+		},
+		{
+			name: "rg with additional cpf",
+			passenger: DocumentExtractPassenger{
+				Name:         "Passageiro Teste",
+				DocumentType: "RG",
+				Document:     "2817314",
+				RG:           "2817314",
+				CPF:          syntheticValidCPFForTests(),
+			},
+			want:    []string{"Passageiro Teste | RG | 2817314", "CPF 849.***.***-86"},
+			notWant: []string{"RG 2817314 | RG 2817314"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reply := buildConfirmExtractedDocumentReply(DocumentExtractResult{
+				ExpectedPassengerCount: 1,
+				Passengers:             []DocumentExtractPassenger{tc.passenger},
+			})
+			if !containsAll(reply, tc.want...) {
+				t.Fatalf("expected additional documents in confirmation, got %q", reply)
+			}
+			for _, part := range tc.notWant {
+				if strings.Contains(reply, part) {
+					t.Fatalf("did not expect duplicate field %q in %q", part, reply)
+				}
+			}
+		})
+	}
 }
 
 func TestPaymentCreateReplyKeepsPixCodeEasyToCopy(t *testing.T) {

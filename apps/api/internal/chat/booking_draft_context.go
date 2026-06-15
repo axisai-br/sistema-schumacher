@@ -537,10 +537,16 @@ func documentExtractResultFromBookingDraft(context BookingDraftContext) Document
 		docType := normalizePassengerDocumentType(passenger.DocumentType)
 		document := normalizePassengerDocumentValue(passenger.Document, docType)
 		item := DocumentExtractPassenger{
-			Name:         strings.TrimSpace(passenger.Name),
-			DocumentType: docType,
-			Document:     document,
-			Confidence:   1,
+			Name:                   strings.TrimSpace(passenger.Name),
+			DocumentType:           docType,
+			Document:               document,
+			CPF:                    normalizePassengerDocumentValue(passenger.CPF, "CPF"),
+			RG:                     normalizePassengerDocumentValue(passenger.RG, "RG"),
+			CNH:                    normalizePassengerDocumentValue(passenger.CNH, "CNH"),
+			BirthDate:              strings.TrimSpace(passenger.BirthDate),
+			BirthCertificateNumber: normalizePassengerDocumentValue(passenger.BirthCertificateNumber, "CERTIDAO_NASCIMENTO"),
+			BirthCity:              normalizePassengerBirthCity(passenger.BirthCity),
+			Confidence:             1,
 		}
 		switch docType {
 		case "CPF":
@@ -549,6 +555,8 @@ func documentExtractResultFromBookingDraft(context BookingDraftContext) Document
 			item.RG = document
 		case "CNH":
 			item.CNH = document
+		case "CERTIDAO_NASCIMENTO":
+			item.BirthCertificateNumber = firstNonEmpty(item.BirthCertificateNumber, document)
 		}
 		passengers = append(passengers, item)
 	}

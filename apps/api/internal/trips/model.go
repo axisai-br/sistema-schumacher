@@ -152,22 +152,29 @@ type TripDetailsSegmentSummary struct {
 }
 
 type TripDetailsPassenger struct {
-	PassengerID       string  `json:"passenger_id"`
-	BookingID         string  `json:"booking_id"`
-	Name              string  `json:"name"`
-	Document          string  `json:"document"`
-	Phone             string  `json:"phone"`
-	SeatNumber        string  `json:"seat_number"`
-	OriginStopID      string  `json:"origin_stop_id"`
-	OriginName        string  `json:"origin_name"`
-	DestinationStopID string  `json:"destination_stop_id"`
-	DestinationName   string  `json:"destination_name"`
-	BookingStatus     string  `json:"booking_status"`
-	PaymentStatus     string  `json:"payment_status"`
-	IsLapChild        bool    `json:"is_lap_child"`
-	TotalAmount       float64 `json:"total_amount"`
-	PaidAmount        float64 `json:"paid_amount"`
-	DueAmount         float64 `json:"due_amount"`
+	PassengerID            string  `json:"passenger_id"`
+	BookingID              string  `json:"booking_id"`
+	Name                   string  `json:"name"`
+	Document               string  `json:"document"`
+	DocumentType           string  `json:"document_type"`
+	CPF                    string  `json:"cpf"`
+	RG                     string  `json:"rg"`
+	CNH                    string  `json:"cnh"`
+	BirthDate              string  `json:"birth_date"`
+	BirthCertificateNumber string  `json:"birth_certificate_number"`
+	BirthCity              string  `json:"birth_city"`
+	Phone                  string  `json:"phone"`
+	SeatNumber             string  `json:"seat_number"`
+	OriginStopID           string  `json:"origin_stop_id"`
+	OriginName             string  `json:"origin_name"`
+	DestinationStopID      string  `json:"destination_stop_id"`
+	DestinationName        string  `json:"destination_name"`
+	BookingStatus          string  `json:"booking_status"`
+	PaymentStatus          string  `json:"payment_status"`
+	IsLapChild             bool    `json:"is_lap_child"`
+	TotalAmount            float64 `json:"total_amount"`
+	PaidAmount             float64 `json:"paid_amount"`
+	DueAmount              float64 `json:"due_amount"`
 }
 
 type TripDetails struct {

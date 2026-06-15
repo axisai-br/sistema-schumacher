@@ -23,6 +23,12 @@ export type BookingPassenger = {
   name: string;
   document: string;
   document_type: string;
+  cpf?: string;
+  rg?: string;
+  cnh?: string;
+  birth_date?: string;
+  birth_certificate_number?: string;
+  birth_city?: string;
   phone: string;
   email: string;
   notes: string;

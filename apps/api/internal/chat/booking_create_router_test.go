@@ -11,6 +11,8 @@ import (
 	"schumacher-tur/api/internal/payments"
 )
 
+const testBirthCertificateNumber = "12345678901234567890123456789012"
+
 func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
@@ -139,26 +141,31 @@ func TestParseBookingCreateInputUsesExplicitLapChildLabel(t *testing.T) {
 	}
 }
 
-func TestBookingPassengerFromDocumentExtractUsesVisibleCPFOnCNH(t *testing.T) {
+func TestBookingPassengerFromDocumentExtractPreservesCNHAndVisibleCPF(t *testing.T) {
 	session := Session{CustomerPhone: "5549999999999"}
 	passenger := bookingPassengerFromDocumentExtract(DocumentExtractPassenger{
-		Name:         "Claudecir Schumacher",
-		DocumentType: "CNH",
-		Document:     "99999999999",
-		CPF:          "849.608.150-86",
-		CNH:          "99999999999",
-		BirthDate:    "1970-01-02",
-		Confidence:   0.92,
+		Name:                   "Claudecir Schumacher",
+		DocumentType:           "CNH",
+		Document:               "99999999999",
+		CPF:                    "849.608.150-86",
+		CNH:                    "99999999999",
+		BirthDate:              "1970-01-02",
+		BirthCertificateNumber: testBirthCertificateNumber,
+		BirthCity:              "Santa Ines",
+		Confidence:             0.92,
 	}, session)
 
-	if passenger.DocumentType != "CPF" || passenger.Document != "84960815086" {
-		t.Fatalf("expected visible CPF as primary passenger document, got %+v", passenger)
+	if passenger.DocumentType != "CNH" || passenger.Document != "99999999999" || passenger.CNH != "99999999999" {
+		t.Fatalf("expected CNH as primary passenger document, got %+v", passenger)
 	}
 	if passenger.Phone != "5549999999999" {
 		t.Fatalf("expected passenger phone from session, got %+v", passenger)
 	}
-	if passenger.Notes != "Documentos secundarios extraidos: CNH: 99999999999" {
-		t.Fatalf("expected CNH preserved in notes, got %+v", passenger)
+	if passenger.CPF != "84960815086" || passenger.BirthDate != "1970-01-02" || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("expected additional identity fields preserved, got %+v", passenger)
+	}
+	if passenger.Notes != "Dados adicionais extraidos: CPF: 84960815086 | CERTIDAO_NASCIMENTO: "+testBirthCertificateNumber+" | DATA_NASCIMENTO: 1970-01-02 | NATURALIDADE: Santa Ines" {
+		t.Fatalf("expected additional identity data in notes, got %+v", passenger)
 	}
 }
 
@@ -178,6 +185,61 @@ func TestBookingPassengerFromDocumentExtractRejectsInvalidCPFOnCNH(t *testing.T)
 	}
 	if passenger.Notes != "" {
 		t.Fatalf("did not expect CNH duplicated in notes, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesTypedAdditionalIdentityFields(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Nome: Maria Silva CPF 84960815086 nascimento 21/05/2022 matricula "+testBirthCertificateNumber+" naturalidade Santa Ines", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Maria Silva" || passenger.DocumentType != "CPF" || passenger.Document != "84960815086" || passenger.CPF != "84960815086" {
+		t.Fatalf("unexpected primary passenger document: %+v", passenger)
+	}
+	if passenger.BirthDate != "2022-05-21" || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("expected additional typed identity fields, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesStructuredLineWithAdditionalIdentityFields(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Maria Silva | CPF | 84960815086 | nascimento 21/05/2022 | matricula "+testBirthCertificateNumber+" | naturalidade Santa Ines", session)
+
+	if len(passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", passengers)
+	}
+	passenger := passengers[0]
+	if passenger.Name != "Maria Silva" || passenger.DocumentType != "CPF" || passenger.Document != "84960815086" || passenger.CPF != "84960815086" {
+		t.Fatalf("unexpected primary passenger document: %+v", passenger)
+	}
+	if passenger.BirthDate != "2022-05-21" || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("expected additional identity fields from structured line, got %+v", passenger)
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesMultipleTypedAdditionalIdentityFields(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	text := strings.Join([]string{
+		"João Silva CPF 52998224725 nascimento 12/03/1990 RG 1234567",
+		"Maria Silva certidão " + testBirthCertificateNumber + " nascimento 10/05/2021 naturalidade Santa Inês",
+		"Pedro Silva CNH 12345678900 CPF 52998224725 nascimento 02/01/1988",
+	}, "\n")
+
+	passengers := extractBookingCreatePassengers(text, session)
+	if len(passengers) != 3 {
+		t.Fatalf("expected three passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "João Silva" || passengers[0].DocumentType != "CPF" || passengers[0].Document != "52998224725" || passengers[0].CPF != "52998224725" || passengers[0].RG != "1234567" || passengers[0].BirthDate != "1990-03-12" {
+		t.Fatalf("unexpected first passenger: %+v", passengers[0])
+	}
+	if passengers[1].Name != "Maria Silva" || passengers[1].DocumentType != "CERTIDAO_NASCIMENTO" || passengers[1].Document != testBirthCertificateNumber || passengers[1].BirthCertificateNumber != testBirthCertificateNumber || passengers[1].BirthDate != "2021-05-10" || passengers[1].BirthCity != "Santa Inês" {
+		t.Fatalf("unexpected second passenger: %+v", passengers[1])
+	}
+	if passengers[2].Name != "Pedro Silva" || passengers[2].DocumentType != "CNH" || passengers[2].Document != "12345678900" || passengers[2].CNH != "12345678900" || passengers[2].CPF != "52998224725" || passengers[2].BirthDate != "1988-01-02" {
+		t.Fatalf("unexpected third passenger: %+v", passengers[2])
 	}
 }
 
@@ -280,6 +342,21 @@ func TestNormalizePassengerDocumentValueCleansRGIssuer(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.expected, document)
 			}
 		})
+	}
+}
+
+func TestNormalizePassengerDocumentValueRequires32DigitBirthCertificate(t *testing.T) {
+	if document := normalizePassengerDocumentValue(testBirthCertificateNumber, "CERTIDAO_NASCIMENTO"); document != testBirthCertificateNumber {
+		t.Fatalf("expected 32 digit birth certificate number, got %q", document)
+	}
+	for _, value := range []string{
+		"1234567890123456789012345678901",
+		"123456789012345678901234567890123",
+		"M1234567890123456789012345678901",
+	} {
+		if document := normalizePassengerDocumentValue(value, "CERTIDAO_NASCIMENTO"); document != "" {
+			t.Fatalf("expected invalid birth certificate number %q to be rejected, got %q", value, document)
+		}
 	}
 }
 
@@ -557,12 +634,12 @@ func TestTranscriptCNHeCorrectionCreatesBookingAndPaymentUsesReservationCPF(t *t
 	if extract.Mode != "EXTRACTED" {
 		t.Fatalf("expected extracted CNH-e payload, got %+v", extract)
 	}
-	if len(extract.Passengers) != 1 || extract.Passengers[0].DocumentType != "CPF" || extract.Passengers[0].Document != "52998224725" {
-		t.Fatalf("expected visible CPF as primary document, got %+v", extract.Passengers)
+	if len(extract.Passengers) != 1 || extract.Passengers[0].DocumentType != "RG" || extract.Passengers[0].Document != "2817314" || extract.Passengers[0].CPF != "52998224725" {
+		t.Fatalf("expected RG as primary document and CPF as additional field, got %+v", extract.Passengers)
 	}
 	reply := buildDocumentExtractReply(extract)
-	if !containsAll(reply, "CLAUDECIR SCHUMACHER | CPF | 529.***.***-25") || strings.Contains(reply, "SSPSC") {
-		t.Fatalf("expected masked CPF confirmation without issuer suffix, got %q", reply)
+	if !containsAll(reply, "CLAUDECIR SCHUMACHER | RG | 2817314") || strings.Contains(reply, "SSPSC") {
+		t.Fatalf("expected RG confirmation without issuer suffix, got %q", reply)
 	}
 
 	now := time.Now().UTC()
@@ -613,6 +690,48 @@ func TestTranscriptCNHeCorrectionCreatesBookingAndPaymentUsesReservationCPF(t *t
 	}
 	if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != "52998224725" {
 		t.Fatalf("expected payment to reuse reservation passenger CPF, got %+v", paymentSvc.lastInput.Customer)
+	}
+}
+
+func TestDocumentConfirmationPreservesAdditionalIdentityFields(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ID: "session-doc-extra", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Maria"}
+	history := documentConfirmationBookingHistory(now, "EXTRACTED", true)
+	history[len(history)-1].Payload = map[string]interface{}{
+		"tool_context": map[string]interface{}{
+			toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
+				Mode:                   "EXTRACTED",
+				ExpectedPassengerCount: 1,
+				MediaCount:             1,
+				Passengers: []DocumentExtractPassenger{
+					{
+						Name:                   "Maria Silva",
+						DocumentType:           "CERTIDAO_NASCIMENTO",
+						Document:               testBirthCertificateNumber,
+						CPF:                    "84960815086",
+						BirthDate:              "2022-05-21",
+						BirthCertificateNumber: testBirthCertificateNumber,
+						BirthCity:              "Santa Ines",
+						Confidence:             0.95,
+					},
+				},
+			}),
+		},
+	}
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem")
+	if !ok {
+		t.Fatalf("expected booking create from document confirmation")
+	}
+	if len(input.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", input.Passengers)
+	}
+	passenger := input.Passengers[0]
+	if passenger.DocumentType != "CERTIDAO_NASCIMENTO" || passenger.Document != testBirthCertificateNumber || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.CPF != "84960815086" {
+		t.Fatalf("expected birth certificate as primary document and cpf field preserved, got %+v", passenger)
+	}
+	if passenger.BirthDate != "2022-05-21" || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("expected additional identity fields from document extract, got %+v", passenger)
 	}
 }
 

@@ -48,13 +48,19 @@ func (t *BookingCreateTool) Create(ctx context.Context, input BookingCreateInput
 	passengers := make([]bookings.PassengerInput, 0, len(input.Passengers))
 	for _, item := range input.Passengers {
 		passengers = append(passengers, bookings.PassengerInput{
-			Name:         strings.TrimSpace(item.Name),
-			Document:     strings.TrimSpace(item.Document),
-			DocumentType: strings.TrimSpace(item.DocumentType),
-			Phone:        strings.TrimSpace(item.Phone),
-			Email:        strings.TrimSpace(item.Email),
-			Notes:        strings.TrimSpace(item.Notes),
-			IsLapChild:   item.IsLapChild,
+			Name:                   strings.TrimSpace(item.Name),
+			Document:               strings.TrimSpace(item.Document),
+			DocumentType:           strings.TrimSpace(item.DocumentType),
+			CPF:                    strings.TrimSpace(item.CPF),
+			RG:                     strings.TrimSpace(item.RG),
+			CNH:                    strings.TrimSpace(item.CNH),
+			BirthDate:              strings.TrimSpace(item.BirthDate),
+			BirthCertificateNumber: strings.TrimSpace(item.BirthCertificateNumber),
+			BirthCity:              strings.TrimSpace(item.BirthCity),
+			Phone:                  strings.TrimSpace(item.Phone),
+			Email:                  strings.TrimSpace(item.Email),
+			Notes:                  strings.TrimSpace(item.Notes),
+			IsLapChild:             item.IsLapChild,
 		})
 	}
 
@@ -102,12 +108,18 @@ func (t *BookingCreateTool) Create(ctx context.Context, input BookingCreateInput
 	result.RemainderAmount = created.Booking.RemainderAmount
 	for _, item := range created.Passengers {
 		result.Passengers = append(result.Passengers, BookingCreatePassengerResult{
-			Name:         strings.TrimSpace(item.Name),
-			Document:     strings.TrimSpace(item.Document),
-			DocumentType: strings.TrimSpace(item.DocumentType),
-			Phone:        strings.TrimSpace(item.Phone),
-			SeatID:       strings.TrimSpace(item.SeatID),
-			IsLapChild:   item.IsLapChild,
+			Name:                   strings.TrimSpace(item.Name),
+			Document:               strings.TrimSpace(item.Document),
+			DocumentType:           strings.TrimSpace(item.DocumentType),
+			CPF:                    strings.TrimSpace(item.CPF),
+			RG:                     strings.TrimSpace(item.RG),
+			CNH:                    strings.TrimSpace(item.CNH),
+			BirthDate:              strings.TrimSpace(item.BirthDate),
+			BirthCertificateNumber: strings.TrimSpace(item.BirthCertificateNumber),
+			BirthCity:              strings.TrimSpace(item.BirthCity),
+			Phone:                  strings.TrimSpace(item.Phone),
+			SeatID:                 strings.TrimSpace(item.SeatID),
+			IsLapChild:             item.IsLapChild,
 		})
 	}
 	result.MessageForAgent = "Reserva criada com sucesso. Informe o reservation_code ao cliente e siga para o pagamento."

@@ -7,7 +7,29 @@ import LoadingState from "../../components/LoadingState";
 import PageHeader from "../../components/PageHeader";
 import SearchToolbar from "../../components/input/SearchToolbar";
 import { useTripDetails, type TripDetailsPassenger } from "../../hooks/useTrips";
-import { formatCurrency, formatDateTime, formatShortId } from "../../utils/format";
+import { formatBirthDate, formatCurrency, formatDateTime, formatShortId } from "../../utils/format";
+
+function passengerDocumentDetails(item: TripDetailsPassenger) {
+  const rows = [
+    item.document ? `${item.document_type ? `${item.document_type} ` : ""}${item.document}` : "",
+    item.cpf ? `CPF ${item.cpf}` : "",
+    item.rg ? `RG ${item.rg}` : "",
+    item.cnh ? `CNH ${item.cnh}` : "",
+    item.birth_date ? `Nascimento ${formatBirthDate(item.birth_date)}` : "",
+    item.birth_certificate_number ? `Matrícula ${item.birth_certificate_number}` : "",
+    item.birth_city ? `Naturalidade ${item.birth_city}` : "",
+  ].filter(Boolean);
+
+  if (rows.length === 0) return "-";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      {rows.map((row) => (
+        <span key={row}>{row}</span>
+      ))}
+    </div>
+  );
+}
 
 export default function TripDetailsPage() {
   const { tripId } = useParams();
@@ -23,6 +45,13 @@ export default function TripDetailsPage() {
       [
         item.name,
         item.document,
+        item.document_type,
+        item.cpf,
+        item.rg,
+        item.cnh,
+        item.birth_date,
+        item.birth_certificate_number,
+        item.birth_city,
         item.phone,
         item.seat_number,
         item.origin_name,
@@ -40,7 +69,7 @@ export default function TripDetailsPage() {
     { label: "Embarque", accessor: (item) => item.origin_name || "-", width: "210px" },
     { label: "Desembarque", accessor: (item) => item.destination_name || "-", width: "210px" },
     { label: "Assento", accessor: (item) => item.seat_number || "-", width: "90px", align: "center" },
-    { label: "Documento", accessor: (item) => item.document || "-", width: "150px", hideOnMobile: true },
+    { label: "Documento", render: passengerDocumentDetails, width: "220px", hideOnMobile: true },
     { label: "Telefone", accessor: (item) => item.phone || "-", width: "150px", hideOnMobile: true },
     { label: "Pago", accessor: (item) => formatCurrency(item.paid_amount), width: "120px", align: "right" },
     { label: "Falta", accessor: (item) => formatCurrency(item.due_amount), width: "120px", align: "right" },
