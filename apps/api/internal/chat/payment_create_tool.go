@@ -276,6 +276,9 @@ func resolvePaymentPayerDocument(explicit string, explicitSource string, passeng
 }
 
 func supportedPassengerCPFDocument(passenger bookings.BookingPassenger) string {
+	if document := normalizeDigits(passenger.CPF); isSupportedPaymentDocument(document) {
+		return document
+	}
 	if !strings.EqualFold(strings.TrimSpace(passenger.DocumentType), "CPF") {
 		return ""
 	}

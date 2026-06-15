@@ -35,13 +35,19 @@ type BookingListItem struct {
 }
 
 type PassengerInput struct {
-	Name         string `json:"name"`
-	Document     string `json:"document"`
-	DocumentType string `json:"document_type"`
-	Phone        string `json:"phone"`
-	Email        string `json:"email"`
-	Notes        string `json:"notes"`
-	IsLapChild   bool   `json:"is_lap_child"`
+	Name                   string `json:"name"`
+	Document               string `json:"document"`
+	DocumentType           string `json:"document_type"`
+	CPF                    string `json:"cpf"`
+	RG                     string `json:"rg"`
+	CNH                    string `json:"cnh"`
+	BirthDate              string `json:"birth_date"`
+	BirthCertificateNumber string `json:"birth_certificate_number"`
+	BirthCity              string `json:"birth_city"`
+	Phone                  string `json:"phone"`
+	Email                  string `json:"email"`
+	Notes                  string `json:"notes"`
+	IsLapChild             bool   `json:"is_lap_child"`
 }
 
 type CreateBookingInput struct {
@@ -106,26 +112,32 @@ type ListFilter struct {
 }
 
 type BookingPassenger struct {
-	ID              string    `json:"id"`
-	BookingID       string    `json:"booking_id"`
-	TripID          string    `json:"trip_id"`
-	Name            string    `json:"name"`
-	Document        string    `json:"document"`
-	DocumentType    string    `json:"document_type"`
-	Phone           string    `json:"phone"`
-	Email           string    `json:"email"`
-	Notes           string    `json:"notes"`
-	IsLapChild      bool      `json:"is_lap_child"`
-	SeatID          string    `json:"seat_id"`
-	BoardStopID     string    `json:"board_stop_id"`
-	AlightStopID    string    `json:"alight_stop_id"`
-	BoardStopOrder  int       `json:"board_stop_order"`
-	AlightStopOrder int       `json:"alight_stop_order"`
-	FareMode        string    `json:"fare_mode"`
-	FareAmountCalc  float64   `json:"fare_amount_calc"`
-	FareAmountFinal float64   `json:"fare_amount_final"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                     string    `json:"id"`
+	BookingID              string    `json:"booking_id"`
+	TripID                 string    `json:"trip_id"`
+	Name                   string    `json:"name"`
+	Document               string    `json:"document"`
+	DocumentType           string    `json:"document_type"`
+	CPF                    string    `json:"cpf"`
+	RG                     string    `json:"rg"`
+	CNH                    string    `json:"cnh"`
+	BirthDate              string    `json:"birth_date"`
+	BirthCertificateNumber string    `json:"birth_certificate_number"`
+	BirthCity              string    `json:"birth_city"`
+	Phone                  string    `json:"phone"`
+	Email                  string    `json:"email"`
+	Notes                  string    `json:"notes"`
+	IsLapChild             bool      `json:"is_lap_child"`
+	SeatID                 string    `json:"seat_id"`
+	BoardStopID            string    `json:"board_stop_id"`
+	AlightStopID           string    `json:"alight_stop_id"`
+	BoardStopOrder         int       `json:"board_stop_order"`
+	AlightStopOrder        int       `json:"alight_stop_order"`
+	FareMode               string    `json:"fare_mode"`
+	FareAmountCalc         float64   `json:"fare_amount_calc"`
+	FareAmountFinal        float64   `json:"fare_amount_final"`
+	Status                 string    `json:"status"`
+	CreatedAt              time.Time `json:"created_at"`
 }
 
 type BookingDetails struct {

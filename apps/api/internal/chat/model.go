@@ -653,13 +653,19 @@ type BookingCreateInput struct {
 }
 
 type BookingCreatePassengerInput struct {
-	Name         string `json:"name"`
-	Document     string `json:"document"`
-	DocumentType string `json:"document_type"`
-	Phone        string `json:"phone,omitempty"`
-	Email        string `json:"email,omitempty"`
-	Notes        string `json:"notes,omitempty"`
-	IsLapChild   bool   `json:"is_lap_child,omitempty"`
+	Name                   string `json:"name"`
+	Document               string `json:"document"`
+	DocumentType           string `json:"document_type"`
+	CPF                    string `json:"cpf,omitempty"`
+	RG                     string `json:"rg,omitempty"`
+	CNH                    string `json:"cnh,omitempty"`
+	BirthDate              string `json:"birth_date,omitempty"`
+	BirthCertificateNumber string `json:"birth_certificate_number,omitempty"`
+	BirthCity              string `json:"birth_city,omitempty"`
+	Phone                  string `json:"phone,omitempty"`
+	Email                  string `json:"email,omitempty"`
+	Notes                  string `json:"notes,omitempty"`
+	IsLapChild             bool   `json:"is_lap_child,omitempty"`
 }
 
 type BookingCreateResult struct {
@@ -678,12 +684,18 @@ type BookingCreateResult struct {
 }
 
 type BookingCreatePassengerResult struct {
-	Name         string `json:"name"`
-	Document     string `json:"document,omitempty"`
-	DocumentType string `json:"document_type,omitempty"`
-	Phone        string `json:"phone,omitempty"`
-	SeatID       string `json:"seat_id,omitempty"`
-	IsLapChild   bool   `json:"is_lap_child,omitempty"`
+	Name                   string `json:"name"`
+	Document               string `json:"document,omitempty"`
+	DocumentType           string `json:"document_type,omitempty"`
+	CPF                    string `json:"cpf,omitempty"`
+	RG                     string `json:"rg,omitempty"`
+	CNH                    string `json:"cnh,omitempty"`
+	BirthDate              string `json:"birth_date,omitempty"`
+	BirthCertificateNumber string `json:"birth_certificate_number,omitempty"`
+	BirthCity              string `json:"birth_city,omitempty"`
+	Phone                  string `json:"phone,omitempty"`
+	SeatID                 string `json:"seat_id,omitempty"`
+	IsLapChild             bool   `json:"is_lap_child,omitempty"`
 }
 
 type RescheduleAssistSearcher interface {

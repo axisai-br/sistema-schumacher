@@ -18,7 +18,7 @@ func TestBuildDocumentExtractPromptsOnlyAcceptPhotos(t *testing.T) {
 	}
 }
 
-func TestParseDocumentExtractResultPrioritizesCPFOverOtherDocuments(t *testing.T) {
+func TestParseDocumentExtractResultPreservesRGAndVisibleCPF(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
 		"passengers":[{
@@ -26,6 +26,7 @@ func TestParseDocumentExtractResultPrioritizesCPFOverOtherDocuments(t *testing.T
 			"document_type":"RG",
 			"document":"1234567",
 			"cpf":"066.456.481-03",
+			"birth_date":"21/05/1990",
 			"confidence":91
 		}]
 	}`)
@@ -40,18 +41,21 @@ func TestParseDocumentExtractResultPrioritizesCPFOverOtherDocuments(t *testing.T
 	if passenger.Name != "Joao Vitor Messias" {
 		t.Fatalf("unexpected passenger name: %+v", passenger)
 	}
-	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
-		t.Fatalf("expected CPF priority, got %+v", passenger)
+	if passenger.DocumentType != "RG" || passenger.Document != "1234567" {
+		t.Fatalf("expected RG as primary document, got %+v", passenger)
 	}
 	if passenger.CPF != "06645648103" || passenger.RG != "1234567" {
 		t.Fatalf("expected secondary documents preserved, got %+v", passenger)
+	}
+	if passenger.BirthDate != "1990-05-21" {
+		t.Fatalf("expected normalized birth date, got %+v", passenger)
 	}
 	if passenger.Confidence != 0.91 {
 		t.Fatalf("expected normalized confidence 0.91, got %.2f", passenger.Confidence)
 	}
 }
 
-func TestParseDocumentExtractResultCNHePrioritizesVisibleCPFAndCleansRG(t *testing.T) {
+func TestParseDocumentExtractResultCNHePreservesSourceDocumentAndCleansRG(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
 		"passengers":[{
@@ -74,8 +78,8 @@ func TestParseDocumentExtractResultCNHePrioritizesVisibleCPFAndCleansRG(t *testi
 		t.Fatalf("expected one passenger, got %+v", result.Passengers)
 	}
 	passenger := result.Passengers[0]
-	if passenger.DocumentType != "CPF" || passenger.Document != "84561718915" || passenger.CPF != "84561718915" {
-		t.Fatalf("expected visible CPF as primary document, got %+v", passenger)
+	if passenger.DocumentType != "RG" || passenger.Document != "2817314" || passenger.CPF != "84561718915" {
+		t.Fatalf("expected RG primary document and visible CPF as additional field, got %+v", passenger)
 	}
 	if passenger.CNH != "01235234139" {
 		t.Fatalf("expected CNH preserved as secondary document, got %+v", passenger)
@@ -85,7 +89,7 @@ func TestParseDocumentExtractResultCNHePrioritizesVisibleCPFAndCleansRG(t *testi
 	}
 }
 
-func TestParseDocumentExtractResultPrioritizesCPFWhenModelKeepsRGAsDocument(t *testing.T) {
+func TestParseDocumentExtractResultKeepsRGWhenCPFIsAdditional(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
 		"passengers":[{
@@ -108,8 +112,8 @@ func TestParseDocumentExtractResultPrioritizesCPFWhenModelKeepsRGAsDocument(t *t
 		t.Fatalf("expected one passenger, got %+v", result.Passengers)
 	}
 	passenger := result.Passengers[0]
-	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" || passenger.CPF != "06645648103" {
-		t.Fatalf("expected CPF to win over model RG document, got %+v", passenger)
+	if passenger.DocumentType != "RG" || passenger.Document != "2873144" || passenger.CPF != "06645648103" {
+		t.Fatalf("expected RG to remain primary and CPF to be additional, got %+v", passenger)
 	}
 	if passenger.RG != "2873144" {
 		t.Fatalf("expected RG preserved as secondary document, got %+v", passenger)
@@ -180,13 +184,15 @@ func TestDocumentExtractResponsePayloadPreservesSecondaryDocuments(t *testing.T)
 		Mode: "EXTRACTED",
 		Passengers: []DocumentExtractPassenger{
 			{
-				Name:         "Claudecir Schumacher",
-				DocumentType: "CPF",
-				Document:     "06645648103",
-				CPF:          "06645648103",
-				CNH:          "99999999999",
-				BirthDate:    "1970-01-02",
-				Confidence:   0.92,
+				Name:                   "Claudecir Schumacher",
+				DocumentType:           "CPF",
+				Document:               "06645648103",
+				CPF:                    "06645648103",
+				CNH:                    "99999999999",
+				BirthDate:              "1970-01-02",
+				BirthCertificateNumber: testBirthCertificateNumber,
+				BirthCity:              "Santa Ines",
+				Confidence:             0.92,
 			},
 		},
 	})
@@ -201,6 +207,9 @@ func TestDocumentExtractResponsePayloadPreservesSecondaryDocuments(t *testing.T)
 	if passengers[0]["cpf"] != "06645648103" || passengers[0]["cnh"] != "99999999999" {
 		t.Fatalf("expected secondary documents in payload, got %+v", passengers[0])
 	}
+	if passengers[0]["birth_date"] != "1970-01-02" || passengers[0]["birth_certificate_number"] != testBirthCertificateNumber || passengers[0]["birth_city"] != "Santa Ines" {
+		t.Fatalf("expected additional identity fields in payload, got %+v", passengers[0])
+	}
 
 	parsed := parseDocumentExtractContextPayload(payload)
 	if len(parsed.Passengers) != 1 {
@@ -209,9 +218,117 @@ func TestDocumentExtractResponsePayloadPreservesSecondaryDocuments(t *testing.T)
 	if parsed.Passengers[0].DocumentType != "CPF" || parsed.Passengers[0].Document != "06645648103" || parsed.Passengers[0].CNH != "99999999999" {
 		t.Fatalf("expected context parser to preserve CPF primary and CNH secondary, got %+v", parsed.Passengers[0])
 	}
+	if parsed.Passengers[0].BirthDate != "1970-01-02" || parsed.Passengers[0].BirthCertificateNumber != testBirthCertificateNumber || parsed.Passengers[0].BirthCity != "Santa Ines" {
+		t.Fatalf("expected context parser to preserve additional identity fields, got %+v", parsed.Passengers[0])
+	}
 }
 
-func TestParseDocumentExtractResultUsesCPFAndPreservesCNHFromGenericDocument(t *testing.T) {
+func TestParseDocumentExtractResultPreservesBirthCertificateAndBirthCity(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Maria Silva",
+			"document_type":"CERTIDAO_NASCIMENTO",
+			"document":"` + testBirthCertificateNumber + `",
+			"cpf":"849.608.150-86",
+			"birth_date":"21/05/2022",
+			"birth_certificate_number":"` + testBirthCertificateNumber + `",
+			"birth_city":"Santa Ines",
+			"confidence":0.95
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	if len(result.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", result.Passengers)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CERTIDAO_NASCIMENTO" || passenger.Document != testBirthCertificateNumber || passenger.CPF != "84960815086" {
+		t.Fatalf("expected birth certificate as primary document and CPF as additional field, got %+v", passenger)
+	}
+	if passenger.BirthDate != "2022-05-21" || passenger.BirthCertificateNumber != testBirthCertificateNumber || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("expected birth certificate data and naturality preserved, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultPreservesBirthCertificateWithoutCPF(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Maria Silva",
+			"document_type":"CERTIDAO_NASCIMENTO",
+			"document":"` + testBirthCertificateNumber + `",
+			"cpf":"",
+			"birth_date":"2021-05-10",
+			"birth_certificate_number":"` + testBirthCertificateNumber + `",
+			"birth_city":"Santa Ines",
+			"confidence":0.96
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "EXTRACTED" {
+		t.Fatalf("expected EXTRACTED mode, got %s", result.Mode)
+	}
+	passenger := result.Passengers[0]
+	if passenger.DocumentType != "CERTIDAO_NASCIMENTO" || passenger.Document != testBirthCertificateNumber || passenger.BirthCertificateNumber != testBirthCertificateNumber {
+		t.Fatalf("expected birth certificate as primary document, got %+v", passenger)
+	}
+	if passenger.CPF != "" || passenger.BirthDate != "2021-05-10" || passenger.BirthCity != "Santa Ines" {
+		t.Fatalf("unexpected additional birth certificate data: %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultClearsIllegibleBirthDate(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Maria Silva",
+			"document_type":"RG",
+			"document":"1234567",
+			"rg":"1234567",
+			"birth_date":"data borrada",
+			"confidence":0.92
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL for illegible birth date, got %s", result.Mode)
+	}
+	if result.Passengers[0].BirthDate != "" {
+		t.Fatalf("expected illegible birth date to be empty, got %+v", result.Passengers[0])
+	}
+}
+
+func TestParseDocumentExtractResultRejectsInvalidBirthCertificateNumber(t *testing.T) {
+	result := parseDocumentExtractResult(`{
+		"mode":"EXTRACTED",
+		"passengers":[{
+			"name":"Maria Silva",
+			"document_type":"CERTIDAO_NASCIMENTO",
+			"document":"1234567890",
+			"birth_certificate_number":"1234567890",
+			"birth_date":"2021-05-10",
+			"birth_city":"Santa Ines",
+			"confidence":0.96
+		}],
+		"failure_reason":""
+	}`)
+
+	if result.Mode != "PARTIAL" {
+		t.Fatalf("expected PARTIAL for invalid birth certificate number, got %s", result.Mode)
+	}
+	passenger := result.Passengers[0]
+	if passenger.Document != "" || passenger.BirthCertificateNumber != "" {
+		t.Fatalf("expected invalid birth certificate number to be rejected, got %+v", passenger)
+	}
+}
+
+func TestParseDocumentExtractResultPreservesCNHAndVisibleCPF(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
 		"passengers":[{
@@ -228,15 +345,15 @@ func TestParseDocumentExtractResultUsesCPFAndPreservesCNHFromGenericDocument(t *
 		t.Fatalf("expected one passenger, got %+v", result.Passengers)
 	}
 	passenger := result.Passengers[0]
-	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" || passenger.CPF != "06645648103" {
-		t.Fatalf("expected visible CPF as primary document, got %+v", passenger)
+	if passenger.DocumentType != "CNH" || passenger.Document != "99999999999" || passenger.CPF != "06645648103" {
+		t.Fatalf("expected CNH as primary document and CPF as additional field, got %+v", passenger)
 	}
 	if passenger.CNH != "99999999999" {
 		t.Fatalf("expected CNH from generic document preserved, got %+v", passenger)
 	}
 }
 
-func TestParseDocumentExtractResultUsesCPFWhenDocumentTypeIsImplicit(t *testing.T) {
+func TestParseDocumentExtractResultUsesCPFWhenDocumentFieldIsImplicitCPF(t *testing.T) {
 	result := parseDocumentExtractResult(`{
 		"mode":"EXTRACTED",
 		"passengers":[{
@@ -252,7 +369,7 @@ func TestParseDocumentExtractResultUsesCPFWhenDocumentTypeIsImplicit(t *testing.
 	}
 	passenger := result.Passengers[0]
 	if passenger.DocumentType != "CPF" || passenger.Document != "06645648103" {
-		t.Fatalf("expected CPF priority for implicit document, got %+v", passenger)
+		t.Fatalf("expected CPF document from implicit document field, got %+v", passenger)
 	}
 }
 

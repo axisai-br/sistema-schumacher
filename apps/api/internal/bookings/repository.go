@@ -190,18 +190,23 @@ func (r *Repository) Create(ctx context.Context, input CreateBookingData) (Booki
       select 'PS-' || upper(replace(gen_random_uuid()::text, '-', '')) as passenger_id
     )
     insert into passengers (
-      passenger_id, booking_id, trip_id, full_name, document, document_type, seat_number,
+      passenger_id, booking_id, trip_id, full_name, document, document_type, cpf, rg, cnh,
+      birth_date, birth_certificate_number, birth_city, seat_number,
       origin_stop_id, destination_stop_id, phone, notes, status, row_type, created_at, updated_at
     )
     select
       g.passenger_id,
-      $1, $2, $3, nullif($4, ''), nullif($5, ''), $6,
-      $7, $8, nullif($9, ''), nullif($10, ''), 'RESERVED', 'passenger', now(), now()
+      $1, $2, $3, nullif($4, ''), nullif($5, ''), nullif($6, ''), nullif($7, ''), nullif($8, ''),
+      nullif($9, '')::date, nullif($10, ''), nullif($11, ''), $12,
+      $13, $14, nullif($15, ''), nullif($16, ''), 'RESERVED', 'passenger', now(), now()
     from generated g
-    returning passenger_id, booking_id, trip_id, full_name, coalesce(document, ''), coalesce(document_type, ''), coalesce(phone, ''), coalesce(notes, ''), coalesce(seat_number, ''), status, created_at
-	  `, booking.ID, input.TripID, inputPassenger.Name, inputPassenger.Document, inputPassenger.DocumentType, passengerSeatID, input.OriginStopID, input.DestinationStopID, inputPassenger.Phone, inputPassenger.Notes)
+    returning passenger_id, booking_id, trip_id, full_name, coalesce(document, ''), coalesce(document_type, ''),
+      coalesce(cpf, ''), coalesce(rg, ''), coalesce(cnh, ''),
+      coalesce(to_char(birth_date, 'YYYY-MM-DD'), ''), coalesce(birth_certificate_number, ''), coalesce(birth_city, ''),
+      coalesce(phone, ''), coalesce(notes, ''), coalesce(seat_number, ''), status, created_at
+	  `, booking.ID, input.TripID, inputPassenger.Name, inputPassenger.Document, inputPassenger.DocumentType, inputPassenger.CPF, inputPassenger.RG, inputPassenger.CNH, inputPassenger.BirthDate, inputPassenger.BirthCertificateNumber, inputPassenger.BirthCity, passengerSeatID, input.OriginStopID, input.DestinationStopID, inputPassenger.Phone, inputPassenger.Notes)
 		var seatNumber string
-		if err := row.Scan(&passenger.ID, &passenger.BookingID, &passenger.TripID, &passenger.Name, &passenger.Document, &passenger.DocumentType, &passenger.Phone, &passenger.Notes, &seatNumber, &passenger.Status, &passenger.CreatedAt); err != nil {
+		if err := row.Scan(&passenger.ID, &passenger.BookingID, &passenger.TripID, &passenger.Name, &passenger.Document, &passenger.DocumentType, &passenger.CPF, &passenger.RG, &passenger.CNH, &passenger.BirthDate, &passenger.BirthCertificateNumber, &passenger.BirthCity, &passenger.Phone, &passenger.Notes, &seatNumber, &passenger.Status, &passenger.CreatedAt); err != nil {
 			return BookingDetails{}, err
 		}
 		passenger.IsLapChild = isLapChildNotes(passenger.Notes)
@@ -292,7 +297,10 @@ func (r *Repository) Get(ctx context.Context, id string) (BookingDetails, error)
 
 	rows, err := r.pool.Query(ctx, `
     select
-      p.passenger_id, p.booking_id, p.trip_id, p.full_name, coalesce(p.document, ''), coalesce(p.document_type, ''), coalesce(p.phone, ''),
+      p.passenger_id, p.booking_id, p.trip_id, p.full_name, coalesce(p.document, ''), coalesce(p.document_type, ''),
+      coalesce(p.cpf, ''), coalesce(p.rg, ''), coalesce(p.cnh, ''),
+      coalesce(to_char(p.birth_date, 'YYYY-MM-DD'), ''), coalesce(p.birth_certificate_number, ''), coalesce(p.birth_city, ''),
+      coalesce(p.phone, ''),
       ''::text as email,
       coalesce(p.notes, '') as notes,
       case when position('CRIANCA_DE_COLO_ATE_5_ANOS' in upper(coalesce(p.notes, ''))) > 0 then true else false end as is_lap_child,
@@ -332,7 +340,9 @@ func (r *Repository) Get(ctx context.Context, id string) (BookingDetails, error)
 	for rows.Next() {
 		var passenger BookingPassenger
 		if err := rows.Scan(
-			&passenger.ID, &passenger.BookingID, &passenger.TripID, &passenger.Name, &passenger.Document, &passenger.DocumentType, &passenger.Phone, &passenger.Email, &passenger.Notes, &passenger.IsLapChild, &passenger.SeatID,
+			&passenger.ID, &passenger.BookingID, &passenger.TripID, &passenger.Name, &passenger.Document, &passenger.DocumentType,
+			&passenger.CPF, &passenger.RG, &passenger.CNH, &passenger.BirthDate, &passenger.BirthCertificateNumber, &passenger.BirthCity,
+			&passenger.Phone, &passenger.Email, &passenger.Notes, &passenger.IsLapChild, &passenger.SeatID,
 			&passenger.BoardStopID, &passenger.AlightStopID, &passenger.BoardStopOrder, &passenger.AlightStopOrder,
 			&passenger.FareMode, &passenger.FareAmountCalc, &passenger.FareAmountFinal, &passenger.Status, &passenger.CreatedAt,
 		); err != nil {

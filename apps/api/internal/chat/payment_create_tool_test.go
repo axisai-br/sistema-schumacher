@@ -30,6 +30,11 @@ type fakePaymentCreatePaymentsService struct {
 	calls     int
 }
 
+func syntheticValidCPFForTests() string {
+	// Checksum-valid CPF generated for validator tests only. Do not pair with real contact data.
+	return "84960815086"
+}
+
 func (f *fakePaymentCreatePaymentsService) Create(_ context.Context, input payments.CreatePaymentInput) (payments.Payment, json.RawMessage, error) {
 	f.calls++
 	f.lastInput = input
@@ -157,6 +162,64 @@ func TestPaymentCreateToolRequiresPayerCPFWhenBookingUsesRG(t *testing.T) {
 	}
 	if len(result.Errors) != 1 {
 		t.Fatalf("expected one operational error, got %+v", result.Errors)
+	}
+}
+
+func TestPaymentCreateToolUsesAdditionalPassengerCPFWhenPrimaryDocumentIsNotCPF(t *testing.T) {
+	cases := []struct {
+		documentType string
+		document     string
+	}{
+		{documentType: "RG", document: "2817314"},
+		{documentType: "CNH", document: "12345678900"},
+		{documentType: "CERTIDAO_NASCIMENTO", document: "12345678901234567890123456789012"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.documentType, func(t *testing.T) {
+			paymentSvc := &fakePaymentCreatePaymentsService{
+				payment: payments.Payment{
+					ID:        "pay-additional-cpf",
+					BookingID: "BK-ABC123456",
+					Status:    "PENDING",
+					CreatedAt: time.Now().UTC(),
+				},
+				raw: json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201ADDITIONALCPF","qr_code_url":"https://provider/pix"}}]}`),
+			}
+			tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+				result: bookings.BookingDetails{
+					Booking: bookings.Booking{
+						ID:              "BK-ABC123456",
+						Status:          "PENDING",
+						ReservationCode: "ABC12345",
+						TotalAmount:     950,
+						RemainderAmount: 950,
+					},
+					Passenger: bookings.BookingPassenger{
+						Name:         "Passageiro Teste",
+						Document:     tc.document,
+						DocumentType: tc.documentType,
+						CPF:          syntheticValidCPFForTests(),
+						Phone:        "11000000000",
+					},
+				},
+			}, paymentSvc)
+
+			result, err := tool.Create(context.Background(), PaymentCreateInput{
+				BookingID:       "BK-ABC123456",
+				ReservationCode: "ABC12345",
+				PaymentType:     "sinal",
+			})
+			if err != nil {
+				t.Fatalf("create payment: %v", err)
+			}
+			if result.Mode != "pix_sent" || result.PixCode != "000201ADDITIONALCPF" {
+				t.Fatalf("expected PIX from saved passenger CPF, got %+v", result)
+			}
+			if paymentSvc.lastInput.Customer == nil || paymentSvc.lastInput.Customer.Document != syntheticValidCPFForTests() {
+				t.Fatalf("expected additional passenger CPF as customer document, got %+v", paymentSvc.lastInput.Customer)
+			}
+		})
 	}
 }
 

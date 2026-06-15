@@ -9,14 +9,16 @@ import (
 )
 
 type DocumentExtractPassenger struct {
-	Name         string  `json:"name"`
-	Document     string  `json:"document"`
-	DocumentType string  `json:"document_type"`
-	CPF          string  `json:"cpf,omitempty"`
-	CNH          string  `json:"cnh,omitempty"`
-	RG           string  `json:"rg,omitempty"`
-	BirthDate    string  `json:"birth_date,omitempty"`
-	Confidence   float64 `json:"confidence"`
+	Name                   string  `json:"name"`
+	Document               string  `json:"document"`
+	DocumentType           string  `json:"document_type"`
+	CPF                    string  `json:"cpf,omitempty"`
+	CNH                    string  `json:"cnh,omitempty"`
+	RG                     string  `json:"rg,omitempty"`
+	BirthDate              string  `json:"birth_date,omitempty"`
+	BirthCertificateNumber string  `json:"birth_certificate_number,omitempty"`
+	BirthCity              string  `json:"birth_city,omitempty"`
+	Confidence             float64 `json:"confidence"`
 }
 
 type DocumentExtractResult struct {
@@ -259,22 +261,41 @@ func (s *Service) runDocumentExtract(ctx context.Context, session Session, candi
 func buildDocumentExtractSystemPrompt() string {
 	return strings.TrimSpace(`Voce extrai dados de documentos brasileiros enviados por foto nitida para uma reserva de passagem.
 Responda exclusivamente em JSON valido, sem markdown.
-Priorize documentos nesta ordem quando houver mais de um numero: CPF, RG, CNH, CERTIDAO_NASCIMENTO.
 CPF brasileiro tem 11 digitos e dois digitos verificadores; nao trate como CPF um numero apenas por ter 11 digitos.
+Preserve a fonte documental como documento principal. CPF visivel deve ser extraido no campo cpf, mas nao deve substituir RG, CNH ou certidao como document principal.
 
 Extraia apenas:
 - nome completo
 - tipo do documento
 - numero do documento
-- CPF, CNH e RG em campos separados quando estiverem visiveis no mesmo arquivo
+- CPF, CNH, RG e matricula/numero da certidao de nascimento em campos separados quando estiverem visiveis no mesmo arquivo
 - data de nascimento quando estiver visivel
+- cidade de naturalidade quando estiver visivel
 - confianca da leitura
 
-Quando CNH ou CNH-e contiver CPF visivel, use o CPF como documento principal:
+Para RG/identidade:
+- document_type deve ser "RG"
+- document deve conter o RG sem orgao emissor/UF
+- rg deve repetir o RG normalizado
+- cpf deve conter o CPF sem pontuacao se ele estiver visivel
+
+Para CNH ou CNH-e:
+- document_type deve ser "CNH"
+- document deve conter o numero da CNH quando visivel
+- cnh deve repetir a CNH normalizada
+- cpf deve conter o CPF sem pontuacao se ele estiver visivel
+
+Para certidao de nascimento:
+- document_type deve ser "CERTIDAO_NASCIMENTO"
+- document deve conter a matricula da certidao quando ela tiver 32 digitos
+- birth_certificate_number deve repetir a matricula de 32 digitos
+- birth_city deve conter a cidade de naturalidade quando visivel
+- cpf deve conter o CPF sem pontuacao se ele estiver visivel
+
+Para CPF escrito como documento principal:
 - document_type deve ser "CPF"
 - document deve ser o CPF sem pontuacao
 - cpf deve repetir o CPF sem pontuacao
-- cnh deve preservar o numero da CNH quando visivel
 
 Para RG, document deve conter apenas o numero do RG.
 Nao inclua orgao emissor/UF no numero do RG.
@@ -282,9 +303,10 @@ Nao junte SSP, SSP/SC, SSPSC, SDS, SESP, IFP ou PC ao numero do RG.
 Exemplo: 2817314 SSP SC deve virar document "2817314", nunca "2817314SSPSC".
 
 Em CNH/CNH-e, nao confunda numero de registro da CNH, numero lateral, espelho, QR Code, RENACH, MRZ, codigo de seguranca ou protocolo com CPF.
-Em CNH-e, se CPF estiver visivel, CPF deve ser documento principal.
 Se houver duvida entre CPF, RG e CNH, retorne mode "PARTIAL".
-Se o CPF nao estiver visivel e a CNH estiver legivel, use document_type "CNH" e preserve o numero de CNH em cnh/document.
+Se a CNH estiver legivel, use document_type "CNH" e preserve o numero de CNH em cnh/document.
+Matricula de certidao de nascimento deve ter exatamente 32 digitos numericos. Se tiver menos ou mais, deixe birth_certificate_number/document vazio e use mode "PARTIAL".
+Data de nascimento deve sair como YYYY-MM-DD. Se estiver ilegivel ou incerta, deixe birth_date vazio.
 
 Quando houver frente e verso do documento, combine as informacoes com cuidado.
 Nunca invente dados ausentes.
@@ -293,7 +315,7 @@ Formato:
 {
   "mode": "EXTRACTED" | "PARTIAL" | "LOW_CONFIDENCE",
   "passengers": [
-    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero principal sem pontuacao desnecessaria", "cpf": "CPF quando visivel", "cnh": "CNH quando visivel", "rg": "RG quando visivel", "birth_date": "YYYY-MM-DD quando disponivel", "confidence": 0.0}
+    {"name": "Nome completo", "document_type": "CPF|RG|CNH|CERTIDAO_NASCIMENTO", "document": "numero principal sem pontuacao desnecessaria", "cpf": "CPF quando visivel", "cnh": "CNH quando visivel", "rg": "RG quando visivel", "birth_certificate_number": "matricula/numero da certidao quando visivel", "birth_date": "YYYY-MM-DD quando disponivel", "birth_city": "cidade de naturalidade quando disponivel", "confidence": 0.0}
   ],
   "failure_reason": ""
 }
@@ -304,7 +326,7 @@ func buildDocumentExtractUserPrompt(expected int) string {
 	if expected > 1 {
 		return fmt.Sprintf("Extraia nome completo e documento da foto recebida. A conversa espera %d passageiros; retorne somente os passageiros que conseguir ler com seguranca.", expected)
 	}
-	return "Extraia o maximo de informacao legivel. Nao classifique como LOW_CONFIDENCE se pelo menos nome ou algum documento puder ser lido parcialmente. Use PARTIAL quando algum campo faltar ou estiver incerto. Retorne LOW_CONFIDENCE somente se nenhum dado util puder ser lido. Se houver CPF visivel, sempre priorize CPF mesmo que tambem exista RG/CNH. Se o nome estiver parcialmente visivel, retorne o trecho lido e marque confidence menor. Nunca invente numeros ausentes."
+	return "Extraia o maximo de informacao legivel. Nao classifique como LOW_CONFIDENCE se pelo menos nome ou algum documento puder ser lido parcialmente. Use PARTIAL quando algum campo faltar ou estiver incerto. Retorne LOW_CONFIDENCE somente se nenhum dado util puder ser lido. Preserve RG, CNH ou CERTIDAO_NASCIMENTO como documento principal quando essa for a fonte enviada; CPF visivel deve ir em cpf adicional. Se o nome estiver parcialmente visivel, retorne o trecho lido e marque confidence menor. Nunca invente numeros ausentes."
 }
 
 func buildDocumentExtractTextFormat() map[string]interface{} {
@@ -348,13 +370,19 @@ func buildDocumentExtractTextFormat() map[string]interface{} {
 							"birth_date": map[string]interface{}{
 								"type": "string",
 							},
+							"birth_certificate_number": map[string]interface{}{
+								"type": "string",
+							},
+							"birth_city": map[string]interface{}{
+								"type": "string",
+							},
 							"confidence": map[string]interface{}{
 								"type":    "number",
 								"minimum": 0,
 								"maximum": 1,
 							},
 						},
-						"required": []string{"name", "document_type", "document", "cpf", "cnh", "rg", "birth_date", "confidence"},
+						"required": []string{"name", "document_type", "document", "cpf", "cnh", "rg", "birth_date", "birth_certificate_number", "birth_city", "confidence"},
 					},
 				},
 				"failure_reason": map[string]interface{}{
@@ -441,19 +469,17 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 	if documentType != "" && document != "" && documents[documentType] == "" {
 		documents[documentType] = document
 	}
-	if cpf := documents["CPF"]; isValidCPF(cpf) {
-		documentType = "CPF"
-		document = cpf
-	}
 	return normalizeDocumentExtractPassenger(DocumentExtractPassenger{
-		Name:         name,
-		Document:     document,
-		DocumentType: documentType,
-		CPF:          documents["CPF"],
-		CNH:          documents["CNH"],
-		RG:           documents["RG"],
-		BirthDate:    normalizeDocumentBirthDate(raw),
-		Confidence:   normalizeDocumentConfidence(asFloat64(raw["confidence"])),
+		Name:                   name,
+		Document:               document,
+		DocumentType:           documentType,
+		CPF:                    documents["CPF"],
+		CNH:                    documents["CNH"],
+		RG:                     documents["RG"],
+		BirthDate:              normalizeDocumentBirthDate(raw),
+		BirthCertificateNumber: documents["CERTIDAO_NASCIMENTO"],
+		BirthCity:              normalizeDocumentBirthCity(raw),
+		Confidence:             normalizeDocumentConfidence(asFloat64(raw["confidence"])),
 	})
 }
 
@@ -465,6 +491,9 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 	passenger.CPF = normalizePassengerDocumentValue(passenger.CPF, "CPF")
 	passenger.CNH = normalizePassengerDocumentValue(passenger.CNH, "CNH")
 	passenger.RG = normalizePassengerDocumentValue(passenger.RG, "RG")
+	passenger.BirthCertificateNumber = normalizePassengerDocumentValue(passenger.BirthCertificateNumber, "CERTIDAO_NASCIMENTO")
+	passenger.BirthDate = strings.TrimSpace(passenger.BirthDate)
+	passenger.BirthCity = normalizePassengerBirthCity(passenger.BirthCity)
 
 	switch documentType {
 	case "CPF":
@@ -475,6 +504,7 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 		passenger.RG = firstNonEmpty(passenger.RG, normalizePassengerDocumentValue(rawDocument, "RG"))
 	case "CERTIDAO_NASCIMENTO":
 		passenger.Document = normalizePassengerDocumentValue(rawDocument, "CERTIDAO_NASCIMENTO")
+		passenger.BirthCertificateNumber = firstNonEmpty(passenger.BirthCertificateNumber, passenger.Document)
 	default:
 		passenger.CPF = firstNonEmpty(passenger.CPF, normalizePassengerDocumentValue(rawDocument, "CPF"))
 		if passenger.CPF == "" {
@@ -482,13 +512,13 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 		}
 	}
 
-	if passenger.CPF != "" {
-		passenger.DocumentType = "CPF"
-		passenger.Document = passenger.CPF
-		return passenger
-	}
-
 	switch passenger.DocumentType {
+	case "CPF":
+		passenger.Document = firstNonEmpty(passenger.CPF, normalizePassengerDocumentValue(passenger.Document, "CPF"))
+		passenger.CPF = firstNonEmpty(passenger.CPF, passenger.Document)
+		if passenger.Document == "" {
+			passenger.DocumentType = ""
+		}
 	case "CNH":
 		passenger.Document = firstNonEmpty(passenger.CNH, normalizePassengerDocumentValue(passenger.Document, "CNH"))
 		passenger.CNH = firstNonEmpty(passenger.CNH, passenger.Document)
@@ -497,6 +527,7 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 		passenger.RG = firstNonEmpty(passenger.RG, passenger.Document)
 	case "CERTIDAO_NASCIMENTO":
 		passenger.Document = normalizePassengerDocumentValue(passenger.Document, "CERTIDAO_NASCIMENTO")
+		passenger.BirthCertificateNumber = firstNonEmpty(passenger.BirthCertificateNumber, passenger.Document)
 	default:
 		if looksLikeCNHEExtract(passenger) && passenger.CNH != "" {
 			passenger.DocumentType = "CNH"
@@ -507,12 +538,15 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 		} else if passenger.CNH != "" {
 			passenger.DocumentType = "CNH"
 			passenger.Document = passenger.CNH
+		} else if passenger.CPF != "" {
+			passenger.DocumentType = "CPF"
+			passenger.Document = passenger.CPF
 		} else {
 			passenger.Document = ""
 		}
 	}
 
-	if looksLikeCNHEExtract(passenger) && passenger.CPF == "" && passenger.CNH != "" {
+	if passenger.DocumentType == "" && looksLikeCNHEExtract(passenger) && passenger.CPF == "" && passenger.CNH != "" {
 		passenger.DocumentType = "CNH"
 		passenger.Document = passenger.CNH
 	}
@@ -556,9 +590,6 @@ func hasUnreliablePassengerDocument(passengers []DocumentExtractPassenger) bool 
 		default:
 			return true
 		}
-		if looksLikeCNHEExtract(passenger) && passenger.CPF != "" && (documentType != "CPF" || passenger.Document != passenger.CPF) {
-			return true
-		}
 	}
 	return false
 }
@@ -588,6 +619,15 @@ func documentExtractPassengerNeedsReview(raw map[string]interface{}, passenger D
 	if rawCPF := strings.TrimSpace(asString(raw["cpf"])); rawCPF != "" && normalizePassengerDocumentValue(rawCPF, "CPF") == "" {
 		return true
 	}
+	rawBirthDate := strings.TrimSpace(firstNonEmpty(
+		asString(raw["birth_date"]),
+		asString(raw["date_of_birth"]),
+		asString(raw["data_nascimento"]),
+		asString(raw["nascimento"]),
+	))
+	if rawBirthDate != "" && strings.TrimSpace(passenger.BirthDate) == "" {
+		return true
+	}
 	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))
 	if explicitType != "CPF" {
 		return false
@@ -615,7 +655,18 @@ func normalizeDocumentBirthDate(raw map[string]interface{}) string {
 	if parsed, ok := parseFlexibleDate(value); ok {
 		return parsed.Format("2006-01-02")
 	}
-	return value
+	return ""
+}
+
+func normalizeDocumentBirthCity(raw map[string]interface{}) string {
+	value := strings.TrimSpace(firstNonEmpty(
+		asString(raw["birth_city"]),
+		asString(raw["place_of_birth"]),
+		asString(raw["naturalidade"]),
+		asString(raw["cidade_naturalidade"]),
+		asString(raw["cidade_de_nascimento"]),
+	))
+	return normalizePassengerBirthCity(value)
 }
 
 func parseDocumentExtractContextPayload(payload map[string]interface{}) DocumentExtractResult {
@@ -653,7 +704,7 @@ func extractDocumentFields(raw map[string]interface{}) map[string]string {
 		{"CPF", []string{"cpf"}},
 		{"RG", []string{"rg"}},
 		{"CNH", []string{"cnh"}},
-		{"CERTIDAO_NASCIMENTO", []string{"certidao", "certidao_nascimento", "birth_certificate", "matricula"}},
+		{"CERTIDAO_NASCIMENTO", []string{"certidao", "certidao_nascimento", "birth_certificate", "birth_certificate_number", "matricula", "matricula_certidao"}},
 	} {
 		for _, key := range candidate.Keys {
 			if document := normalizePassengerDocumentValue(asString(raw[key]), candidate.Type); document != "" {
@@ -676,26 +727,25 @@ func selectDocumentByPriority(raw map[string]interface{}, documents map[string]s
 	}
 	explicitType := normalizePassengerDocumentType(firstNonEmpty(asString(raw["document_type"]), asString(raw["tipo_documento"]), asString(raw["type"])))
 	explicitDocument := firstNonEmpty(asString(raw["document"]), asString(raw["numero"]), asString(raw["number"]), asString(raw["document_number"]))
-	for _, candidate := range candidates {
-		if document := documents[candidate.Type]; document != "" {
-			return candidate.Type, document
-		}
-		if explicitType == "" {
-			if document := normalizePassengerDocumentValue(explicitDocument, candidate.Type); document != "" {
-				return candidate.Type, document
-			}
-		}
-	}
 	if explicitType != "" {
+		if document := documents[explicitType]; document != "" {
+			return explicitType, document
+		}
 		if document := normalizePassengerDocumentValue(explicitDocument, explicitType); document != "" {
 			return explicitType, document
 		}
+		return explicitType, ""
 	}
-	if explicitDocument != "" && explicitType == "" {
+	if explicitDocument != "" {
 		for _, candidate := range candidates {
 			if document := normalizePassengerDocumentValue(explicitDocument, candidate.Type); document != "" {
 				return candidate.Type, document
 			}
+		}
+	}
+	for _, candidate := range candidates {
+		if document := documents[candidate.Type]; document != "" {
+			return candidate.Type, document
 		}
 	}
 	return "", ""
@@ -755,14 +805,16 @@ func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[strin
 	passengers := make([]map[string]interface{}, 0, len(result.Passengers))
 	for _, passenger := range result.Passengers {
 		passengers = append(passengers, map[string]interface{}{
-			"name":          passenger.Name,
-			"document":      passenger.Document,
-			"document_type": passenger.DocumentType,
-			"cpf":           passenger.CPF,
-			"cnh":           passenger.CNH,
-			"rg":            passenger.RG,
-			"birth_date":    passenger.BirthDate,
-			"confidence":    passenger.Confidence,
+			"name":                     passenger.Name,
+			"document":                 passenger.Document,
+			"document_type":            passenger.DocumentType,
+			"cpf":                      passenger.CPF,
+			"cnh":                      passenger.CNH,
+			"rg":                       passenger.RG,
+			"birth_date":               passenger.BirthDate,
+			"birth_certificate_number": passenger.BirthCertificateNumber,
+			"birth_city":               passenger.BirthCity,
+			"confidence":               passenger.Confidence,
 		})
 	}
 	payload := map[string]interface{}{

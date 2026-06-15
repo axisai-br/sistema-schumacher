@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"time"
 
 	"schumacher-tur/api/internal/payments"
 	"schumacher-tur/api/internal/pricing"
@@ -275,36 +276,113 @@ func normalizePassengers(primary PassengerInput, list []PassengerInput) []Passen
 	if len(list) > 0 {
 		passengers := make([]PassengerInput, 0, len(list))
 		for _, passenger := range list {
-			passengers = append(passengers, PassengerInput{
-				Name:         strings.TrimSpace(passenger.Name),
-				Document:     strings.TrimSpace(passenger.Document),
-				DocumentType: normalizePassengerDocumentType(passenger.DocumentType, passenger.Document),
-				Phone:        strings.TrimSpace(passenger.Phone),
-				Email:        strings.TrimSpace(passenger.Email),
-				Notes:        mergePassengerNotes(passenger.Notes, passenger.IsLapChild),
-				IsLapChild:   passenger.IsLapChild,
-			})
+			passengers = append(passengers, normalizePassengerIdentityFields(PassengerInput{
+				Name:                   strings.TrimSpace(passenger.Name),
+				Document:               strings.TrimSpace(passenger.Document),
+				DocumentType:           normalizePassengerDocumentType(passenger.DocumentType, passenger.Document),
+				CPF:                    strings.TrimSpace(passenger.CPF),
+				RG:                     strings.TrimSpace(passenger.RG),
+				CNH:                    strings.TrimSpace(passenger.CNH),
+				BirthDate:              normalizePassengerBirthDate(passenger.BirthDate),
+				BirthCertificateNumber: strings.TrimSpace(passenger.BirthCertificateNumber),
+				BirthCity:              strings.TrimSpace(passenger.BirthCity),
+				Phone:                  strings.TrimSpace(passenger.Phone),
+				Email:                  strings.TrimSpace(passenger.Email),
+				Notes:                  mergePassengerNotes(passenger.Notes, passenger.IsLapChild),
+				IsLapChild:             passenger.IsLapChild,
+			}))
 		}
 		return passengers
 	}
 	if !hasPassengerPayload(primary) {
 		return nil
 	}
-	return []PassengerInput{{
-		Name:         strings.TrimSpace(primary.Name),
-		Document:     strings.TrimSpace(primary.Document),
-		DocumentType: normalizePassengerDocumentType(primary.DocumentType, primary.Document),
-		Phone:        strings.TrimSpace(primary.Phone),
-		Email:        strings.TrimSpace(primary.Email),
-		Notes:        mergePassengerNotes(primary.Notes, primary.IsLapChild),
-		IsLapChild:   primary.IsLapChild,
-	}}
+	return []PassengerInput{normalizePassengerIdentityFields(PassengerInput{
+		Name:                   strings.TrimSpace(primary.Name),
+		Document:               strings.TrimSpace(primary.Document),
+		DocumentType:           normalizePassengerDocumentType(primary.DocumentType, primary.Document),
+		CPF:                    strings.TrimSpace(primary.CPF),
+		RG:                     strings.TrimSpace(primary.RG),
+		CNH:                    strings.TrimSpace(primary.CNH),
+		BirthDate:              normalizePassengerBirthDate(primary.BirthDate),
+		BirthCertificateNumber: strings.TrimSpace(primary.BirthCertificateNumber),
+		BirthCity:              strings.TrimSpace(primary.BirthCity),
+		Phone:                  strings.TrimSpace(primary.Phone),
+		Email:                  strings.TrimSpace(primary.Email),
+		Notes:                  mergePassengerNotes(primary.Notes, primary.IsLapChild),
+		IsLapChild:             primary.IsLapChild,
+	})}
+}
+
+func normalizePassengerIdentityFields(passenger PassengerInput) PassengerInput {
+	switch passenger.DocumentType {
+	case "CPF":
+		if cpf := normalizePassengerCPF(passenger.CPF); cpf != "" {
+			passenger.CPF = cpf
+		} else {
+			passenger.CPF = normalizePassengerCPF(passenger.Document)
+		}
+		if passenger.CPF != "" {
+			passenger.Document = passenger.CPF
+		}
+	case "RG":
+		if passenger.RG == "" {
+			passenger.RG = passenger.Document
+		}
+	case "CNH":
+		if passenger.CNH == "" {
+			passenger.CNH = passenger.Document
+		}
+	case "CERTIDAO_NASCIMENTO":
+		if passenger.BirthCertificateNumber == "" {
+			passenger.BirthCertificateNumber = passenger.Document
+		}
+	}
+	return passenger
+}
+
+func normalizePassengerCPF(value string) string {
+	digits := passengerDocumentDigits(value)
+	if len(digits) != 11 || !payments.IsSupportedDocument(digits) {
+		return ""
+	}
+	return digits
+}
+
+func passengerDocumentDigits(value string) string {
+	var builder strings.Builder
+	for _, char := range strings.TrimSpace(value) {
+		if char >= '0' && char <= '9' {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
+}
+
+func normalizePassengerBirthDate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, layout := range []string{"2006-01-02", "02/01/2006", "02-01-2006", time.RFC3339, time.RFC3339Nano} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+	return value
 }
 
 func hasPassengerPayload(passenger PassengerInput) bool {
 	return strings.TrimSpace(passenger.Name) != "" ||
 		strings.TrimSpace(passenger.Document) != "" ||
 		strings.TrimSpace(passenger.DocumentType) != "" ||
+		strings.TrimSpace(passenger.CPF) != "" ||
+		strings.TrimSpace(passenger.RG) != "" ||
+		strings.TrimSpace(passenger.CNH) != "" ||
+		strings.TrimSpace(passenger.BirthDate) != "" ||
+		strings.TrimSpace(passenger.BirthCertificateNumber) != "" ||
+		strings.TrimSpace(passenger.BirthCity) != "" ||
 		strings.TrimSpace(passenger.Phone) != "" ||
 		strings.TrimSpace(passenger.Email) != "" ||
 		passenger.IsLapChild

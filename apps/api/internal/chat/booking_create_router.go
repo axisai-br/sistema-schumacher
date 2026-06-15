@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,9 +16,11 @@ var (
 	passengerCPFPattern            = regexp.MustCompile(`(?i)\bcpf\b[^0-9]*([0-9.\-]{11,14})`)
 	passengerRGPattern             = regexp.MustCompile(`(?i)\brg\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
 	passengerCNHPattern            = regexp.MustCompile(`(?i)\bcnh\b[^A-Z0-9]*([A-Z0-9.\-]{4,20})`)
-	passengerBirthRecordPattern    = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9.\-]{8,40})`)
+	passengerBirthRecordPattern    = regexp.MustCompile(`(?i)\b(?:certid[aã]o(?: de nascimento)?|matr[ií]cula)\b[^A-Z0-9]*([A-Z0-9][A-Z0-9.\- ]{6,80})`)
+	passengerBirthDatePattern      = regexp.MustCompile(`(?i)\b(?:data\s+de\s+nascimento|nascimento|nasc\.?)\b[^0-9]*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})`)
+	passengerBirthCityPattern      = regexp.MustCompile(`(?i)\b(?:naturalidade|natural\s+de|cidade\s+de\s+nascimento)\b\s*(?:é|e|:|-|de)?\s*([A-ZÀ-ÿ][A-Za-zÀ-ÿ' ]{1,80})`)
 	passengerLooseCPFLinePattern   = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+([0-9.\-]{11,14})\s*$`)
-	passengerLooseTypedLinePattern = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+(cpf|rg|cnh|certid[aã]o(?: de nascimento)?|matr[ií]cula)\s+([A-Z0-9.\- ]{4,40})\s*$`)
+	passengerLooseTypedLinePattern = regexp.MustCompile(`(?i)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,100}?)\s+(cpf|rg|cnh|certid[aã]o(?: de nascimento)?|matr[ií]cula)\s+([A-Z0-9.\- ]{4,80}?)(?:\s+(?:cpf|rg|cnh|certid[aã]o|matr[ií]cula|data\s+de\s+nascimento|nascimento|nasc\.?|naturalidade|natural\s+de|cidade\s+de\s+nascimento)\b.*)?\s*$`)
 	passengerWordQtyPattern        = regexp.MustCompile(`\b(um|uma|dois|duas|tres|quatro|cinco)\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
 	passengerDigitQtyPattern       = regexp.MustCompile(`\b([1-9])\s+(?:pessoas?|passageiros?|passagens?|assentos?|lugares?)\b`)
 	passengerSomosEmQtyPattern     = regexp.MustCompile(`\bsomos\s+em\s+([1-9])\b`)
@@ -35,10 +38,16 @@ var (
 )
 
 type PassengerDocumentCorrection struct {
-	NameConfirmed bool
-	Name          string
-	DocumentType  string
-	Document      string
+	NameConfirmed          bool
+	Name                   string
+	DocumentType           string
+	Document               string
+	CPF                    string
+	RG                     string
+	CNH                    string
+	BirthDate              string
+	BirthCertificateNumber string
+	BirthCity              string
 }
 
 type PassengerClarificationSlots struct {
@@ -246,27 +255,38 @@ func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, ses
 	extracted = normalizeDocumentExtractPassenger(extracted)
 	documentType := normalizePassengerDocumentType(extracted.DocumentType)
 	document := normalizePassengerDocumentValue(extracted.Document, documentType)
-	if cpf := normalizePassengerDocumentValue(extracted.CPF, "CPF"); cpf != "" {
-		documentType = "CPF"
-		document = cpf
-	}
 	return BookingCreatePassengerInput{
-		Name:         strings.TrimSpace(extracted.Name),
-		DocumentType: documentType,
-		Document:     document,
-		Phone:        strings.TrimSpace(session.CustomerPhone),
-		Notes:        buildSecondaryDocumentNotes(extracted, documentType, document),
+		Name:                   strings.TrimSpace(extracted.Name),
+		DocumentType:           documentType,
+		Document:               document,
+		CPF:                    normalizePassengerDocumentValue(extracted.CPF, "CPF"),
+		RG:                     firstNonEmpty(normalizePassengerDocumentValue(extracted.RG, "RG"), documentValueForType(document, documentType, "RG")),
+		CNH:                    firstNonEmpty(normalizePassengerDocumentValue(extracted.CNH, "CNH"), documentValueForType(document, documentType, "CNH")),
+		BirthDate:              strings.TrimSpace(extracted.BirthDate),
+		BirthCertificateNumber: firstNonEmpty(normalizePassengerDocumentValue(extracted.BirthCertificateNumber, "CERTIDAO_NASCIMENTO"), documentValueForType(document, documentType, "CERTIDAO_NASCIMENTO")),
+		BirthCity:              normalizePassengerBirthCity(extracted.BirthCity),
+		Phone:                  strings.TrimSpace(session.CustomerPhone),
+		Notes:                  buildPassengerIdentityNotes(extracted, documentType, document),
 	}
 }
 
-func buildSecondaryDocumentNotes(extracted DocumentExtractPassenger, primaryType string, primaryDocument string) string {
-	secondary := make([]string, 0, 2)
+func documentValueForType(document string, documentType string, expectedType string) string {
+	if !strings.EqualFold(strings.TrimSpace(documentType), expectedType) {
+		return ""
+	}
+	return normalizePassengerDocumentValue(document, expectedType)
+}
+
+func buildPassengerIdentityNotes(extracted DocumentExtractPassenger, primaryType string, primaryDocument string) string {
+	secondary := make([]string, 0, 6)
 	for _, item := range []struct {
 		Type     string
 		Document string
 	}{
+		{"CPF", normalizePassengerDocumentValue(extracted.CPF, "CPF")},
 		{"CNH", normalizePassengerDocumentValue(extracted.CNH, "CNH")},
 		{"RG", normalizePassengerDocumentValue(extracted.RG, "RG")},
+		{"CERTIDAO_NASCIMENTO", normalizePassengerDocumentValue(extracted.BirthCertificateNumber, "CERTIDAO_NASCIMENTO")},
 	} {
 		if item.Document == "" {
 			continue
@@ -276,10 +296,16 @@ func buildSecondaryDocumentNotes(extracted DocumentExtractPassenger, primaryType
 		}
 		secondary = append(secondary, item.Type+": "+item.Document)
 	}
+	if birthDate := strings.TrimSpace(extracted.BirthDate); birthDate != "" {
+		secondary = append(secondary, "DATA_NASCIMENTO: "+birthDate)
+	}
+	if birthCity := normalizePassengerBirthCity(extracted.BirthCity); birthCity != "" {
+		secondary = append(secondary, "NATURALIDADE: "+birthCity)
+	}
 	if len(secondary) == 0 {
 		return ""
 	}
-	return "Documentos secundarios extraidos: " + strings.Join(secondary, " | ")
+	return "Dados adicionais extraidos: " + strings.Join(secondary, " | ")
 }
 
 func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session Session, tripDate string) []BookingCreatePassengerInput {
@@ -300,18 +326,28 @@ func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection,
 		return PassengerDocumentCorrection{}, false
 	}
 
-	document := extractValidCPF(body)
-	if document == "" {
-		return PassengerDocumentCorrection{}, false
-	}
-
 	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
 	looseNameCPF := passengerLooseCPFLinePattern.FindStringSubmatch(body)
+	document, documentType := extractBookingPassengerDocument(body)
+	cpf := extractValidCPF(body)
+	if document == "" && cpf != "" {
+		document = cpf
+		documentType = "CPF"
+	}
 	hasCorrectionCue := looksLikeBareCPF(body) ||
 		len(looseNameCPF) == 3 ||
 		strings.Contains(folded, "cpf") ||
+		strings.Contains(folded, "rg") ||
+		strings.Contains(folded, "cnh") ||
+		strings.Contains(folded, "certidao") ||
+		strings.Contains(folded, "matricula") ||
+		strings.Contains(folded, "nascimento") ||
+		strings.Contains(folded, "naturalidade") ||
 		strings.Contains(folded, "documento correto") ||
 		strings.Contains(folded, "documento certo") ||
+		strings.Contains(folded, "corrige") ||
+		strings.Contains(folded, "corrigir") ||
+		strings.Contains(folded, "correto") ||
 		strings.Contains(folded, "usar esse documento") ||
 		strings.Contains(folded, "use esse documento")
 	if !hasCorrectionCue {
@@ -323,9 +359,15 @@ func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection,
 			strings.Contains(folded, "nome ta certo") ||
 			strings.Contains(folded, "nome correto") ||
 			strings.Contains(folded, "nome esta correto"),
-		DocumentType: "CPF",
+		DocumentType: documentType,
 		Document:     document,
+		CPF:          cpf,
+		RG:           extractPassengerRG(body),
+		CNH:          extractPassengerCNH(body),
+		BirthDate:    extractPassengerBirthDate(body),
+		BirthCity:    extractPassengerBirthCity(body),
 	}
+	correction.BirthCertificateNumber = extractPassengerBirthCertificateNumber(body)
 
 	if len(looseNameCPF) == 3 {
 		correction.Name = normalizePassengerName(looseNameCPF[1])
@@ -334,7 +376,22 @@ func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection,
 		correction.Name = extractBookingPassengerName(body, "")
 	}
 
+	if !correction.hasChanges() {
+		return PassengerDocumentCorrection{}, false
+	}
 	return correction, true
+}
+
+func (c PassengerDocumentCorrection) hasChanges() bool {
+	return strings.TrimSpace(c.Name) != "" ||
+		strings.TrimSpace(c.Document) != "" ||
+		strings.TrimSpace(c.CPF) != "" ||
+		strings.TrimSpace(c.RG) != "" ||
+		strings.TrimSpace(c.CNH) != "" ||
+		strings.TrimSpace(c.BirthDate) != "" ||
+		strings.TrimSpace(c.BirthCertificateNumber) != "" ||
+		strings.TrimSpace(c.BirthCity) != "" ||
+		c.NameConfirmed
 }
 
 func extractValidCPF(text string) string {
@@ -396,12 +453,12 @@ func findLatestPassengerDocumentCorrection(history []Message, currentTurn string
 }
 
 func applyPassengerDocumentCorrection(passengers []BookingCreatePassengerInput, correction PassengerDocumentCorrection) []BookingCreatePassengerInput {
-	if len(passengers) == 0 || strings.TrimSpace(correction.DocumentType) == "" || strings.TrimSpace(correction.Document) == "" {
+	if len(passengers) == 0 {
 		return passengers
 	}
 
 	out := append([]BookingCreatePassengerInput(nil), passengers...)
-	target := 0
+	target := -1
 	if correction.Name != "" {
 		for i, passenger := range out {
 			if strings.EqualFold(strings.Join(strings.Fields(foldChatText(passenger.Name)), " "), strings.Join(strings.Fields(foldChatText(correction.Name)), " ")) {
@@ -410,12 +467,48 @@ func applyPassengerDocumentCorrection(passengers []BookingCreatePassengerInput, 
 			}
 		}
 	}
+	if target < 0 && len(out) == 1 {
+		target = 0
+	}
+	if target < 0 {
+		return out
+	}
 
 	if correction.Name != "" {
 		out[target].Name = correction.Name
 	}
-	out[target].DocumentType = normalizePassengerDocumentType(correction.DocumentType)
-	out[target].Document = normalizePassengerDocumentValue(correction.Document, out[target].DocumentType)
+	if strings.TrimSpace(correction.DocumentType) != "" && strings.TrimSpace(correction.Document) != "" {
+		out[target].DocumentType = normalizePassengerDocumentType(correction.DocumentType)
+		out[target].Document = normalizePassengerDocumentValue(correction.Document, out[target].DocumentType)
+	}
+	if correction.CPF != "" {
+		out[target].CPF = normalizePassengerDocumentValue(correction.CPF, "CPF")
+	}
+	if correction.RG != "" {
+		out[target].RG = normalizePassengerDocumentValue(correction.RG, "RG")
+	}
+	if correction.CNH != "" {
+		out[target].CNH = normalizePassengerDocumentValue(correction.CNH, "CNH")
+	}
+	if correction.BirthDate != "" {
+		out[target].BirthDate = correction.BirthDate
+	}
+	if correction.BirthCertificateNumber != "" {
+		out[target].BirthCertificateNumber = normalizePassengerDocumentValue(correction.BirthCertificateNumber, "CERTIDAO_NASCIMENTO")
+	}
+	if correction.BirthCity != "" {
+		out[target].BirthCity = normalizePassengerBirthCity(correction.BirthCity)
+	}
+	switch out[target].DocumentType {
+	case "CPF":
+		out[target].CPF = normalizePassengerDocumentValue(out[target].Document, "CPF")
+	case "RG":
+		out[target].RG = normalizePassengerDocumentValue(out[target].Document, "RG")
+	case "CNH":
+		out[target].CNH = normalizePassengerDocumentValue(out[target].Document, "CNH")
+	case "CERTIDAO_NASCIMENTO":
+		out[target].BirthCertificateNumber = normalizePassengerDocumentValue(out[target].Document, "CERTIDAO_NASCIMENTO")
+	}
 	return out
 }
 
@@ -803,17 +896,22 @@ func extractBookingCreatePassengers(text string, session Session) []BookingCreat
 		name := normalizePassengerName(match[1])
 		document := normalizeDigits(match[2])
 		if name != "" && isValidCPF(document) {
+			passenger := enrichPassengerAdditionalIdentityFromText(BookingCreatePassengerInput{
+				Name:         name,
+				Document:     document,
+				DocumentType: "CPF",
+				CPF:          document,
+				Phone:        strings.TrimSpace(session.CustomerPhone),
+			}, text)
 			return []BookingCreatePassengerInput{
-				{
-					Name:         name,
-					Document:     document,
-					DocumentType: "CPF",
-					Phone:        strings.TrimSpace(session.CustomerPhone),
-				},
+				passenger,
 			}
 		}
 	}
 	if passenger, ok := parseLooseTypedPassengerDocument(text, session); ok {
+		return []BookingCreatePassengerInput{enrichPassengerAdditionalIdentityFromText(passenger, text)}
+	}
+	if passenger, ok := parseStructuredPassengerLine(text, session); ok {
 		return []BookingCreatePassengerInput{passenger}
 	}
 	document, documentType := extractBookingPassengerDocument(text)
@@ -824,14 +922,13 @@ func extractBookingCreatePassengers(text string, session Session) []BookingCreat
 	if name == "" {
 		return nil
 	}
-	return []BookingCreatePassengerInput{
-		{
-			Name:         name,
-			Document:     document,
-			DocumentType: documentType,
-			Phone:        strings.TrimSpace(session.CustomerPhone),
-		},
+	passenger := BookingCreatePassengerInput{
+		Name:         name,
+		Document:     document,
+		DocumentType: documentType,
+		Phone:        strings.TrimSpace(session.CustomerPhone),
 	}
+	return []BookingCreatePassengerInput{enrichPassengerAdditionalIdentityFromText(passenger, text)}
 }
 
 func extractBookingCreatePassengersByLines(text string, session Session) []BookingCreatePassengerInput {
@@ -849,13 +946,15 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 			if name == "" || !isValidCPF(document) {
 				return nil
 			}
-			passengers = append(passengers, BookingCreatePassengerInput{
+			passenger := BookingCreatePassengerInput{
 				Name:         name,
 				Document:     document,
 				DocumentType: "CPF",
+				CPF:          document,
 				Phone:        strings.TrimSpace(session.CustomerPhone),
 				IsLapChild:   lapChildLabelKnown && isLapChild,
-			})
+			}
+			passengers = append(passengers, enrichPassengerAdditionalIdentityFromText(passenger, segment))
 			continue
 		}
 		if match := passengerLooseCPFLinePattern.FindStringSubmatch(cleanSegment); len(match) == 3 {
@@ -864,13 +963,15 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 			if name == "" || !isValidCPF(document) {
 				return nil
 			}
-			passengers = append(passengers, BookingCreatePassengerInput{
+			passenger := BookingCreatePassengerInput{
 				Name:         name,
 				Document:     document,
 				DocumentType: "CPF",
+				CPF:          document,
 				Phone:        strings.TrimSpace(session.CustomerPhone),
 				IsLapChild:   lapChildLabelKnown && isLapChild,
-			})
+			}
+			passengers = append(passengers, enrichPassengerAdditionalIdentityFromText(passenger, cleanSegment))
 			continue
 		}
 
@@ -878,7 +979,7 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 			if lapChildLabelKnown {
 				passenger.IsLapChild = isLapChild
 			}
-			passengers = append(passengers, passenger)
+			passengers = append(passengers, enrichPassengerAdditionalIdentityFromText(passenger, cleanSegment))
 			continue
 		}
 
@@ -886,7 +987,7 @@ func extractBookingCreatePassengersByLines(text string, session Session) []Booki
 			if lapChildLabelKnown {
 				passenger.IsLapChild = isLapChild
 			}
-			passengers = append(passengers, passenger)
+			passengers = append(passengers, enrichPassengerAdditionalIdentityFromText(passenger, cleanSegment))
 			continue
 		}
 	}
@@ -907,12 +1008,13 @@ func parseLooseTypedPassengerDocument(segment string, session Session) (BookingC
 	if name == "" || documentType == "" || document == "" {
 		return BookingCreatePassengerInput{}, false
 	}
-	return BookingCreatePassengerInput{
+	passenger := BookingCreatePassengerInput{
 		Name:         name,
 		Document:     document,
 		DocumentType: documentType,
 		Phone:        strings.TrimSpace(session.CustomerPhone),
-	}, true
+	}
+	return enrichPassengerAdditionalIdentityFromText(passenger, segment), true
 }
 
 func stripPassengerLapChildLabel(segment string) (string, bool, bool) {
@@ -945,7 +1047,7 @@ func parseStructuredPassengerLine(segment string, session Session) (BookingCreat
 	}
 
 	parts := strings.Split(segment, "|")
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return BookingCreatePassengerInput{}, false
 	}
 
@@ -964,12 +1066,98 @@ func parseStructuredPassengerLine(segment string, session Session) (BookingCreat
 		return BookingCreatePassengerInput{}, false
 	}
 
-	return BookingCreatePassengerInput{
+	return enrichPassengerAdditionalIdentityFromText(BookingCreatePassengerInput{
 		Name:         name,
 		Document:     document,
 		DocumentType: documentType,
 		Phone:        strings.TrimSpace(session.CustomerPhone),
-	}, true
+	}, segment), true
+}
+
+func enrichPassengerAdditionalIdentityFromText(passenger BookingCreatePassengerInput, text string) BookingCreatePassengerInput {
+	passenger.CPF = firstNonEmpty(
+		normalizePassengerDocumentValue(passenger.CPF, "CPF"),
+		passengerCPFForPrimaryDocument(passenger),
+		extractValidCPF(text),
+	)
+	passenger.RG = firstNonEmpty(
+		normalizePassengerDocumentValue(passenger.RG, "RG"),
+		passengerDocumentForPrimaryType(passenger, "RG"),
+		extractPassengerRG(text),
+	)
+	passenger.CNH = firstNonEmpty(
+		normalizePassengerDocumentValue(passenger.CNH, "CNH"),
+		passengerDocumentForPrimaryType(passenger, "CNH"),
+		extractPassengerCNH(text),
+	)
+	if birthDate := extractPassengerBirthDate(text); birthDate != "" {
+		passenger.BirthDate = birthDate
+	}
+	if birthRecord := normalizePassengerDocumentValue(firstNonEmpty(passenger.BirthCertificateNumber, extractPassengerBirthCertificateNumber(text)), "CERTIDAO_NASCIMENTO"); birthRecord != "" {
+		passenger.BirthCertificateNumber = birthRecord
+	}
+	if strings.EqualFold(passenger.DocumentType, "CERTIDAO_NASCIMENTO") && passenger.BirthCertificateNumber == "" {
+		passenger.BirthCertificateNumber = normalizePassengerDocumentValue(passenger.Document, "CERTIDAO_NASCIMENTO")
+	}
+	if city := normalizePassengerBirthCity(firstNonEmpty(passenger.BirthCity, extractPassengerBirthCity(text))); city != "" {
+		passenger.BirthCity = city
+	}
+	return passenger
+}
+
+func passengerCPFForPrimaryDocument(passenger BookingCreatePassengerInput) string {
+	if !strings.EqualFold(strings.TrimSpace(passenger.DocumentType), "CPF") {
+		return ""
+	}
+	return normalizePassengerDocumentValue(passenger.Document, "CPF")
+}
+
+func passengerDocumentForPrimaryType(passenger BookingCreatePassengerInput, documentType string) string {
+	if !strings.EqualFold(strings.TrimSpace(passenger.DocumentType), documentType) {
+		return ""
+	}
+	return normalizePassengerDocumentValue(passenger.Document, documentType)
+}
+
+func extractPassengerRG(text string) string {
+	if match := passengerRGPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
+		return normalizePassengerDocumentValue(match[1], "RG")
+	}
+	return ""
+}
+
+func extractPassengerCNH(text string) string {
+	if match := passengerCNHPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
+		return normalizePassengerDocumentValue(match[1], "CNH")
+	}
+	return ""
+}
+
+func extractPassengerBirthDate(text string) string {
+	match := passengerBirthDatePattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	if parsed, ok := parseFlexibleDate(match[1]); ok {
+		return parsed.Format("2006-01-02")
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func extractPassengerBirthCertificateNumber(text string) string {
+	match := passengerBirthRecordPattern.FindStringSubmatch(strings.ToUpper(text))
+	if len(match) != 2 {
+		return ""
+	}
+	return normalizeBirthCertificateNumberFromText(match[1])
+}
+
+func extractPassengerBirthCity(text string) string {
+	match := passengerBirthCityPattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	return normalizePassengerBirthCity(match[1])
 }
 
 func splitPassengerSegments(text string) []string {
@@ -1010,31 +1198,49 @@ func normalizePassengerName(value string) string {
 }
 
 func extractBookingPassengerDocument(text string) (string, string) {
-	if match := passengerCPFPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		document := normalizeDigits(match[1])
-		if isValidCPF(document) {
-			return document, "CPF"
-		}
+	candidates := typedPassengerDocumentCandidates(text)
+	if len(candidates) == 0 {
+		return "", ""
 	}
-	if match := passengerRGPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		document := normalizePassengerDocumentValue(match[1], "RG")
-		if document != "" {
-			return document, "RG"
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Start < candidates[j].Start
+	})
+	return candidates[0].Document, candidates[0].DocumentType
+}
+
+type typedPassengerDocumentCandidate struct {
+	Start        int
+	Document     string
+	DocumentType string
+}
+
+func typedPassengerDocumentCandidates(text string) []typedPassengerDocumentCandidate {
+	body := strings.ToUpper(text)
+	candidates := make([]typedPassengerDocumentCandidate, 0, 4)
+	for _, item := range []struct {
+		DocumentType string
+		Pattern      *regexp.Regexp
+	}{
+		{"CPF", passengerCPFPattern},
+		{"RG", passengerRGPattern},
+		{"CNH", passengerCNHPattern},
+		{"CERTIDAO_NASCIMENTO", passengerBirthRecordPattern},
+	} {
+		match := item.Pattern.FindStringSubmatchIndex(body)
+		if len(match) < 4 || match[2] < 0 || match[3] < 0 {
+			continue
 		}
-	}
-	if match := passengerBirthRecordPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		document := normalizeAlphaNumeric(match[1])
-		if document != "" {
-			return document, "CERTIDAO_NASCIMENTO"
+		document := normalizePassengerDocumentValue(body[match[2]:match[3]], item.DocumentType)
+		if document == "" {
+			continue
 		}
+		candidates = append(candidates, typedPassengerDocumentCandidate{
+			Start:        match[0],
+			Document:     document,
+			DocumentType: item.DocumentType,
+		})
 	}
-	if match := passengerCNHPattern.FindStringSubmatch(strings.ToUpper(text)); len(match) == 2 {
-		document := normalizeAlphaNumeric(match[1])
-		if document != "" {
-			return document, "CNH"
-		}
-	}
-	return "", ""
+	return candidates
 }
 
 func looksLikePassengerDocumentText(text string, session Session) bool {
@@ -1819,7 +2025,7 @@ func isLapChildFromBirthDate(birthDate string, tripDate string) bool {
 
 func parseFlexibleDate(value string) (time.Time, bool) {
 	value = strings.TrimSpace(value)
-	for _, layout := range []string{"2006-01-02", "02/01/2006", time.RFC3339, time.RFC3339Nano} {
+	for _, layout := range []string{"2006-01-02", "02/01/2006", "02-01-2006", time.RFC3339, time.RFC3339Nano} {
 		parsed, err := time.Parse(layout, value)
 		if err == nil {
 			return parsed, true
@@ -1854,11 +2060,49 @@ func normalizePassengerDocumentValue(value string, documentType string) string {
 		return ""
 	case "RG":
 		return normalizeRGDocument(value)
-	case "CNH", "CERTIDAO_NASCIMENTO":
+	case "CNH":
 		return normalizeAlphaNumeric(value)
+	case "CERTIDAO_NASCIMENTO":
+		document := normalizeDigits(value)
+		if len(document) == 32 {
+			return document
+		}
+		return ""
 	default:
 		return ""
 	}
+}
+
+func normalizePassengerBirthCity(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	tokens := strings.Fields(value)
+	city := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		folded := strings.Trim(strings.Join(strings.Fields(foldChatText(token)), " "), ".,;:-")
+		switch folded {
+		case "cpf", "rg", "cnh", "certidao", "matricula", "documento", "data", "nascimento", "nasc":
+			return strings.TrimSpace(strings.Join(city, " "))
+		}
+		city = append(city, strings.Trim(token, ".,;:"))
+	}
+	return strings.TrimSpace(strings.Join(city, " "))
+}
+
+func normalizeBirthCertificateNumberFromText(value string) string {
+	tokens := strings.Fields(strings.TrimSpace(value))
+	kept := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		folded := strings.Trim(strings.Join(strings.Fields(foldChatText(token)), " "), ".,;:-")
+		switch folded {
+		case "cpf", "rg", "cnh", "certidao", "matricula", "documento", "data", "nascimento", "nasc", "naturalidade", "natural":
+			return normalizePassengerDocumentValue(strings.Join(kept, ""), "CERTIDAO_NASCIMENTO")
+		}
+		kept = append(kept, token)
+	}
+	return normalizePassengerDocumentValue(strings.Join(kept, ""), "CERTIDAO_NASCIMENTO")
 }
 
 func isValidCPF(value string) bool {
@@ -1975,11 +2219,17 @@ func buildBookingCreateRequestPayload(input BookingCreateInput) map[string]inter
 	passengers := make([]map[string]interface{}, 0, len(input.Passengers))
 	for _, item := range input.Passengers {
 		passengers = append(passengers, map[string]interface{}{
-			"name":          item.Name,
-			"document":      item.Document,
-			"document_type": item.DocumentType,
-			"phone":         item.Phone,
-			"is_lap_child":  item.IsLapChild,
+			"name":                     item.Name,
+			"document":                 item.Document,
+			"document_type":            item.DocumentType,
+			"cpf":                      item.CPF,
+			"rg":                       item.RG,
+			"cnh":                      item.CNH,
+			"birth_date":               item.BirthDate,
+			"birth_certificate_number": item.BirthCertificateNumber,
+			"birth_city":               item.BirthCity,
+			"phone":                    item.Phone,
+			"is_lap_child":             item.IsLapChild,
 		})
 	}
 	return map[string]interface{}{
@@ -2003,12 +2253,18 @@ func buildBookingCreateResponsePayload(result BookingCreateResult) map[string]in
 	passengers := make([]map[string]interface{}, 0, len(result.Passengers))
 	for _, item := range result.Passengers {
 		passengers = append(passengers, map[string]interface{}{
-			"name":          item.Name,
-			"document":      item.Document,
-			"document_type": item.DocumentType,
-			"phone":         item.Phone,
-			"seat_id":       item.SeatID,
-			"is_lap_child":  item.IsLapChild,
+			"name":                     item.Name,
+			"document":                 item.Document,
+			"document_type":            item.DocumentType,
+			"cpf":                      item.CPF,
+			"rg":                       item.RG,
+			"cnh":                      item.CNH,
+			"birth_date":               item.BirthDate,
+			"birth_certificate_number": item.BirthCertificateNumber,
+			"birth_city":               item.BirthCity,
+			"phone":                    item.Phone,
+			"seat_id":                  item.SeatID,
+			"is_lap_child":             item.IsLapChild,
 		})
 	}
 	payload := map[string]interface{}{

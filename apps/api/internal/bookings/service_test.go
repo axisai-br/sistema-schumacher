@@ -2,11 +2,18 @@ package bookings
 
 import "testing"
 
+const testBirthCertificateNumber = "12345678901234567890123456789012"
+
+func syntheticValidCPFForBookingTests() string {
+	// Checksum-valid CPF generated for normalization tests only.
+	return "84960815086"
+}
+
 func TestNormalizePassengersUsesPluralListWhenPresent(t *testing.T) {
 	passengers := normalizePassengers(
 		PassengerInput{Name: "Ignorado"},
 		[]PassengerInput{
-			{Name: " Maria ", Document: " 123 ", Phone: " 4899 ", Email: " maria@example.com "},
+			{Name: " Passageiro Teste ", Document: " 123 ", CPF: " " + syntheticValidCPFForBookingTests() + " ", RG: " 123 ", CNH: " 99999999999 ", BirthDate: " 21-05-2022 ", BirthCertificateNumber: " " + testBirthCertificateNumber + " ", BirthCity: " Santa Ines ", Phone: " 1100 ", Email: " passageiro@example.invalid "},
 			{Name: "Joao"},
 		},
 	)
@@ -14,8 +21,11 @@ func TestNormalizePassengersUsesPluralListWhenPresent(t *testing.T) {
 	if len(passengers) != 2 {
 		t.Fatalf("expected 2 passengers, got %d", len(passengers))
 	}
-	if passengers[0].Name != "Maria" || passengers[0].Document != "123" || passengers[0].DocumentType != "RG" || passengers[0].Phone != "4899" || passengers[0].Email != "maria@example.com" {
+	if passengers[0].Name != "Passageiro Teste" || passengers[0].Document != "123" || passengers[0].DocumentType != "RG" || passengers[0].Phone != "1100" || passengers[0].Email != "passageiro@example.invalid" {
 		t.Fatalf("unexpected normalization result: %+v", passengers[0])
+	}
+	if passengers[0].CPF != syntheticValidCPFForBookingTests() || passengers[0].RG != "123" || passengers[0].CNH != "99999999999" || passengers[0].BirthDate != "2022-05-21" || passengers[0].BirthCertificateNumber != testBirthCertificateNumber || passengers[0].BirthCity != "Santa Ines" {
+		t.Fatalf("expected additional identity fields preserved, got %+v", passengers[0])
 	}
 	if passengers[1].Name != "Joao" {
 		t.Fatalf("unexpected second passenger: %+v", passengers[1])
@@ -58,6 +68,26 @@ func TestNormalizePassengersPreservesExplicitDocumentType(t *testing.T) {
 	}
 	if passengers[3].DocumentType != "CERTIDAO_NASCIMENTO" {
 		t.Fatalf("expected CERTIDAO_NASCIMENTO document type, got %+v", passengers[3])
+	}
+}
+
+func TestNormalizePassengersMirrorsFormattedCPFAsDigitsOnly(t *testing.T) {
+	passengers := normalizePassengers(
+		PassengerInput{},
+		[]PassengerInput{
+			{Name: "Passageiro Teste", Document: "849.608.150-86"},
+			{Name: "Outro Teste", Document: "123.456.789-01", DocumentType: "CPF"},
+		},
+	)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected 2 passengers, got %d", len(passengers))
+	}
+	if passengers[0].DocumentType != "CPF" || passengers[0].Document != syntheticValidCPFForBookingTests() || passengers[0].CPF != syntheticValidCPFForBookingTests() {
+		t.Fatalf("expected formatted CPF mirrored as digits only, got %+v", passengers[0])
+	}
+	if passengers[1].DocumentType != "CPF" || passengers[1].CPF != "" {
+		t.Fatalf("expected invalid CPF not to be persisted as cpf, got %+v", passengers[1])
 	}
 }
 
