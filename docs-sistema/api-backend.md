@@ -398,15 +398,24 @@ Payload principal de criacao:
   "passengers": [
     {
       "name": "Maria",
-      "document": "00000000000",
+      "document": "<cpf_11_digitos>",
       "document_type": "CPF",
+      "cpf": "<cpf_11_digitos>",
+      "rg": "",
+      "cnh": "",
+      "birth_date": "1990-05-21",
+      "birth_certificate_number": "",
+      "birth_city": "Santa Ines",
       "phone": "48999999999",
       "email": "maria@example.com"
     },
     {
       "name": "Joao",
-      "document": "MG1234567",
+      "document": "RG_EXEMPLO",
       "document_type": "RG",
+      "cpf": "<cpf_11_digitos>",
+      "rg": "RG_EXEMPLO",
+      "cnh": "",
       "phone": "48988888888",
       "email": "joao@example.com"
     }
@@ -430,15 +439,24 @@ Payload de checkout:
   "passengers": [
     {
       "name": "Maria",
-      "document": "00000000000",
+      "document": "<cpf_11_digitos>",
       "document_type": "CPF",
+      "cpf": "<cpf_11_digitos>",
+      "rg": "",
+      "cnh": "",
+      "birth_date": "1990-05-21",
+      "birth_certificate_number": "",
+      "birth_city": "Santa Ines",
       "phone": "48999999999",
       "email": "maria@example.com"
     },
     {
       "name": "Joao",
-      "document": "MG1234567",
+      "document": "RG_EXEMPLO",
       "document_type": "RG",
+      "cpf": "<cpf_11_digitos>",
+      "rg": "RG_EXEMPLO",
+      "cnh": "",
       "phone": "48988888888",
       "email": "joao@example.com"
     }
@@ -453,7 +471,7 @@ Payload de checkout:
       "name": "Maria",
       "email": "maria@example.com",
       "phone": "48999999999",
-      "document": "00000000000"
+      "document": "<cpf_11_digitos>"
     }
   }
 }
@@ -465,6 +483,12 @@ Validacoes e regras:
 - `passengers[]` e o contrato principal para grupos; `passenger` singular segue aceito como alias retrocompativel para um unico passageiro
 - cada passageiro pode informar `document_type` como `CPF`, `RG`, `CNH` ou `CERTIDAO_NASCIMENTO`; aliases operacionais como `CERTIDAO`, `CERTIDAO_DE_NASCIMENTO` e `MATRICULA` sao normalizados para `CERTIDAO_NASCIMENTO`
 - quando `document_type` for omitido, a API preserva a compatibilidade anterior e infere `CPF` para documentos com 11 digitos numericos e `RG` nos demais casos
+- cada passageiro tambem pode informar dados adicionais de identidade: `cpf` quando estiver disponivel mas nao for necessariamente o documento principal, `rg`, `cnh`, `birth_date`, `birth_certificate_number` e `birth_city`
+- `birth_date` e armazenado como `DATE` no banco; a API retorna `YYYY-MM-DD`; WhatsApp e UI exibem `DD-MM-YYYY`
+- `birth_certificate_number` e texto e deve ser nulo ou conter exatamente 32 digitos numericos, por exemplo `12345678901234567890123456789012`
+- `birth_city` representa naturalidade/cidade de nascimento
+- quando a fonte documental for RG, CNH ou certidao, `document_type`/`document` preservam essa fonte; CPF visivel fica em `cpf` e nao substitui o documento principal
+- o fluxo de chat extrai esses campos de foto legivel ou texto digitado, mostra na confirmacao antes da reserva e persiste junto ao passageiro
 - `idempotency_key` e opcional; quando enviado, a API o persiste junto ao booking para correlacao operacional
 - `seat_id` e opcional; quando omitido, a API tenta alocar automaticamente a primeira poltrona livre da viagem
 - quando `seat_id` e informado, ele so pode ser usado com um unico passageiro
@@ -478,8 +502,15 @@ Validacoes e regras:
 Observacao operacional:
 
 - `GET /bookings` agora permite localizar reserva por `booking_id`, `reservation_code`, `trip_id` e `status`; quando `booking_id` e `reservation_code` vierem juntos, a API trata a busca como `OR` para facilitar integracao com workflows.
-- a resposta de `GET /bookings/{bookingId}`, `POST /bookings` e `POST /bookings/checkout` inclui `passengers[]` com `document` e `document_type`; o campo `passenger` continua presente como alias do primeiro passageiro para compatibilidade.
+- a resposta de `GET /bookings/{bookingId}`, `POST /bookings` e `POST /bookings/checkout` inclui `passengers[]` com `document`, `document_type`, `cpf`, `rg`, `cnh`, `birth_date`, `birth_certificate_number` e `birth_city`; o campo `passenger` continua presente como alias do primeiro passageiro para compatibilidade.
 - `POST /bookings` tambem devolve `booking.reservation_code`; o vencimento da reserva segue em `booking.expires_at`.
+- as constraints de `cpf`, `birth_certificate_number` e `birth_date` foram adicionadas como `NOT VALID` para nao bloquear rollout com dados legados; inserts/updates novos continuam sendo checados. Depois de auditar e corrigir linhas antigas, validar:
+  `alter table passengers validate constraint passengers_cpf_digits_check;`
+  `alter table passengers validate constraint passengers_birth_certificate_number_digits_check;`
+  `alter table passengers validate constraint passengers_birth_date_range_check;`
+  `alter table booking_passengers validate constraint booking_passengers_cpf_digits_check;`
+  `alter table booking_passengers validate constraint booking_passengers_birth_certificate_number_digits_check;`
+  `alter table booking_passengers validate constraint booking_passengers_birth_date_range_check;`
 
 Resposta importante:
 
