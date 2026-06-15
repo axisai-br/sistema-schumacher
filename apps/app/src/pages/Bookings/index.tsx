@@ -3,14 +3,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import InlineAlert from "../../components/InlineAlert";
 import PageHeader from "../../components/PageHeader";
 import StatusBadge from "../../components/StatusBadge";
-import { useBookings, useBookingDetail } from "../../hooks/useBookings";
+import { useBookings, useBookingDetail, type BookingPassenger } from "../../hooks/useBookings";
 import Drawer from "../../components/overlay/Drawer";
 import { useRoutes } from "../../hooks/useRoutes";
 import { useTrips } from "../../hooks/useTrips";
 import { apiGet, apiPatch, apiPost } from "../../services/api";
 import type { PassengerSuggestion, PreferredSeatOption } from "../../types/checkout";
 import useToast from "../../hooks/useToast";
-import { formatCurrency, formatDateTime, formatShortId } from "../../utils/format";
+import { formatBirthDate, formatCurrency, formatDateTime, formatShortId } from "../../utils/format";
 import BookingList from "./BookingList";
 import { BookingFormProvider, type BookingFormState, type BookingStep } from "./BookingFormContext";
 import BookingStepForm from "./BookingStepForm";
@@ -43,6 +43,17 @@ type QuoteResult = {
   fare_mode: string;
   occupancy_ratio: number;
 };
+
+function passengerIdentityFields(passenger: BookingPassenger) {
+  return [
+    passenger.cpf ? ["CPF", passenger.cpf] : null,
+    passenger.rg ? ["RG", passenger.rg] : null,
+    passenger.cnh ? ["CNH", passenger.cnh] : null,
+    passenger.birth_date ? ["Nascimento", formatBirthDate(passenger.birth_date)] : null,
+    passenger.birth_certificate_number ? ["Matrícula", passenger.birth_certificate_number] : null,
+    passenger.birth_city ? ["Naturalidade", passenger.birth_city] : null,
+  ].filter(Boolean) as [string, string][];
+}
 
 type BookingItem = {
   id: string;
@@ -832,14 +843,27 @@ export default function Bookings() {
                   <div><span style={{ opacity: 0.6 }}>Pendente</span><br />{formatCurrency(booking.remainder_amount)}</div>
                 </div>
               </div>
-              {passenger ? (
+              {passengers.length > 0 ? (
                 <div className="card">
-                  <div className="section-title" style={{ marginBottom: "8px" }}>Passageiro</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <div><span style={{ opacity: 0.6 }}>Nome</span>: {passenger.name}</div>
-                    <div><span style={{ opacity: 0.6 }}>Documento</span>: {passenger.document || "-"}</div>
-                    <div><span style={{ opacity: 0.6 }}>Telefone</span>: {passenger.phone || "-"}</div>
-                    <div><span style={{ opacity: 0.6 }}>E-mail</span>: {passenger.email || "-"}</div>
+                  <div className="section-title" style={{ marginBottom: "8px" }}>
+                    {passengers.length > 1 ? "Passageiros" : "Passageiro"}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    {passengers.map((item, index) => {
+                      const identityFields = passengerIdentityFields(item);
+                      return (
+                        <div key={item.id || `${item.name}-${index}`} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          {passengers.length > 1 ? <strong>{index + 1}. {item.name || "-"}</strong> : null}
+                          {passengers.length <= 1 ? <div><span style={{ opacity: 0.6 }}>Nome</span>: {item.name || "-"}</div> : null}
+                          <div><span style={{ opacity: 0.6 }}>Documento</span>: {item.document_type ? `${item.document_type} ` : ""}{item.document || "-"}</div>
+                          {identityFields.map(([label, value]) => (
+                            <div key={label}><span style={{ opacity: 0.6 }}>{label}</span>: {value}</div>
+                          ))}
+                          <div><span style={{ opacity: 0.6 }}>Telefone</span>: {item.phone || "-"}</div>
+                          <div><span style={{ opacity: 0.6 }}>E-mail</span>: {item.email || "-"}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
