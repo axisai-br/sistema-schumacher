@@ -677,6 +677,81 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 	return input, true
 }
 
+func parseVerifyAllOptionsAvailabilityInput(history []Message, observedAt time.Time) (AvailabilitySearchInput, string) {
+	context := inferVerifyAllOptionsRouteContext(history)
+	input := AvailabilitySearchInput{
+		Origin:      strings.TrimSpace(context.Origin),
+		Destination: strings.TrimSpace(context.Destination),
+		PackageName: strings.TrimSpace(context.PackageName),
+		TripDate:    latestTripDateFromHistory(history, observedAt),
+		Qty:         1,
+		Limit:       8,
+	}
+	if input.PackageName == "" {
+		input.PackageName = packageNameForRouteDirection(inferRouteDirectionFromDestination(input.Destination))
+	}
+	input = enrichAvailabilitySearchInput(input)
+	switch {
+	case strings.TrimSpace(input.Destination) == "" && strings.TrimSpace(input.PackageName) == "":
+		return input, "destination"
+	case strings.TrimSpace(input.Origin) == "":
+		return input, "origin"
+	case strings.TrimSpace(input.Destination) == "":
+		return input, "destination"
+	default:
+		return input, ""
+	}
+}
+
+func inferVerifyAllOptionsRouteContext(history []Message) inferredRouteContext {
+	context := inferLatestRouteContextFromHistory(history)
+	for i := 0; i < len(history); i++ {
+		body := messageTurnText(history[i])
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		if context.Destination == "" {
+			if city, ok := findSingleSupportedCityInText(body, scPackageDestinations); ok {
+				context.Destination = city
+				context.RouteDirection = "TO_SC"
+				context.PackageName = packageToSantaCatarina
+			} else if city, ok := findSingleSupportedCityInText(body, maPackageDestinations); ok {
+				context.Destination = city
+				context.RouteDirection = "TO_MA"
+				context.PackageName = packageToMaranhao
+			}
+		}
+		if context.RouteDirection == "" && context.Destination != "" {
+			context.RouteDirection = inferRouteDirectionFromDestination(context.Destination)
+		}
+		if context.PackageName == "" {
+			context.PackageName = packageNameForRouteDirection(context.RouteDirection)
+		}
+		if context.Origin == "" {
+			switch context.RouteDirection {
+			case "TO_SC":
+				if city, ok := findSingleSupportedCityInText(body, maPackageDestinations); ok {
+					context.Origin = city
+				}
+			case "TO_MA":
+				if city, ok := findSingleSupportedCityInText(body, scPackageDestinations); ok {
+					context.Origin = city
+				}
+			}
+		}
+	}
+	return context
+}
+
+func latestTripDateFromHistory(history []Message, observedAt time.Time) *time.Time {
+	for i := len(history) - 1; i >= 0; i-- {
+		if tripDate := extractTripDate(messageTurnText(history[i]), observedAt); tripDate != nil {
+			return tripDate
+		}
+	}
+	return nil
+}
+
 func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
 	originState, questionIndex, ok := lastAssistantOriginQuestionState(history)
 	if !ok {

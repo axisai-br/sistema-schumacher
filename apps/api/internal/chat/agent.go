@@ -365,6 +365,9 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, rep
 	if len(toolCalls) == 0 && containsOperationalAutoSendClaimWithoutTool(replyText) {
 		reasons = append(reasons, draftAutoSendReasonOperationalNoTool)
 	}
+	if containsOutOfDomainSchedulingVocabulary(replyText) {
+		reasons = append(reasons, draftAutoSendReasonBookingFlowRegression)
+	}
 
 	policy := draftAutoSendPolicy{Status: draftAutoSendStatusEligible}
 	if len(reasons) > 0 {
