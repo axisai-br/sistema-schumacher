@@ -15,6 +15,7 @@ const (
 	IntentPassengerDocumentsProvided Intent = "PASSENGER_DOCUMENTS_PROVIDED"
 	IntentBookingCreateConfirmation  Intent = "BOOKING_CREATE_CONFIRMATION"
 	IntentPaymentPreference          Intent = "PAYMENT_PREFERENCE"
+	IntentPaymentMethodQuestion      Intent = "PAYMENT_METHOD_QUESTION"
 	IntentPaymentStatusQuery         Intent = "PAYMENT_STATUS_QUERY"
 	IntentPaymentCreate              Intent = "PAYMENT_CREATE"
 	IntentBookingCancel              Intent = "BOOKING_CANCEL"
@@ -44,10 +45,13 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		return IntentDecision{Intent: IntentUnsupportedCargo, Source: "deterministic", TemplateName: TemplateUnsupportedCargo, Action: "template"}
 	}
 	if looksLikeHumanSupportIntent(folded) {
-		return IntentDecision{Intent: IntentHumanSupport, Source: "deterministic"}
+		return IntentDecision{Intent: IntentHumanSupport, Source: "deterministic", TemplateName: TemplateHumanHandoff, Action: "template"}
 	}
 	if looksLikeBookingCancelIntent(body) {
 		return IntentDecision{Intent: IntentBookingCancel, Source: "deterministic"}
+	}
+	if looksLikeUnsupportedPaymentMethodQuestion(body) {
+		return IntentDecision{Intent: IntentPaymentMethodQuestion, Source: "deterministic_payment_method_question", TemplateName: TemplatePaymentMethods, Action: "template"}
 	}
 	if looksLikePaymentLookupIntent(body) {
 		return IntentDecision{Intent: IntentPaymentStatusQuery, Source: "deterministic"}
@@ -68,6 +72,32 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if looksLikeRescheduleIntent(folded) {
 		return IntentDecision{Intent: IntentReschedule, Source: "deterministic"}
+	}
+	if looksLikeVerifyAllOptionsIntent(body) {
+		input, missing := parseVerifyAllOptionsAvailabilityInput(history, observedAt)
+		switch missing {
+		case "":
+			return IntentDecision{
+				Intent:            IntentAvailabilitySearch,
+				Source:            "deterministic_verify_all_options",
+				AvailabilityInput: &input,
+				Action:            "tool",
+			}
+		case "origin":
+			return IntentDecision{
+				Intent:            IntentAvailabilitySearch,
+				Source:            "deterministic_verify_all_options_missing_origin",
+				AvailabilityInput: &input,
+				TemplateName:      TemplateAskMAOrigin,
+				Action:            "template",
+			}
+		default:
+			return IntentDecision{
+				Intent: IntentAvailabilitySearch,
+				Source: "deterministic_verify_all_options_missing_" + missing,
+				Action: "safe_fallback",
+			}
+		}
 	}
 	if decision, ok := routeBroadStateTemplateIntent(body, folded); ok {
 		return decision
@@ -99,6 +129,13 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			SelectedOptionIndex: firstAvailableOptionIndex(history),
 			TemplateName:        TemplateAskPassengerCount,
 			Action:              "template",
+		}
+	}
+	if looksLikeReservationHowToProceedIntent(body) {
+		return IntentDecision{
+			Intent: IntentBookingCreateConfirmation,
+			Source: "deterministic_reservation_next_step",
+			Action: "safe_fallback",
 		}
 	}
 	if looksLikeCreateBookingIntent(body) || looksLikeBookingCreateConfirmation(body) {
@@ -265,10 +302,99 @@ func looksLikeContextualAvailabilitySelection(folded string) bool {
 	}
 }
 
-func looksLikeHumanSupportIntent(folded string) bool {
-	return strings.Contains(folded, "atendente") ||
+func looksLikeReservationHowToProceedIntent(text string) bool {
+	body := NormalizeIncomingCustomerText(text)
+	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	if folded == "" {
+		return false
+	}
+	if hasExplicitRouteContextForReservationHelp(body) {
+		return false
+	}
+	for _, phrase := range []string{
+		"como posso fazer para reservar",
+		"como posso fazer pra reservar",
+		"como faco para reservar",
+		"como faco pra reservar",
+		"quero reservar",
+		"como prosseguir",
+		"como agendar",
+		"quero agendar",
+		"agendar",
+	} {
+		if folded == phrase || strings.Contains(folded, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExplicitRouteContextForReservationHelp(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	if strings.Contains(folded, " de ") && strings.Contains(folded, " para ") {
+		return true
+	}
+	if _, _, ok := extractExplicitRouteFromText(text); ok {
+		return true
+	}
+	if locations := extractCanonicalLocations(text); len(locations) >= 2 {
+		return true
+	}
+	if locations := extractSupportedPackageLocationsInOrder(text); len(locations) >= 2 {
+		return true
+	}
+	return false
+}
+
+func looksLikeVerifyAllOptionsIntent(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(NormalizeIncomingCustomerText(text))), " ")
+	if folded == "" {
+		return false
+	}
+	switch folded {
+	case "verificar todas as opcoes", "ver todas", "ver todas as opcoes", "todas as opcoes", "pode verificar todas":
+		return true
+	default:
+		return strings.Contains(folded, "verificar todas as opcoes") ||
+			strings.Contains(folded, "todas as opcoes")
+	}
+}
+
+func looksLikeHumanSupportIntent(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	if strings.Contains(folded, "atendente") ||
 		strings.Contains(folded, "humano") ||
-		strings.Contains(folded, "suporte")
+		strings.Contains(folded, "suporte") {
+		return true
+	}
+	for _, phrase := range []string{
+		"falar com alguem",
+		"falar com uma pessoa",
+		"me passa para alguem",
+		"me passa pra alguem",
+		"me passe para alguem",
+		"me passe pra alguem",
+		"alguem pode me atender",
+		"pode me atender",
+		"me atende",
+		"atendimento humano",
+	} {
+		if folded == phrase || strings.Contains(folded, phrase) {
+			return true
+		}
+	}
+	switch folded {
+	case "tem alguem", "tem alguem ai", "tem alguem aqui":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSCOriginFollowUpAfterMaranhaoQuery(history []Message, currentTurn string) (AvailabilitySearchInput, bool) {

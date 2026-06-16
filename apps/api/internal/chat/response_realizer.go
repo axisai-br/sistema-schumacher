@@ -28,12 +28,14 @@ const (
 	TemplateBookingCreated        ResponseTemplateName = "BOOKING_CREATED"
 	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 	TemplatePaymentCreate         ResponseTemplateName = "PAYMENT_CREATE"
+	TemplatePaymentMethods        ResponseTemplateName = "PAYMENT_METHODS"
 )
 
 const (
 	askPassengerCountReply      = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
 	askChildUnder5Reply         = "Tem crianca de 5 anos ou menos viajando?"
 	askPaymentChoiceReply       = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
+	paymentMethodsSupportReply  = "Por aqui consigo seguir apenas com PIX. Para verificar outras formas de pagamento, fale com o suporte: 55 49 99986-2222."
 	publicSCTableReply          = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
 	unsupportedPDFDocumentReply = "Não consigo ler PDF com segurança por aqui. Por favor, envie uma foto nítida do documento ou escreva o nome completo e CPF/RG do passageiro."
 )
@@ -66,6 +68,8 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return buildUnsupportedPackageReply(), true
 	case TemplateHumanHandoff:
 		return "Vou te encaminhar para um atendente continuar por aqui.", true
+	case TemplatePaymentMethods:
+		return paymentMethodsSupportReply, true
 	default:
 		return "", false
 	}
@@ -257,7 +261,7 @@ func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, conte
 		return false
 	}
 	switch strings.TrimSpace(decision.Source) {
-	case "deterministic_ma_destination_followup", "deterministic_origin_followup":
+	case "deterministic_ma_destination_followup", "deterministic_origin_followup", "deterministic_verify_all_options":
 		return true
 	default:
 		return false

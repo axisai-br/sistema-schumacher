@@ -9,6 +9,9 @@ func parsePaymentCreateInput(session Session, history []Message, text string, cu
 	if body == "" {
 		return PaymentCreateInput{}, false
 	}
+	if looksLikeUnsupportedPaymentMethodQuestion(body) {
+		return PaymentCreateInput{}, false
+	}
 	if !looksLikePaymentCreateIntent(body) && !looksLikeContextualPaymentCreateIntent(history, body) {
 		return PaymentCreateInput{}, false
 	}

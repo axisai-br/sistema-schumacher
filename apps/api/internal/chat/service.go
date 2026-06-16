@@ -883,6 +883,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	if passengerCountContext {
 		passengerCountContext = !lastBotAskedRouteAndPassengerCollection(history)
 	}
+	if passengerCountContext && looksLikeHumanSupportIntent(strings.Join(strings.Fields(foldChatText(currentTurn)), " ")) {
+		passengerCountContext = false
+	}
 
 	toolContext := agentToolContext{}
 
@@ -1116,6 +1119,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
+	if looksLikeReservationHowToProceedIntent(currentTurn) || looksLikeVerifyAllOptionsIntent(currentTurn) {
+		unsupportedPackageHandled = false
+	}
 	if documentCollectionMediaTurn {
 		if unsupportedPackageHandled {
 			s.logReprocess(
@@ -1148,9 +1154,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 		unsupportedPackageHandled = false
 	}
+	deterministicDecision := IntentDecision{Intent: IntentUnknown}
 	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !documentCollectionMediaTurn {
 		if intentRouterEnabled() && templateRealizerEnabled() {
 			decision := routeDeterministicIntent(history, currentTurn, canonicalState, observedAt)
+			deterministicDecision = decision
 			if decision.Intent != IntentUnknown {
 				s.logReprocess(
 					"chat reprocess event=intent_router_decision session_id=%s trigger=%s job_run_id=%s intent=%s intent_source=%s phase_before=%s action=%s template_name=%s",
@@ -1176,6 +1184,19 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					decision.Source,
 					maskDocumentForLog(currentTurn),
 				)
+			}
+
+			if !deterministicBookingHandled && decision.Action == "safe_fallback" {
+				bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+				reply, ok := buildSafeFallbackReplyForPhase(canonicalState, bookingDraft, currentTurn)
+				if ok && strings.TrimSpace(reply) != "" {
+					run := buildSafeFallbackDraftRun(reply, canonicalState, decision.Source)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "deterministic"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				}
 			}
 
 			if decision.Intent == IntentSelectAvailabilityOption &&
@@ -1265,6 +1286,21 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "deterministic"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				}
+			}
+		}
+		if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn {
+			bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+			if shouldUseSafePhaseFallbackForCurrentTurn(canonicalState, bookingDraft, history) &&
+				shouldApplySafeFallbackAfterDecision(deterministicDecision) {
+				reply, ok := buildSafeFallbackReplyForPhase(canonicalState, bookingDraft, currentTurn)
+				if ok && strings.TrimSpace(reply) != "" {
+					run := buildSafeFallbackDraftRun(reply, canonicalState, "protected_phase_no_deterministic_decision")
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "safe_phase_fallback"
 					rolloutMetadata.DecisionValid = boolPtr(true)
 					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
 				}
@@ -1657,6 +1693,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		)
 		if rolloutMetadata.DecisionSource == "" || rolloutMetadata.FallbackReason != "" {
 			rolloutMetadata.DecisionSource = "legacy_llm"
+		}
+	}
+
+	if containsOutOfDomainSchedulingVocabulary(run.ReplyText) ||
+		shouldReplaceLoopingDraftWithSafeFallback(history, run.ReplyText, toolContext.Calls, phaseBefore, canonicalState.Phase) {
+		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+		if reply, ok := buildSafeFallbackReplyForPhase(canonicalState, bookingDraft, currentTurn); ok && strings.TrimSpace(reply) != "" {
+			run = buildSafeFallbackDraftRun(reply, canonicalState, "unsafe_or_looping_draft_replaced")
+			rolloutMetadata.DecisionSource = "safe_phase_fallback"
+			rolloutMetadata.DecisionValid = boolPtr(true)
+			rolloutMetadata.FallbackReason = "unsafe_or_looping_draft_replaced"
 		}
 	}
 
