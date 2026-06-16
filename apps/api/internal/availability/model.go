@@ -9,6 +9,8 @@ type SearchFilter struct {
 	DestinationStopID string `json:"destination_stop_id,omitempty"`
 	RouteID           string `json:"route_id,omitempty"`
 	TripDate          *time.Time
+	DateFrom          *time.Time
+	DateTo            *time.Time
 	PackageName       string
 	Qty               int
 	Limit             int

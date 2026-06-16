@@ -100,6 +100,15 @@ func buildTemplateDraftRunFromDecision(decision IntentDecision, reply string) Ru
 			"qtd":          decision.AvailabilityInput.Qty,
 			"limit":        decision.AvailabilityInput.Limit,
 		}
+		if decision.AvailabilityInput.TripDate != nil {
+			input["trip_date"] = decision.AvailabilityInput.TripDate.UTC().Format("2006-01-02")
+		}
+		if decision.AvailabilityInput.DateFrom != nil {
+			input["date_from"] = decision.AvailabilityInput.DateFrom.UTC().Format("2006-01-02")
+		}
+		if decision.AvailabilityInput.DateTo != nil {
+			input["date_to"] = decision.AvailabilityInput.DateTo.UTC().Format("2006-01-02")
+		}
 		requestPayload["pending_availability_input"] = input
 		responsePayload["pending_availability_input"] = input
 	}
@@ -211,6 +220,8 @@ func buildNoAvailabilityReply(result AvailabilitySearchResult) string {
 	}
 	if result.Filter.TripDate != nil {
 		parts = append(parts, "em "+result.Filter.TripDate.Format("02/01/2006"))
+	} else if result.Filter.DateFrom != nil && result.Filter.DateTo != nil {
+		parts = append(parts, "entre "+result.Filter.DateFrom.Format("02/01/2006")+" e "+result.Filter.DateTo.Format("02/01/2006"))
 	}
 	return strings.Join(parts, " ") + "."
 }
