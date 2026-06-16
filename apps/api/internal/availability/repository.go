@@ -124,6 +124,15 @@ func buildAvailabilitySearchQuery(filter SearchFilter) (string, []interface{}) {
 	if filter.TripDate != nil {
 		args = append(args, filter.TripDate.Format("2006-01-02"))
 		clauses = append(clauses, fmt.Sprintf("t.trip_date = $%d::date", len(args)))
+	} else {
+		if filter.DateFrom != nil {
+			args = append(args, filter.DateFrom.Format("2006-01-02"))
+			clauses = append(clauses, fmt.Sprintf("t.trip_date >= $%d::date", len(args)))
+		}
+		if filter.DateTo != nil {
+			args = append(args, filter.DateTo.Format("2006-01-02"))
+			clauses = append(clauses, fmt.Sprintf("t.trip_date <= $%d::date", len(args)))
+		}
 	}
 	if filter.RouteID != "" {
 		args = append(args, filter.RouteID)

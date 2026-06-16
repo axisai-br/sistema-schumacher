@@ -784,6 +784,9 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		"current_turn_message_ids":   candidateMessageIDs(candidates),
 		"current_turn_body":          joinCandidateBodies(candidates),
 	}
+	if interpretation, ok := availabilityDraftTurnInterpretation(session, currentTurn, observedAt); ok {
+		messageMetadata["interpretation"] = interpretation
+	}
 	if untranscribedAudio {
 		messageMetadata["auto_send_status"] = draftAutoSendStatusReviewNeeded
 		messageMetadata["auto_send_reasons"] = []string{draftAutoSendReasonNonTextTurn}
@@ -894,7 +897,27 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	var deterministicToolHandled bool
 	var deterministicBookingAction BookingNextAction
 	documentCollectionMediaTurn := shouldRunDocumentExtract(memory) && s.canRunAgent()
-	if passengerCountContext {
+	if draftSession, draftToolContext, draftRun, handled, err := s.resolveAvailabilityDraftTurn(ctx, persisted.Session, history, currentTurn, observedAt); err != nil {
+		return ReprocessResult{}, err
+	} else if handled {
+		persisted.Session = draftSession
+		toolContext = mergeAgentToolContexts(toolContext, draftToolContext)
+		result.ToolCalls = toolContext.Calls
+		deterministicToolHandled = len(draftToolContext.Calls) > 0
+		if toolContext.Availability != nil {
+			toolFacts := map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
+			}
+			mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+			agentState["canonical_state"] = canonicalState
+			memory["canonical_state"] = canonicalState
+		}
+		if draftRun != nil {
+			deterministicBookingRun = draftRun
+			deterministicBookingHandled = true
+		}
+	}
+	if passengerCountContext && !deterministicBookingHandled {
 		s.logReprocess(
 			"chat reprocess event=passenger_count_context_detected session_id=%s trigger=%s job_run_id=%s",
 			persisted.Session.ID,

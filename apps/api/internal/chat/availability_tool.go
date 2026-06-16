@@ -36,6 +36,8 @@ func (t *AvailabilityTool) Search(ctx context.Context, input AvailabilitySearchI
 		RouteID:           input.RouteID,
 		PackageName:       input.PackageName,
 		TripDate:          input.TripDate,
+		DateFrom:          input.DateFrom,
+		DateTo:            input.DateTo,
 		Qty:               input.Qty,
 		Limit:             input.Limit,
 		OnlyActive:        true,

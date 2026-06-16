@@ -525,6 +525,8 @@ type AvailabilitySearchInput struct {
 	RouteID           string
 	PackageName       string
 	TripDate          *time.Time
+	DateFrom          *time.Time
+	DateTo            *time.Time
 	Qty               int
 	Limit             int
 }

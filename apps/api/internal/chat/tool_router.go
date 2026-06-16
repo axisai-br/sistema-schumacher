@@ -1964,6 +1964,12 @@ func buildAvailabilityToolRequestPayload(input AvailabilitySearchInput) map[stri
 	if input.TripDate != nil {
 		payload["trip_date"] = input.TripDate.UTC().Format("2006-01-02")
 	}
+	if input.DateFrom != nil {
+		payload["date_from"] = input.DateFrom.UTC().Format("2006-01-02")
+	}
+	if input.DateTo != nil {
+		payload["date_to"] = input.DateTo.UTC().Format("2006-01-02")
+	}
 	if input.PackageName != "" {
 		payload["package_name"] = input.PackageName
 	}
@@ -2009,6 +2015,12 @@ func buildAvailabilityToolResponsePayload(result AvailabilitySearchResult) map[s
 	}
 	if result.Filter.TripDate != nil {
 		payload["trip_date"] = result.Filter.TripDate.UTC().Format("2006-01-02")
+	}
+	if result.Filter.DateFrom != nil {
+		payload["date_from"] = result.Filter.DateFrom.UTC().Format("2006-01-02")
+	}
+	if result.Filter.DateTo != nil {
+		payload["date_to"] = result.Filter.DateTo.UTC().Format("2006-01-02")
 	}
 	if result.Filter.Qty > 0 {
 		payload["qtd"] = result.Filter.Qty
