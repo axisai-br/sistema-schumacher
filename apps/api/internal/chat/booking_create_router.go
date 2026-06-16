@@ -562,7 +562,13 @@ func looksLikeDocumentConfirmation(text string) bool {
 		"pode criar",
 		"pode fazer a reserva",
 		"confirmado",
-		"confirmo":
+		"confirmo",
+		"pode",
+		"ss",
+		"s",
+		"positivo",
+		"posi",
+		"aham":
 		return true
 	default:
 		return strings.Contains(folded, "tudo certo") ||
