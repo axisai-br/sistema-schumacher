@@ -11,6 +11,15 @@ const (
 	availabilityDraftStatusCompleted = "COMPLETED"
 	availabilityDraftPeriodMonth     = "MONTH"
 	availabilityDraftTemplateMissing = "AVAILABILITY_DRAFT_MISSING_SLOTS"
+	pendingQuestionStatusActive      = "ACTIVE"
+	pendingQuestionStatusCompleted   = "COMPLETED"
+
+	pendingQuestionAskAvailabilityRouteAndQty  = "ASK_AVAILABILITY_ROUTE_AND_QTY"
+	pendingQuestionAskAvailabilityRoute        = "ASK_AVAILABILITY_ROUTE"
+	pendingQuestionAskAvailabilityQty          = "ASK_AVAILABILITY_QTY"
+	pendingQuestionAskAvailabilityOrigin       = "ASK_AVAILABILITY_ORIGIN"
+	pendingQuestionAskAvailabilityDestination  = "ASK_AVAILABILITY_DESTINATION"
+	availabilityDraftTemplateSearchUnavailable = "AVAILABILITY_SEARCH_UNAVAILABLE"
 )
 
 type AvailabilityDraft struct {
@@ -194,7 +203,13 @@ func availabilityDraftToSearchInput(d AvailabilityDraft) (AvailabilitySearchInpu
 }
 
 func loadAvailabilityDraft(session Session) (AvailabilityDraft, bool) {
-	raw := asMap(session.Metadata["availability_draft"])
+	if draft, ok := loadAvailabilityDraftFromMap(asMap(session.Metadata["availability_draft"])); ok {
+		return draft, true
+	}
+	return loadAvailabilityDraftFromPendingQuestion(session)
+}
+
+func loadAvailabilityDraftFromMap(raw map[string]interface{}) (AvailabilityDraft, bool) {
 	if len(raw) == 0 {
 		return AvailabilityDraft{}, false
 	}
@@ -228,6 +243,25 @@ func loadAvailabilityDraft(session Session) (AvailabilityDraft, bool) {
 	return draft, true
 }
 
+func loadAvailabilityDraftFromPendingQuestion(session Session) (AvailabilityDraft, bool) {
+	pending := asMap(session.Metadata["pending_question"])
+	if len(pending) == 0 {
+		return AvailabilityDraft{}, false
+	}
+	status := strings.ToUpper(strings.TrimSpace(asString(pending["status"])))
+	if status != pendingQuestionStatusActive {
+		return AvailabilityDraft{}, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(asString(pending["intent"])), string(IntentAvailabilitySearch)) {
+		return AvailabilityDraft{}, false
+	}
+	if !isAvailabilityPendingQuestionType(asString(pending["type"])) {
+		return AvailabilityDraft{}, false
+	}
+	context := asMap(pending["context"])
+	return loadAvailabilityDraftFromMap(asMap(context["availability_draft"]))
+}
+
 func availabilityDraftMetadata(d AvailabilityDraft) map[string]interface{} {
 	d.Status = firstNonEmpty(strings.ToUpper(strings.TrimSpace(d.Status)), availabilityDraftStatusActive)
 	d.PeriodType = strings.ToUpper(strings.TrimSpace(d.PeriodType))
@@ -256,13 +290,99 @@ func availabilityDraftMetadata(d AvailabilityDraft) map[string]interface{} {
 	return map[string]interface{}{"availability_draft": item}
 }
 
+func availabilityDraftWithPendingQuestionMetadata(d AvailabilityDraft, question string) map[string]interface{} {
+	metadata := availabilityDraftMetadata(d)
+	if len(availabilityDraftMissingSlots(d)) > 0 {
+		metadata["pending_question"] = availabilityDraftPendingQuestion(d, question)
+	}
+	return metadata
+}
+
+func availabilityDraftWithCompletedPendingQuestionMetadata(d AvailabilityDraft) map[string]interface{} {
+	metadata := availabilityDraftMetadata(d)
+	now := d.UpdatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	metadata["pending_question"] = map[string]interface{}{
+		"status":         pendingQuestionStatusCompleted,
+		"domain":         "availability",
+		"intent":         string(IntentAvailabilitySearch),
+		"expected_slots": []string{},
+		"answered_at":    now.UTC().Format(time.RFC3339Nano),
+	}
+	return metadata
+}
+
+func availabilityDraftPendingQuestion(d AvailabilityDraft, question string) map[string]interface{} {
+	askedAt := d.UpdatedAt
+	if askedAt.IsZero() {
+		askedAt = time.Now().UTC()
+	}
+	d.UpdatedAt = askedAt.UTC()
+	return map[string]interface{}{
+		"status":         pendingQuestionStatusActive,
+		"type":           availabilityDraftPendingQuestionType(d),
+		"domain":         "availability",
+		"intent":         string(IntentAvailabilitySearch),
+		"question":       strings.TrimSpace(question),
+		"expected_slots": availabilityDraftMissingSlots(d),
+		"asked_at":       askedAt.UTC().Format(time.RFC3339Nano),
+		"context": map[string]interface{}{
+			"availability_draft": availabilityDraftMetadata(d)["availability_draft"],
+		},
+	}
+}
+
 func clearAvailabilityDraftMetadata() map[string]interface{} {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	return map[string]interface{}{
 		"availability_draft": map[string]interface{}{
 			"status":        availabilityDraftStatusCompleted,
 			"missing_slots": []string{},
-			"updated_at":    time.Now().UTC().Format(time.RFC3339Nano),
+			"updated_at":    now,
 		},
+		"pending_question": map[string]interface{}{
+			"status":         pendingQuestionStatusCompleted,
+			"domain":         "availability",
+			"intent":         string(IntentAvailabilitySearch),
+			"expected_slots": []string{},
+			"answered_at":    now,
+		},
+	}
+}
+
+func availabilityDraftPendingQuestionType(d AvailabilityDraft) string {
+	missing := map[string]bool{}
+	for _, slot := range availabilityDraftMissingSlots(d) {
+		missing[slot] = true
+	}
+	switch {
+	case missing["origin"] && missing["destination"] && missing["qty"]:
+		return pendingQuestionAskAvailabilityRouteAndQty
+	case missing["origin"] && missing["destination"]:
+		return pendingQuestionAskAvailabilityRoute
+	case missing["qty"]:
+		return pendingQuestionAskAvailabilityQty
+	case missing["origin"]:
+		return pendingQuestionAskAvailabilityOrigin
+	case missing["destination"]:
+		return pendingQuestionAskAvailabilityDestination
+	default:
+		return ""
+	}
+}
+
+func isAvailabilityPendingQuestionType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case pendingQuestionAskAvailabilityRouteAndQty,
+		pendingQuestionAskAvailabilityRoute,
+		pendingQuestionAskAvailabilityQty,
+		pendingQuestionAskAvailabilityOrigin,
+		pendingQuestionAskAvailabilityDestination:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -285,6 +405,16 @@ func availabilityDraftTurnInterpretation(session Session, text string, observedA
 }
 
 func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Session, history []Message, currentTurn string, observedAt time.Time) (Session, agentToolContext, *RunAgentResult, bool, error) {
+	if shouldBypassAvailabilityDraftTurn(currentTurn) {
+		updatedSession, err := s.store.UpdateSessionMetadata(ctx, UpdateSessionMetadataInput{
+			SessionID: session.ID,
+			Metadata:  clearAvailabilityDraftMetadata(),
+		})
+		if err != nil {
+			return session, agentToolContext{}, nil, false, err
+		}
+		return updatedSession, agentToolContext{}, nil, false, nil
+	}
 	if availabilityDraftHasSelectedTrip(session, history, currentTurn) {
 		return session, agentToolContext{}, nil, false, nil
 	}
@@ -303,7 +433,7 @@ func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Sess
 		}
 		updatedSession, err := s.store.UpdateSessionMetadata(ctx, UpdateSessionMetadataInput{
 			SessionID: session.ID,
-			Metadata:  availabilityDraftMetadata(existing),
+			Metadata:  availabilityDraftWithPendingQuestionMetadata(existing, buildAvailabilityDraftMissingSlotsReply(existing)),
 		})
 		if err != nil {
 			return session, agentToolContext{}, nil, false, err
@@ -323,7 +453,7 @@ func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Sess
 	if !availabilityDraftReady(draft) {
 		updatedSession, err := s.store.UpdateSessionMetadata(ctx, UpdateSessionMetadataInput{
 			SessionID: session.ID,
-			Metadata:  availabilityDraftMetadata(draft),
+			Metadata:  availabilityDraftWithPendingQuestionMetadata(draft, buildAvailabilityDraftMissingSlotsReply(draft)),
 		})
 		if err != nil {
 			return session, agentToolContext{}, nil, false, err
@@ -339,12 +469,12 @@ func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Sess
 	if !s.canSearchAvailability() {
 		updatedSession, err := s.store.UpdateSessionMetadata(ctx, UpdateSessionMetadataInput{
 			SessionID: session.ID,
-			Metadata:  availabilityDraftMetadata(draft),
+			Metadata:  availabilityDraftWithCompletedPendingQuestionMetadata(draft),
 		})
 		if err != nil {
 			return session, agentToolContext{}, nil, false, err
 		}
-		run := buildAvailabilityDraftMissingSlotsRun(draft)
+		run := buildAvailabilityDraftSearchUnavailableRun(draft)
 		return updatedSession, agentToolContext{}, &run, true, nil
 	}
 
@@ -371,6 +501,10 @@ func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Sess
 	}
 	run := buildAvailabilityTemplateDraftRun(decision, *context.Availability)
 	return updatedSession, context, &run, true, nil
+}
+
+func shouldBypassAvailabilityDraftTurn(currentTurn string) bool {
+	return looksLikeHumanSupportIntent(currentTurn) || looksLikeBookingCancelIntent(currentTurn)
 }
 
 func parseAvailabilityDraftRoute(text string) (string, string, bool) {
@@ -440,11 +574,47 @@ func buildAvailabilityDraftMissingSlotsRun(draft AvailabilityDraft) RunAgentResu
 		"action":             "clarify",
 		"availability_draft": availabilityDraftMetadata(draft)["availability_draft"],
 	}
+	if len(availabilityDraftMissingSlots(draft)) > 0 {
+		requestPayload["pending_question"] = availabilityDraftPendingQuestion(draft, reply)
+	}
 	return RunAgentResult{
 		ReplyText:       reply,
 		Model:           "template_realizer",
 		RequestPayload:  requestPayload,
 		ResponsePayload: requestPayload,
+	}
+}
+
+func buildAvailabilityDraftSearchUnavailableRun(draft AvailabilityDraft) RunAgentResult {
+	reply := buildAvailabilityDraftSearchUnavailableReply(draft)
+	requestPayload := map[string]interface{}{
+		"mode":               "TEMPLATE_FIRST_REPLY",
+		"template_name":      availabilityDraftTemplateSearchUnavailable,
+		"intent":             string(IntentAvailabilitySearch),
+		"action":             "search_unavailable",
+		"availability_draft": availabilityDraftMetadata(draft)["availability_draft"],
+	}
+	return RunAgentResult{
+		ReplyText:       reply,
+		Model:           "template_realizer",
+		RequestPayload:  requestPayload,
+		ResponsePayload: requestPayload,
+	}
+}
+
+func buildAvailabilityDraftSearchUnavailableReply(draft AvailabilityDraft) string {
+	route := availabilityDraftRouteText(draft)
+	period := availabilityDraftPeriodText(draft)
+
+	switch {
+	case route != "" && period != "":
+		return "Tenho os dados da busca para " + route + " em " + period + ", mas nao consegui consultar a disponibilidade agora. Tente novamente em instantes ou fale com o suporte."
+	case route != "":
+		return "Tenho os dados da busca para " + route + ", mas nao consegui consultar a disponibilidade agora. Tente novamente em instantes ou fale com o suporte."
+	case period != "":
+		return "Tenho o periodo da busca para " + period + ", mas nao consegui consultar a disponibilidade agora. Tente novamente em instantes ou fale com o suporte."
+	default:
+		return "Nao consegui consultar a disponibilidade agora. Tente novamente em instantes ou fale com o suporte."
 	}
 }
 

@@ -3,12 +3,11 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"schumacher-tur/api/internal/bookings"
+	"schumacher-tur/api/internal/payments"
 	"strings"
 	"testing"
 	"time"
-
-	"schumacher-tur/api/internal/bookings"
-	"schumacher-tur/api/internal/payments"
 )
 
 const testBirthCertificateNumber = "12345678901234567890123456789012"
@@ -737,15 +736,51 @@ func TestDocumentConfirmationPreservesAdditionalIdentityFields(t *testing.T) {
 
 func TestLooksLikeDocumentConfirmationAcceptsNaturalConfirmations(t *testing.T) {
 	cases := []string{
+		"conferem",
+		"confere",
+		"sim",
+		"sim sim",
+		"isso",
+		"isso mesmo",
+		"correto",
+		"certo",
 		"sim esta correto",
 		"sim está correto",
-		"Sim, tá certo.",
-		"sim ta certo",
 		"esta correto",
 		"está correto",
+		"sim correto",
+		"sim esta certo",
+		"sim está certo",
+		"sim ta certo",
+		"Sim, tá certo.",
+		"esta certo",
+		"está certo",
+		"ta certo",
+		"tá certo",
+		"ta tudo certo",
+		"tá tudo certo",
+		"tudo certo",
+		"sim ta tudo certo",
+		"sim tá tudo certo",
+		"sim sim ta tudo certo",
+		"sim sim tá tudo certo",
+		"sim sim ta tudo certo tudo certo",
+		"sim sim tá tudo certo tudo certo",
+		"pode seguir",
+		"pode continuar",
 		"pode prosseguir",
 		"pode criar",
+		"pode criar a reserva",
+		"pode fazer a reserva",
+		"pode reservar",
+		"pode sim",
 		"confirmado",
+		"confirmo",
+		"ss",
+		"s",
+		"positivo",
+		"posi",
+		"aham",
 	}
 
 	for _, tc := range cases {
@@ -754,6 +789,95 @@ func TestLooksLikeDocumentConfirmationAcceptsNaturalConfirmations(t *testing.T) 
 				t.Fatalf("expected %q to be accepted as document confirmation", tc)
 			}
 		})
+	}
+}
+
+func TestLooksLikeDocumentConfirmationRejectsCorrectionRequests(t *testing.T) {
+	cases := []string{
+		"pode",
+		"pode corrigir",
+		"pode alterar",
+		"pode mudar",
+		"pode trocar",
+		"pode arrumar",
+		"pode ajustar",
+		"pode corrigir o cpf",
+		"pode alterar o documento",
+		"pode trocar o nome",
+		"nao",
+		"não",
+		"nao esta certo",
+		"não está certo",
+		"nao confere",
+		"está errado",
+		"ta errado",
+		"sim, mas o cpf esta errado",
+		"sim, mas precisa corrigir o documento",
+		"isso, mas o nome esta errado",
+	}
+
+	for _, tc := range cases {
+		if looksLikeDocumentConfirmation(tc) {
+			t.Fatalf("expected %q not to be treated as document confirmation", tc)
+		}
+	}
+}
+
+func TestLooksLikeDocumentConfirmationContextReplyAcceptsCPFCorrection(t *testing.T) {
+	cases := []string{
+		"o cpf correto é 52998224725",
+		"cpf correto 52998224725",
+		"o nome está certo, mas o cpf é 52998224725",
+		"sim, mas o cpf está errado, é 52998224725",
+		"corrigir cpf 52998224725",
+		"pode corrigir o cpf para 52998224725",
+	}
+
+	for _, tc := range cases {
+		if !looksLikeDocumentConfirmationContextReply(tc) {
+			t.Fatalf("expected %q to be treated as document confirmation context reply", tc)
+		}
+		if looksLikeDocumentConfirmation(tc) {
+			t.Fatalf("expected %q not to be treated as pure document confirmation", tc)
+		}
+	}
+}
+
+func TestLooksLikeDocumentConfirmationContextReplyRejectsBareCorrectionWithoutDocument(t *testing.T) {
+	cases := []string{
+		"pode corrigir",
+		"quero alterar",
+		"está errado",
+		"tem erro",
+		"não confere",
+	}
+
+	for _, tc := range cases {
+		if looksLikeDocumentConfirmationContextReply(tc) {
+			t.Fatalf("expected %q not to be treated as actionable document correction without document value", tc)
+		}
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationRejectsCorrectionSameTurn(t *testing.T) {
+	session := Session{
+		ID:            "session-document-correction-same-turn",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
+
+	currentTurn := "pode corrigir o cpf para 52998224725"
+
+	if !looksLikeDocumentConfirmationContextReply(currentTurn) {
+		t.Fatalf("expected correction to remain in document confirmation context")
+	}
+	if looksLikeDocumentConfirmation(currentTurn) {
+		t.Fatalf("expected correction not to be treated as pure confirmation")
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, currentTurn); ok {
+		t.Fatalf("expected correction turn not to create booking directly, got %+v", input)
 	}
 }
 
