@@ -531,51 +531,175 @@ func buildBookingCreateInputFromDraftContext(session Session, context BookingDra
 
 func looksLikeDocumentConfirmation(text string) bool {
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
-	switch folded {
-	case "conferem",
-		"confere",
-		"sim",
-		"sim sim",
-		"isso",
-		"isso mesmo",
-		"correto",
-		"certo",
-		"sim esta correto",
+	if folded == "" {
+		return false
+	}
+
+	if looksLikeDocumentCorrectionOrRejection(text) {
+		return false
+	}
+
+	exactConfirmations := map[string]struct{}{
+		"conferem":                         {},
+		"confere":                          {},
+		"sim":                              {},
+		"sim sim":                          {},
+		"s":                                {},
+		"ss":                               {},
+		"isso":                             {},
+		"isso mesmo":                       {},
+		"correto":                          {},
+		"certo":                            {},
+		"sim correto":                      {},
+		"sim esta correto":                 {},
+		"esta correto":                     {},
+		"sim esta certo":                   {},
+		"sim ta certo":                     {},
+		"esta certo":                       {},
+		"ta certo":                         {},
+		"tudo certo":                       {},
+		"ta tudo certo":                    {},
+		"esta tudo certo":                  {},
+		"sim tudo certo":                   {},
+		"sim ta tudo certo":                {},
+		"sim esta tudo certo":              {},
+		"sim sim ta tudo certo":            {},
+		"sim sim esta tudo certo":          {},
+		"sim sim ta tudo certo tudo certo": {},
+		"confirmo":                         {},
+		"confirmado":                       {},
+		"positivo":                         {},
+		"posi":                             {},
+		"aham":                             {},
+		"uhum":                             {},
+		"ok":                               {},
+		"okay":                             {},
+		"beleza":                           {},
+		"blz":                              {},
+		"pode sim":                         {},
+		"pode seguir":                      {},
+		"pode continuar":                   {},
+		"pode prosseguir":                  {},
+		"pode criar":                       {},
+		"pode reservar":                    {},
+	}
+
+	if _, ok := exactConfirmations[folded]; ok {
+		return true
+	}
+
+	confirmationPhrases := []string{
 		"esta correto",
-		"sim correto",
-		"sim esta certo",
-		"sim ta certo",
+		"ta correto",
 		"esta certo",
 		"ta certo",
-		"tá certo",
-		"ta tudo certo",
-		"tá tudo certo",
 		"tudo certo",
-		"sim ta tudo certo",
-		"sim tá tudo certo",
-		"sim sim ta tudo certo",
-		"sim sim tá tudo certo",
-		"sim sim ta tudo certo tudo certo",
-		"sim sim tá tudo certo tudo certo",
+		"esta tudo certo",
+		"ta tudo certo",
+		"os dados estao certos",
+		"os dados tao certos",
+		"as informacoes estao certas",
+		"as informacoes tao certas",
+		"as informacoes conferem",
+		"os dados conferem",
 		"pode seguir",
+		"pode continuar",
 		"pode prosseguir",
 		"pode criar",
+		"pode criar a reserva",
 		"pode fazer a reserva",
-		"confirmado",
-		"confirmo",
-		"pode",
-		"ss",
-		"s",
-		"positivo",
-		"posi",
-		"aham":
-		return true
-	default:
-		return strings.Contains(folded, "tudo certo") ||
-			strings.Contains(folded, "pode criar") ||
-			strings.Contains(folded, "pode seguir") ||
-			strings.Contains(folded, "pode prosseguir")
+		"pode reservar",
+		"pode fazer",
+		"pode sim",
 	}
+
+	return containsFoldedPhrase(folded, confirmationPhrases)
+}
+
+func looksLikeDocumentConfirmationContextReply(text string) bool {
+	return looksLikeDocumentConfirmation(text) || looksLikeDocumentCorrectionReply(text)
+}
+
+func looksLikeDocumentCorrectionReply(text string) bool {
+	_, ok := parsePassengerDocumentCorrection(text)
+	return ok
+}
+
+func looksLikeDocumentCorrectionOrRejection(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	if _, ok := parsePassengerDocumentCorrection(text); ok {
+		return true
+	}
+
+	rejectionPhrases := []string{
+		"nao",
+		"nao esta certo",
+		"nao ta certo",
+		"nao confere",
+		"esta errado",
+		"ta errado",
+		"errado",
+		"incorreto",
+		"incorreta",
+		"tem erro",
+		"tem um erro",
+	}
+
+	if containsFoldedPhrase(folded, rejectionPhrases) {
+		return true
+	}
+
+	correctionPhrases := []string{
+		"corrigir",
+		"corrige",
+		"corrija",
+		"alterar",
+		"altera",
+		"altere",
+		"mudar",
+		"muda",
+		"mude",
+		"trocar",
+		"troca",
+		"troque",
+		"arrumar",
+		"arruma",
+		"arrume",
+		"ajustar",
+		"ajusta",
+		"ajuste",
+		"corrigir o cpf",
+		"corrigir cpf",
+		"alterar o cpf",
+		"alterar cpf",
+		"trocar o cpf",
+		"trocar cpf",
+		"corrigir o documento",
+		"alterar o documento",
+		"trocar o documento",
+		"corrigir o nome",
+		"alterar o nome",
+		"trocar o nome",
+	}
+
+	return containsFoldedPhrase(folded, correctionPhrases)
+}
+
+func containsFoldedPhrase(text string, phrases []string) bool {
+	paddedText := " " + text + " "
+	for _, phrase := range phrases {
+		normalizedPhrase := strings.Join(strings.Fields(foldChatText(phrase)), " ")
+		if normalizedPhrase == "" {
+			continue
+		}
+		if paddedText == " "+normalizedPhrase+" " || strings.Contains(paddedText, " "+normalizedPhrase+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 func lastAssistantAskedDocumentConfirmation(history []Message) bool {
