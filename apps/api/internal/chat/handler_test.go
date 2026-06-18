@@ -752,6 +752,489 @@ func TestReprocessConfirmsTextPassengerDocumentBeforeGenericRunner(t *testing.T)
 	}
 }
 
+func TestReprocessInlinePassengerDocumentsWithIncompleteSecondNameAsksResendWithNameAndCPF(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709060")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-partial-1",
+			IdempotencyKey:    "idem-inline-docs-partial-1",
+			Body:              "joão vitor messias 06645648103 ivoneide 46643591104",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest inline passenger documents: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess inline passenger documents: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected inline documents to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before confirmation, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected partial passenger document draft")
+	}
+	body := strings.Join(strings.Fields(strings.ToLower(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "joão vitor messias") ||
+		!strings.Contains(body, "reenvie ivoneide") ||
+		!strings.Contains(body, "nome completo + cpf") ||
+		!strings.Contains(body, "mesma linha") ||
+		strings.Contains(body, "documentos dos 2 passageiros faltantes") ||
+		strings.Contains(body, "tem crianca") {
+		t.Fatalf("unexpected partial passenger reply: %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected ask documents template, got %q", got)
+	}
+}
+
+func TestReprocessInlinePassengerDocumentsWithOnlyOneOfTwoAsksMissingBeforeConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709062")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-one-of-two-1",
+			IdempotencyKey:    "idem-inline-docs-one-of-two-1",
+			Body:              "João Vitor Messias 06645648103",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest partial passenger documents: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess partial passenger documents: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected partial documents to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before confirmation, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected missing passenger document draft")
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "documento de 1 passageiro") ||
+		strings.Contains(body, "documentos dos 2 passageiros") ||
+		strings.Contains(body, "consegui identificar estes dados") ||
+		strings.Contains(body, "posso prosseguir e criar a reserva") {
+		t.Fatalf("unexpected missing passenger reply: %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected ask documents template, got %q", got)
+	}
+}
+
+func TestReprocessInlinePassengerDocumentsWithLapChildPendingAsksAssignmentBeforeConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709063")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-lap-pending-1",
+			IdempotencyKey:    "idem-inline-docs-lap-pending-1",
+			Body:              "João Vitor Messias 06645648103 Ivoneide Pereira 46643591104",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest complete passenger documents with lap child pending: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess complete passenger documents with lap child pending: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected lap child assignment to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before lap child assignment, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected lap child assignment draft")
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "qual deles e a crianca de ate 5 anos") ||
+		!strings.Contains(body, "joao vitor messias") ||
+		!strings.Contains(body, "ivoneide pereira") ||
+		strings.Contains(body, "consegui identificar estes dados") ||
+		strings.Contains(body, "eles conferem") {
+		t.Fatalf("unexpected lap child assignment reply: %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment template, got %q", got)
+	}
+}
+
+func TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreate(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{
+		enabled: true,
+		result: BookingCreateResult{
+			Mode:            "created",
+			BookingID:       "BK-LAP123",
+			ReservationCode: "LAP12345",
+			Status:          "PENDING",
+			TotalAmount:     950,
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709065")
+
+	ingestedDocs, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-lap-flow-1",
+			IdempotencyKey:    "idem-inline-docs-lap-flow-1",
+			Body:              "João Vitor Messias 06645648103 Ivoneide Pereira 46643591104",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest complete passenger documents with lap child pending: %v", err)
+	}
+	reprocessedDocs, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedDocs.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess complete passenger documents with lap child pending: %v", err)
+	}
+	if reprocessedDocs.Draft == nil {
+		t.Fatalf("expected lap child assignment draft")
+	}
+	if got := strings.TrimSpace(asString(reprocessedDocs.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment template, got %q", got)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before lap child assignment, got %d calls", creator.calls)
+	}
+	seedSentOutboundFromDraft(t, store, ingestedDocs.Session.ID, reprocessedDocs.Draft)
+
+	ingestedAssignment, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-lap-flow-2",
+			IdempotencyKey:    "idem-inline-docs-lap-flow-2",
+			Body:              "2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest lap child assignment: %v", err)
+	}
+	reprocessedAssignment, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedAssignment.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess lap child assignment: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected lap child flow to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called on lap child assignment turn, got %d calls", creator.calls)
+	}
+	if len(reprocessedAssignment.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls on lap child assignment turn, got %+v", reprocessedAssignment.ToolCalls)
+	}
+	if reprocessedAssignment.Draft == nil {
+		t.Fatalf("expected document confirmation draft after lap child assignment")
+	}
+	body := strings.Join(strings.Fields(strings.ToLower(reprocessedAssignment.Draft.Body)), " ")
+	if !strings.Contains(body, "consegui identificar estes dados") ||
+		!strings.Contains(body, "joão vitor messias") ||
+		!strings.Contains(body, "2. ivoneide pereira") ||
+		!strings.Contains(body, "crianca de ate 5 anos") {
+		t.Fatalf("unexpected document confirmation after lap child assignment: %q", reprocessedAssignment.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessedAssignment.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("expected confirm document template after lap child assignment, got %q", got)
+	}
+	seedSentOutboundFromDraft(t, store, ingestedAssignment.Session.ID, reprocessedAssignment.Draft)
+	messagesAfterAssignment, err := store.ListMessages(context.Background(), ingestedAssignment.Session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list messages after lap child assignment: %v", err)
+	}
+	if !lastAssistantAskedDocumentConfirmation(messagesAfterAssignment) {
+		bodies := make([]string, 0, len(messagesAfterAssignment))
+		for _, message := range messagesAfterAssignment {
+			bodies = append(bodies, strings.TrimSpace(message.Direction)+":"+strings.TrimSpace(message.Body))
+		}
+		t.Fatalf("expected saved document confirmation before final confirmation, got history=%q", strings.Join(bodies, " | "))
+	}
+
+	ingestedConfirmation, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-lap-flow-3",
+			IdempotencyKey:    "idem-inline-docs-lap-flow-3",
+			Body:              "sim",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest document confirmation: %v", err)
+	}
+	reprocessedConfirmation, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedConfirmation.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess document confirmation: %v", err)
+	}
+	if creator.calls != 1 {
+		var draftBody string
+		if reprocessedConfirmation.Draft != nil {
+			draftBody = reprocessedConfirmation.Draft.Body
+		}
+		t.Fatalf("expected booking_create to be called once after document confirmation, got %d calls; draft=%q tool_calls=%+v", creator.calls, draftBody, reprocessedConfirmation.ToolCalls)
+	}
+	if len(reprocessedConfirmation.ToolCalls) != 1 || reprocessedConfirmation.ToolCalls[0].ToolName != toolNameBookingCreate {
+		t.Fatalf("expected one booking_create tool call after confirmation, got %+v", reprocessedConfirmation.ToolCalls)
+	}
+	if len(creator.lastInput.Passengers) != 2 ||
+		creator.lastInput.Passengers[0].IsLapChild ||
+		!creator.lastInput.Passengers[1].IsLapChild {
+		t.Fatalf("expected passenger 2 marked as lap child on booking_create input, got %+v", creator.lastInput.Passengers)
+	}
+	if creator.lastInput.SelectedOptionIndex != 1 ||
+		creator.lastInput.TripID != "trip-inline-docs-1" ||
+		creator.lastInput.BoardStopID != "board-inline-docs-1" ||
+		creator.lastInput.AlightStopID != "alight-inline-docs-1" {
+		t.Fatalf("expected booking_create to keep original option 1 after lap child assignment, got %+v", creator.lastInput)
+	}
+}
+
+func TestReprocessInlinePassengerDocumentsWithIncompleteFirstNameDoesNotUseWrongOrdinal(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709064")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-partial-first-1",
+			IdempotencyKey:    "idem-inline-docs-partial-first-1",
+			Body:              "joão 06645648103 Ivoneide Pereira 46643591104",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest partial-first inline passenger documents: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess partial-first inline passenger documents: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected partial-first documents to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before complete passenger details, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected partial passenger document draft")
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "ivoneide pereira") ||
+		!strings.Contains(body, "reenvie joao") ||
+		!strings.Contains(body, "nome completo + cpf") ||
+		!strings.Contains(body, "mesma linha") ||
+		strings.Contains(body, "passageiro 2") {
+		t.Fatalf("unexpected partial-first reply: %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected ask documents template, got %q", got)
+	}
+}
+
+func TestReprocessInlinePassengerDocumentsAfterPartialResendDraftsConfirmation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistoryNoChild(t, store, "5549988709066")
+
+	ingestedPartial, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-partial-resend-1",
+			IdempotencyKey:    "idem-inline-docs-partial-resend-1",
+			Body:              "joão 06645648103 Ivoneide Pereira 46643591104",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest partial inline passenger documents: %v", err)
+	}
+	reprocessedPartial, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedPartial.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess partial inline passenger documents: %v", err)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before complete passenger details, got %d calls", creator.calls)
+	}
+	if reprocessedPartial.Draft == nil {
+		t.Fatalf("expected partial passenger document draft")
+	}
+	partialBody := strings.Join(strings.Fields(foldChatText(reprocessedPartial.Draft.Body)), " ")
+	if !strings.Contains(partialBody, "reenvie joao") ||
+		!strings.Contains(partialBody, "nome completo + cpf") ||
+		strings.Contains(partialBody, "passageiro 2") {
+		t.Fatalf("unexpected partial resend reply: %q", reprocessedPartial.Draft.Body)
+	}
+	seedSentOutboundFromDraft(t, store, ingestedPartial.Session.ID, reprocessedPartial.Draft)
+
+	ingestedResend, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-partial-resend-2",
+			IdempotencyKey:    "idem-inline-docs-partial-resend-2",
+			Body:              "João Vitor Messias 06645648103",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest completed partial passenger: %v", err)
+	}
+	reprocessedResend, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedResend.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess completed partial passenger: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected completed partial passenger to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before document confirmation, got %d calls", creator.calls)
+	}
+	if len(reprocessedResend.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls before document confirmation, got %+v", reprocessedResend.ToolCalls)
+	}
+	if reprocessedResend.Draft == nil {
+		t.Fatalf("expected document confirmation draft")
+	}
+	confirmationBody := strings.Join(strings.Fields(foldChatText(reprocessedResend.Draft.Body)), " ")
+	if !strings.Contains(confirmationBody, "consegui identificar estes dados") ||
+		!strings.Contains(confirmationBody, "joao vitor messias") ||
+		!strings.Contains(confirmationBody, "ivoneide pereira") ||
+		strings.Contains(confirmationBody, "documentos dos 2 passageiros faltantes") {
+		t.Fatalf("unexpected confirmation after completed partial passenger: %q", reprocessedResend.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessedResend.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("expected confirm document template, got %q", got)
+	}
+}
+
+func TestReprocessAlreadySentReevaluatesPreviousInlinePassengerDocuments(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedInlinePassengerDocumentBookingHistory(t, store, "5549988709061")
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-90 * time.Second),
+		Body:             "joão vitor messias 06645648103 ivoneide pereira 46643591104",
+	}); err != nil {
+		t.Fatalf("seed previous inline documents: %v", err)
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-60 * time.Second),
+		Body:             "Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes.",
+	}); err != nil {
+		t.Fatalf("seed repeated generic document request: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-inline-docs-already-sent-1",
+			IdempotencyKey:    "idem-inline-docs-already-sent-1",
+			Body:              "mas já enviei",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest already sent reply: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess already sent reply: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected already-sent reply to be handled before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before confirmation, got %d calls", creator.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected lap child assignment draft")
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "qual deles e a crianca de ate 5 anos") ||
+		!strings.Contains(body, "joao vitor messias") ||
+		!strings.Contains(body, "ivoneide pereira") ||
+		strings.Contains(body, "consegui identificar estes dados") ||
+		strings.Contains(body, "eles conferem") ||
+		strings.Contains(body, "documentos dos 2 passageiros faltantes") {
+		t.Fatalf("unexpected already-sent lap child reply: %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment template, got %q", got)
+	}
+}
+
 func TestReprocessCPFOnlyPassengerDocumentAsksNameBeforeGenericRunner(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
@@ -1176,6 +1659,119 @@ func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contac
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "Tem crianca de 5 anos ou menos viajando?"},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: "nao"},
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento."},
+	}
+	for _, message := range messages {
+		if _, err := store.CreateMessage(context.Background(), message); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
+	}
+	return session
+}
+
+func seedSentOutboundFromDraft(t *testing.T, store *fakeStore, sessionID string, draft *Message) {
+	t.Helper()
+	if draft == nil {
+		t.Fatalf("expected draft to seed sent outbound")
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		ProcessingStatus:  messageStatusAutomationSent,
+		ReceivedAt:        time.Now().UTC(),
+		Body:              draft.Body,
+		Payload:           draft.Payload,
+		NormalizedPayload: draft.NormalizedPayload,
+	}); err != nil {
+		t.Fatalf("seed sent outbound from draft: %v", err)
+	}
+}
+
+func seedInlinePassengerDocumentBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
+	t.Helper()
+	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "eu e minha filha de 4 anos")
+}
+
+func seedInlinePassengerDocumentBookingHistoryNoChild(t *testing.T, store *fakeStore, contactKey string) Session {
+	t.Helper()
+	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "2 pessoas e nenhuma crianca")
+}
+
+func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t *testing.T, store *fakeStore, contactKey string, passengerReply string) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     contactKey,
+		CustomerPhone:  contactKey,
+		CustomerName:   "Joao",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         2,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-inline-docs-1",
+				BoardStopID:            "board-inline-docs-1",
+				AlightStopID:           "alight-inline-docs-1",
+				OriginDisplayName:      "Santa Ines/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "12:00",
+				TripDate:               "2026-06-22",
+				Price:                  950,
+				Currency:               "BRL",
+				PackageName:            packageToSantaCatarina,
+			},
+			{
+				TripID:                 "trip-inline-docs-2",
+				BoardStopID:            "board-inline-docs-2",
+				AlightStopID:           "alight-inline-docs-2",
+				OriginDisplayName:      "Santa Ines/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "18:00",
+				TripDate:               "2026-06-24",
+				Price:                  950,
+				Currency:               "BRL",
+				PackageName:            packageToSantaCatarina,
+			},
+		},
+	})
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		Body:             "Encontrei estas opcoes para Santa Ines/MA -> Fraiburgo/SC.",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-6 * time.Minute),
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: availabilityPayload,
+			},
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: availabilityPayload,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed availability: %v", err)
+	}
+
+	messages := []CreateMessageInput{
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "primeira opcao"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: passengerReply},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG)."},
 	}
 	for _, message := range messages {
 		if _, err := store.CreateMessage(context.Background(), message); err != nil {

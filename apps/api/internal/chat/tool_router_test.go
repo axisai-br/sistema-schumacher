@@ -496,3 +496,36 @@ func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *
 		t.Fatalf("unexpected selected trip: %+v", creator.lastInput)
 	}
 }
+
+func TestResolveContextualActionToolsDoesNotCreateBookingFromLapChildAssignment(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := Session{
+		ID:            "session-resolve-lap-child-assignment",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	now := time.Now().UTC()
+	history := lapChildBookingHistory(now, "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082")
+	history = history[:len(history)-1]
+	history = append(history, Message{
+		Direction:        "OUTBOUND",
+		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
+		ProcessingStatus: messageStatusAutomationDraft,
+		ReceivedAt:       now.Add(-30 * time.Second),
+	})
+
+	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "2", agentToolContext{})
+	if err != nil {
+		t.Fatalf("resolve contextual tools: %v", err)
+	}
+	if used {
+		t.Fatalf("expected contextual action tool not to be used from lap child assignment, got %+v", context.Calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called from lap child assignment, got %d calls", creator.calls)
+	}
+}

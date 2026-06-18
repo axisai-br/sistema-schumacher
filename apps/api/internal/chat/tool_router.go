@@ -459,12 +459,7 @@ func (s *Service) resolveContextualActionTools(ctx context.Context, session Sess
 		}
 	}
 	if s.canCreateBookings() {
-		createInput, ok := parseBookingCreateFromLapChildAssignment(session, history, currentTurn)
-		if ok {
-			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
-			return updated, true, err
-		}
-		createInput, ok = parseBookingCreateFromDocumentConfirmation(session, history, currentTurn)
+		createInput, ok := parseBookingCreateFromDocumentConfirmation(session, history, currentTurn)
 		if ok {
 			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
 			return updated, true, err

@@ -17,33 +17,35 @@ const (
 )
 
 type BookingDraftContext struct {
-	Origin                      string
-	Destination                 string
-	SelectedOptionIndex         int
-	TripID                      string
-	BoardStopID                 string
-	AlightStopID                string
-	TripDate                    string
-	DepartureTime               string
-	Price                       float64
-	Currency                    string
-	PassengerCount              int
-	ChildUnder5Count            int
-	PassengerCountKnown         bool
-	ChildUnder5CountKnown       bool
-	LapChildAssignmentKnown     bool
-	LapChildPassengerIndexes    []int
-	NeedsLapChildAssignment     bool
-	HasPassengerDetails         bool
-	PassengerDetailsCount       int
-	PassengerDetailsText        string
-	PassengerDetails            []BookingCreatePassengerInput
-	HasAvailabilityShown        bool
-	AskedPassengerQuestion      bool
-	PassengerCountContextActive bool
-	RequestedPassengerDocuments bool
-	BookingCreated              bool
-	AskedPaymentPreference      bool
+	Origin                       string
+	Destination                  string
+	SelectedOptionIndex          int
+	TripID                       string
+	BoardStopID                  string
+	AlightStopID                 string
+	TripDate                     string
+	DepartureTime                string
+	Price                        float64
+	Currency                     string
+	PassengerCount               int
+	ChildUnder5Count             int
+	PassengerCountKnown          bool
+	ChildUnder5CountKnown        bool
+	LapChildAssignmentKnown      bool
+	LapChildPassengerIndexes     []int
+	NeedsLapChildAssignment      bool
+	HasPassengerDetails          bool
+	PassengerDetailsCount        int
+	PassengerDetailsText         string
+	PassengerDetails             []BookingCreatePassengerInput
+	PartialPassengerDetails      []BookingPassengerDocumentPartial
+	PartialPassengerDetailsCount int
+	HasAvailabilityShown         bool
+	AskedPassengerQuestion       bool
+	PassengerCountContextActive  bool
+	RequestedPassengerDocuments  bool
+	BookingCreated               bool
+	AskedPaymentPreference       bool
 }
 
 func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
@@ -115,8 +117,9 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		}
 	}
 
-	passengerDetailsText := findLatestPassengerDetailsText(history, session)
-	passengers := extractBookingCreatePassengers(passengerDetailsText, session)
+	passengerProgress := findLatestPassengerDocumentProgress(history, session)
+	passengerDetailsText := passengerProgress.SourceText
+	passengers := passengerProgress.Passengers
 	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
 	if len(passengers) == 0 {
 		if extract := findLatestDocumentExtractContext(history); extract != nil && (strings.EqualFold(strings.TrimSpace(extract.Mode), "EXTRACTED") || hasCorrection) {
@@ -140,6 +143,13 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 			}
 		}
 	}
+	if len(passengerProgress.Partials) > 0 {
+		context.PartialPassengerDetails = passengerProgress.Partials
+		context.PartialPassengerDetailsCount = len(passengerProgress.Partials)
+		if context.PassengerDetailsText == "" {
+			context.PassengerDetailsText = passengerDetailsText
+		}
+	}
 	if context.PassengerDetailsCount > 0 &&
 		context.PassengerDetailsCount > context.PassengerCount &&
 		context.ChildUnder5Count > 0 {
@@ -155,6 +165,9 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 			context.LapChildPassengerIndexes = indexes
 			context.LapChildAssignmentKnown = true
 		}
+	}
+	if context.LapChildAssignmentKnown && len(context.LapChildPassengerIndexes) > 0 && len(context.PassengerDetails) > 0 {
+		applyLapChildPassengerIndexes(context.PassengerDetails, context.LapChildPassengerIndexes)
 	}
 	context.NeedsLapChildAssignment = context.ChildUnder5Count > 0 &&
 		context.HasPassengerDetails &&
@@ -287,6 +300,14 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 	if !context.HasPassengerDetails {
 		return BookingNextAskPassengerDocuments
 	}
+	if context.PartialPassengerDetailsCount > 0 {
+		return BookingNextAskPassengerDocuments
+	}
+	if context.PassengerCount > 0 &&
+		context.PassengerDetailsCount > 0 &&
+		context.PassengerDetailsCount != context.PassengerCount {
+		return BookingNextAskPassengerDocuments
+	}
 	if context.NeedsLapChildAssignment {
 		return BookingNextAskLapChildAssignment
 	}
@@ -303,6 +324,9 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 	case BookingNextAwaitTripSelection:
 		return "Antes de criar a reserva, preciso que voce escolha uma opcao de viagem disponivel."
 	case BookingNextAskPassengerDocuments:
+		if reply := buildPassengerDocumentProgressReply(context); reply != "" {
+			return reply
+		}
 		return buildAskDocumentsReply(context.PassengerCount, context.PassengerDetailsCount)
 	case BookingNextAskLapChildAssignment:
 		return buildAskLapChildAssignmentReply(context)
@@ -311,6 +335,46 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 	default:
 		return ""
 	}
+}
+
+func buildPassengerDocumentProgressReply(context BookingDraftContext) string {
+	if context.PartialPassengerDetailsCount == 0 {
+		return ""
+	}
+
+	partial := context.PartialPassengerDetails[0]
+	nameFragment := strings.TrimSpace(partial.NameFragment)
+	if nameFragment == "" {
+		nameFragment = "desse passageiro"
+	}
+
+	if context.PassengerDetailsCount > 0 {
+		names := make([]string, 0, context.PassengerDetailsCount)
+		for _, passenger := range context.PassengerDetails {
+			if name := strings.TrimSpace(passenger.Name); name != "" {
+				names = append(names, name)
+			}
+		}
+		received := fmt.Sprintf("Recebi os dados de %d passageiro", context.PassengerDetailsCount)
+		if context.PassengerDetailsCount > 1 {
+			received = fmt.Sprintf("Recebi os dados de %d passageiros", context.PassengerDetailsCount)
+		}
+		if len(names) > 0 {
+			received = "Recebi os dados de " + strings.Join(names, ", ")
+		}
+		if nameFragment == "desse passageiro" {
+			return fmt.Sprintf("%s. Para esse passageiro, recebi o CPF, mas preciso que voce reenvie esse passageiro na mesma linha com nome completo + CPF.", received)
+		}
+		return fmt.Sprintf("%s. Para %s, recebi o CPF, mas preciso que voce reenvie %s na mesma linha com nome completo + CPF.", received, nameFragment, nameFragment)
+	}
+
+	if context.PartialPassengerDetailsCount == 1 {
+		if nameFragment == "desse passageiro" {
+			return "Recebi o CPF, mas preciso que voce reenvie esse passageiro na mesma linha com nome completo + CPF para conferir antes de criar a reserva."
+		}
+		return fmt.Sprintf("Recebi o CPF, mas preciso que voce reenvie %s na mesma linha com nome completo + CPF para conferir antes de criar a reserva.", nameFragment)
+	}
+	return fmt.Sprintf("Recebi os CPFs, mas preciso que voce reenvie os %d passageiros na mesma linha com nome completo + CPF para conferir antes de criar a reserva.", context.PartialPassengerDetailsCount)
 }
 
 func buildBookingCreateMissingDataReply(context BookingDraftContext) string {
@@ -351,9 +415,17 @@ func missingBookingCreateDataLabels(context BookingDraftContext) []string {
 		missing = append(missing, "confirmacao se ha crianca de ate 5 anos")
 	}
 	if !context.HasPassengerDetails || context.PassengerDetailsCount <= 0 {
-		missing = append(missing, "nome completo e documento dos passageiros")
+		if context.PartialPassengerDetailsCount > 0 {
+			missing = append(missing, "nome completo dos passageiros com documento ja informado")
+		} else {
+			missing = append(missing, "nome completo e documento dos passageiros")
+		}
 	} else if context.PassengerCount > 0 && context.PassengerDetailsCount != context.PassengerCount {
-		missing = append(missing, "documentos de todos os passageiros")
+		if context.PartialPassengerDetailsCount > 0 {
+			missing = append(missing, "nome completo dos passageiros com documento ja informado")
+		} else {
+			missing = append(missing, "documentos de todos os passageiros")
+		}
 	}
 	if context.NeedsLapChildAssignment {
 		missing = append(missing, "qual passageiro e a crianca de ate 5 anos")
@@ -410,6 +482,9 @@ func buildBookingContinuationDraftRun(reply string, action BookingNextAction, co
 }
 
 func shouldDraftPassengerDocumentConfirmation(session Session, history []Message, currentTurn string, context BookingDraftContext) bool {
+	if !canDraftPassengerDocumentConfirmation(context, decideNextBookingStep(context)) {
+		return false
+	}
 	if !context.HasPassengerDetails || len(context.PassengerDetails) == 0 {
 		return false
 	}
@@ -424,7 +499,85 @@ func shouldDraftPassengerDocumentConfirmation(session Session, history []Message
 		!lastAssistantAskedBookingProceedConfirmation(history) {
 		return false
 	}
+	if context.PartialPassengerDetailsCount > 0 {
+		return false
+	}
+	if context.LapChildAssignmentKnown &&
+		context.ChildUnder5Count > 0 &&
+		lastAssistantAskedLapChildAssignment(history) {
+		return true
+	}
+	if looksLikeAlreadySentPassengerDocumentsReply(currentTurn) {
+		return context.HasPassengerDetails &&
+			len(context.PassengerDetails) > 0 &&
+			lastAssistantAskedPassengerDocumentRequest(history)
+	}
 	return len(extractBookingCreatePassengers(currentTurn, session)) > 0
+}
+
+func canDraftPassengerDocumentConfirmation(context BookingDraftContext, action BookingNextAction) bool {
+	if action != BookingNextCallCreate {
+		return false
+	}
+	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
+		return false
+	}
+	if !context.HasPassengerDetails || context.PassengerDetailsCount != context.PassengerCount {
+		return false
+	}
+	if context.PartialPassengerDetailsCount > 0 || context.NeedsLapChildAssignment {
+		return false
+	}
+	if context.ChildUnder5Count > 0 && !context.LapChildAssignmentKnown {
+		return false
+	}
+	for _, passenger := range context.PassengerDetails {
+		if !bookingDraftPassengerDocumentComplete(passenger) {
+			return false
+		}
+	}
+	return true
+}
+
+func bookingDraftPassengerDocumentComplete(passenger BookingCreatePassengerInput) bool {
+	if strings.TrimSpace(passenger.Name) == "" {
+		return false
+	}
+	documentType := normalizePassengerDocumentType(passenger.DocumentType)
+	if documentType == "" {
+		for _, candidate := range []struct {
+			Type  string
+			Value string
+		}{
+			{"CPF", passenger.CPF},
+			{"RG", passenger.RG},
+			{"CNH", passenger.CNH},
+			{"CERTIDAO_NASCIMENTO", passenger.BirthCertificateNumber},
+		} {
+			if normalizePassengerDocumentValue(candidate.Value, candidate.Type) != "" {
+				documentType = candidate.Type
+				break
+			}
+		}
+	}
+	if documentType == "" {
+		return false
+	}
+	if normalizePassengerDocumentValue(passenger.Document, documentType) != "" {
+		return true
+	}
+	switch documentType {
+	case "CPF":
+		return normalizePassengerDocumentValue(passenger.CPF, "CPF") != ""
+	case "RG":
+		return normalizePassengerDocumentValue(passenger.RG, "RG") != ""
+	case "CNH":
+		return normalizePassengerDocumentValue(passenger.CNH, "CNH") != ""
+	case "CERTIDAO_NASCIMENTO":
+		return normalizePassengerDocumentValue(passenger.BirthCertificateNumber, "CERTIDAO_NASCIMENTO") != ""
+	default:
+		return false
+	}
 }
 
 func shouldAskPassengerNameAfterCPF(session Session, currentTurn string, context BookingDraftContext) bool {
@@ -546,6 +699,7 @@ func documentExtractResultFromBookingDraft(context BookingDraftContext) Document
 			BirthDate:              strings.TrimSpace(passenger.BirthDate),
 			BirthCertificateNumber: normalizePassengerDocumentValue(passenger.BirthCertificateNumber, "CERTIDAO_NASCIMENTO"),
 			BirthCity:              normalizePassengerBirthCity(passenger.BirthCity),
+			IsLapChild:             passenger.IsLapChild,
 			Confidence:             1,
 		}
 		switch docType {
@@ -585,6 +739,58 @@ func shouldTreatAsPassengerDocumentFlow(phase ConversationPhase, history []Messa
 		break
 	}
 	return looksLikePassengerDocumentText(currentTurn, session)
+}
+
+func looksLikeAlreadySentPassengerDocumentsReply(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if folded == "" {
+		return false
+	}
+	phrases := []string{
+		"mas ja enviei",
+		"ja enviei",
+		"ja mandei",
+		"enviei sim",
+		"mandei acima",
+		"ja foi",
+		"mande acima",
+		"esta acima",
+		"ta acima",
+	}
+	return containsFoldedPhrase(folded, phrases)
+}
+
+func shouldReplyPassengerDocumentsAlreadySentNotRecognized(currentTurn string, context BookingDraftContext) bool {
+	return looksLikeAlreadySentPassengerDocumentsReply(currentTurn) &&
+		context.RequestedPassengerDocuments &&
+		!context.HasPassengerDetails &&
+		context.PartialPassengerDetailsCount == 0
+}
+
+func lastAssistantAskedPassengerDocumentRequest(history []Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		folded := strings.Join(strings.Fields(foldChatText(message.Body)), " ")
+		if folded == "" {
+			continue
+		}
+		return looksLikePassengerDocumentRequest(folded)
+	}
+	return false
+}
+
+func buildPassengerDocumentsAlreadySentNotRecognizedReply(context BookingDraftContext) string {
+	expected := context.PassengerCount
+	if expected <= 0 {
+		expected = 1
+	}
+	if expected == 1 {
+		return "Vi que voce enviou uma mensagem antes, mas nao consegui identificar os dados do passageiro. Pode enviar em uma linha? Exemplo: Nome completo - CPF."
+	}
+	return fmt.Sprintf("Vi que voce enviou uma mensagem antes, mas nao consegui identificar os dados dos %d passageiros. Pode enviar em uma linha por passageiro? Exemplo: Nome completo - CPF.", expected)
 }
 
 func bookingContinuationTemplateName(action BookingNextAction, context BookingDraftContext) ResponseTemplateName {

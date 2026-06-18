@@ -271,6 +271,132 @@ func TestExtractBookingCreatePassengersParsesObservedNameCPF(t *testing.T) {
 	}
 }
 
+func TestExtractBookingCreatePassengersParsesMultipleInlineNameCPF(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("João Vitor Messias 06645648103 Ivoneide Pereira 46643591104", session)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected two passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "João Vitor Messias" || passengers[0].DocumentType != "CPF" || passengers[0].Document != "06645648103" || passengers[0].CPF != "06645648103" {
+		t.Fatalf("unexpected first passenger: %+v", passengers[0])
+	}
+	if passengers[1].Name != "Ivoneide Pereira" || passengers[1].DocumentType != "CPF" || passengers[1].Document != "46643591104" || passengers[1].CPF != "46643591104" {
+		t.Fatalf("unexpected second passenger: %+v", passengers[1])
+	}
+}
+
+func TestExtractBookingCreatePassengersStripsInitialInlineConjunction(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("João Vitor Messias 06645648103 e Ivoneide Pereira 46643591104", session)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected two passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "João Vitor Messias" {
+		t.Fatalf("unexpected first passenger name: %+v", passengers[0])
+	}
+	if passengers[1].Name != "Ivoneide Pereira" {
+		t.Fatalf("expected second passenger without conjunction, got %+v", passengers[1])
+	}
+}
+
+func TestExtractBookingCreatePassengersStripsInlineSeparatorsBeforeLabels(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	tests := []struct {
+		name           string
+		text           string
+		expectedFirst  string
+		expectedSecond string
+	}{
+		{
+			name:           "comma before ordinal",
+			text:           "João Vitor Messias 06645648103, 2. Ivoneide Pereira 46643591104",
+			expectedFirst:  "João Vitor Messias",
+			expectedSecond: "Ivoneide Pereira",
+		},
+		{
+			name:           "conjunction before ordinal",
+			text:           "João Vitor Messias 06645648103 e 2. Ivoneide Pereira 46643591104",
+			expectedFirst:  "João Vitor Messias",
+			expectedSecond: "Ivoneide Pereira",
+		},
+		{
+			name:           "conjunction before passenger label",
+			text:           "João Vitor Messias 06645648103 e passageiro 2: Ivoneide Pereira 46643591104",
+			expectedFirst:  "João Vitor Messias",
+			expectedSecond: "Ivoneide Pereira",
+		},
+		{
+			name:           "names starting with e",
+			text:           "Edivaldo Pereira 06645648103 e Eliane Souza 46643591104",
+			expectedFirst:  "Edivaldo Pereira",
+			expectedSecond: "Eliane Souza",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			passengers := extractBookingCreatePassengers(tc.text, session)
+
+			if len(passengers) != 2 {
+				t.Fatalf("expected two passengers, got %+v", passengers)
+			}
+			if passengers[0].Name != tc.expectedFirst {
+				t.Fatalf("expected first passenger %q, got %+v", tc.expectedFirst, passengers[0])
+			}
+			if passengers[1].Name != tc.expectedSecond {
+				t.Fatalf("expected second passenger %q without inline label, got %+v", tc.expectedSecond, passengers[1])
+			}
+		})
+	}
+}
+
+func TestExtractBookingCreatePassengersPreservesNamesStartingWithE(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("Edivaldo Pereira 06645648103 e Eliane Souza 46643591104", session)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected two passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "Edivaldo Pereira" {
+		t.Fatalf("expected first name starting with E to be preserved, got %+v", passengers[0])
+	}
+	if passengers[1].Name != "Eliane Souza" {
+		t.Fatalf("expected second name starting with E to be preserved, got %+v", passengers[1])
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesMultipleInlinePunctuatedCPF(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("João Vitor Messias - 066.456.481-03 / Ivoneide Pereira - 466.435.911-04", session)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected two passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "João Vitor Messias" || passengers[0].DocumentType != "CPF" || passengers[0].Document != "06645648103" {
+		t.Fatalf("unexpected first passenger: %+v", passengers[0])
+	}
+	if passengers[1].Name != "Ivoneide Pereira" || passengers[1].DocumentType != "CPF" || passengers[1].Document != "46643591104" {
+		t.Fatalf("unexpected second passenger: %+v", passengers[1])
+	}
+}
+
+func TestExtractBookingCreatePassengersParsesMultipleInlineWithCPFLabels(t *testing.T) {
+	session := Session{CustomerPhone: "5549999999999"}
+	passengers := extractBookingCreatePassengers("João Vitor Messias CPF 06645648103 Ivoneide Pereira CPF 46643591104", session)
+
+	if len(passengers) != 2 {
+		t.Fatalf("expected two passengers, got %+v", passengers)
+	}
+	if passengers[0].Name != "João Vitor Messias" || passengers[0].Document != "06645648103" {
+		t.Fatalf("unexpected first passenger: %+v", passengers[0])
+	}
+	if passengers[1].Name != "Ivoneide Pereira" || passengers[1].Document != "46643591104" {
+		t.Fatalf("unexpected second passenger: %+v", passengers[1])
+	}
+}
+
 func TestExtractBookingCreatePassengersParsesNameAndRG(t *testing.T) {
 	session := Session{CustomerPhone: "5549999999999"}
 	passengers := extractBookingCreatePassengers("Nome: Maria Silva RG 2817314 SSP SC", session)
@@ -359,23 +485,48 @@ func TestNormalizePassengerDocumentValueRequires32DigitBirthCertificate(t *testi
 	}
 }
 
-func TestParseBookingCreateFromLapChildAssignmentReplyByIndex(t *testing.T) {
+func TestParseBookingCreateFromDocumentConfirmationUsesLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
 	history := lapChildBookingHistory(now, "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082")
+	history = history[:len(history)-1]
 	history = append(history, Message{
 		Direction:        "OUTBOUND",
 		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
 		ProcessingStatus: messageStatusAutomationDraft,
 		ReceivedAt:       now.Add(-30 * time.Second),
+	}, Message{
+		Direction:        "INBOUND",
+		Body:             "1",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-20 * time.Second),
+	}, Message{
+		Direction:        "OUTBOUND",
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Joao Vitor Messias | CPF | 849.***.***-86 | crianca de ate 5 anos\n2. Ivoneide Messias | CPF | 048.***.***-82",
+		ProcessingStatus: messageStatusAutomationDraft,
+		ReceivedAt:       now.Add(-10 * time.Second),
 	})
 
-	input, ok := parseBookingCreateFromLapChildAssignment(session, history, "1")
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
 	if !ok {
-		t.Fatalf("expected booking create from lap child assignment")
+		t.Fatalf("expected booking create after document confirmation")
 	}
 	if len(input.Passengers) != 2 || !input.Passengers[0].IsLapChild || input.Passengers[1].IsLapChild {
 		t.Fatalf("expected first passenger as lap child only, got %+v", input.Passengers)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Pereira", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "INBOUND", Body: "2", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 1 {
+		t.Fatalf("expected trip selection 1 to be preserved, got %d", got)
 	}
 }
 

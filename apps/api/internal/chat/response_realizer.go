@@ -412,12 +412,19 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 		if document == "" {
 			document = "numero nao identificado"
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(passenger)))
+		lines = append(lines, fmt.Sprintf("%d. %s | %s | %s%s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(passenger), formatPassengerLapChildForConfirmation(passenger)))
 	}
 	if missing := result.ExpectedPassengerCount - len(result.Passengers); missing > 0 {
 		lines = append(lines, buildAskDocumentsReply(missing, 0))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatPassengerLapChildForConfirmation(passenger DocumentExtractPassenger) string {
+	if !passenger.IsLapChild {
+		return ""
+	}
+	return " | crianca de ate 5 anos"
 }
 
 func formatPassengerAdditionalIdentityForConfirmation(passenger DocumentExtractPassenger) string {
