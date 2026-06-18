@@ -18,6 +18,7 @@ type DocumentExtractPassenger struct {
 	BirthDate              string  `json:"birth_date,omitempty"`
 	BirthCertificateNumber string  `json:"birth_certificate_number,omitempty"`
 	BirthCity              string  `json:"birth_city,omitempty"`
+	IsLapChild             bool    `json:"is_lap_child,omitempty"`
 	Confidence             float64 `json:"confidence"`
 }
 
@@ -479,6 +480,7 @@ func parseDocumentExtractPassenger(raw map[string]interface{}) DocumentExtractPa
 		BirthDate:              normalizeDocumentBirthDate(raw),
 		BirthCertificateNumber: documents["CERTIDAO_NASCIMENTO"],
 		BirthCity:              normalizeDocumentBirthCity(raw),
+		IsLapChild:             readBool(raw["is_lap_child"]),
 		Confidence:             normalizeDocumentConfidence(asFloat64(raw["confidence"])),
 	})
 }
@@ -551,6 +553,17 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 		passenger.Document = passenger.CNH
 	}
 	return passenger
+}
+
+func readBool(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
 }
 
 func looksLikeCNHEExtract(passenger DocumentExtractPassenger) bool {
@@ -814,6 +827,7 @@ func buildDocumentExtractResponsePayload(result DocumentExtractResult) map[strin
 			"birth_date":               passenger.BirthDate,
 			"birth_certificate_number": passenger.BirthCertificateNumber,
 			"birth_city":               passenger.BirthCity,
+			"is_lap_child":             passenger.IsLapChild,
 			"confidence":               passenger.Confidence,
 		})
 	}

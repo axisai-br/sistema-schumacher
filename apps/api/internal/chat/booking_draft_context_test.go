@@ -273,6 +273,76 @@ func TestTypedPassengerDocsWithoutChildLabelAskLapChildAssignment(t *testing.T) 
 	}
 }
 
+func TestInlinePassengerDocsWithIncompleteSecondNameAsksResendWithNameAndCPF(t *testing.T) {
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "eu e minha filha de 4 anos", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "joão vitor messias 06645648103 ivoneide 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	)
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.PassengerCount != 2 || context.ChildUnder5Count != 1 || !context.ChildUnder5CountKnown {
+		t.Fatalf("expected two passengers and one child context, got %+v", context)
+	}
+	if context.PassengerDetailsCount != 1 || context.PartialPassengerDetailsCount != 1 {
+		t.Fatalf("expected one complete passenger and one partial passenger, got %+v", context)
+	}
+	if context.PassengerDetails[0].Name != "joão vitor messias" || context.PassengerDetails[0].Document != "06645648103" {
+		t.Fatalf("unexpected complete passenger: %+v", context.PassengerDetails)
+	}
+	if context.PartialPassengerDetails[0].NameFragment != "ivoneide" || context.PartialPassengerDetails[0].Document != "46643591104" {
+		t.Fatalf("unexpected partial passenger: %+v", context.PartialPassengerDetails)
+	}
+	action := decideNextBookingStep(context)
+	if action != BookingNextAskPassengerDocuments {
+		t.Fatalf("expected next action %s, got %s", BookingNextAskPassengerDocuments, action)
+	}
+	reply := buildBookingContinuationReply(context, action)
+	if !strings.Contains(reply, "joão vitor messias") ||
+		!strings.Contains(reply, "reenvie ivoneide") ||
+		!strings.Contains(reply, "nome completo + CPF") ||
+		!strings.Contains(reply, "mesma linha") ||
+		strings.Contains(reply, "documentos dos 2 passageiros faltantes") ||
+		strings.Contains(reply, "Tem crianca") {
+		t.Fatalf("unexpected partial passenger reply: %q", reply)
+	}
+}
+
+func TestInlinePassengerDocsWithIncompleteFirstNameDoesNotUseWrongOrdinal(t *testing.T) {
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "2 pessoas e nenhuma crianca", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "joão 06645648103 Ivoneide Pereira 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	)
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.PassengerDetailsCount != 1 || context.PartialPassengerDetailsCount != 1 {
+		t.Fatalf("expected one complete passenger and one partial passenger, got %+v", context)
+	}
+	if context.PassengerDetails[0].Name != "Ivoneide Pereira" || context.PassengerDetails[0].Document != "46643591104" {
+		t.Fatalf("unexpected complete passenger: %+v", context.PassengerDetails)
+	}
+	if context.PartialPassengerDetails[0].NameFragment != "joão" || context.PartialPassengerDetails[0].Document != "06645648103" {
+		t.Fatalf("unexpected partial passenger: %+v", context.PartialPassengerDetails)
+	}
+	action := decideNextBookingStep(context)
+	if action != BookingNextAskPassengerDocuments {
+		t.Fatalf("expected next action %s, got %s", BookingNextAskPassengerDocuments, action)
+	}
+	reply := buildBookingContinuationReply(context, action)
+	if !strings.Contains(reply, "Ivoneide Pereira") ||
+		!strings.Contains(reply, "reenvie joão") ||
+		!strings.Contains(reply, "nome completo + CPF") ||
+		!strings.Contains(reply, "mesma linha") ||
+		strings.Contains(reply, "passageiro 2") {
+		t.Fatalf("unexpected partial passenger reply: %q", reply)
+	}
+}
+
 func TestParsePassengerClarificationSlotsEuEMeuFilhoDe4Anos(t *testing.T) {
 	slots := parsePassengerClarificationSlots("eu e meu filho de 4 anos")
 	if !slots.PassengerCountKnown || slots.PassengerCount != 2 {

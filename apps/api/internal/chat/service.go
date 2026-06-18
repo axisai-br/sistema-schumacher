@@ -987,7 +987,22 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			memory["passenger_count_reply_parsed"] = false
 		}
 
-		if deterministicBookingAction == BookingNextCallCreate {
+		if !deterministicBookingHandled && shouldReplyPassengerDocumentsAlreadySentNotRecognized(currentTurn, bookingDraft) {
+			reply := buildPassengerDocumentsAlreadySentNotRecognizedReply(bookingDraft)
+			run := buildBookingContinuationDraftRun(reply, BookingNextAskPassengerDocuments, bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		}
+
+		if !deterministicBookingHandled &&
+			canDraftPassengerDocumentConfirmation(bookingDraft, deterministicBookingAction) &&
+			shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
+			run := buildPassengerDocumentConfirmationDraftRun(bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		}
+
+		if !deterministicBookingHandled && deterministicBookingAction == BookingNextCallCreate {
 			updatedContext, used, err := s.resolveContextualActionTools(
 				ctx,
 				persisted.Session,
@@ -1041,6 +1056,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	if !passengerCountContext && !deterministicBookingHandled {
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
 		passengerDocumentFlowContext := shouldTreatAsPassengerDocumentFlow(canonicalState.Phase, history, currentTurn, persisted.Session)
+		if passengerDocumentFlowContext {
+			if _, ok := parsePaymentCreateInput(persisted.Session, history, currentTurn, nil, nil); ok {
+				passengerDocumentFlowContext = false
+			}
+		}
 		bookingAction := decideNextBookingStep(bookingDraft)
 		canHandlePassengerDocumentTurn := bookingAction != BookingNextAskPassengerClarification && bookingAction != BookingNextAwaitTripSelection
 		if passengerDocumentFlowContext && canHandlePassengerDocumentTurn && hasDocumentExtractPDFMedia(collectCandidateMedia(candidates)) {
@@ -1055,6 +1075,35 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			run := buildAskPassengerNameAfterCPFDraftRun(bookingDraft)
 			deterministicBookingRun = &run
 			deterministicBookingHandled = true
+		}
+		if !deterministicBookingHandled &&
+			passengerDocumentFlowContext &&
+			canHandlePassengerDocumentTurn &&
+			shouldReplyPassengerDocumentsAlreadySentNotRecognized(currentTurn, bookingDraft) {
+			reply := buildPassengerDocumentsAlreadySentNotRecognizedReply(bookingDraft)
+			run := buildBookingContinuationDraftRun(reply, BookingNextAskPassengerDocuments, bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		}
+		if !deterministicBookingHandled &&
+			passengerDocumentFlowContext &&
+			canHandlePassengerDocumentTurn &&
+			canDraftPassengerDocumentConfirmation(bookingDraft, bookingAction) &&
+			shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
+			run := buildPassengerDocumentConfirmationDraftRun(bookingDraft)
+			deterministicBookingRun = &run
+			deterministicBookingHandled = true
+		}
+		if !deterministicBookingHandled &&
+			passengerDocumentFlowContext &&
+			canHandlePassengerDocumentTurn &&
+			bookingAction == BookingNextAskPassengerDocuments {
+			reply := buildBookingContinuationReply(bookingDraft, bookingAction)
+			if strings.TrimSpace(reply) != "" {
+				run := buildBookingContinuationDraftRun(reply, bookingAction, bookingDraft)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+			}
 		}
 		if !deterministicBookingHandled && bookingAction == BookingNextCallCreate {
 			updatedContext, used, err := s.resolveContextualActionTools(
@@ -1081,7 +1130,8 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 				}
-			} else if shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
+			} else if canDraftPassengerDocumentConfirmation(bookingDraft, bookingAction) &&
+				shouldDraftPassengerDocumentConfirmation(persisted.Session, history, currentTurn, bookingDraft) {
 				run := buildPassengerDocumentConfirmationDraftRun(bookingDraft)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
@@ -1108,6 +1158,23 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					"needs_lap_child_assignment":  bookingDraft.NeedsLapChildAssignment,
 					"passenger_details_count":     bookingDraft.PassengerDetailsCount,
 				}
+			}
+		}
+	}
+	if !deterministicBookingHandled && !deterministicToolHandled && s.canCreateBookings() {
+		createInput, ok := parseBookingCreateFromDocumentConfirmation(persisted.Session, history, currentTurn)
+		if ok {
+			updatedContext, err := s.executeBookingCreateTool(ctx, persisted.Session, toolContext, createInput)
+			if err != nil {
+				return ReprocessResult{}, err
+			}
+			toolContext = updatedContext
+			result.ToolCalls = toolContext.Calls
+			deterministicToolHandled = len(toolContext.Calls) > 0
+			if toolContext.BookingCreate != nil {
+				run := buildBookingCreatedDraftRun(*toolContext.BookingCreate)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
 			}
 		}
 	}
