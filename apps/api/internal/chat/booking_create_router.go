@@ -148,7 +148,8 @@ func validateLapChildStateForBooking(history []Message, currentTurn string, pass
 }
 
 func parseBookingCreateFromDocumentConfirmation(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
-	if (!lastAssistantAskedDocumentConfirmation(history) && !lastAssistantAskedBookingProceedConfirmation(history)) ||
+	documentConfirmationContext := lastAssistantAskedDocumentConfirmation(history)
+	if (!documentConfirmationContext && !lastAssistantAskedBookingProceedConfirmation(history)) ||
 		!looksLikeDocumentConfirmation(currentTurn) {
 		return BookingCreateInput{}, false
 	}
@@ -157,6 +158,17 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 	if (!context.PassengerCountKnown || context.PassengerCount <= 0) && context.PassengerDetailsCount > 0 {
 		context.PassengerCount = context.PassengerDetailsCount
 		context.PassengerCountKnown = true
+	}
+	extract := findLatestDocumentExtractContext(history)
+	if (!context.PassengerCountKnown || context.PassengerCount <= 0) && extract != nil {
+		expected := extract.ExpectedPassengerCount
+		if expected <= 0 {
+			expected = len(extract.Passengers)
+		}
+		if expected > 0 {
+			context.PassengerCount = expected
+			context.PassengerCountKnown = true
+		}
 	}
 
 	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
@@ -176,10 +188,7 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 	var passengers []BookingCreatePassengerInput
 	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
 
-	if extract := findLatestDocumentExtractContext(history); extract != nil {
-		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" && !hasCorrection {
-			return BookingCreateInput{}, false
-		}
+	if extract != nil {
 		if expected <= 0 {
 			expected = extract.ExpectedPassengerCount
 		}
@@ -193,6 +202,13 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 		passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
 		if hasCorrection {
 			passengers = applyPassengerDocumentCorrection(passengers, correction)
+		}
+		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" && !hasCorrection {
+			if !documentConfirmationContext ||
+				strings.ToUpper(strings.TrimSpace(extract.Mode)) != "PARTIAL" ||
+				!documentExtractPartialHasConfirmablePassengerData(*extract, passengers, expected) {
+				return BookingCreateInput{}, false
+			}
 		}
 		for _, passenger := range passengers {
 			if strings.TrimSpace(passenger.Name) == "" ||
@@ -244,14 +260,19 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 }
 
 func bookingPassengerFromDocumentExtract(extracted DocumentExtractPassenger, session Session) BookingCreatePassengerInput {
-	extracted = normalizeDocumentExtractPassenger(extracted)
+	extracted = normalizeDocumentExtractPassengerForBookingConfirmation(extracted)
 	documentType := normalizePassengerDocumentType(extracted.DocumentType)
 	document := normalizePassengerDocumentValue(extracted.Document, documentType)
+	cpf := normalizePassengerDocumentValue(extracted.CPF, "CPF")
+	if document == "" && cpf != "" {
+		documentType = "CPF"
+		document = cpf
+	}
 	return BookingCreatePassengerInput{
 		Name:                   strings.TrimSpace(extracted.Name),
 		DocumentType:           documentType,
 		Document:               document,
-		CPF:                    normalizePassengerDocumentValue(extracted.CPF, "CPF"),
+		CPF:                    cpf,
 		RG:                     firstNonEmpty(normalizePassengerDocumentValue(extracted.RG, "RG"), documentValueForType(document, documentType, "RG")),
 		CNH:                    firstNonEmpty(normalizePassengerDocumentValue(extracted.CNH, "CNH"), documentValueForType(document, documentType, "CNH")),
 		BirthDate:              strings.TrimSpace(extracted.BirthDate),
@@ -310,6 +331,33 @@ func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session 
 		passengers = append(passengers, passenger)
 	}
 	return passengers
+}
+
+func documentExtractPartialHasConfirmablePassengerData(result DocumentExtractResult, passengers []BookingCreatePassengerInput, expected int) bool {
+	if !documentExtractPartialHasConfirmableResultData(result, expected) {
+		return false
+	}
+	if expected <= 0 {
+		expected = result.ExpectedPassengerCount
+	}
+	if expected <= 0 {
+		expected = len(result.Passengers)
+	}
+	if expected <= 0 || len(result.Passengers) != expected || len(passengers) != expected {
+		return false
+	}
+	for index, passenger := range passengers {
+		if strings.TrimSpace(passenger.Name) == "" ||
+			strings.TrimSpace(passenger.DocumentType) == "" ||
+			strings.TrimSpace(passenger.Document) == "" {
+			return false
+		}
+		if normalizePassengerDocumentValue(result.Passengers[index].CPF, "CPF") == "" ||
+			normalizePassengerDocumentValue(passenger.CPF, "CPF") == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection, bool) {
@@ -778,6 +826,9 @@ func findLatestDocumentExtractContext(history []Message) *DocumentExtractResult 
 			}
 			result := parseDocumentExtractContextPayload(payload)
 			if strings.TrimSpace(result.Mode) != "" {
+				if documentExtractPartialHasConfirmableResultData(result, result.ExpectedPassengerCount) {
+					result.Mode = "EXTRACTED"
+				}
 				return &result
 			}
 		}
@@ -2586,6 +2637,9 @@ func normalizePassengerDocumentType(value string) string {
 }
 
 func normalizePassengerDocumentValue(value string, documentType string) string {
+	if looksLikeUnidentifiedDocumentValue(value) {
+		return ""
+	}
 	switch documentType {
 	case "CPF":
 		document := normalizeDigits(value)
@@ -2605,6 +2659,19 @@ func normalizePassengerDocumentValue(value string, documentType string) string {
 		return ""
 	default:
 		return ""
+	}
+}
+
+func looksLikeUnidentifiedDocumentValue(value string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(value)), " ")
+	if folded == "" {
+		return false
+	}
+	switch folded {
+	case "nao identificado", "nao identificada", "numero nao identificado", "numero nao identificada", "documento nao identificado", "documento nao identificada", "naoidentificado", "naoidentificada", "numeronaoidentificado", "documentonaoidentificado":
+		return true
+	default:
+		return false
 	}
 }
 

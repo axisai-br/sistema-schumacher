@@ -358,9 +358,9 @@ func buildAskDocumentsReply(expectedPassengerCount int, collectedDocumentCount i
 		missing = expectedPassengerCount
 	}
 	if missing <= 1 {
-		return "Ainda falta o documento de 1 passageiro. Pode enviar o nome completo e CPF ou RG do passageiro faltante. Se preferir, pode mandar foto legivel do documento."
+		return "Ainda falta o documento de 1 passageiro. Pode enviar o nome completo e CPF, RG ou CNH completo do passageiro faltante. Se preferir, pode mandar foto legivel do documento."
 	}
-	return fmt.Sprintf("Perfeito. Agora pode enviar os nomes completos e os documentos dos %d passageiros faltantes (CPF ou RG). Se preferir, pode mandar fotos legiveis dos documentos.", missing)
+	return fmt.Sprintf("Perfeito. Agora pode enviar os nomes completos e os documentos dos %d passageiros faltantes (CPF, RG ou CNH completos). Se preferir, pode mandar fotos legiveis dos documentos.", missing)
 }
 
 func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
@@ -368,15 +368,19 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 		if strings.EqualFold(strings.TrimSpace(result.FailureReason), "unsupported_pdf") {
 			return unsupportedPDFDocumentReply
 		}
-		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF ou RG."
+		return "Nao consegui ler o documento com seguranca. Pode reenviar uma foto mais perto e com boa luz? Se preferir, pode digitar nome completo e CPF, RG ou CNH completo."
 	}
 	if strings.EqualFold(strings.TrimSpace(result.Mode), "PARTIAL") {
 		lines := []string{"Consegui ler parte do documento, mas preciso confirmar antes de seguir:"}
-		cnhLike := false
+		confirmable := documentExtractPartialHasConfirmableResultData(result, result.ExpectedPassengerCount)
 		for index, passenger := range result.Passengers {
-			name := strings.TrimSpace(passenger.Name)
-			docType := strings.TrimSpace(passenger.DocumentType)
-			document := strings.TrimSpace(passenger.Document)
+			displayPassenger := passenger
+			if confirmable {
+				displayPassenger = normalizeDocumentExtractPassengerForBookingConfirmation(passenger)
+			}
+			name := strings.TrimSpace(displayPassenger.Name)
+			docType := strings.TrimSpace(displayPassenger.DocumentType)
+			document := strings.TrimSpace(displayPassenger.Document)
 			if name == "" {
 				name = "nao identificado"
 			}
@@ -386,16 +390,13 @@ func buildConfirmExtractedDocumentReply(result DocumentExtractResult) string {
 			if document == "" {
 				document = "numero nao identificado"
 			}
-			if looksLikeCNHEExtract(passenger) {
-				cnhLike = true
-			}
-			lines = append(lines, fmt.Sprintf("%d. Nome: %s\n   Documento lido: %s %s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(passenger)))
+			lines = append(lines, fmt.Sprintf("%d. Nome: %s\n   Documento lido: %s %s%s", index+1, name, docType, maskDocumentForDisplay(document, docType), formatPassengerAdditionalIdentityForConfirmation(displayPassenger)))
 		}
-		if cnhLike {
-			lines = append(lines, "Como parece uma CNH-e e nao consegui confirmar o CPF com seguranca, envie o CPF do passageiro ou confirme o documento correto.")
-		} else {
-			lines = append(lines, "Envie o CPF do passageiro ou confirme o documento correto para eu seguir com a reserva.")
+		if !confirmable {
+			lines = append(lines, "Envie o CPF, RG ou CNH completo do passageiro para eu seguir com a reserva.")
+			return strings.Join(lines, "\n")
 		}
+		lines = append(lines, "Confirme se os dados lidos estao corretos ou envie o documento correto para eu seguir com a reserva.")
 		return strings.Join(lines, "\n")
 	}
 	lines := []string{"Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?"}

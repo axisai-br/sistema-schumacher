@@ -560,7 +560,7 @@ func TestBuildDocumentExtractReplyAsksOnlyMissingPassengerDocuments(t *testing.T
 		},
 	})
 
-	if !containsAll(reply, "Joao Vitor Messias | CPF | 066.***.***-03", "passageiro faltante", "CPF ou RG") {
+	if !containsAll(reply, "Joao Vitor Messias | CPF | 066.***.***-03", "passageiro faltante", "CPF, RG ou CNH") {
 		t.Fatalf("unexpected reply: %q", reply)
 	}
 }
@@ -573,10 +573,10 @@ func TestBuildDocumentExtractReplyForPartialDoesNotConfirmAsCertain(t *testing.T
 		},
 	})
 
-	if !containsAll(reply, "Consegui ler parte do documento", "Documento lido: RG 2817314", "envie o CPF do passageiro") {
+	if !containsAll(reply, "Consegui ler parte do documento", "Documento lido: RG 2817314", "Envie o CPF, RG ou CNH completo") {
 		t.Fatalf("unexpected partial reply: %q", reply)
 	}
-	if strings.Contains(reply, "Eles conferem? Posso prosseguir") {
+	if strings.Contains(reply, "Eles conferem? Posso prosseguir") || strings.Contains(reply, "confirme o documento correto") {
 		t.Fatalf("partial reply must not confirm as certain: %q", reply)
 	}
 }

@@ -811,7 +811,7 @@ func TestReprocessDocumentImageWithoutExtractableMediaReturnsObjectiveFallback(t
 	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 0 {
 		t.Fatalf("expected tool_call_count=0, got %d", got)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "reenviar uma foto") || !strings.Contains(reprocessed.Draft.Body, "nome completo e CPF ou RG") {
+	if !strings.Contains(reprocessed.Draft.Body, "reenviar uma foto") || !strings.Contains(reprocessed.Draft.Body, "nome completo e CPF, RG ou CNH completo") {
 		t.Fatalf("expected objective inaccessible-media fallback, got %q", reprocessed.Draft.Body)
 	}
 	toolContext := asMap(reprocessed.Draft.Payload["tool_context"])
@@ -1788,6 +1788,181 @@ func TestReprocessCreatesBookingAfterCorrectedDocumentConfirmation(t *testing.T)
 	}
 	if reprocessed.Draft == nil || !strings.Contains(reprocessed.Draft.Body, "valor integral") {
 		t.Fatalf("expected payment preference draft after booking creation, got %+v", reprocessed.Draft)
+	}
+}
+
+func TestReprocessCreatesBookingAfterPartialDocumentConfirmationWithVisibleCPF(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{
+		enabled: true,
+		result: BookingCreateResult{
+			Mode:            "created",
+			BookingID:       "BK-PARTIAL",
+			ReservationCode: "PART1234",
+			Status:          "PENDING",
+			TotalAmount:     950,
+			RemainderAmount: 950,
+			Passengers: []BookingCreatePassengerResult{
+				{Name: "Joao Vitor Messias", Document: syntheticValidCPFForTests(), DocumentType: "CPF", Phone: "5549988709056"},
+			},
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709056")
+	now := time.Now().UTC()
+	result := DocumentExtractResult{
+		Mode:                   "PARTIAL",
+		ExpectedPassengerCount: 1,
+		MediaCount:             1,
+		Passengers: []DocumentExtractPassenger{
+			{
+				Name:         "Joao Vitor Messias",
+				DocumentType: "RG",
+				Document:     "numero nao identificado",
+				CPF:          syntheticValidCPFForTests(),
+				Confidence:   0.72,
+			},
+		},
+	}
+	toolContext := map[string]interface{}{
+		toolNameDocumentExtract: buildDocumentExtractResponsePayload(result),
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Body:             buildConfirmExtractedDocumentReply(result),
+		Payload: map[string]interface{}{
+			"tool_context": toolContext,
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": toolContext,
+		},
+	}); err != nil {
+		t.Fatalf("seed partial document confirmation outbound: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-partial-confirm-1",
+			IdempotencyKey:    "idem-partial-confirm-1",
+			Body:              "ta certo",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest partial confirmation: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess partial confirmation: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected booking create template before generic runner, got %d calls", runner.calls)
+	}
+	if creator.calls != 1 {
+		t.Fatalf("expected booking_create after partial confirmation, got %d calls", creator.calls)
+	}
+	if len(creator.lastInput.Passengers) != 1 ||
+		creator.lastInput.Passengers[0].DocumentType != "CPF" ||
+		creator.lastInput.Passengers[0].Document != syntheticValidCPFForTests() ||
+		creator.lastInput.Passengers[0].CPF != syntheticValidCPFForTests() {
+		t.Fatalf("expected visible CPF as booking passenger document, got %+v", creator.lastInput.Passengers)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected payment preference draft after booking creation")
+	}
+	if strings.Contains(reprocessed.Draft.Body, "Ainda falta o documento") {
+		t.Fatalf("did not expect ask-documents fallback after confirmed partial document, got %q", reprocessed.Draft.Body)
+	}
+	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameBookingCreate {
+		t.Fatalf("expected one booking_create tool call, got %+v", reprocessed.ToolCalls)
+	}
+}
+
+func TestReprocessPartialDocumentConfirmationWithoutUsableDocumentAsksObjectiveDocument(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709057")
+	now := time.Now().UTC()
+	result := DocumentExtractResult{
+		Mode:                   "PARTIAL",
+		ExpectedPassengerCount: 1,
+		MediaCount:             1,
+		Passengers: []DocumentExtractPassenger{
+			{
+				Name:         "Joao Vitor Messias",
+				DocumentType: "RG",
+				Document:     "numero nao identificado",
+				Confidence:   0.72,
+			},
+		},
+	}
+	toolContext := map[string]interface{}{
+		toolNameDocumentExtract: buildDocumentExtractResponsePayload(result),
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Body:             buildConfirmExtractedDocumentReply(result),
+		Payload: map[string]interface{}{
+			"tool_context": toolContext,
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": toolContext,
+		},
+	}); err != nil {
+		t.Fatalf("seed incomplete partial document confirmation outbound: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-partial-incomplete-confirm-1",
+			IdempotencyKey:    "idem-partial-incomplete-confirm-1",
+			Body:              "ta certo",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest incomplete partial confirmation: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess incomplete partial confirmation: %v", err)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected incomplete partial document not to call booking_create, got %d calls", creator.calls)
+	}
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("did not expect tool calls for incomplete partial document confirmation, got %+v", reprocessed.ToolCalls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected objective document request draft")
+	}
+	body := strings.Join(strings.Fields(reprocessed.Draft.Body), " ")
+	if !strings.Contains(body, "CPF, RG ou CNH completo") {
+		t.Fatalf("expected objective CPF/RG/CNH request, got %q", reprocessed.Draft.Body)
+	}
+	if strings.Contains(strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " "), "confirme") {
+		t.Fatalf("did not expect confirmation-only guidance for unsafe partial document, got %q", reprocessed.Draft.Body)
 	}
 }
 
