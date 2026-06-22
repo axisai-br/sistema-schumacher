@@ -1811,7 +1811,22 @@ func TestReprocessCreatesBookingAfterPartialDocumentConfirmationWithVisibleCPF(t
 			},
 		},
 	}
-	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation: StructuredInterpretation{
+				Intent:      StructuredIntentBookingCancelRequest,
+				TurnMeaning: TurnMeaningNewRequest,
+				Confidence:  0.99,
+				Source:      "openai_structured",
+			},
+			ProviderResponseID: "resp_shadow_booking_divergent",
+		},
+	}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, creator, openAI)
 	session := seedDocumentCollectionBookingHistory(t, store, "5549988709056")
 	now := time.Now().UTC()
 	result := DocumentExtractResult{
@@ -1885,6 +1900,18 @@ func TestReprocessCreatesBookingAfterPartialDocumentConfirmationWithVisibleCPF(t
 	}
 	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameBookingCreate {
 		t.Fatalf("expected one booking_create tool call, got %+v", reprocessed.ToolCalls)
+	}
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to be called once, got %d", openAI.calls)
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, reprocessed.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowValid) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowValid, got)
+	}
+	agreement := mustNestedMap(t, shadow, "agreement")
+	if got, ok := agreement["intent"].(bool); !ok || got {
+		t.Fatalf("expected divergent OpenAI intent not to agree, got %#v", agreement["intent"])
 	}
 }
 
@@ -4549,6 +4576,249 @@ func TestReprocessGeneratesAgentDraftWhenRunnerIsEnabled(t *testing.T) {
 	}
 	if got := asString(agent["status"]); got != agentStatusDraftGenerated {
 		t.Fatalf("expected agent status %s, got %s", agentStatusDraftGenerated, got)
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowDisabledDoesNotCallOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Temos saidas para Santa Catarina. Qual cidade de destino voce quer consultar?",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_disabled",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation: StructuredInterpretation{
+				Intent:      StructuredIntentBookingCancelRequest,
+				TurnMeaning: TurnMeaningNewRequest,
+				Confidence:  0.99,
+				Source:      "openai_structured",
+			},
+			ProviderResponseID: "resp_shadow_should_not_run",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000101", "oi")
+
+	if openAI.calls != 0 {
+		t.Fatalf("expected OpenAI shadow not to be called when disabled, got %d calls", openAI.calls)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != runner.result.ReplyText {
+		t.Fatalf("expected real draft body to remain %q, got %q", runner.result.ReplyText, got)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %+v", out.ToolCalls)
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowDisabled) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowDisabled, got)
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowEnabledRunnerDisabled(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Vou verificar as opcoes para voce.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_runner_disabled",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{enabled: false}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000102", "quero viajar")
+
+	if openAI.calls != 0 {
+		t.Fatalf("expected disabled OpenAI runner not to be called, got %d calls", openAI.calls)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowOpenAIDisabled) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowOpenAIDisabled, got)
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowEnabledValidDoesNotChangeDraftOrTools(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Temos saidas para Santa Catarina. Qual cidade de destino voce quer consultar?",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_valid",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation: StructuredInterpretation{
+				Intent:      StructuredIntentGreeting,
+				TurnMeaning: TurnMeaningGreeting,
+				Confidence:  0.88,
+				Source:      "openai_structured",
+			},
+			ProviderResponseID: "resp_shadow_valid_openai",
+		},
+	}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000103", "oi")
+
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to be called once, got %d", openAI.calls)
+	}
+	if strings.TrimSpace(openAI.lastInput.IdempotencyKey) == "" {
+		t.Fatalf("expected shadow idempotency key")
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != runner.result.ReplyText {
+		t.Fatalf("expected real draft body to remain %q, got %q", runner.result.ReplyText, got)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %+v", out.ToolCalls)
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowValid) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowValid, got)
+	}
+	if got := asString(openAIShadow["provider_response_id"]); got != "resp_shadow_valid_openai" {
+		t.Fatalf("expected provider response id, got %q", got)
+	}
+	agreement := mustNestedMap(t, shadow, "agreement")
+	if got, ok := agreement["intent"].(bool); !ok || !got {
+		t.Fatalf("expected intent agreement, got %#v", agreement["intent"])
+	}
+	if got, ok := agreement["turn_meaning"].(bool); !ok || !got {
+		t.Fatalf("expected turn meaning agreement, got %#v", agreement["turn_meaning"])
+	}
+	draftShadow := mustStructuredInterpreterShadowMap(t, out.Draft.NormalizedPayload[structuredInterpreterShadowKey])
+	draftOpenAIShadow := mustNestedMap(t, draftShadow, "openai")
+	if got := asString(draftOpenAIShadow["status"]); got != string(StructuredInterpreterShadowValid) {
+		t.Fatalf("expected draft shadow status %q, got %q", StructuredInterpreterShadowValid, got)
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowEnabledErrorContinues(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Vou verificar as opcoes para voce.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_error",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		err:     errors.New("provider failed with CPF 52998224725 and raw_output"),
+	}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000104", "quero viajar")
+
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to be called once, got %d", openAI.calls)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != runner.result.ReplyText {
+		t.Fatalf("expected real draft body to remain %q, got %q", runner.result.ReplyText, got)
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowError) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowError, got)
+	}
+	if got := asString(openAIShadow["error_code"]); got != "openai_structured_interpreter_error" {
+		t.Fatalf("expected sanitized error code, got %q", got)
+	}
+	raw, err := json.Marshal(shadow)
+	if err != nil {
+		t.Fatalf("marshal shadow: %v", err)
+	}
+	if strings.Contains(string(raw), "52998224725") || strings.Contains(string(raw), "raw_output") {
+		t.Fatalf("shadow error leaked sensitive/raw data: %s", string(raw))
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowDoesNotPersistSensitiveData(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Certo, vou conferir.",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_sensitive",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation: StructuredInterpretation{
+				Intent:      StructuredIntentUnknown,
+				TurnMeaning: TurnMeaningUnknown,
+				Confidence:  0.4,
+				Source:      "openai_structured",
+			},
+			ProviderResponseID: "resp_shadow_sensitive_openai",
+			RawOutput:          `{"cpf":"52998224725","raw_output":"forbidden"}`,
+		},
+	}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000105", "Meu CPF e 529.982.247-25, RG 123456 e data:image/png;base64,AAAA")
+
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	raw, err := json.Marshal(shadow)
+	if err != nil {
+		t.Fatalf("marshal shadow: %v", err)
+	}
+	text := string(raw)
+	for _, forbidden := range []string{
+		"52998224725",
+		"529.982.247-25",
+		"123456",
+		"data:image",
+		"raw_output",
+		"RawOutput",
+		"prompt",
+		"compact",
+		"request_payload",
+		"response_payload",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("shadow summary leaked forbidden value %q in %s", forbidden, text)
+		}
 	}
 }
 
@@ -7643,8 +7913,23 @@ func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testi
 			MessageForAgent: "PIX gerado com sucesso. Envie somente o copia e cola ao cliente, sem link do provedor.",
 		},
 	}
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation: StructuredInterpretation{
+				Intent:      StructuredIntentBookingCancelRequest,
+				TurnMeaning: TurnMeaningNewRequest,
+				Confidence:  0.99,
+				Source:      "openai_structured",
+			},
+			ProviderResponseID: "resp_shadow_payment_divergent",
+		},
+	}
 	availabilitySearcher := &fakeAvailabilitySearcher{enabled: true}
-	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, availabilitySearcher, paymentCreator)
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, availabilitySearcher, paymentCreator, openAI)
 
 	now := time.Now().UTC()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
@@ -7728,6 +8013,14 @@ func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testi
 	}
 	if out.ToolCalls[0].ToolName != toolNamePaymentCreate {
 		t.Fatalf("expected tool name %s, got %s", toolNamePaymentCreate, out.ToolCalls[0].ToolName)
+	}
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to be called once, got %d", openAI.calls)
+	}
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	openAIShadow := mustNestedMap(t, shadow, "openai")
+	if got := asString(openAIShadow["status"]); got != string(StructuredInterpreterShadowValid) {
+		t.Fatalf("expected shadow status %q, got %q", StructuredInterpreterShadowValid, got)
 	}
 	if paymentCreator.lastInput.BookingID != "BK-ABC123456" {
 		t.Fatalf("expected booking id from previous booking create context, got %s", paymentCreator.lastInput.BookingID)
@@ -8287,6 +8580,52 @@ type fakeReplySender struct {
 	err        error
 	errs       []error
 	beforeSend func(SendReplyInput)
+}
+
+func ingestAndReprocessShadowDraft(t *testing.T, svc *Service, contactKey string, body string) ReprocessResult {
+	t.Helper()
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: contactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-shadow-" + contactKey,
+			IdempotencyKey:    "idem-shadow-" + contactKey,
+			Body:              body,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest shadow turn: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess shadow turn: %v", err)
+	}
+	return out
+}
+
+func mustStructuredInterpreterShadowMap(t *testing.T, value interface{}) map[string]interface{} {
+	t.Helper()
+	if value == nil {
+		t.Fatalf("expected structured interpreter shadow summary")
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal structured interpreter shadow summary: %v", err)
+	}
+	out := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal structured interpreter shadow summary: %v", err)
+	}
+	return out
+}
+
+func mustNestedMap(t *testing.T, parent map[string]interface{}, key string) map[string]interface{} {
+	t.Helper()
+	child := asMap(parent[key])
+	if child == nil {
+		t.Fatalf("expected nested map %q in %#v", key, parent)
+	}
+	return child
 }
 
 type fakeAgentRunner struct {
