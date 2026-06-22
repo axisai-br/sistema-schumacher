@@ -623,6 +623,280 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	}
 }
 
+func TestReprocessExtractsDocumentImageDataURLBeforeGenericReply(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Maria Silva","document_type":"RG","document":"1234567","confidence":0.9}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-extract-data-url-1",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709050",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-doc-data-out-1",
+			IdempotencyKey:    "idem-doc-data-out-1",
+			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest outbound: %v", err)
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709050",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-doc-data-img-1",
+			IdempotencyKey:    "idem-doc-data-img-1",
+			NormalizedPayload: map[string]interface{}{
+				"image_data_url":  "data:image/jpeg;base64,/9j/2Q==",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest image: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess message: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
+	}
+	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].URL != "data:image/jpeg;base64,/9j/2Q==" {
+		t.Fatalf("expected one image data URL media item, got %+v", runner.lastInput.CurrentTurnMedia)
+	}
+	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
+	}
+	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 1 {
+		t.Fatalf("expected tool_call_count=1, got %d", got)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskDocuments) {
+		t.Fatalf("did not expect generic document request template, got %q", got)
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | RG | 1234567") {
+		t.Fatalf("expected extracted RG confirmation, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessExtractsDocumentImageDataURLDuringBookingDocumentCollection(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Claudecir Schumacher","document_type":"CPF","document":"529.982.247-25","confidence":0.93}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-extract-booking-flow-1",
+		},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709056")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-doc-booking-flow-img-1",
+			IdempotencyKey:    "idem-doc-booking-flow-img-1",
+			NormalizedPayload: map[string]interface{}{
+				"image_data_url":  "data:image/jpeg;base64,/9j/2Q==",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest image: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess image document: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected document extraction to run once, got %d calls", runner.calls)
+	}
+	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].URL != "data:image/jpeg;base64,/9j/2Q==" {
+		t.Fatalf("expected image data URL media in document_extract, got %+v", runner.lastInput.CurrentTurnMedia)
+	}
+	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 1 {
+		t.Fatalf("expected tool_call_count=1, got %d", got)
+	}
+	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected one document_extract tool call, got %+v", reprocessed.ToolCalls)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskDocuments) {
+		t.Fatalf("did not expect generic ask documents template, got %q", got)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called before document confirmation, got %d calls", creator.calls)
+	}
+	for _, call := range reprocessed.ToolCalls {
+		if call.ToolName == toolNameBookingCreate {
+			t.Fatalf("did not expect booking_create tool call on document image turn, got %+v", reprocessed.ToolCalls)
+		}
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Claudecir Schumacher | CPF | 529.***.***-25") {
+		t.Fatalf("expected extracted document confirmation, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessDocumentImageWithoutExtractableMediaReturnsObjectiveFallback(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "generic LLM fallback", Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709051",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-doc-unavailable-out-1",
+			IdempotencyKey:    "idem-doc-unavailable-out-1",
+			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest outbound: %v", err)
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709051",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-doc-unavailable-img-1",
+			IdempotencyKey:    "idem-doc-unavailable-img-1",
+			NormalizedPayload: map[string]interface{}{
+				"image_mime_type":    "image/jpeg",
+				"image_source":       "evolution_url_fallback",
+				"image_base64_error": "evolution get base64 failed",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest image: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess message: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected generic runner not to be called, got %d calls", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected booking_create not to be called, got %d calls", creator.calls)
+	}
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("did not expect stored document_extract tool call for inaccessible media, got %+v", reprocessed.ToolCalls)
+	}
+	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 0 {
+		t.Fatalf("expected tool_call_count=0, got %d", got)
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "reenviar uma foto") || !strings.Contains(reprocessed.Draft.Body, "nome completo e CPF ou RG") {
+		t.Fatalf("expected objective inaccessible-media fallback, got %q", reprocessed.Draft.Body)
+	}
+	toolContext := asMap(reprocessed.Draft.Payload["tool_context"])
+	extract := asMap(toolContext[toolNameDocumentExtract])
+	if got := strings.TrimSpace(asString(extract["failure_reason"])); got != "media_unavailable" {
+		t.Fatalf("expected media_unavailable failure reason, got %q in %#v", got, extract)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskDocuments) {
+		t.Fatalf("did not expect generic document request template, got %q", got)
+	}
+}
+
+func TestReprocessImageAfterNewRouteQuestionDoesNotUseOldDocumentFallback(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "Me diga a cidade de destino para eu verificar as opcoes.", Model: "gpt-test"},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709057",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-old-doc-out-1",
+			IdempotencyKey:    "idem-old-doc-out-1",
+			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest old document request: %v", err)
+	}
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709057",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-new-route-out-1",
+			IdempotencyKey:    "idem-new-route-out-1",
+			Body:              "Para qual cidade no Maranhao voce vai?",
+		},
+	}); err != nil {
+		t.Fatalf("ingest newer route question: %v", err)
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709057",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-image-after-route-1",
+			IdempotencyKey:    "idem-image-after-route-1",
+			NormalizedPayload: map[string]interface{}{
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest image after route question: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess image after route question: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected generic draft to be generated")
+	}
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("did not expect document_extract tool call from stale document request, got %+v", reprocessed.ToolCalls)
+	}
+	if len(store.toolCallOrder) != 0 {
+		t.Fatalf("did not expect stored tool calls from stale document request, got %+v", store.toolCallOrder)
+	}
+	toolContext := asMap(reprocessed.Draft.Payload["tool_context"])
+	if extract := asMap(toolContext[toolNameDocumentExtract]); len(extract) != 0 {
+		t.Fatalf("did not expect document_extract fallback context, got %#v", extract)
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if strings.Contains(body, "reenviar uma foto") ||
+		strings.Contains(body, "nome completo e cpf ou rg") ||
+		strings.Contains(body, "documento") {
+		t.Fatalf("did not expect document fallback reply after newer route question, got %q", reprocessed.Draft.Body)
+	}
+	if runner.calls > 0 && strings.Contains(runner.lastInput.SystemPrompt, "extrai dados de documentos brasileiros") {
+		t.Fatalf("did not expect document_extract runner prompt, got %q", runner.lastInput.SystemPrompt)
+	}
+}
+
 func TestReprocessRejectsPDFDocumentInsteadOfExtracting(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
@@ -699,6 +973,74 @@ func TestReprocessRejectsPDFDocumentInsteadOfExtracting(t *testing.T) {
 	}
 	if readDraftAutoSendStatus(*reprocessed.Draft) != draftAutoSendStatusEligible {
 		t.Fatalf("expected PDF guidance to be auto-send eligible, got %s", readDraftAutoSendStatus(*reprocessed.Draft))
+	}
+}
+
+func TestReprocessRejectsPDFDocumentWithoutExtractableMedia(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Maria Silva","document_type":"CPF","document":"123.456.789-09","confidence":0.94}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-extract-pdf-no-media-1",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709058",
+		Message: IngestMessagePayload{
+			Direction:         "OUTBOUND",
+			ProviderMessageID: "msg-pdf-no-media-doc-out-1",
+			IdempotencyKey:    "idem-pdf-no-media-doc-out-1",
+			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
+		},
+	}); err != nil {
+		t.Fatalf("ingest document request outbound: %v", err)
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5549988709058",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "DOCUMENT",
+			ProviderMessageID: "msg-pdf-no-media-doc-1",
+			IdempotencyKey:    "idem-pdf-no-media-doc-1",
+			NormalizedPayload: map[string]interface{}{
+				"document_file_name": "rg.pdf",
+				"document_mime_type": "application/pdf",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest PDF without extractable media: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess PDF without extractable media: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected PDF without extractable media not to call runner, got %d calls", runner.calls)
+	}
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("did not expect stored document_extract tool call for PDF guardrail, got %+v", reprocessed.ToolCalls)
+	}
+	if len(store.toolCallOrder) != 0 {
+		t.Fatalf("did not expect stored tool_call for PDF guardrail, got %+v", store.toolCallOrder)
+	}
+	if reprocessed.Draft.Body != unsupportedPDFDocumentReply {
+		t.Fatalf("expected unsupported PDF reply, got %q", reprocessed.Draft.Body)
+	}
+	toolContext := asMap(reprocessed.Draft.Payload["tool_context"])
+	extract := asMap(toolContext[toolNameDocumentExtract])
+	if got := strings.TrimSpace(asString(extract["failure_reason"])); got != "unsupported_pdf" {
+		t.Fatalf("expected unsupported_pdf failure reason, got %q in %#v", got, extract)
+	}
+	if got := strings.TrimSpace(asString(extract["failure_reason"])); got == "media_unavailable" {
+		t.Fatalf("did not expect media_unavailable fallback for PDF, got %#v", extract)
 	}
 }
 
