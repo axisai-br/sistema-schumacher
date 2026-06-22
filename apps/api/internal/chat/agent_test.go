@@ -51,6 +51,23 @@ func TestCollectCandidateMediaFallsBackToImageURL(t *testing.T) {
 	}
 }
 
+func TestCollectCandidateMediaIgnoresNonHTTPImageURL(t *testing.T) {
+	items := collectCandidateMedia([]Message{
+		{
+			ID:   "msg-1",
+			Kind: "IMAGE",
+			NormalizedPayload: map[string]interface{}{
+				"image_url":       "/v/t62.7118-24/direct-path",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+
+	if len(items) != 0 {
+		t.Fatalf("expected non-HTTP image URL to be ignored, got %+v", items)
+	}
+}
+
 func TestCollectCandidateMediaIncludesPDFDataURLAndFileName(t *testing.T) {
 	dataURL := "data:application/pdf;base64,JVBERi0xLjQ="
 

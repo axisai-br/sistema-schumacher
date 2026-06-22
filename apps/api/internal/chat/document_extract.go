@@ -38,15 +38,48 @@ type DocumentExtractResult struct {
 func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Session, candidates []Message, memory map[string]interface{}, draftID string) (agentToolContext, bool, error) {
 	media := collectCandidateMedia(candidates)
 	recent := normalizeRecentMemoryMessages(memory["recent_messages"])
-	if len(media) == 0 || (!isWaitingForPassengerDocuments(recent) && !hasRecentDocumentRequest(recent)) {
+	waitingForDocuments := hasRecentDocumentRequest(recent)
+	recentDocumentRequest := waitingForDocuments
+	rawMediaHint := hasCurrentTurnRawDocumentMediaHint(candidates)
+	rawPDFHint := hasCurrentTurnRawPDFDocumentHint(candidates)
+
+	if !waitingForDocuments && !recentDocumentRequest {
+		if rawMediaHint {
+			s.logDocumentExtractSkip(session, candidates, media, rawMediaHint, waitingForDocuments, recentDocumentRequest, "not_waiting_for_documents")
+		}
 		return agentToolContext{}, false, nil
 	}
-	extractableMedia := documentExtractImageMedia(media)
 
 	expected := inferExpectedPassengerCountFromMemory(
 		strings.TrimSpace(asString(memory["current_turn_body"])),
 		recent,
 	)
+
+	if len(media) == 0 {
+		if rawPDFHint {
+			result := DocumentExtractResult{
+				Mode:                   "LOW_CONFIDENCE",
+				ExpectedPassengerCount: expected,
+				MediaCount:             0,
+				FailureReason:          "unsupported_pdf",
+				Model:                  "document_extract_guardrail",
+			}
+			return agentToolContext{DocumentExtract: &result}, true, nil
+		}
+		if rawMediaHint {
+			s.logDocumentExtractSkip(session, candidates, media, rawMediaHint, waitingForDocuments, recentDocumentRequest, "no_extractable_media")
+			result := DocumentExtractResult{
+				Mode:                   "LOW_CONFIDENCE",
+				ExpectedPassengerCount: expected,
+				MediaCount:             0,
+				FailureReason:          "media_unavailable",
+				Model:                  "document_extract_guardrail",
+			}
+			return agentToolContext{DocumentExtract: &result}, true, nil
+		}
+		return agentToolContext{}, false, nil
+	}
+	extractableMedia := documentExtractImageMedia(media)
 
 	/* Log for init of extraction */
 	s.logReprocess(
@@ -78,7 +111,7 @@ func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Ses
 		)
 	}
 
-	if len(extractableMedia) == 0 && hasDocumentExtractPDFMedia(media) {
+	if len(extractableMedia) == 0 && (hasDocumentExtractPDFMedia(media) || rawPDFHint) {
 		result := DocumentExtractResult{
 			Mode:                   "LOW_CONFIDENCE",
 			ExpectedPassengerCount: expected,
@@ -162,7 +195,88 @@ func (s *Service) resolveDocumentExtractContext(ctx context.Context, session Ses
 func shouldRunDocumentExtract(memory map[string]interface{}) bool {
 	recent := normalizeRecentMemoryMessages(memory["recent_messages"])
 	media := normalizeMediaMemoryItems(memory["current_turn_media"])
-	return len(media) > 0 && (isWaitingForPassengerDocuments(recent) || hasRecentDocumentRequest(recent))
+	if !hasRecentDocumentRequest(recent) {
+		return false
+	}
+	if len(media) > 0 {
+		return true
+	}
+	return currentTurnKindsHaveRawDocumentMediaHint(memory["current_turn_kinds"])
+}
+
+func (s *Service) logDocumentExtractSkip(session Session, candidates []Message, media []AgentMediaInput, rawMediaHint bool, waitingForDocuments bool, recentDocumentRequest bool, reason string) {
+	s.logReprocess(
+		"document_extract event=skipped reason=%s session_id=%s message_id=%s current_turn_kinds=%v raw_media_hint=%t media_count=%d waiting_for_documents=%t recent_document_request=%t",
+		reason,
+		session.ID,
+		latestCandidateMessageID(candidates),
+		candidateKinds(candidates),
+		rawMediaHint,
+		len(media),
+		waitingForDocuments,
+		recentDocumentRequest,
+	)
+}
+
+func hasCurrentTurnRawDocumentMediaHint(candidates []Message) bool {
+	for _, message := range candidates {
+		if messageHasRawDocumentMediaHint(message) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCurrentTurnRawPDFDocumentHint(candidates []Message) bool {
+	for _, message := range candidates {
+		if messageHasRawPDFDocumentHint(message) {
+			return true
+		}
+	}
+	return false
+}
+
+func messageHasRawDocumentMediaHint(message Message) bool {
+	kind := strings.ToUpper(strings.TrimSpace(message.Kind))
+	if kind == "IMAGE" || kind == "DOCUMENT" {
+		return true
+	}
+
+	normalized := message.NormalizedPayload
+	if strings.TrimSpace(asString(normalized["image_data_url"])) != "" ||
+		strings.TrimSpace(asString(normalized["image_url"])) != "" ||
+		strings.TrimSpace(asString(normalized["image_base64_error"])) != "" ||
+		strings.TrimSpace(asString(normalized["document_data_url"])) != "" ||
+		strings.TrimSpace(asString(normalized["document_url"])) != "" ||
+		strings.TrimSpace(asString(normalized["document_mime_type"])) != "" ||
+		strings.TrimSpace(asString(normalized["document_base64_error"])) != "" {
+		return true
+	}
+
+	return false
+}
+
+func messageHasRawPDFDocumentHint(message Message) bool {
+	normalized := message.NormalizedPayload
+	mimeType := strings.TrimSpace(asString(normalized["document_mime_type"]))
+	dataURL := strings.TrimSpace(asString(normalized["document_data_url"]))
+	documentURL := strings.TrimSpace(asString(normalized["document_url"]))
+	fileName := strings.TrimSpace(asString(normalized["document_file_name"]))
+
+	return strings.EqualFold(mimeType, "application/pdf") ||
+		strings.HasPrefix(strings.ToLower(dataURL), "data:application/pdf") ||
+		strings.HasSuffix(strings.ToLower(documentURL), ".pdf") ||
+		strings.HasSuffix(strings.ToLower(fileName), ".pdf")
+}
+
+func currentTurnKindsHaveRawDocumentMediaHint(value interface{}) bool {
+	for _, kind := range asStringSlice(value) {
+		switch strings.ToUpper(strings.TrimSpace(kind)) {
+		case "IMAGE", "DOCUMENT":
+			return true
+		}
+	}
+	return false
 }
 
 func documentExtractImageMedia(media []AgentMediaInput) []AgentMediaInput {
@@ -196,13 +310,54 @@ func hasRecentDocumentRequest(recent []map[string]interface{}) bool {
 		if body == "" {
 			continue
 		}
-		if strings.Contains(body, "documento") || strings.Contains(body, "documentos") {
-			if strings.Contains(body, "foto") || strings.Contains(body, "enviar") || strings.Contains(body, "digitar") || strings.Contains(body, "nome completo") {
-				return true
-			}
+		if looksLikePassengerDocumentRequest(body) {
+			return true
+		}
+		if outboundInvalidatesDocumentRequest(body) {
+			return false
 		}
 	}
 	return false
+}
+
+func outboundInvalidatesDocumentRequest(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" || looksLikePassengerDocumentRequest(folded) {
+		return false
+	}
+	if looksLikePassengerCountQuestion(folded) || looksLikePaymentPreferencePrompt(folded) {
+		return true
+	}
+
+	invalidatingPhrases := []string{
+		"para qual cidade",
+		"de qual cidade",
+		"qual cidade",
+		"qual origem",
+		"qual destino",
+		"origem",
+		"destino",
+		"qual data",
+		"que data",
+		"qual dia",
+		"que dia",
+		"qual horario",
+		"que horario",
+		"horario",
+		"hora de saida",
+		"qual opcao",
+		"opcao voce prefere",
+		"escolha uma opcao",
+		"opcoes disponiveis",
+		"encontrei estas opcoes",
+		"viagem disponivel",
+		"disponibilidade",
+		"pagamento",
+		"pagar",
+		"pix",
+		"cartao",
+	}
+	return containsFoldedPhrase(folded, invalidatingPhrases)
 }
 
 func (s *Service) runDocumentExtract(ctx context.Context, session Session, candidates []Message, media []AgentMediaInput, expected int, draftID string) (RunAgentResult, DocumentExtractResult, error) {

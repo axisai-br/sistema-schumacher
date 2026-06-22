@@ -2368,11 +2368,71 @@ func TestHandleEvolutionMessagesEnrichesImageWithEvolutionBase64(t *testing.T) {
 	if key["fromMe"] != false {
 		t.Fatalf("unexpected fromMe: %#v", key["fromMe"])
 	}
+	if chatSvc.lastInput.Message.Kind != "IMAGE" {
+		t.Fatalf("unexpected kind: %s", chatSvc.lastInput.Message.Kind)
+	}
+	if got := chatSvc.lastInput.Message.NormalizedPayload["image_mime_type"]; got != "image/jpeg" {
+		t.Fatalf("unexpected image mime type: %#v", got)
+	}
 	if got := chatSvc.lastInput.Message.NormalizedPayload["image_data_url"]; got != "data:image/jpeg;base64,/9j/2Q==" {
 		t.Fatalf("unexpected image data url: %#v", got)
 	}
 	if got := chatSvc.lastInput.Message.NormalizedPayload["image_source"]; got != "evolution_get_base64" {
 		t.Fatalf("unexpected image source: %#v", got)
+	}
+}
+
+func TestHandleEvolutionMessagesImageBase64FailureFallsBackToURL(t *testing.T) {
+	mediaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/getBase64FromMediaMessage/belle" {
+			t.Fatalf("unexpected media path: %s", r.URL.Path)
+		}
+		http.Error(w, "media unavailable", http.StatusBadGateway)
+	}))
+	defer mediaServer.Close()
+
+	chatSvc := &fakeChatIngestor{}
+	handler := NewHandler(NewService(&fakeAutomationStore{}, chatSvc, config.Config{
+		EvolutionBaseURL:  mediaServer.URL,
+		EvolutionAPIKey:   "secret",
+		EvolutionInstance: "belle",
+	}))
+
+	r := chi.NewRouter()
+	handler.RegisterWebhooks(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/evolution/messages", bytes.NewBufferString(`{
+		"event":"messages.upsert",
+		"data":{
+			"key":{"remoteJid":"554998208115@s.whatsapp.net","fromMe":false,"id":"MSG-5B"},
+			"message":{"imageMessage":{"caption":"foto do documento","mimetype":"image/jpeg","url":"https://files.example.test/doc-fallback.jpg"}},
+			"messageType":"imageMessage"
+		}
+	}`))
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+	if chatSvc.lastInput.Message.Kind != "IMAGE" {
+		t.Fatalf("unexpected kind: %s", chatSvc.lastInput.Message.Kind)
+	}
+	if got := chatSvc.lastInput.Message.NormalizedPayload["image_mime_type"]; got != "image/jpeg" {
+		t.Fatalf("unexpected image mime type: %#v", got)
+	}
+	if got := chatSvc.lastInput.Message.NormalizedPayload["image_url"]; got != "https://files.example.test/doc-fallback.jpg" {
+		t.Fatalf("unexpected image url: %#v", got)
+	}
+	if got := chatSvc.lastInput.Message.NormalizedPayload["image_source"]; got != "evolution_url_fallback" {
+		t.Fatalf("unexpected image source: %#v", got)
+	}
+	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["image_base64_error"])); got == "" {
+		t.Fatalf("expected image_base64_error to be populated")
+	}
+	if got := strings.TrimSpace(asString(chatSvc.lastInput.Message.NormalizedPayload["image_data_url"])); got != "" {
+		t.Fatalf("did not expect image_data_url on media fetch failure, got %q", got)
 	}
 }
 
