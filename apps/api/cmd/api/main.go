@@ -34,7 +34,6 @@ import (
 	"schumacher-tur/api/internal/service_orders"
 	"schumacher-tur/api/internal/shared/config"
 	"schumacher-tur/api/internal/shared/db"
-	httpx "schumacher-tur/api/internal/shared/http"
 	"schumacher-tur/api/internal/suppliers"
 	"schumacher-tur/api/internal/trip_advances"
 	"schumacher-tur/api/internal/trip_expenses"
@@ -43,6 +42,8 @@ import (
 	"schumacher-tur/api/internal/trip_validations"
 	"schumacher-tur/api/internal/trips"
 	"schumacher-tur/api/internal/users"
+
+	httpx "schumacher-tur/api/internal/shared/http"
 )
 
 func main() {
@@ -96,6 +97,7 @@ func main() {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 
+	openaiStructuredInterpreter := chat.NewOpenAIStructuredInterpreterRunner(cfg)
 	paymentsRepo := payments.NewRepository(pool)
 	paymentsSvc := payments.NewService(paymentsRepo, cfg)
 	paymentsHandler := payments.NewHandler(paymentsSvc, cfg.PagarmeWebhookSecret, cfg.PagarmeWebhookBasicUser, cfg.PagarmeWebhookBasicPass)
@@ -119,7 +121,7 @@ func main() {
 	paymentStatusTool := chat.NewPaymentStatusTool(paymentsSvc)
 	paymentCreateTool := chat.NewPaymentCreateTool(bookingsSvc, paymentsSvc)
 	userProfileSvc := users.NewProfileService(pool)
-	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, openAIJSONRunner, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool, userProfileSvc)
+	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, openAIJSONRunner, openaiStructuredInterpreter, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool, userProfileSvc)
 	chatHandler := chat.NewHandler(chatSvc)
 	automationSvc := automation.NewService(automation.NewRepository(pool), chatSvc, cfg, paymentsRepo, bookingsSvc)
 	automation.StartChatBufferFlushLoop(ctx, automationSvc, cfg, log.Default())

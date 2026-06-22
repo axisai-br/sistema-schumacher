@@ -39,6 +39,7 @@ type Config struct {
 	// TODO(abacatepay-domain): Use hosted frontend URLs (not localhost) in production.
 	AbacatePayCompletionURL            string
 	ChatReviewAlertWebhookURL          string
+	ChatOpenAIInterpreterShadowEnabled bool
 	OpenAIAPIKey                       string
 	OpenAIModel                        string
 	OpenAIVisionModel                  string
@@ -116,6 +117,7 @@ func Load() (Config, error) {
 		ChatReviewSLAMinutes:               getEnvAsInt("CHAT_REVIEW_SLA_MINUTES", 15),
 		ChatDefaultHandoffMode:             getEnv("CHAT_DEFAULT_HANDOFF_MODE", "BOT"),
 		ChatAgentMode:                      getEnv("CHAT_AGENT_MODE", "legacy"),
+		ChatOpenAIInterpreterShadowEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED")),
 		GoogleSheetsSpreadsheetID:          strings.TrimSpace(os.Getenv("GOOGLE_SHEETS_SPREADSHEET_ID")),
 		GoogleServiceAccountJSON:           strings.TrimSpace(os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
 	}

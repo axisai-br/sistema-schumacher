@@ -2,7 +2,9 @@ package chat
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"schumacher-tur/api/internal/auth"
@@ -49,21 +51,22 @@ var (
 )
 
 type Service struct {
-	store         Store
-	cfg           config.Config
-	logger        chatLogger
-	sender        ReplySender
-	runner        AgentRunner
-	jsonRunner    AgentJSONDecisionRunner
-	availability  AvailabilitySearcher
-	pricing       PricingQuoteSearcher
-	bookings      BookingLookupSearcher
-	bookingCreate BookingCreator
-	reschedules   RescheduleAssistSearcher
-	payments      PaymentStatusSearcher
-	paymentCreate PaymentCreator
-	bookingCancel BookingCanceler
-	profiles      AuthUserProfileEnsurer
+	store             Store
+	cfg               config.Config
+	logger            chatLogger
+	sender            ReplySender
+	runner            AgentRunner
+	jsonRunner        AgentJSONDecisionRunner
+	availability      AvailabilitySearcher
+	pricing           PricingQuoteSearcher
+	bookings          BookingLookupSearcher
+	bookingCreate     BookingCreator
+	reschedules       RescheduleAssistSearcher
+	payments          PaymentStatusSearcher
+	paymentCreate     PaymentCreator
+	bookingCancel     BookingCanceler
+	profiles          AuthUserProfileEnsurer
+	openaiInterpreter OpenAIStructuredInterpreter
 }
 
 type chatLogger interface {
@@ -88,6 +91,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 	var paymentCreate PaymentCreator
 	var bookingCancel BookingCanceler
 	var profiles AuthUserProfileEnsurer
+	var openaiInterpreter OpenAIStructuredInterpreter
 	for _, dep := range deps {
 		switch typed := dep.(type) {
 		case chatLogger:
@@ -142,24 +146,30 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 			if profiles == nil {
 				profiles = typed
 			}
+
+		case OpenAIStructuredInterpreter:
+			if openaiInterpreter == nil {
+				openaiInterpreter = typed
+			}
 		}
 	}
 	return &Service{
-		store:         store,
-		cfg:           cfg,
-		logger:        logger,
-		sender:        sender,
-		runner:        runner,
-		jsonRunner:    jsonRunner,
-		availability:  availability,
-		pricing:       pricing,
-		bookings:      bookings,
-		bookingCreate: bookingCreate,
-		reschedules:   reschedules,
-		payments:      payments,
-		paymentCreate: paymentCreate,
-		bookingCancel: bookingCancel,
-		profiles:      profiles,
+		store:             store,
+		cfg:               cfg,
+		logger:            logger,
+		sender:            sender,
+		runner:            runner,
+		jsonRunner:        jsonRunner,
+		availability:      availability,
+		pricing:           pricing,
+		bookings:          bookings,
+		bookingCreate:     bookingCreate,
+		reschedules:       reschedules,
+		payments:          payments,
+		paymentCreate:     paymentCreate,
+		bookingCancel:     bookingCancel,
+		profiles:          profiles,
+		openaiInterpreter: openaiInterpreter,
 	}
 }
 
@@ -759,11 +769,33 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	buffer := buildReprocessBufferState(session.Metadata, candidates, trigger, observedAt)
 	untranscribedAudioMessage, untranscribedAudio := currentTurnUntranscribedAudioCandidate(candidates)
 	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
+	structuredCanonicalState := deriveCanonicalConversationState(session, history, currentTurn)
+
 	canonicalState := CanonicalConversationState{}
 	if canonicalStateEnabled() {
-		canonicalState = deriveCanonicalConversationState(session, history, currentTurn)
+		canonicalState = structuredCanonicalState
 		agentState["canonical_state"] = canonicalState
 	}
+
+	structuredInput := StructuredInterpreterInput{
+		CurrentTurn: currentTurn,
+		State:       structuredCanonicalState,
+		History:     history,
+		ObservedAt:  observedAt,
+	}
+
+	localInterpretation := InterpretStructuredTurn(structuredInput)
+
+	shadow := RunStructuredInterpreterShadow(ctx, StructuredInterpreterShadowInput{
+		Enabled:             s.cfg.ChatOpenAIInterpreterShadowEnabled,
+		OpenAIInterpreter:   s.openaiInterpreter,
+		StructuredInput:     structuredInput,
+		LocalInterpretation: localInterpretation,
+		IdempotencyKey:      buildStructuredInterpreterShadowIdempotencyKey(session.ID, candidates),
+	})
+
+	memory[structuredInterpreterShadowKey] = shadow
+	agentState[structuredInterpreterShadowKey] = shadow
 	if looksLikeBareCPF(currentTurn) {
 		s.logReprocess(
 			"chat reprocess event=cpf_reply_detected session_id=%s trigger=%s job_run_id=%s phase=%s last_bot_asked_payer_cpf=%t document=%s",
@@ -1831,6 +1863,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 	draftBuffer := buildDraftGeneratedBufferState(persisted.Session.Metadata, candidates, draftID, runAt)
 	draftPayload, draftNormalizedPayload := buildAgentDraftPayload(persisted.Session, candidates, draftID, systemPrompt, userPrompt, run, toolContext, autoSendPolicy, runAt)
+	draftAgentState[structuredInterpreterShadowKey] = shadow
+	draftPayload[structuredInterpreterShadowKey] = shadow
+	draftNormalizedPayload[structuredInterpreterShadowKey] = shadow
+
 	s.logReprocess(
 		"chat reprocess event=save_agent_draft_start session_id=%s trigger=%s job_run_id=%s idempotency_key=%s tool_call_count=%d",
 		sessionID,
@@ -2692,6 +2728,20 @@ func (s *Service) persistOpenAIContinuityMetadata(ctx context.Context, session S
 		return Session{}, err
 	}
 	return updated, nil
+}
+
+func buildStructuredInterpreterShadowIdempotencyKey(sessionID string, candidates []Message) string {
+	parts := make([]string, 0, len(candidates)+1)
+	parts = append(parts, sessionID)
+	for _, message := range candidates {
+		parts = append(parts, message.ID)
+	}
+	return "chat-openai-interpreter-shadow-" + deterministicID(strings.Join(parts, "|"))
+}
+
+func deterministicID(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:32]
 }
 
 func (s *Service) deliverReply(ctx context.Context, result ReplyResult) (ReplyResult, error) {
