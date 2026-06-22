@@ -710,6 +710,42 @@ func normalizeDocumentExtractPassenger(passenger DocumentExtractPassenger) Docum
 	return passenger
 }
 
+func normalizeDocumentExtractPassengerForBookingConfirmation(passenger DocumentExtractPassenger) DocumentExtractPassenger {
+	passenger = normalizeDocumentExtractPassenger(passenger)
+	cpf := normalizePassengerDocumentValue(passenger.CPF, "CPF")
+	if strings.TrimSpace(passenger.Document) == "" && cpf != "" {
+		passenger.DocumentType = "CPF"
+		passenger.Document = cpf
+		passenger.CPF = cpf
+	}
+	return passenger
+}
+
+func documentExtractPartialHasConfirmableResultData(result DocumentExtractResult, expected int) bool {
+	if strings.ToUpper(strings.TrimSpace(result.Mode)) != "PARTIAL" {
+		return false
+	}
+	if expected <= 0 {
+		expected = result.ExpectedPassengerCount
+	}
+	if expected <= 0 {
+		expected = len(result.Passengers)
+	}
+	if expected <= 0 || len(result.Passengers) != expected {
+		return false
+	}
+	for _, passenger := range result.Passengers {
+		normalized := normalizeDocumentExtractPassengerForBookingConfirmation(passenger)
+		if strings.TrimSpace(normalized.Name) == "" ||
+			strings.TrimSpace(normalized.DocumentType) == "" ||
+			strings.TrimSpace(normalized.Document) == "" ||
+			normalizePassengerDocumentValue(normalized.CPF, "CPF") == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func readBool(value interface{}) bool {
 	switch typed := value.(type) {
 	case bool:

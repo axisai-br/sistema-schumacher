@@ -167,7 +167,7 @@ func TestAskDocumentsOnlyMissingPassengers(t *testing.T) {
 	if !strings.Contains(reply, "dos 2 passageiros faltantes") {
 		t.Fatalf("expected only missing passenger count, got %q", reply)
 	}
-	if !strings.Contains(reply, "CPF ou RG") {
+	if !strings.Contains(reply, "CPF, RG ou CNH") {
 		t.Fatalf("expected accepted documents, got %q", reply)
 	}
 }

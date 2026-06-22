@@ -727,6 +727,118 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	}
 }
 
+func TestParseBookingCreateFromPartialDocumentConfirmationUsesVisibleCPF(t *testing.T) {
+	session := Session{
+		ID:            "session-partial-document-confirmation",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := partialDocumentConfirmationBookingHistory(time.Now().UTC(), DocumentExtractPassenger{
+		Name:         "Joao Vitor Messias",
+		DocumentType: "RG",
+		Document:     "numero nao identificado",
+		CPF:          syntheticValidCPFForTests(),
+		Confidence:   0.72,
+	})
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "ta certo")
+	if !ok {
+		t.Fatalf("expected booking create from partial document confirmation with visible CPF")
+	}
+	if len(input.Passengers) != 1 {
+		t.Fatalf("expected one passenger, got %+v", input.Passengers)
+	}
+	passenger := input.Passengers[0]
+	if passenger.Name != "Joao Vitor Messias" {
+		t.Fatalf("unexpected passenger name: %+v", passenger)
+	}
+	if passenger.DocumentType != "CPF" || passenger.Document != syntheticValidCPFForTests() || passenger.CPF != syntheticValidCPFForTests() {
+		t.Fatalf("expected visible CPF to become primary document, got %+v", passenger)
+	}
+}
+
+func TestParseBookingCreateFromPartialDocumentConfirmationAcceptsContextPhrases(t *testing.T) {
+	session := Session{
+		ID:            "session-partial-document-confirmation-phrases",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	cases := []string{
+		"tá certo",
+		"esta certo",
+		"correto",
+		"isso mesmo",
+		"confere",
+		"pode seguir",
+	}
+
+	for _, phrase := range cases {
+		t.Run(phrase, func(t *testing.T) {
+			history := partialDocumentConfirmationBookingHistory(time.Now().UTC(), DocumentExtractPassenger{
+				Name:         "Joao Vitor Messias",
+				DocumentType: "RG",
+				Document:     "",
+				CPF:          syntheticValidCPFForTests(),
+				Confidence:   0.72,
+			})
+			if _, ok := parseBookingCreateFromDocumentConfirmation(session, history, phrase); !ok {
+				t.Fatalf("expected %q to confirm partial document with usable CPF", phrase)
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationRejectsShortConfirmationOutsideDocumentContext(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ID:            "session-short-confirmation-outside-document",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	histories := [][]Message{
+		{
+			{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		},
+		{
+			{Direction: "OUTBOUND", Body: "Voce prefere pagar o valor integral ou apenas o sinal de R$ 250?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		},
+		{
+			{Direction: "OUTBOUND", Body: "Encontrei estas opcoes. Qual opcao voce prefere?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		},
+	}
+
+	for _, history := range histories {
+		if lastAssistantAskedDocumentConfirmation(history) {
+			t.Fatalf("test history should not be document confirmation context: %+v", history)
+		}
+		if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "ta certo"); ok {
+			t.Fatalf("did not expect short confirmation outside document context to create booking, got %+v", input)
+		}
+	}
+}
+
+func TestParseBookingCreateFromPartialDocumentConfirmationRejectsIncompleteDocument(t *testing.T) {
+	session := Session{
+		ID:            "session-partial-document-incomplete",
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Messias",
+	}
+	history := partialDocumentConfirmationBookingHistory(time.Now().UTC(), DocumentExtractPassenger{
+		Name:         "Joao Vitor Messias",
+		DocumentType: "RG",
+		Document:     "numero nao identificado",
+		Confidence:   0.72,
+	})
+
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "ta certo"); ok {
+		t.Fatalf("expected incomplete partial document to block booking create, got %+v", input)
+	}
+}
+
 func TestParsePassengerDocumentCorrectionPreservesNameAndReplacesRGWithCPF(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
@@ -1164,8 +1276,8 @@ func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(
 	}
 
 	history = documentConfirmationBookingHistory(time.Now().UTC(), "PARTIAL", true)
-	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {
-		t.Fatalf("expected partial document_extract to block booking create, got %+v", input)
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); !ok || input.Qty != 1 {
+		t.Fatalf("expected partial document_extract with complete CPF to create booking, got ok=%v input=%+v", ok, input)
 	}
 }
 
@@ -1258,6 +1370,24 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 			ReceivedAt:       now.Add(-2 * time.Minute),
 		})
 	}
+	return history
+}
+
+func partialDocumentConfirmationBookingHistory(now time.Time, passenger DocumentExtractPassenger) []Message {
+	history := documentConfirmationBookingHistory(now, "EXTRACTED", false)
+	result := DocumentExtractResult{
+		Mode:                   "PARTIAL",
+		ExpectedPassengerCount: 1,
+		MediaCount:             1,
+		Passengers:             []DocumentExtractPassenger{passenger},
+	}
+	toolContext := map[string]interface{}{
+		toolNameDocumentExtract: buildDocumentExtractResponsePayload(result),
+	}
+	last := len(history) - 1
+	history[last].Body = buildConfirmExtractedDocumentReply(result)
+	history[last].Payload = map[string]interface{}{"tool_context": toolContext}
+	history[last].NormalizedPayload = map[string]interface{}{"tool_context": toolContext}
 	return history
 }
 
