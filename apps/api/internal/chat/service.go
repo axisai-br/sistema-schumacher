@@ -897,27 +897,41 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	var deterministicToolHandled bool
 	var deterministicBookingAction BookingNextAction
 	documentCollectionMediaTurn := shouldRunDocumentExtract(memory) && s.canRunAgent()
-	if draftSession, draftToolContext, draftRun, handled, err := s.resolveAvailabilityDraftTurn(ctx, persisted.Session, history, currentTurn, observedAt); err != nil {
-		return ReprocessResult{}, err
-	} else if handled {
-		persisted.Session = draftSession
-		toolContext = mergeAgentToolContexts(toolContext, draftToolContext)
-		result.ToolCalls = toolContext.Calls
-		deterministicToolHandled = len(draftToolContext.Calls) > 0
-		if toolContext.Availability != nil {
-			toolFacts := map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
-			}
-			mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
-			agentState["canonical_state"] = canonicalState
-			memory["canonical_state"] = canonicalState
+	documentAttempted := false
+	documentHandled := false
+	if documentCollectionMediaTurn && !unsupportedCargoHandled {
+		documentAttempted = true
+		documentContext, handled, err := s.resolveDocumentExtractContext(ctx, persisted.Session, candidates, memory, draftID)
+		if err != nil {
+			return ReprocessResult{}, err
 		}
-		if draftRun != nil {
-			deterministicBookingRun = draftRun
-			deterministicBookingHandled = true
+		documentHandled = handled
+		toolContext = mergeAgentToolContexts(toolContext, documentContext)
+		result.ToolCalls = toolContext.Calls
+	}
+	if !documentHandled {
+		if draftSession, draftToolContext, draftRun, handled, err := s.resolveAvailabilityDraftTurn(ctx, persisted.Session, history, currentTurn, observedAt); err != nil {
+			return ReprocessResult{}, err
+		} else if handled {
+			persisted.Session = draftSession
+			toolContext = mergeAgentToolContexts(toolContext, draftToolContext)
+			result.ToolCalls = toolContext.Calls
+			deterministicToolHandled = len(draftToolContext.Calls) > 0
+			if toolContext.Availability != nil {
+				toolFacts := map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
+				}
+				mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+				agentState["canonical_state"] = canonicalState
+				memory["canonical_state"] = canonicalState
+			}
+			if draftRun != nil {
+				deterministicBookingRun = draftRun
+				deterministicBookingHandled = true
+			}
 		}
 	}
-	if passengerCountContext && !deterministicBookingHandled {
+	if passengerCountContext && !deterministicBookingHandled && !documentHandled {
 		s.logReprocess(
 			"chat reprocess event=passenger_count_context_detected session_id=%s trigger=%s job_run_id=%s",
 			persisted.Session.ID,
@@ -1053,7 +1067,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		)
 
 	}
-	if !passengerCountContext && !deterministicBookingHandled {
+	if !passengerCountContext && !deterministicBookingHandled && !documentHandled {
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
 		passengerDocumentFlowContext := shouldTreatAsPassengerDocumentFlow(canonicalState.Phase, history, currentTurn, persisted.Session)
 		if passengerDocumentFlowContext {
@@ -1161,7 +1175,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
-	if !deterministicBookingHandled && !deterministicToolHandled && s.canCreateBookings() {
+	if !deterministicBookingHandled && !deterministicToolHandled && !documentHandled && s.canCreateBookings() {
 		createInput, ok := parseBookingCreateFromDocumentConfirmation(persisted.Session, history, currentTurn)
 		if ok {
 			updatedContext, err := s.executeBookingCreateTool(ctx, persisted.Session, toolContext, createInput)
@@ -1178,7 +1192,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
-	if !deterministicBookingHandled && !deterministicToolHandled && s.canCreatePayments() {
+	if !deterministicBookingHandled && !deterministicToolHandled && !documentHandled && s.canCreatePayments() {
 		paymentInput, ok := parsePaymentCreateInput(
 			persisted.Session,
 			history,
@@ -1698,8 +1712,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	}
 	result.ToolCalls = toolContext.Calls
 
-	documentHandled := false
-	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled {
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !documentAttempted {
 		documentContext, handled, err := s.resolveDocumentExtractContext(ctx, persisted.Session, candidates, memory, draftID)
 		if err != nil {
 			return ReprocessResult{}, err
