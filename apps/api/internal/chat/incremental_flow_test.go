@@ -2,11 +2,10 @@ package chat
 
 import (
 	"context"
+	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"testing"
 	"time"
-
-	"schumacher-tur/api/internal/shared/config"
 )
 
 func TestExtractSelectedOptionIndexBarePrimeira(t *testing.T) {
@@ -126,6 +125,13 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskReservationRouteSC) {
 		t.Fatalf("expected template %s, got %q", TemplateAskReservationRouteSC, got)
+	}
+
+	if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusEligible {
+		t.Fatalf("expected reservation start draft to be auto-send eligible, got %s reasons=%v", got, readDraftAutoSendReasons(*out.Draft))
+	}
+	if reasons := readDraftAutoSendReasons(*out.Draft); len(reasons) != 0 {
+		t.Fatalf("expected no auto-send block reasons, got %v", reasons)
 	}
 }
 

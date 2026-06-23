@@ -292,3 +292,19 @@ func assertNoEmptyTemplateArtifacts(t *testing.T, reply string) {
 		}
 	}
 }
+
+func TestReservationStartTemplateDoesNotTriggerOperationalClaimWithoutTool(t *testing.T) {
+	if containsOperationalAutoSendClaimWithoutTool(askReservationRouteSCReply) {
+		t.Fatalf("reservation start template must not look like operational availability claim: %q", askReservationRouteSCReply)
+	}
+
+	policy := evaluateDraftAutoSendPolicy(
+		[]Message{{Direction: "INBOUND", Body: "como faço uma reserva?"}},
+		nil,
+		askReservationRouteSCReply,
+	)
+
+	if policy.Status != draftAutoSendStatusEligible {
+		t.Fatalf("expected reservation start template to be auto-send eligible, got %s reasons=%v", policy.Status, policy.Reasons)
+	}
+}
