@@ -81,6 +81,94 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 	}
 }
 
+func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-reservation-start-1",
+			IdempotencyKey:    "idem-reservation-start-1",
+			Body:              "como faço uma reserva?",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest reservation start: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess reservation start: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected reservation start template to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no availability search before route, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	folded := foldChatText(out.Draft.Body)
+	for _, want := range []string{"de qual cidade", "para qual cidade", "santa catarina"} {
+		if !strings.Contains(folded, strings.TrimSpace(foldChatText(want))) {
+			t.Fatalf("expected route-to-SC reply to contain %q, got %q", want, out.Draft.Body)
+		}
+	}
+	for _, notWant := range []string{"passageiro", "crianca", "documento", "pagamento"} {
+		if strings.Contains(folded, strings.TrimSpace(foldChatText(notWant))) {
+			t.Fatalf("expected reservation start not to ask %q, got %q", notWant, out.Draft.Body)
+		}
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskReservationRouteSC) {
+		t.Fatalf("expected template %s, got %q", TemplateAskReservationRouteSC, got)
+	}
+}
+
+func TestReservationPhraseInPassengerCollectionDoesNotResetRoute(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedPassengerCollectionPhase(t, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-reservation-active-1",
+			IdempotencyKey:    "idem-reservation-active-1",
+			Body:              "quero reservar",
+		},
+	}); err != nil {
+		t.Fatalf("ingest active reservation phrase: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess active reservation phrase: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	folded := foldChatText(out.Draft.Body)
+	if strings.Contains(folded, "cidade de saida") ||
+		strings.Contains(folded, "santa catarina") ||
+		strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])) == string(TemplateAskReservationRouteSC) {
+		t.Fatalf("expected active booking flow not to reset to route template, got %q", out.Draft.Body)
+	}
+	if !strings.Contains(folded, "passagem e so para voce") {
+		t.Fatalf("expected passenger collection to remain active, got %q", out.Draft.Body)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search reset, got %d", searcher.calls)
+	}
+}
+
 func TestBroadMaranhaoQueryAsksSCOriginWithoutOpenAI(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}

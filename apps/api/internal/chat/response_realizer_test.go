@@ -27,6 +27,7 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 		TemplateAskMADestination,
 		TemplateAskSCOrigin,
 		TemplateAskSCOriginForMA,
+		TemplateAskReservationRouteSC,
 		TemplatePublicSCTable,
 		TemplateUnsupportedCargo,
 		TemplateHumanHandoff,

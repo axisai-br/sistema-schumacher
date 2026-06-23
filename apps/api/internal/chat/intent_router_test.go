@@ -39,6 +39,33 @@ func TestIntentRouterAvailabilitySearch(t *testing.T) {
 	}
 }
 
+func TestIntentRouterReservationStartTemplateOnlyInDiscovery(t *testing.T) {
+	discovery := routeDeterministicIntent(nil, "como faço uma reserva?", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+	if discovery.Intent != IntentAvailabilitySearch || discovery.TemplateName != TemplateAskReservationRouteSC {
+		t.Fatalf("expected discovery reservation start template, got %+v", discovery)
+	}
+
+	activeCases := []CanonicalConversationState{
+		{Phase: ConversationPhasePassengerCollection},
+		{Phase: ConversationPhaseBookingPending},
+		{Phase: ConversationPhaseBooked, Booking: CanonicalBookingState{BookingID: "booking-1"}},
+		{Phase: ConversationPhasePaymentPending, Payment: CanonicalPaymentState{Status: "PENDING"}},
+		{Phase: ConversationPhaseDiscovery, Route: CanonicalRouteState{Origin: "Moncao/MA"}},
+	}
+	for _, state := range activeCases {
+		got := routeDeterministicIntent(nil, "quero reservar", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+		if got.TemplateName == TemplateAskReservationRouteSC {
+			t.Fatalf("did not expect reservation start template for active state %+v, got %+v", state, got)
+		}
+	}
+
+	history := availabilitySelectionHistory(t)
+	got := routeDeterministicIntent(history, "quero reservar", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+	if got.TemplateName == TemplateAskReservationRouteSC {
+		t.Fatalf("did not expect reservation start template when availability list exists, got %+v", got)
+	}
+}
+
 func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringPassengerCollection(t *testing.T) {
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},
