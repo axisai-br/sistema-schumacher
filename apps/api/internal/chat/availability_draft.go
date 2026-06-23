@@ -81,6 +81,15 @@ func parseAvailabilityDraftFromText(text string, now time.Time) (AvailabilityDra
 		draft.Qty = qty
 		found = true
 	}
+	if draft.DateFrom != nil && draft.DateTo != nil && draft.Origin == "" && draft.Destination == "" {
+		if origin, ok := parseAvailabilityDraftProbableMAOriginToSC(body); ok {
+			draft.Origin = origin
+			if draft.Qty <= 0 {
+				draft.Qty = 1
+			}
+			found = true
+		}
+	}
 	if !found {
 		return AvailabilityDraft{}, false
 	}
@@ -94,6 +103,14 @@ func parseMonthPeriod(text string, now time.Time) (string, int, int, time.Time, 
 	folded := foldChatText(text)
 	if strings.TrimSpace(folded) == "" {
 		return "", 0, 0, time.Time{}, time.Time{}, false
+	}
+
+	observed := now.UTC()
+	if availabilityDraftMentionsCurrentMonth(folded) {
+		month := int(observed.Month())
+		dateFrom := time.Date(observed.Year(), observed.Month(), 1, 0, 0, 0, 0, time.UTC)
+		dateTo := time.Date(observed.Year(), observed.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+		return availabilityDraftPeriodMonth, month, observed.Year(), dateFrom, dateTo, true
 	}
 
 	selectedMonth := 0
@@ -110,7 +127,6 @@ func parseMonthPeriod(text string, now time.Time) (string, int, int, time.Time, 
 		return "", 0, 0, time.Time{}, time.Time{}, false
 	}
 
-	observed := now.UTC()
 	year := observed.Year()
 	if time.Month(selectedMonth) < observed.Month() {
 		year++
@@ -118,6 +134,27 @@ func parseMonthPeriod(text string, now time.Time) (string, int, int, time.Time, 
 	dateFrom := time.Date(year, time.Month(selectedMonth), 1, 0, 0, 0, 0, time.UTC)
 	dateTo := time.Date(year, time.Month(selectedMonth)+1, 0, 0, 0, 0, 0, time.UTC)
 	return availabilityDraftPeriodMonth, selectedMonth, year, dateFrom, dateTo, true
+}
+
+func availabilityDraftMentionsCurrentMonth(folded string) bool {
+	return containsAnyFoldedWord(folded,
+		"esse mes",
+		"este mes",
+		"nesse mes",
+		"neste mes",
+		"mes atual",
+	)
+}
+
+func containsAnyFoldedWord(value string, patterns ...string) bool {
+	foldedValue := " " + strings.Join(strings.Fields(foldChatText(value)), " ") + " "
+	for _, pattern := range patterns {
+		foldedPattern := strings.Join(strings.Fields(foldChatText(pattern)), " ")
+		if foldedPattern != "" && strings.Contains(foldedValue, " "+foldedPattern+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeAvailabilityDraft(existing, update AvailabilityDraft) AvailabilityDraft {
@@ -425,7 +462,17 @@ func (s *Service) resolveAvailabilityDraftTurn(ctx context.Context, session Sess
 		if !parsed || !availabilityDraftCanStartFromText(update, currentTurn) {
 			return session, agentToolContext{}, nil, false, nil
 		}
-	} else if !parsed {
+	} else {
+		if followUp, ok := parseAvailabilityDraftSingleCityFollowUp(existing, currentTurn, observedAt); ok {
+			if parsed {
+				update = mergeAvailabilityDraft(update, followUp)
+			} else {
+				update = followUp
+			}
+			parsed = true
+		}
+	}
+	if hasExisting && !parsed {
 		existing.UpdatedAt = observedAt.UTC()
 		existing.MissingSlots = availabilityDraftMissingSlots(existing)
 		if availabilityDraftReady(existing) {
@@ -532,6 +579,65 @@ func parseAvailabilityDraftQuantity(text string) int {
 		return passengerWordNumber(match[1])
 	}
 	return 0
+}
+
+func parseAvailabilityDraftProbableMAOriginToSC(text string) (string, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if !containsAnyFolded(folded,
+		"quero ir pra",
+		"quero ir para",
+		"quero viajar pra",
+		"quero viajar para",
+	) {
+		return "", false
+	}
+	if _, ok := findSingleSupportedCityInText(text, scPackageDestinations); ok {
+		return "", false
+	}
+	return findSingleSupportedCityInText(text, maPackageDestinations)
+}
+
+func parseAvailabilityDraftSingleCityFollowUp(existing AvailabilityDraft, text string, observedAt time.Time) (AvailabilityDraft, bool) {
+	missing := map[string]bool{}
+	for _, slot := range availabilityDraftMissingSlots(existing) {
+		missing[slot] = true
+	}
+	if !missing["origin"] && !missing["destination"] {
+		return AvailabilityDraft{}, false
+	}
+	if strings.TrimSpace(text) == "" {
+		return AvailabilityDraft{}, false
+	}
+
+	update := AvailabilityDraft{
+		Status:    availabilityDraftStatusActive,
+		UpdatedAt: observedAt.UTC(),
+	}
+	if missing["destination"] && strings.HasSuffix(strings.ToUpper(strings.TrimSpace(existing.Origin)), "/MA") {
+		if destination, ok := findSingleSupportedCityInText(text, scPackageDestinations); ok {
+			update.Destination = destination
+			return update, true
+		}
+	}
+	if missing["origin"] && strings.HasSuffix(strings.ToUpper(strings.TrimSpace(existing.Destination)), "/SC") {
+		if origin, ok := findSingleSupportedCityInText(text, maPackageDestinations); ok {
+			update.Origin = origin
+			return update, true
+		}
+	}
+	if missing["destination"] && strings.HasSuffix(strings.ToUpper(strings.TrimSpace(existing.Origin)), "/SC") {
+		if destination, ok := findSingleSupportedCityInText(text, maPackageDestinations); ok {
+			update.Destination = destination
+			return update, true
+		}
+	}
+	if missing["origin"] && strings.HasSuffix(strings.ToUpper(strings.TrimSpace(existing.Destination)), "/MA") {
+		if origin, ok := findSingleSupportedCityInText(text, scPackageDestinations); ok {
+			update.Origin = origin
+			return update, true
+		}
+	}
+	return AvailabilityDraft{}, false
 }
 
 func availabilityDraftCanStartFromText(update AvailabilityDraft, text string) bool {
@@ -651,6 +757,12 @@ func buildAvailabilityDraftMissingSlotsReply(draft AvailabilityDraft) string {
 		}
 		return "De qual cidade voce pretende sair?"
 	case missing["destination"]:
+		if strings.HasSuffix(strings.ToUpper(strings.TrimSpace(draft.Origin)), "/MA") {
+			if period != "" {
+				return "Saindo de " + draft.Origin + " em " + period + ". Para qual cidade de Santa Catarina voce quer ir?"
+			}
+			return "Saindo de " + draft.Origin + ". Para qual cidade de Santa Catarina voce quer ir?"
+		}
 		if draft.Origin != "" && period != "" {
 			return "Perfeito - saindo de " + draft.Origin + " em " + period + ". Para qual cidade quer ir?"
 		}

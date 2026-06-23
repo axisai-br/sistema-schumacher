@@ -188,6 +188,177 @@ func TestAvailabilityDraftMonthlyVariationsAskOnlyMissingSlots(t *testing.T) {
 	}
 }
 
+func TestAvailabilityDraftCurrentMonthQuantityWithoutRouteAsksRouteNotChild(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedAvailabilityDraftSession(t, store)
+
+	out := ingestAvailabilityDraftTurn(t, svc, session, "quero pra esse mês, 1 pessoa", "current-month-route-missing")
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic draft to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search before route, got %d", searcher.calls)
+	}
+	folded := foldChatText(out.Draft.Body)
+	for _, want := range []string{"de qual cidade", "para qual cidade"} {
+		if !strings.Contains(folded, strings.TrimSpace(foldChatText(want))) {
+			t.Fatalf("expected route question to contain %q, got %q", want, out.Draft.Body)
+		}
+	}
+	for _, notWant := range []string{"crianca", "documento", "pagamento", "opcao de viagem"} {
+		if strings.Contains(folded, strings.TrimSpace(foldChatText(notWant))) {
+			t.Fatalf("expected route question not to contain %q, got %q", notWant, out.Draft.Body)
+		}
+	}
+	if got := asString(out.Memory["passenger_count_reply_context"]); got == "true" {
+		t.Fatalf("expected not to enter passenger count context, got memory %+v", out.Memory)
+	}
+	draft, ok := loadAvailabilityDraft(out.Session)
+	if !ok {
+		t.Fatalf("expected active availability draft, got %+v", out.Session.Metadata)
+	}
+	if draft.Qty != 1 {
+		t.Fatalf("expected qty 1 to stay in availability draft, got %+v", draft)
+	}
+}
+
+func TestAvailabilityDraftCurrentMonthMatcherWordBoundaries(t *testing.T) {
+	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	for _, text := range []string{
+		"esse mês",
+		"nesse mês",
+		"este mês",
+		"neste mês",
+	} {
+		t.Run(text, func(t *testing.T) {
+			draft, ok := parseAvailabilityDraftFromText(text, now)
+			if !ok {
+				t.Fatalf("expected current-month draft for %q", text)
+			}
+			if draft.Month != int(now.Month()) || draft.Year != now.Year() {
+				t.Fatalf("expected current-month period for %q, got %+v", text, draft)
+			}
+		})
+	}
+
+	for _, text := range []string{
+		"esse mesmo",
+		"nesse mesmo",
+		"isso mesmo",
+		"pode ser esse mesmo",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if draft, ok := parseAvailabilityDraftFromText(text, now); ok {
+				t.Fatalf("did not expect current-month draft for %q, got %+v", text, draft)
+			}
+		})
+	}
+}
+
+func TestAvailabilityDraftRoutePassengerPromptReplyDoesNotAskChild(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedAvailabilityDraftSession(t, store)
+	now := time.Now().UTC()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        session.ID,
+		Direction:        "OUTBOUND",
+		Kind:             "TEXT",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+		Body:             "Qual a cidade de origem, a data da viagem e quantos passageiros vao viajar?",
+	}); err != nil {
+		t.Fatalf("seed broad route prompt: %v", err)
+	}
+
+	out := ingestAvailabilityDraftTurn(t, svc, session, "quero pra esse mês, 1 pessoa", "route-passenger-prompt-reply")
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic draft to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search before route, got %d", searcher.calls)
+	}
+	folded := foldChatText(out.Draft.Body)
+	if strings.Contains(folded, "crianca") || strings.Contains(folded, "opcao de viagem") {
+		t.Fatalf("expected route prompt instead of child/trip-selection prompt, got %q", out.Draft.Body)
+	}
+	if !strings.Contains(folded, "de qual cidade") || !strings.Contains(folded, "para qual cidade") {
+		t.Fatalf("expected missing route question, got %q", out.Draft.Body)
+	}
+	if got := asString(out.Memory["passenger_count_reply_context"]); got == "true" {
+		t.Fatalf("expected route reply not passenger context, got memory %+v", out.Memory)
+	}
+}
+
+func TestAvailabilityDraftMoncaoCurrentMonthAsksSCDestination(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	currentMonth := int(time.Now().UTC().Month())
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  availabilityDraftSearchResult("Moncao/MA", "Fraiburgo/SC", expectedAvailabilityDraftMonthTripDate(currentMonth, 10)),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	session := seedAvailabilityDraftSession(t, store)
+
+	out := ingestAvailabilityDraftTurn(t, svc, session, "quero ir pra monção esse mês", "moncao-current-month")
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic draft to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 {
+		t.Fatalf("expected no availability search before destination, got %d", searcher.calls)
+	}
+	folded := foldChatText(out.Draft.Body)
+	for _, want := range []string{"moncao", "santa catarina", "para qual cidade"} {
+		if !strings.Contains(folded, strings.TrimSpace(foldChatText(want))) {
+			t.Fatalf("expected SC destination question to contain %q, got %q", want, out.Draft.Body)
+		}
+	}
+	for _, notWant := range []string{"crianca", "documento", "pagamento", "quantas pessoas"} {
+		if strings.Contains(folded, strings.TrimSpace(foldChatText(notWant))) {
+			t.Fatalf("expected SC destination question not to contain %q, got %q", notWant, out.Draft.Body)
+		}
+	}
+	draft, ok := loadAvailabilityDraft(out.Session)
+	if !ok {
+		t.Fatalf("expected active availability draft, got %+v", out.Session.Metadata)
+	}
+	if draft.Origin != "Moncao/MA" || draft.Destination != "" || draft.Qty != 1 {
+		t.Fatalf("unexpected draft for Moncao current month: %+v", draft)
+	}
+
+	markSessionMessagesAutomationSent(t, store, session.ID)
+	second := ingestAvailabilityDraftTurn(t, svc, session, "Fraiburgo, 2 pessoas", "moncao-current-month-destination")
+	if second.Draft == nil {
+		t.Fatal("expected second draft")
+	}
+	if searcher.calls != 1 {
+		t.Fatalf("expected availability search after SC destination reply, got %d", searcher.calls)
+	}
+	assertAvailabilityDraftSearchInput(t, searcher.lastInput, "Moncao/MA", "Fraiburgo/SC", 2, currentMonth)
+	if strings.Contains(foldChatText(second.Draft.Body), "para qual cidade de santa catarina") {
+		t.Fatalf("expected destination reply to advance instead of repeating destination question, got %q", second.Draft.Body)
+	}
+	if !strings.Contains(second.Draft.Body, "Encontrei estas opcoes") {
+		t.Fatalf("expected availability list after destination reply, got %q", second.Draft.Body)
+	}
+	assertNoActiveAvailabilityPendingQuestion(t, second.Session)
+}
+
 func TestAvailabilityDraftRouteThenQuantityFollowUps(t *testing.T) {
 	t.Run("route follow-up asks quantity", func(t *testing.T) {
 		store := newFakeStore()
