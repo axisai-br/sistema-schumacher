@@ -19,6 +19,7 @@ const (
 	TemplateAskMADestination      ResponseTemplateName = "ASK_MA_DESTINATION"
 	TemplateAskSCOrigin           ResponseTemplateName = "ASK_SC_ORIGIN"
 	TemplateAskSCOriginForMA      ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
+	TemplateAskReservationRouteSC ResponseTemplateName = "ASK_RESERVATION_ROUTE_SC"
 	TemplatePublicSCTable         ResponseTemplateName = "PUBLIC_SC_TABLE"
 	TemplateAvailabilityList      ResponseTemplateName = "AVAILABILITY_LIST"
 	TemplateNoAvailability        ResponseTemplateName = "NO_AVAILABILITY"
@@ -34,6 +35,7 @@ const (
 const (
 	askPassengerCountReply      = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
 	askChildUnder5Reply         = "Tem crianca de 5 anos ou menos viajando?"
+	askReservationRouteSCReply  = "Para fazer a reserva, primeiro preciso consultar uma viagem disponível. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
 	askPaymentChoiceReply       = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
 	paymentMethodsSupportReply  = "Por aqui consigo seguir apenas com PIX. Para verificar outras formas de pagamento, fale com o suporte: 55 49 99986-2222."
 	publicSCTableReply          = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
@@ -60,6 +62,8 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return "De qual cidade de Santa Catarina voce vai sair?", true
 	case TemplateAskSCOriginForMA:
 		return "De qual cidade de Santa Catarina voce vai sair para o Maranhao?", true
+	case TemplateAskReservationRouteSC:
+		return askReservationRouteSCReply, true
 	case TemplatePublicSCTable:
 		return publicSCTableReply, true
 	case TemplateUnsupportedCargo:

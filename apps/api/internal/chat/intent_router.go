@@ -132,6 +132,14 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		}
 	}
 	if looksLikeReservationHowToProceedIntent(body) {
+		if looksLikeReservationStartTemplateIntent(body) && shouldUseReservationStartTemplate(state, history) {
+			return IntentDecision{
+				Intent:       IntentAvailabilitySearch,
+				Source:       "deterministic_reservation_start",
+				TemplateName: TemplateAskReservationRouteSC,
+				Action:       "template",
+			}
+		}
 		return IntentDecision{
 			Intent: IntentBookingCreateConfirmation,
 			Source: "deterministic_reservation_next_step",
@@ -314,8 +322,11 @@ func looksLikeReservationHowToProceedIntent(text string) bool {
 	for _, phrase := range []string{
 		"como posso fazer para reservar",
 		"como posso fazer pra reservar",
+		"como posso fazer uma reserva",
 		"como faco para reservar",
 		"como faco pra reservar",
+		"como faco uma reserva",
+		"como fazer uma reserva",
 		"quero reservar",
 		"como prosseguir",
 		"como agendar",
@@ -345,6 +356,60 @@ func hasExplicitRouteContextForReservationHelp(text string) bool {
 	}
 	if locations := extractSupportedPackageLocationsInOrder(text); len(locations) >= 2 {
 		return true
+	}
+	return false
+}
+
+func shouldUseReservationStartTemplate(state CanonicalConversationState, history []Message) bool {
+	if state.Phase != "" && state.Phase != ConversationPhaseDiscovery {
+		return false
+	}
+	if hasPreviousAvailabilityList(history) {
+		return false
+	}
+	if hasCanonicalRoute(state) {
+		return false
+	}
+	if strings.TrimSpace(state.Route.TripID) != "" ||
+		state.Route.SelectedOptionIndex > 0 ||
+		strings.TrimSpace(state.Route.BoardStopID) != "" ||
+		strings.TrimSpace(state.Route.AlightStopID) != "" ||
+		strings.TrimSpace(state.Route.TripDate) != "" {
+		return false
+	}
+	if state.Passengers.ExpectedCount > 0 || state.Passengers.DocumentsCollected {
+		return false
+	}
+	if strings.TrimSpace(state.Booking.BookingID) != "" ||
+		strings.TrimSpace(state.Booking.ReservationCode) != "" ||
+		strings.TrimSpace(state.Booking.Status) != "" {
+		return false
+	}
+	if strings.TrimSpace(state.Payment.Status) != "" ||
+		strings.TrimSpace(state.Payment.Preference) != "" {
+		return false
+	}
+	return true
+}
+
+func looksLikeReservationStartTemplateIntent(text string) bool {
+	folded := strings.Join(strings.Fields(foldChatText(NormalizeIncomingCustomerText(text))), " ")
+	if folded == "" {
+		return false
+	}
+	for _, phrase := range []string{
+		"como posso fazer para reservar",
+		"como posso fazer pra reservar",
+		"como posso fazer uma reserva",
+		"como faco para reservar",
+		"como faco pra reservar",
+		"como faco uma reserva",
+		"como fazer uma reserva",
+		"quero reservar",
+	} {
+		if folded == phrase || strings.Contains(folded, phrase) {
+			return true
+		}
 	}
 	return false
 }
