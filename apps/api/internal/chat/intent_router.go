@@ -328,6 +328,7 @@ func looksLikeReservationHowToProceedIntent(text string) bool {
 		"como faco uma reserva",
 		"como fazer uma reserva",
 		"quero reservar",
+		"como reserva",
 		"como prosseguir",
 		"como agendar",
 		"quero agendar",
