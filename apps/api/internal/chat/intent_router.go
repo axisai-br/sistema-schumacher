@@ -131,6 +131,14 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			Action:              "template",
 		}
 	}
+	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
+		return IntentDecision{
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic_availability_date_selection",
+			AvailabilityInput: &input,
+			Action:            "tool",
+		}
+	}
 	if looksLikeReservationHowToProceedIntent(body) {
 		if looksLikeReservationStartTemplateIntent(body) && shouldUseReservationStartTemplate(state, history) {
 			return IntentDecision{

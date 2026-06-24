@@ -39,6 +39,29 @@ func TestIntentRouterAvailabilitySearch(t *testing.T) {
 	}
 }
 
+func TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "06/07", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentAvailabilitySearch {
+		t.Fatalf("expected availability search intent, got %+v", got)
+	}
+	if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+		t.Fatalf("date selection must not become unsupported package: %+v", got)
+	}
+	if got.Action != "tool" || got.AvailabilityInput == nil {
+		t.Fatalf("expected deterministic availability tool decision, got %+v", got)
+	}
+	if got.AvailabilityInput.TripDate == nil || got.AvailabilityInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
+		t.Fatalf("expected selected trip date 2026-07-06, got %+v", got.AvailabilityInput)
+	}
+	if got.AvailabilityInput.Origin != "Santa Ines/MA" || got.AvailabilityInput.Destination != "Videira/SC" {
+		t.Fatalf("expected route from availability context, got %+v", got.AvailabilityInput)
+	}
+}
+
 func TestIntentRouterReservationStartTemplateOnlyInDiscovery(t *testing.T) {
 	discovery := routeDeterministicIntent(nil, "como faço uma reserva?", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
 	if discovery.Intent != IntentAvailabilitySearch || discovery.TemplateName != TemplateAskReservationRouteSC {
@@ -186,5 +209,56 @@ func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
 	}
 	if got.AvailabilityInput.Origin != "" || got.AvailabilityInput.TripDate != nil {
 		t.Fatalf("expected follow-up to avoid origin/date resolution, got %+v", got.AvailabilityInput)
+	}
+}
+
+func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message {
+	t.Helper()
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "De qual cidade do Maranhao voce vai sair?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Encontrei estas opcoes:\n1. Santa Ines/MA para Videira/SC, 2026-07-06, saida 08:00, R$ 950\n\nQual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+				},
+			},
+		},
+	}
+}
+
+func availabilityDateSelectionTestResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Videira/SC",
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{{
+			TripID:                 "trip-2026-07-06",
+			BoardStopID:            "board-2026-07-06",
+			AlightStopID:           "alight-2026-07-06",
+			OriginDisplayName:      "Santa Ines/MA",
+			DestinationDisplayName: "Videira/SC",
+			OriginDepartTime:       "08:00",
+			TripDate:               "2026-07-06",
+			SeatsAvailable:         5,
+			Price:                  950,
+			Currency:               "BRL",
+			Status:                 "ACTIVE",
+			TripStatus:             "SCHEDULED",
+			PackageName:            packageToSantaCatarina,
+		}},
 	}
 }
