@@ -276,7 +276,7 @@ func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, conte
 		return false
 	}
 	switch strings.TrimSpace(decision.Source) {
-	case "deterministic_ma_destination_followup", "deterministic_origin_followup", "deterministic_verify_all_options":
+	case "deterministic_availability_date_selection", "deterministic_ma_destination_followup", "deterministic_origin_followup", "deterministic_verify_all_options":
 		return true
 	default:
 		return false
