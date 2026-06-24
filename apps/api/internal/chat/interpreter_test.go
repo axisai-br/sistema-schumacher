@@ -122,6 +122,27 @@ func TestInterpretStructuredTurnDocumentConfirmationRequiresContext(t *testing.T
 	}
 }
 
+func TestInterpretStructuredTurnDocumentConfirmationIgnoresStaleAvailabilityContext(t *testing.T) {
+	history := append(availabilitySelectionStructuredHistory(t), Message{
+		Direction:        "OUTBOUND",
+		Body:             "Consegui identificar estes dados. Eles conferem?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	})
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "isso mesmo",
+		History:     history,
+	})
+
+	if got.Intent != StructuredIntentDocumentConfirmation {
+		t.Fatalf("expected document confirmation with stale availability context, got %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("document confirmation must not select availability option: %+v", got.Booking)
+	}
+}
+
 func TestInterpretStructuredTurnGreeting(t *testing.T) {
 	got := InterpretStructuredTurn(StructuredInterpreterInput{CurrentTurn: "oi"})
 

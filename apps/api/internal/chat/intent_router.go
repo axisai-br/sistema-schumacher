@@ -102,7 +102,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if decision, ok := routeBroadStateTemplateIntent(body, folded); ok {
 		return decision
 	}
-	if index := extractSelectedOptionIndex(body); index > 0 && hasPreviousAvailabilityList(history) {
+	if index := extractSelectedOptionIndex(body); index > 0 && hasCurrentAvailabilitySelectionContext(history) {
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              "deterministic",
@@ -111,7 +111,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			Action:              "template",
 		}
 	}
-	if looksLikeContextualAvailabilitySelection(folded) && hasPreviousAvailabilityList(history) {
+	if looksLikeContextualAvailabilitySelection(folded) && hasCurrentAvailabilitySelectionContext(history) {
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              "deterministic",
@@ -122,7 +122,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if looksLikeBookingCreateConfirmation(body) &&
 		state.Phase == ConversationPhaseTripSelection &&
-		hasPreviousAvailabilityList(history) {
+		hasCurrentAvailabilitySelectionContext(history) {
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              "deterministic_trip_confirmation_recovery",
@@ -309,9 +309,35 @@ func firstAvailableOptionIndex(history []Message) int {
 	return 1
 }
 
+func hasCurrentAvailabilitySelectionContext(history []Message) bool {
+	message, ok := latestAssistantMessage(history)
+	if !ok {
+		return false
+	}
+	if availabilityOptionCountFromMessage(message) > 0 {
+		return true
+	}
+	body := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
+	if !looksLikeAvailabilitySelectionPrompt(body) {
+		return false
+	}
+	return hasPreviousAvailabilityList(history)
+}
+
 func looksLikeContextualAvailabilitySelection(folded string) bool {
 	switch folded {
-	case "essa", "essa opcao", "esta", "esta opcao", "esse", "esse horario", "essa passagem":
+	case "essa",
+		"essa ai",
+		"essa mesmo",
+		"essa mesma",
+		"essa opcao",
+		"essa opcao mesmo",
+		"essa passagem",
+		"esta",
+		"esta opcao",
+		"esse",
+		"esse horario",
+		"pode ser essa":
 		return true
 	default:
 		return false
