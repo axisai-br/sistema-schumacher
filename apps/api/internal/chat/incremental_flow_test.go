@@ -80,6 +80,119 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 	}
 }
 
+func TestSelectAvailabilityOptionContextualEssaMesmoAsksPassengerCount(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  availabilityDateSelectionTestResult(),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999999",
+		CustomerPhone:  "5511999999999",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-contextual-availability-selection",
+		Body:             "Encontrei estas opcoes:\n1. Monção/MA para Videira/SC, 2026-07-06, saida 09:00, R$ 950\n\nQual opcao voce prefere?",
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+					Filter: AvailabilitySearchInput{
+						Origin:      "Monção/MA",
+						Destination: "Videira/SC",
+						PackageName: packageToSantaCatarina,
+						Qty:         1,
+						Limit:       5,
+					},
+					Results: []AvailabilitySearchItem{{
+						TripID:                 "trip-2026-07-06",
+						BoardStopID:            "board-2026-07-06",
+						AlightStopID:           "alight-2026-07-06",
+						OriginDisplayName:      "Monção/MA",
+						DestinationDisplayName: "Videira/SC",
+						OriginDepartTime:       "09:00",
+						TripDate:               "2026-07-06",
+						SeatsAvailable:         5,
+						Price:                  950,
+						Currency:               "BRL",
+						Status:                 "ACTIVE",
+						TripStatus:             "SCHEDULED",
+						PackageName:            packageToSantaCatarina,
+					}},
+				}),
+			},
+		},
+		RecordedAt: now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed availability draft: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-contextual-availability-selection",
+			IdempotencyKey:    "idem-contextual-availability-selection",
+			Body:              "essa mesmo",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest selection: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess selection: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic selection to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no new availability search, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
+		t.Fatalf("expected passenger question %q, got %q", askPassengerCountReply, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentSelectAvailabilityOption) {
+		t.Fatalf("expected selected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
+		t.Fatalf("contextual selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
+	}
+	if strings.TrimSpace(out.Draft.Body) == buildUnsupportedPackageReply() {
+		t.Fatalf("contextual selection must not use unsupported package reply")
+	}
+	if reasons := readDraftAutoSendReasons(*out.Draft); containsString(reasons, draftAutoSendReasonOutOfScopeDuringBooking) {
+		t.Fatalf("did not expect out-of-scope booking auto-send reason, got %+v", reasons)
+	}
+	intentDecision := asMap(out.Memory["intent_decision"])
+	if got := asInt(intentDecision["selected_option_index"]); got != 1 {
+		t.Fatalf("expected selected option index 1, got %d memory=%+v", got, intentDecision)
+	}
+}
+
 func TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage(t *testing.T) {
 	for _, text := range []string{"06/7", "6/7", "6/07", "06/07"} {
 		t.Run(text, func(t *testing.T) {

@@ -17,6 +17,11 @@ func TestIntentRouterDeterministicCases(t *testing.T) {
 		{text: "segunda", intent: IntentSelectAvailabilityOption, index: 2},
 		{text: "opção 1", intent: IntentSelectAvailabilityOption, index: 1},
 		{text: "essa opção", intent: IntentSelectAvailabilityOption, index: 1},
+		{text: "essa mesmo", intent: IntentSelectAvailabilityOption, index: 1},
+		{text: "essa mesma", intent: IntentSelectAvailabilityOption, index: 1},
+		{text: "pode ser essa", intent: IntentSelectAvailabilityOption, index: 1},
+		{text: "essa aí", intent: IntentSelectAvailabilityOption, index: 1},
+		{text: "essa opção mesmo", intent: IntentSelectAvailabilityOption, index: 1},
 		{text: "paguei", intent: IntentPaymentStatusQuery},
 		{text: "quero cancelar", intent: IntentBookingCancel},
 		{text: "quero levar uma moto", intent: IntentUnsupportedCargo},
@@ -29,6 +34,42 @@ func TestIntentRouterDeterministicCases(t *testing.T) {
 		if tc.index > 0 && got.SelectedOptionIndex != tc.index {
 			t.Fatalf("routeDeterministicIntent(%q) selected index = %d, want %d", tc.text, got.SelectedOptionIndex, tc.index)
 		}
+	}
+}
+
+func TestIntentRouterPrioritizesContextualAvailabilitySelectionOverUnsupportedFollowUp(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "essa mesmo", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected availability option selection, got %+v", got)
+	}
+	if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+		t.Fatalf("contextual selection must not become unsupported package: %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option index 1, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+		t.Fatalf("expected passenger count template decision, got %+v", got)
+	}
+}
+
+func TestIntentRouterContextualAvailabilitySelectionRequiresLatestAvailabilityPrompt(t *testing.T) {
+	history := append(availabilitySelectionHistory(t), Message{
+		Direction:        "OUTBOUND",
+		Body:             "Consegui identificar estes dados. Eles conferem?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	})
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "essa mesmo", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("document confirmation context must not reuse stale availability list: %+v", got)
 	}
 }
 
