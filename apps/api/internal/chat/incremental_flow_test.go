@@ -81,85 +81,89 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 }
 
 func TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage(t *testing.T) {
-	store := newFakeStore()
-	runner := &fakeAgentRunner{
-		enabled: true,
-		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
-	}
-	searcher := &fakeAvailabilitySearcher{
-		enabled: true,
-		result:  availabilityDateSelectionTestResult(),
-	}
-	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	for _, text := range []string{"06/7", "6/7", "6/07", "06/07"} {
+		t.Run(text, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{
+				enabled: true,
+				result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+			}
+			searcher := &fakeAvailabilitySearcher{
+				enabled: true,
+				result:  availabilityDateSelectionTestResult(),
+			}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
 
-	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
-		Channel:        "WHATSAPP",
-		ContactKey:     "5511999999999",
-		CustomerPhone:  "5511999999999",
-		LastMessageAt:  &now,
-		LastOutboundAt: &now,
-	})
-	if err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
-	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
-		SessionID:        session.ID,
-		IdempotencyKey:   "draft-availability-date-selection",
-		Body:             "Encontrei estas opcoes:\n1. Santa Ines/MA para Videira/SC, 2026-07-06, saida 08:00, R$ 950\n\nQual opcao voce prefere?",
-		SenderName:       "SHABAS",
-		ProcessingStatus: messageStatusAutomationSent,
-		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
-			},
-		},
-		RecordedAt: now.Add(-2 * time.Minute),
-	}); err != nil {
-		t.Fatalf("seed availability draft: %v", err)
-	}
+			now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel:        "WHATSAPP",
+				ContactKey:     "5511999999999",
+				CustomerPhone:  "5511999999999",
+				LastMessageAt:  &now,
+				LastOutboundAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
+			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+				SessionID:        session.ID,
+				IdempotencyKey:   "draft-availability-date-selection",
+				Body:             "Encontrei estas opcoes:\n1. Santa Ines/MA para Videira/SC, 2026-07-06, saida 08:00, R$ 950\n\nQual opcao voce prefere?",
+				SenderName:       "SHABAS",
+				ProcessingStatus: messageStatusAutomationSent,
+				Payload: map[string]interface{}{
+					"tool_context": map[string]interface{}{
+						toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+					},
+				},
+				RecordedAt: now.Add(-2 * time.Minute),
+			}); err != nil {
+				t.Fatalf("seed availability draft: %v", err)
+			}
 
-	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
-		ContactKey: session.ContactKey,
-		Message: IngestMessagePayload{
-			Direction:         "INBOUND",
-			ProviderMessageID: "msg-availability-date-selection",
-			IdempotencyKey:    "idem-availability-date-selection",
-			Body:              "06/07",
-		},
-	})
-	if err != nil {
-		t.Fatalf("ingest date selection: %v", err)
-	}
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: "msg-availability-date-selection",
+					IdempotencyKey:    "idem-availability-date-selection",
+					Body:              text,
+				},
+			})
+			if err != nil {
+				t.Fatalf("ingest date selection: %v", err)
+			}
 
-	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
-	if err != nil {
-		t.Fatalf("reprocess date selection: %v", err)
-	}
-	if runner.calls != 0 {
-		t.Fatalf("expected deterministic availability date selection to avoid LLM, got %d calls", runner.calls)
-	}
-	if searcher.calls != 1 {
-		t.Fatalf("expected one availability search, got %d", searcher.calls)
-	}
-	if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
-		t.Fatalf("expected trip date 2026-07-06, got %+v", searcher.lastInput)
-	}
-	if out.Draft == nil {
-		t.Fatal("expected availability draft")
-	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
-		t.Fatalf("date selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
-	}
-	if strings.TrimSpace(out.Draft.Body) == buildUnsupportedPackageReply() {
-		t.Fatalf("date selection must not use unsupported package reply")
-	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentAvailabilitySearch) {
-		t.Fatalf("expected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
-	}
-	if reasons := readDraftAutoSendReasons(*out.Draft); containsString(reasons, draftAutoSendReasonOutOfScopeDuringBooking) {
-		t.Fatalf("did not expect out-of-scope booking auto-send reason, got %+v", reasons)
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess date selection: %v", err)
+			}
+			if runner.calls != 0 {
+				t.Fatalf("expected deterministic availability date selection to avoid LLM, got %d calls", runner.calls)
+			}
+			if searcher.calls != 1 {
+				t.Fatalf("expected one availability search, got %d", searcher.calls)
+			}
+			if searcher.lastInput.TripDate == nil || searcher.lastInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
+				t.Fatalf("expected trip date 2026-07-06, got %+v", searcher.lastInput)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected availability draft")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
+				t.Fatalf("date selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
+			}
+			if strings.TrimSpace(out.Draft.Body) == buildUnsupportedPackageReply() {
+				t.Fatalf("date selection must not use unsupported package reply")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentAvailabilitySearch) {
+				t.Fatalf("expected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+			}
+			if reasons := readDraftAutoSendReasons(*out.Draft); containsString(reasons, draftAutoSendReasonOutOfScopeDuringBooking) {
+				t.Fatalf("did not expect out-of-scope booking auto-send reason, got %+v", reasons)
+			}
+		})
 	}
 }
 
