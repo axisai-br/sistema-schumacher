@@ -17,7 +17,7 @@ var (
 	locationMentionPattern = regexp.MustCompile(`(?i)\b([\p{L}][\p{L}' ]{1,60}?)[/\s,-]+([a-z]{2})\b`)
 	routeFromToPattern     = regexp.MustCompile(`(?i)\bde\s+(.+?)\s+para\s+(.+?)(?:\s+(?:em|dia|para)\b|$)`)
 	isoDatePattern         = regexp.MustCompile(`\b(\d{4})-(\d{2})-(\d{2})\b`)
-	brDatePattern          = regexp.MustCompile(`\b(\d{2})/(\d{2})(?:/(\d{4}))?\b`)
+	brDatePattern          = regexp.MustCompile(`\b(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\b`)
 	qtyPattern             = regexp.MustCompile(`\b(\d{1,2})\s*(?:pessoas?|passagens?|assentos?|lugares?)\b`)
 	bookingIDPattern       = regexp.MustCompile(`(?i)\bBK-[A-Z0-9]+\b`)
 	reservationCodePattern = regexp.MustCompile(`\b[A-Z0-9]{8}\b`)

@@ -43,22 +43,29 @@ func TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	got := routeDeterministicIntent(history, "06/07", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	for _, text := range []string{"06/7", "6/7", "6/07", "06/07"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
-	if got.Intent != IntentAvailabilitySearch {
-		t.Fatalf("expected availability search intent, got %+v", got)
-	}
-	if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
-		t.Fatalf("date selection must not become unsupported package: %+v", got)
-	}
-	if got.Action != "tool" || got.AvailabilityInput == nil {
-		t.Fatalf("expected deterministic availability tool decision, got %+v", got)
-	}
-	if got.AvailabilityInput.TripDate == nil || got.AvailabilityInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
-		t.Fatalf("expected selected trip date 2026-07-06, got %+v", got.AvailabilityInput)
-	}
-	if got.AvailabilityInput.Origin != "Santa Ines/MA" || got.AvailabilityInput.Destination != "Videira/SC" {
-		t.Fatalf("expected route from availability context, got %+v", got.AvailabilityInput)
+			if got.Intent != IntentAvailabilitySearch {
+				t.Fatalf("expected availability search intent, got %+v", got)
+			}
+			if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+				t.Fatalf("date selection must not become unsupported package: %+v", got)
+			}
+			if got.Source != "deterministic_availability_date_selection" {
+				t.Fatalf("expected deterministic date selection source, got %+v", got)
+			}
+			if got.Action != "tool" || got.AvailabilityInput == nil {
+				t.Fatalf("expected deterministic availability tool decision, got %+v", got)
+			}
+			if got.AvailabilityInput.TripDate == nil || got.AvailabilityInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
+				t.Fatalf("expected selected trip date 2026-07-06, got %+v", got.AvailabilityInput)
+			}
+			if got.AvailabilityInput.Origin != "Santa Ines/MA" || got.AvailabilityInput.Destination != "Videira/SC" {
+				t.Fatalf("expected route from availability context, got %+v", got.AvailabilityInput)
+			}
+		})
 	}
 }
 
