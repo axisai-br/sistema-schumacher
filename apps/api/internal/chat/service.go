@@ -48,6 +48,7 @@ var (
 	ErrReprocessRequiresBot         = errors.New("chat session reprocess requires bot ownership")
 	ErrReprocessNoMessages          = errors.New("chat session has no pending messages to reprocess")
 	ErrAgentRunFailed               = errors.New("chat agent run failed")
+	ErrShadowReportSessionRequired  = errors.New("structured interpreter shadow report session_id is required")
 )
 
 type Service struct {
@@ -2220,6 +2221,25 @@ func (s *Service) ListMessages(ctx context.Context, sessionID string, filter Lis
 	return s.store.ListMessages(ctx, sessionID, normalizeListMessagesFilter(filter))
 }
 
+func (s *Service) GetStructuredInterpreterShadowReport(ctx context.Context, filter StructuredInterpreterShadowReportFilter) (StructuredInterpreterShadowReportResponse, error) {
+	filter = normalizeStructuredInterpreterShadowReportFilter(filter)
+	if filter.SessionID == "" {
+		return StructuredInterpreterShadowReportResponse{}, ErrShadowReportSessionRequired
+	}
+	messages, err := s.store.ListStructuredInterpreterShadowMessages(ctx, filter)
+	if err != nil {
+		return StructuredInterpreterShadowReportResponse{}, err
+	}
+
+	items := StructuredInterpreterShadowReportItemsFromMessages(messages)
+	return StructuredInterpreterShadowReportResponse{
+		Filter:             filter,
+		LoadedMessageCount: len(messages),
+		ReportItemCount:    len(items),
+		Report:             BuildStructuredInterpreterShadowReport(items),
+	}, nil
+}
+
 func (s *Service) GetCurrentDraft(ctx context.Context, sessionID string) (CurrentDraftResult, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	session, err := s.GetSession(ctx, sessionID)
@@ -2344,6 +2364,20 @@ func normalizeListSessionsFilter(filter ListSessionsFilter) ListSessionsFilter {
 func normalizeListMessagesFilter(filter ListMessagesFilter) ListMessagesFilter {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	return filter
+}
+
+func normalizeStructuredInterpreterShadowReportFilter(filter StructuredInterpreterShadowReportFilter) StructuredInterpreterShadowReportFilter {
+	filter.SessionID = strings.TrimSpace(filter.SessionID)
+	if filter.Limit <= 0 {
+		filter.Limit = 200
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000
 	}
 	if filter.Offset < 0 {
 		filter.Offset = 0
