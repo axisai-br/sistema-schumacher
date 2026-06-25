@@ -8544,17 +8544,21 @@ func TestListSessionsSupportsOperationalTabs(t *testing.T) {
 }
 
 type fakeStore struct {
-	sessions          map[string]Session
-	sessionsByKey     map[string]string
-	messages          map[string]Message
-	messageOrder      []string
-	byProviderID      map[string]string
-	byIdempotencyKey  map[string]string
-	handoffs          map[string]Handoff
-	outbounds         map[string]ReplyOutbound
-	toolCalls         map[string]ToolCall
-	toolCallOrder     []string
-	requestHandoffErr error
+	sessions             map[string]Session
+	sessionsByKey        map[string]string
+	messages             map[string]Message
+	messageOrder         []string
+	byProviderID         map[string]string
+	byIdempotencyKey     map[string]string
+	handoffs             map[string]Handoff
+	outbounds            map[string]ReplyOutbound
+	toolCalls            map[string]ToolCall
+	toolCallOrder        []string
+	requestHandoffErr    error
+	shadowReportMessages []Message
+	shadowReportErr      error
+	shadowReportCalls    int
+	shadowReportFilter   StructuredInterpreterShadowReportFilter
 }
 
 type fakeProfileEnsurer struct {

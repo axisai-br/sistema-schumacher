@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"schumacher-tur/api/internal/auth"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	httpx "schumacher-tur/api/internal/shared/http"
 )
@@ -24,6 +26,7 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Route("/chat", func(r chi.Router) {
 		r.Post("/messages/ingest", h.ingestMessage)
+		r.Get("/reports/structured-interpreter-shadow", h.getStructuredInterpreterShadowReport)
 		r.Get("/sessions", h.listSessions)
 		r.Get("/sessions/summary", h.getSessionsSummary)
 		r.Route("/sessions/{sessionId}", func(r chi.Router) {
@@ -199,6 +202,26 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) getStructuredInterpreterShadowReport(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseStructuredInterpreterShadowReportFilter(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_QUERY", "invalid query parameters", nil)
+		return
+	}
+
+	result, err := h.svc.GetStructuredInterpreterShadowReport(r.Context(), filter)
+	if err != nil {
+		if errors.Is(err, ErrShadowReportSessionRequired) {
+			httpx.WriteError(w, http.StatusBadRequest, "INVALID_QUERY", err.Error(), nil)
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "CHAT_STRUCTURED_INTERPRETER_SHADOW_REPORT_ERROR", "could not load structured interpreter shadow report", err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) requestHandoff(w http.ResponseWriter, r *http.Request) {
@@ -481,6 +504,38 @@ func parseListSessionsFilter(r *http.Request) (ListSessionsFilter, error) {
 		}
 		filter.Offset = value
 	}
+
+	return filter, nil
+}
+
+func parseStructuredInterpreterShadowReportFilter(r *http.Request) (StructuredInterpreterShadowReportFilter, error) {
+	filter := StructuredInterpreterShadowReportFilter{}
+
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		value, err := strconv.Atoi(limit)
+		if err != nil || value <= 0 || value > 1000 {
+			return StructuredInterpreterShadowReportFilter{}, errors.New("invalid limit")
+		}
+		filter.Limit = value
+	}
+
+	if offset := r.URL.Query().Get("offset"); offset != "" {
+		value, err := strconv.Atoi(offset)
+		if err != nil || value < 0 {
+			return StructuredInterpreterShadowReportFilter{}, errors.New("invalid offset")
+		}
+		filter.Offset = value
+	}
+
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		return StructuredInterpreterShadowReportFilter{}, ErrShadowReportSessionRequired
+	}
+	parsed, err := uuid.Parse(sessionID)
+	if err != nil {
+		return StructuredInterpreterShadowReportFilter{}, errors.New("invalid session_id")
+	}
+	filter.SessionID = parsed.String()
 
 	return filter, nil
 }

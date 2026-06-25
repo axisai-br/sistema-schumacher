@@ -189,6 +189,19 @@ type ListMessagesFilter struct {
 	Offset int
 }
 
+type StructuredInterpreterShadowReportFilter struct {
+	Limit     int    `json:"limit"`
+	Offset    int    `json:"offset"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+type StructuredInterpreterShadowReportResponse struct {
+	Filter             StructuredInterpreterShadowReportFilter `json:"filter"`
+	LoadedMessageCount int                                     `json:"loaded_message_count"`
+	ReportItemCount    int                                     `json:"report_item_count"`
+	Report             StructuredInterpreterShadowReport       `json:"report"`
+}
+
 type UpsertSessionInput struct {
 	Channel        string
 	ContactKey     string

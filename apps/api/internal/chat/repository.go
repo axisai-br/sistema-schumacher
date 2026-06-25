@@ -36,6 +36,7 @@ type Store interface {
 	CountSessionsSummary(ctx context.Context, filter ListSessionsFilter, reviewSLASeconds int) (SessionsSummary, error)
 	GetSession(ctx context.Context, id string) (Session, error)
 	ListMessages(ctx context.Context, sessionID string, filter ListMessagesFilter) ([]Message, error)
+	ListStructuredInterpreterShadowMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error)
 }
 
 type Repository struct {
@@ -2436,6 +2437,52 @@ func (r *Repository) ListMessages(ctx context.Context, sessionID string, filter 
 		order by created_at asc
 		limit $2 offset $3
 	`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []Message{}
+	for rows.Next() {
+		item, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
+func (r *Repository) ListStructuredInterpreterShadowMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error) {
+	filter = normalizeStructuredInterpreterShadowReportFilter(filter)
+	if filter.SessionID == "" {
+		return nil, ErrShadowReportSessionRequired
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		select
+			id::text,
+			session_id::text,
+			coalesce(direction, ''),
+			coalesce(kind, ''),
+			coalesce(provider_message_id, ''),
+			coalesce(idempotency_key, ''),
+			'' as sender_name,
+			'' as sender_phone,
+			'' as body,
+			payload,
+			normalized_payload,
+			coalesce(processing_status, ''),
+			received_at,
+			sent_at,
+			created_at
+		from chat_messages
+		where session_id = $1::uuid
+			and (coalesce(normalized_payload, '{}'::jsonb) ? $2 or coalesce(payload, '{}'::jsonb) ? $2)
+		order by created_at desc
+		limit $3 offset $4
+	`, filter.SessionID, structuredInterpreterShadowKey, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}
