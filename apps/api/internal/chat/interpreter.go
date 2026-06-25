@@ -81,6 +81,22 @@ func InterpretStructuredTurn(input StructuredInterpreterInput) StructuredInterpr
 		return unknownStructuredInterpretation("empty_current_turn", 0)
 	}
 
+	if looksLikeBookingCancelIntent(body) {
+		out := newStructuredInterpretation(
+			StructuredIntentBookingCancelRequest,
+			TurnMeaningNewRequest,
+			0.94,
+			"deterministic_booking_cancel_request",
+		)
+		out.Reasons = []string{"cancel_keyword"}
+		return out
+	}
+
+	activePrompt := InferActivePromptContext(input.History, input.State)
+	if out, ok := interpretActivePromptAnswer(activePrompt, input, body, folded); ok {
+		return out
+	}
+
 	if index := extractSelectedOptionIndex(body); index > 0 && lastAssistantAskedLapChildAssignment(input.History) {
 		out := newStructuredInterpretation(
 			StructuredIntentLapChildAssignmentAnswer,
@@ -101,17 +117,6 @@ func InterpretStructuredTurn(input StructuredInterpreterInput) StructuredInterpr
 			"deterministic_document_confirmation",
 		)
 		out.Reasons = []string{"latest_assistant_asked_document_confirmation"}
-		return out
-	}
-
-	if looksLikeBookingCancelIntent(body) {
-		out := newStructuredInterpretation(
-			StructuredIntentBookingCancelRequest,
-			TurnMeaningNewRequest,
-			0.94,
-			"deterministic_booking_cancel_request",
-		)
-		out.Reasons = []string{"cancel_keyword"}
 		return out
 	}
 
@@ -183,6 +188,166 @@ func InterpretStructuredTurn(input StructuredInterpreterInput) StructuredInterpr
 	return unknownStructuredInterpretation("no_deterministic_match", 0)
 }
 
+func interpretActivePromptAnswer(ctx ActivePromptContext, input StructuredInterpreterInput, body string, folded string) (StructuredInterpretation, bool) {
+	switch ctx.Kind {
+	case ActivePromptLapChildAssignment:
+		if index := extractSelectedOptionIndex(body); index > 0 {
+			out := newStructuredInterpretation(
+				StructuredIntentLapChildAssignmentAnswer,
+				TurnMeaningAnswerToQuestion,
+				0.98,
+				"deterministic_active_prompt_lap_child_assignment",
+			)
+			out.Booking.LapChildPassengerIndexes = []int{index}
+			out.Reasons = []string{"active_prompt_lap_child_assignment"}
+			return out, true
+		}
+	case ActivePromptDocumentConfirmation:
+		if looksLikeDocumentConfirmation(body) {
+			out := newStructuredInterpretation(
+				StructuredIntentDocumentConfirmation,
+				TurnMeaningConfirmation,
+				0.96,
+				"deterministic_active_prompt_document_confirmation",
+			)
+			out.Reasons = []string{"active_prompt_document_confirmation"}
+			return out, true
+		}
+	case ActivePromptPaymentPreference:
+		if preference := detectStructuredPaymentPreference(body); preference == "sinal" || preference == "integral" {
+			out := newStructuredInterpretation(
+				StructuredIntentPaymentPreference,
+				TurnMeaningAnswerToQuestion,
+				0.94,
+				"deterministic_active_prompt_payment_preference",
+			)
+			out.Payment.PaymentPreference = preference
+			out.Reasons = []string{"active_prompt_payment_preference"}
+			return out, true
+		}
+		if looksLikePixOnlyPaymentReply(folded) {
+			out := activePromptUnknownStructuredInterpretation(
+				"pix_is_payment_method_not_payment_preference",
+				"deterministic_active_prompt_payment_preference",
+			)
+			return out, true
+		}
+	case ActivePromptAvailabilityOptionChoice:
+		optionCount := ctx.AvailabilityOptionCount
+		if optionCount <= 0 {
+			if count, ok := structuredAvailabilitySelectionOptionCount(input.History); ok {
+				optionCount = count
+			}
+		}
+		if index := extractSelectedOptionIndex(body); index > 0 {
+			if optionCount > 0 && index <= optionCount {
+				out := newStructuredInterpretation(
+					StructuredIntentSelectAvailabilityOption,
+					TurnMeaningAnswerToQuestion,
+					0.96,
+					"deterministic_active_prompt_availability_option",
+				)
+				out.Booking.SelectedOptionIndex = index
+				out.Booking.SelectedOptionIndexKnown = true
+				out.Reasons = []string{"active_prompt_availability_option"}
+				return out, true
+			}
+			reason := "availability_option_index_out_of_range"
+			if optionCount <= 0 {
+				reason = "availability_option_count_unknown"
+			}
+			return activePromptUnknownStructuredInterpretation(reason, "deterministic_active_prompt_availability_option"), true
+		}
+		if optionCount == 1 && (looksLikeContextualAvailabilitySelection(folded) || looksLikeBookingCreateConfirmation(body)) {
+			out := newStructuredInterpretation(
+				StructuredIntentSelectAvailabilityOption,
+				TurnMeaningAnswerToQuestion,
+				0.94,
+				"deterministic_active_prompt_availability_option",
+			)
+			out.Booking.SelectedOptionIndex = 1
+			out.Booking.SelectedOptionIndexKnown = true
+			out.Reasons = []string{"active_prompt_single_availability_option"}
+			return out, true
+		}
+		if looksLikeContextualAvailabilitySelection(folded) || looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
+			return activePromptUnknownStructuredInterpretation("ambiguous_availability_option_reply", "deterministic_active_prompt_availability_option"), true
+		}
+	case ActivePromptAvailabilityDateChoice:
+		if _, ok := parseAvailabilityDateSelectionInput(input.History, body, input.ObservedAt); ok {
+			out := newStructuredInterpretation(
+				StructuredIntentAvailabilitySearch,
+				TurnMeaningAnswerToQuestion,
+				0.93,
+				"deterministic_active_prompt_availability_date",
+			)
+			out.Reasons = []string{"active_prompt_availability_date"}
+			return out, true
+		}
+	case ActivePromptReservationRoute:
+		if activePromptRouteAvailabilitySearchResolved(input.History, body, input.ObservedAt) {
+			out := newStructuredInterpretation(
+				StructuredIntentAvailabilitySearch,
+				TurnMeaningAnswerToQuestion,
+				0.91,
+				"deterministic_active_prompt_reservation_route",
+			)
+			out.Reasons = []string{"active_prompt_reservation_route"}
+			return out, true
+		}
+	case ActivePromptPassengerCount, ActivePromptLapChildQuestion:
+		slots := parsePassengerClarificationSlots(body)
+		if slots.PassengerCountKnown || slots.ChildUnder5CountKnown {
+			out := newStructuredInterpretation(
+				StructuredIntentPassengerCountReply,
+				TurnMeaningAnswerToQuestion,
+				0.93,
+				"deterministic_active_prompt_passenger_count",
+			)
+			out.Booking.PassengerCount = slots.PassengerCount
+			out.Booking.PassengerCountKnown = slots.PassengerCountKnown
+			out.Booking.ChildUnder5Count = slots.ChildUnder5Count
+			out.Booking.ChildUnder5CountKnown = slots.ChildUnder5CountKnown
+			out.Reasons = []string{"active_prompt_passenger_count"}
+			return out, true
+		}
+	case ActivePromptPassengerDocuments:
+		if looksLikePassengerDocumentText(body, Session{}) {
+			out := newStructuredInterpretation(
+				StructuredIntentPassengerDocumentsProvided,
+				TurnMeaningAnswerToQuestion,
+				0.92,
+				"deterministic_active_prompt_passenger_documents",
+			)
+			out.PassengerDocument.DocumentLikeText = true
+			out.Reasons = []string{"active_prompt_passenger_documents"}
+			return out, true
+		}
+	}
+
+	return StructuredInterpretation{}, false
+}
+
+func activePromptRouteAvailabilitySearchResolved(history []Message, body string, observedAt time.Time) bool {
+	if _, ok := parseSupportedCityPairAvailabilityInput(body, observedAt); ok {
+		return true
+	}
+	if _, ok := parseDirectAvailabilitySearchInput(body, observedAt); ok {
+		return true
+	}
+	if _, ok := parseOriginAnswerAvailabilitySearchInput(history, body, observedAt); ok {
+		return true
+	}
+
+	historyContext := inferLatestRouteContextFromHistory(history)
+	turnContext := inferConversationTurnRouteContext(body, historyContext)
+	if strings.TrimSpace(turnContext.Origin) == "" && strings.TrimSpace(turnContext.Destination) == "" {
+		return false
+	}
+	_, ok := parseAvailabilitySearchInput(history, body, observedAt)
+	return ok
+}
+
 func newStructuredInterpretation(intent StructuredIntent, meaning TurnMeaning, confidence float64, source string) StructuredInterpretation {
 	return StructuredInterpretation{
 		Intent:      intent,
@@ -194,6 +359,14 @@ func newStructuredInterpretation(intent StructuredIntent, meaning TurnMeaning, c
 
 func unknownStructuredInterpretation(reason string, confidence float64) StructuredInterpretation {
 	out := newStructuredInterpretation(StructuredIntentUnknown, TurnMeaningUnknown, confidence, "deterministic")
+	if strings.TrimSpace(reason) != "" {
+		out.Reasons = []string{reason}
+	}
+	return out
+}
+
+func activePromptUnknownStructuredInterpretation(reason string, source string) StructuredInterpretation {
+	out := newStructuredInterpretation(StructuredIntentUnknown, TurnMeaningUnknown, 0, source)
 	if strings.TrimSpace(reason) != "" {
 		out.Reasons = []string{reason}
 	}
