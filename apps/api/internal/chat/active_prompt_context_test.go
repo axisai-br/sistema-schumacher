@@ -100,13 +100,24 @@ func TestInferActivePromptContextUsesLatestPromptPriority(t *testing.T) {
 		{ID: "document", Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseBookingPending})
+	state := CanonicalConversationState{
+		Phase: ConversationPhaseBookingPending,
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: map[string]interface{}{
+				"results": []interface{}{map[string]interface{}{"trip_id": "trip-1"}},
+			},
+		},
+	}
+	got := InferActivePromptContext(history, state)
 
 	if got.Kind != ActivePromptDocumentConfirmation {
 		t.Fatalf("expected document confirmation to win over stale availability, got %+v", got)
 	}
 	if got.SourceMessageID != "document" {
 		t.Fatalf("expected latest document prompt as source, got %+v", got)
+	}
+	if got.HasAvailabilityList || got.AvailabilityOptionCount != 0 {
+		t.Fatalf("document confirmation must not expose stale availability context, got %+v", got)
 	}
 }
 
@@ -173,5 +184,40 @@ func TestInferActivePromptContextReadsAvailabilityOptionCount(t *testing.T) {
 	}
 	if got.AvailabilityOptionCount != 2 {
 		t.Fatalf("expected availability option count 2, got %+v", got)
+	}
+	if !got.HasAvailabilityList {
+		t.Fatalf("expected availability list flag, got %+v", got)
+	}
+}
+
+func TestInferActivePromptContextLeavesGenericPhrasesUnknown(t *testing.T) {
+	now := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	for _, body := range []string{
+		"isso mesmo",
+		"pode ser",
+		"sim",
+		"não",
+		"ja enviei",
+	} {
+		t.Run(body, func(t *testing.T) {
+			history := []Message{
+				{
+					ID:               "generic",
+					Direction:        "OUTBOUND",
+					Body:             body,
+					ProcessingStatus: messageStatusAutomationSent,
+					ReceivedAt:       now,
+				},
+			}
+
+			got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseDiscovery})
+
+			if got.Kind != ActivePromptUnknown {
+				t.Fatalf("expected generic phrase %q to remain unknown, got %+v", body, got)
+			}
+			if got.HasAvailabilityList || got.AvailabilityOptionCount != 0 {
+				t.Fatalf("did not expect availability context for generic phrase %q, got %+v", body, got)
+			}
+		})
 	}
 }

@@ -28,6 +28,7 @@ type ActivePromptContext struct {
 	SourceMessageBody       string            `json:"source_message_body,omitempty"`
 	SourceMessageReceivedAt time.Time         `json:"source_message_received_at,omitempty"`
 	AvailabilityOptionCount int               `json:"availability_option_count,omitempty"`
+	HasAvailabilityList     bool              `json:"has_availability_list,omitempty"`
 }
 
 func InferActivePromptContext(history []Message, state CanonicalConversationState) ActivePromptContext {
@@ -49,6 +50,7 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 	context.Kind = inferActivePromptKind(body, availabilityOptionCount)
 	if context.Kind == ActivePromptAvailabilityOptionChoice {
 		context.AvailabilityOptionCount = availabilityOptionCount
+		context.HasAvailabilityList = availabilityOptionCount > 0
 	}
 
 	return context
