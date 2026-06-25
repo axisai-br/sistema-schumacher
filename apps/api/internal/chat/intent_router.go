@@ -13,6 +13,8 @@ const (
 	IntentSelectAvailabilityOption   Intent = "SELECT_AVAILABILITY_OPTION"
 	IntentPassengerCountReply        Intent = "PASSENGER_COUNT_REPLY"
 	IntentPassengerDocumentsProvided Intent = "PASSENGER_DOCUMENTS_PROVIDED"
+	IntentLapChildAssignmentAnswer   Intent = "LAP_CHILD_ASSIGNMENT_ANSWER"
+	IntentDocumentConfirmation       Intent = "DOCUMENT_CONFIRMATION"
 	IntentBookingCreateConfirmation  Intent = "BOOKING_CREATE_CONFIRMATION"
 	IntentPaymentPreference          Intent = "PAYMENT_PREFERENCE"
 	IntentPaymentMethodQuestion      Intent = "PAYMENT_METHOD_QUESTION"
@@ -41,6 +43,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if body == "" {
 		return IntentDecision{Intent: IntentUnknown, Source: "deterministic"}
 	}
+	activePrompt := InferActivePromptContext(history, state)
 	if _, ok := inferUnsupportedCargoQuery(body); ok {
 		return IntentDecision{Intent: IntentUnsupportedCargo, Source: "deterministic", TemplateName: TemplateUnsupportedCargo, Action: "template"}
 	}
@@ -49,6 +52,11 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if looksLikeBookingCancelIntent(body) {
 		return IntentDecision{Intent: IntentBookingCancel, Source: "deterministic"}
+	}
+	if activePrompt.Kind == ActivePromptPaymentPreference &&
+		looksLikePixOnlyPaymentReply(folded) &&
+		!looksLikePaymentCreateIntent(body) {
+		return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_payment_preference"}
 	}
 	if looksLikeUnsupportedPaymentMethodQuestion(body) {
 		return IntentDecision{Intent: IntentPaymentMethodQuestion, Source: "deterministic_payment_method_question", TemplateName: TemplatePaymentMethods, Action: "template"}
@@ -72,6 +80,31 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if looksLikeRescheduleIntent(folded) {
 		return IntentDecision{Intent: IntentReschedule, Source: "deterministic"}
+	}
+
+	if decision, ok := routeActivePromptAnswer(activePrompt, history, body, folded, state, observedAt); ok {
+		return decision
+	}
+
+	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice {
+		optionCount := activePrompt.AvailabilityOptionCount
+		if optionCount <= 0 {
+			optionCount = currentAvailabilitySelectionOptionCount(history)
+		}
+		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic", state.Phase == ConversationPhaseTripSelection); ok {
+			return decision
+		}
+		if optionCount > 1 && looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
+			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_availability_option_ambiguous"}
+		}
+	}
+	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
+		return IntentDecision{
+			Intent:            IntentAvailabilitySearch,
+			Source:            "deterministic_availability_date_selection",
+			AvailabilityInput: &input,
+			Action:            "tool",
+		}
 	}
 	if looksLikeVerifyAllOptionsIntent(body) {
 		input, missing := parseVerifyAllOptionsAvailabilityInput(history, observedAt)
@@ -101,43 +134,6 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if decision, ok := routeBroadStateTemplateIntent(body, folded); ok {
 		return decision
-	}
-	if index := extractSelectedOptionIndex(body); index > 0 && hasCurrentAvailabilitySelectionContext(history) {
-		return IntentDecision{
-			Intent:              IntentSelectAvailabilityOption,
-			Source:              "deterministic",
-			SelectedOptionIndex: index,
-			TemplateName:        TemplateAskPassengerCount,
-			Action:              "template",
-		}
-	}
-	if looksLikeContextualAvailabilitySelection(folded) && hasCurrentAvailabilitySelectionContext(history) {
-		return IntentDecision{
-			Intent:              IntentSelectAvailabilityOption,
-			Source:              "deterministic",
-			SelectedOptionIndex: firstAvailableOptionIndex(history),
-			TemplateName:        TemplateAskPassengerCount,
-			Action:              "template",
-		}
-	}
-	if looksLikeBookingCreateConfirmation(body) &&
-		state.Phase == ConversationPhaseTripSelection &&
-		hasCurrentAvailabilitySelectionContext(history) {
-		return IntentDecision{
-			Intent:              IntentSelectAvailabilityOption,
-			Source:              "deterministic_trip_confirmation_recovery",
-			SelectedOptionIndex: firstAvailableOptionIndex(history),
-			TemplateName:        TemplateAskPassengerCount,
-			Action:              "template",
-		}
-	}
-	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
-		return IntentDecision{
-			Intent:            IntentAvailabilitySearch,
-			Source:            "deterministic_availability_date_selection",
-			AvailabilityInput: &input,
-			Action:            "tool",
-		}
 	}
 	if looksLikeReservationHowToProceedIntent(body) {
 		if looksLikeReservationStartTemplateIntent(body) && shouldUseReservationStartTemplate(state, history) {
@@ -199,7 +195,7 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if state.Phase != ConversationPhasePassengerCollection &&
 		state.Phase != ConversationPhaseBookingPending {
-		if query, ok := inferUnsupportedRouteFollowUp(history, body); ok {
+		if query, ok := inferUnsupportedRouteFollowUp(history, body); ok && activePromptAllowsUnsupportedFollowUp(activePrompt) {
 			return IntentDecision{
 				Intent:       IntentUnsupportedPackage,
 				Source:       "deterministic_unsupported_followup",
@@ -220,6 +216,145 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 
 func isPaymentDocumentReplyPhase(phase ConversationPhase) bool {
 	return phase == ConversationPhaseBooked || phase == ConversationPhasePaymentPending
+}
+
+func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body string, folded string, state CanonicalConversationState, observedAt time.Time) (IntentDecision, bool) {
+	switch ctx.Kind {
+	case ActivePromptAvailabilityOptionChoice:
+		optionCount := ctx.AvailabilityOptionCount
+		if optionCount <= 0 {
+			optionCount = currentAvailabilitySelectionOptionCount(history)
+		}
+		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic_active_prompt_availability_option", true); ok {
+			return decision, true
+		}
+		if optionCount > 1 && looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
+			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_availability_option_ambiguous"}, true
+		}
+		if extractSelectedOptionIndex(body) > 0 {
+			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_availability_option_out_of_range"}, true
+		}
+	case ActivePromptAvailabilityDateChoice:
+		if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
+			return IntentDecision{
+				Intent:            IntentAvailabilitySearch,
+				Source:            "deterministic_availability_date_selection",
+				AvailabilityInput: &input,
+				Action:            "tool",
+			}, true
+		}
+	case ActivePromptPassengerCount, ActivePromptLapChildQuestion:
+		slots := parsePassengerClarificationSlots(body)
+		if slots.PassengerCountKnown || slots.ChildUnder5CountKnown {
+			return IntentDecision{Intent: IntentPassengerCountReply, Source: "deterministic_active_prompt_passenger_count"}, true
+		}
+	case ActivePromptPassengerDocuments:
+		if looksLikePassengerDocumentText(body, Session{}) {
+			return IntentDecision{Intent: IntentPassengerDocumentsProvided, Source: "deterministic_active_prompt_passenger_documents"}, true
+		}
+	case ActivePromptDocumentConfirmation:
+		if looksLikeDocumentConfirmation(body) {
+			return IntentDecision{Intent: IntentDocumentConfirmation, Source: "deterministic_active_prompt_document_confirmation"}, true
+		}
+	case ActivePromptPaymentPreference:
+		if preference := detectStructuredPaymentPreference(body); preference != "" {
+			return IntentDecision{Intent: IntentPaymentPreference, Source: "deterministic_active_prompt_payment_preference"}, true
+		}
+		if looksLikePixOnlyPaymentReply(folded) {
+			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_payment_preference"}, true
+		}
+	case ActivePromptPayerCPF:
+		if isPaymentDocumentReplyPhase(state.Phase) && looksLikeBareCPF(body) {
+			return IntentDecision{Intent: IntentPaymentCreate, Source: "deterministic_payer_document_reply", Action: "tool"}, true
+		}
+	case ActivePromptLapChildAssignment:
+		if index := extractSelectedOptionIndex(body); index > 0 {
+			return IntentDecision{
+				Intent:              IntentLapChildAssignmentAnswer,
+				Source:              "deterministic_active_prompt_lap_child_assignment",
+				SelectedOptionIndex: index,
+			}, true
+		}
+	}
+
+	return IntentDecision{}, false
+}
+
+func routeAvailabilityOptionAnswer(optionCount int, history []Message, body string, folded string, source string, allowConfirmation bool) (IntentDecision, bool) {
+	if optionCount <= 0 {
+		optionCount = currentAvailabilitySelectionOptionCount(history)
+	}
+	if optionCount <= 0 {
+		return IntentDecision{}, false
+	}
+
+	if index := extractSelectedOptionIndex(body); index > 0 {
+		if index > optionCount {
+			return IntentDecision{}, false
+		}
+		return IntentDecision{
+			Intent:              IntentSelectAvailabilityOption,
+			Source:              source,
+			SelectedOptionIndex: index,
+			TemplateName:        TemplateAskPassengerCount,
+			Action:              "template",
+		}, true
+	}
+	if optionCount == 1 && looksLikeContextualAvailabilitySelection(folded) {
+		return IntentDecision{
+			Intent:              IntentSelectAvailabilityOption,
+			Source:              source,
+			SelectedOptionIndex: 1,
+			TemplateName:        TemplateAskPassengerCount,
+			Action:              "template",
+		}, true
+	}
+	if optionCount == 1 && allowConfirmation && looksLikeBookingCreateConfirmation(body) {
+		return IntentDecision{
+			Intent:              IntentSelectAvailabilityOption,
+			Source:              "deterministic_trip_confirmation_recovery",
+			SelectedOptionIndex: 1,
+			TemplateName:        TemplateAskPassengerCount,
+			Action:              "template",
+		}, true
+	}
+
+	return IntentDecision{}, false
+}
+
+func looksLikeAmbiguousAvailabilityOptionReply(body string, folded string) bool {
+	if looksLikeContextualAvailabilitySelection(folded) || looksLikeBookingCreateConfirmation(body) {
+		return true
+	}
+	switch folded {
+	case "pode ser", "pode ser sim":
+		return true
+	default:
+		return false
+	}
+}
+
+func currentAvailabilitySelectionOptionCount(history []Message) int {
+	if !hasCurrentAvailabilitySelectionContext(history) {
+		return 0
+	}
+	if latest := findLatestAvailabilityContext(history); latest != nil && len(latest.Results) > 0 {
+		return len(latest.Results)
+	}
+	return 0
+}
+
+func activePromptAllowsUnsupportedFollowUp(ctx ActivePromptContext) bool {
+	switch ctx.Kind {
+	case ActivePromptReservationRoute:
+		return true
+	case ActivePromptUnknown:
+		return ctx.Phase == "" ||
+			ctx.Phase == ConversationPhaseDiscovery ||
+			ctx.Phase == ConversationPhaseRouteSelection
+	default:
+		return false
+	}
 }
 
 func routeBroadStateTemplateIntent(body string, folded string) (IntentDecision, bool) {
