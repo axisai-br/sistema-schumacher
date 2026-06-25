@@ -280,6 +280,67 @@ func TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage(t *te
 	}
 }
 
+func TestIncrementalFlowUsesActivePromptForAvailabilityOptionAfterDate(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  activePromptFlowAvailabilityResult(),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	contactKey := "5511999999999"
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+
+	first := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-start", "quero saber como faço uma reserva")
+	if first.Draft == nil {
+		t.Fatal("expected reservation start draft")
+	}
+	sessionID := first.Session.ID
+	seedOutboundSent(t, store, sessionID, first.Draft.Body, now.Add(1*time.Minute))
+
+	second := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-route", "de monção pra videira")
+	if second.Draft == nil {
+		t.Fatal("expected availability draft after route")
+	}
+	seedOutboundSent(t, store, sessionID, second.Draft.Body, now.Add(2*time.Minute))
+
+	third := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-date", "06/07")
+	if third.Draft == nil {
+		t.Fatal("expected availability draft after date")
+	}
+	seedOutboundSent(t, store, sessionID, third.Draft.Body, now.Add(3*time.Minute))
+
+	out := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-option", "essa mesmo")
+	if out.Draft == nil {
+		t.Fatal("expected passenger count draft")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentSelectAvailabilityOption) {
+		t.Fatalf("expected selected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
+		t.Fatalf("expected passenger count reply %q, got %q", askPassengerCountReply, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
+		t.Fatalf("active prompt selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
+	}
+	if strings.TrimSpace(out.Draft.Body) == buildUnsupportedPackageReply() {
+		t.Fatalf("active prompt selection must not use unsupported package reply")
+	}
+	if reasons := readDraftAutoSendReasons(*out.Draft); containsString(reasons, draftAutoSendReasonOutOfScopeDuringBooking) {
+		t.Fatalf("did not expect out-of-scope booking auto-send reason, got %+v", reasons)
+	}
+	intentDecision := asMap(out.Memory["intent_decision"])
+	if got := asInt(intentDecision["selected_option_index"]); got != 1 {
+		t.Fatalf("expected selected option index 1, got %d memory=%+v", got, intentDecision)
+	}
+}
+
 func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
@@ -1217,6 +1278,27 @@ func reprocessAvailabilitySelectionWithBookingCreator(t *testing.T, customerText
 	return out, runner, searcher, creator
 }
 
+func ingestAndReprocessActivePromptFlowTurn(t *testing.T, svc *Service, contactKey string, key string, body string) ReprocessResult {
+	t.Helper()
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: contactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-" + key,
+			IdempotencyKey:    "idem-" + key,
+			Body:              body,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest %q: %v", body, err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess %q: %v", body, err)
+	}
+	return out
+}
+
 func availabilitySelectionHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Now().UTC()
@@ -1248,6 +1330,33 @@ func availabilitySelectionHistory(t *testing.T) []Message {
 				},
 			},
 		},
+	}
+}
+
+func activePromptFlowAvailabilityResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Moncao/MA",
+			Destination: "Videira/SC",
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{{
+			TripID:                 "trip-active-prompt-2026-07-06",
+			BoardStopID:            "board-active-prompt-2026-07-06",
+			AlightStopID:           "alight-active-prompt-2026-07-06",
+			OriginDisplayName:      "Moncao/MA",
+			DestinationDisplayName: "Videira/SC",
+			OriginDepartTime:       "09:00",
+			TripDate:               "2026-07-06",
+			SeatsAvailable:         5,
+			Price:                  950,
+			Currency:               "BRL",
+			Status:                 "ACTIVE",
+			TripStatus:             "SCHEDULED",
+			PackageName:            packageToSantaCatarina,
+		}},
 	}
 }
 

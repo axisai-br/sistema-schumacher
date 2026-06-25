@@ -16,12 +16,6 @@ func TestIntentRouterDeterministicCases(t *testing.T) {
 		{text: "primeira", intent: IntentSelectAvailabilityOption, index: 1},
 		{text: "segunda", intent: IntentSelectAvailabilityOption, index: 2},
 		{text: "opção 1", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "essa opção", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "essa mesmo", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "essa mesma", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "pode ser essa", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "essa aí", intent: IntentSelectAvailabilityOption, index: 1},
-		{text: "essa opção mesmo", intent: IntentSelectAvailabilityOption, index: 1},
 		{text: "paguei", intent: IntentPaymentStatusQuery},
 		{text: "quero cancelar", intent: IntentBookingCancel},
 		{text: "quero levar uma moto", intent: IntentUnsupportedCargo},
@@ -54,6 +48,114 @@ func TestIntentRouterPrioritizesContextualAvailabilitySelectionOverUnsupportedFo
 	}
 	if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
 		t.Fatalf("expected passenger count template decision, got %+v", got)
+	}
+}
+
+func TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	for _, text := range []string{"essa mesmo", "essa mesma"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected availability option selection, got %+v", got)
+			}
+			if got.SelectedOptionIndex != 1 {
+				t.Fatalf("expected selected option index 1, got %+v", got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount {
+				t.Fatalf("expected passenger count template, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterUsesActivePromptForAvailabilityOptionPodeSerEssa(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "pode ser essa", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected availability option selection, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option index 1, got %+v", got)
+	}
+}
+
+func TestIntentRouterUsesActivePromptForAvailabilityNumericSelection(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "1", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected availability option selection, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option index 1, got %+v", got)
+	}
+}
+
+func TestIntentRouterRejectsOutOfRangeOptionWithActivePrompt(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "5", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("did not expect out-of-range option to be selected: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("out-of-range option must not set selected index: %+v", got)
+	}
+}
+
+func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(t *testing.T) {
+	history := availabilityDateSelectionWithFiveOptionsHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "pode ser", "essa mesmo", "essa mesma", "pode ser essa"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent == IntentSelectAvailabilityOption {
+				t.Fatalf("ambiguous reply must not select option 1 from multiple options: %+v", got)
+			}
+			if got.SelectedOptionIndex != 0 {
+				t.Fatalf("ambiguous reply must not set selected option index: %+v", got)
+			}
+			if got.Intent == IntentBookingCreateConfirmation {
+				t.Fatalf("ambiguous availability reply must not become booking confirmation: %+v", got)
+			}
+			if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+				t.Fatalf("ambiguous availability reply must not become unsupported package: %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterSelectsExplicitAvailabilityOptionFromMultipleOptions(t *testing.T) {
+	history := availabilityDateSelectionWithFiveOptionsHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	for _, text := range []string{"1", "primeira", "opção 1"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected explicit availability option selection, got %+v", got)
+			}
+			if got.SelectedOptionIndex != 1 {
+				t.Fatalf("expected selected option index 1, got %+v", got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount {
+				t.Fatalf("expected passenger count template, got %+v", got)
+			}
+		})
 	}
 }
 
@@ -107,6 +209,141 @@ func TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp
 				t.Fatalf("expected route from availability context, got %+v", got.AvailabilityInput)
 			}
 		})
+	}
+}
+
+func TestIntentRouterUsesActivePromptForAvailabilityDate(t *testing.T) {
+	history := availabilityDateChoiceAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "06/07", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentAvailabilitySearch {
+		t.Fatalf("expected availability search, got %+v", got)
+	}
+	if got.Action != "tool" || got.AvailabilityInput == nil {
+		t.Fatalf("expected availability tool decision, got %+v", got)
+	}
+	if got.AvailabilityInput.TripDate == nil || got.AvailabilityInput.TripDate.UTC().Format("2006-01-02") != "2026-07-06" {
+		t.Fatalf("expected selected trip date 2026-07-06, got %+v", got.AvailabilityInput)
+	}
+}
+
+func TestIntentRouterDoesNotLetUnsupportedStealAvailabilityOptionContext(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "essa mesmo", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+		t.Fatalf("availability option answer must not become unsupported package: %+v", got)
+	}
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected availability option selection, got %+v", got)
+	}
+}
+
+func TestIntentRouterBlocksUnsupportedFollowUpInAvailabilityOptionContext(t *testing.T) {
+	history := availabilityDateSelectionWithFiveOptionsHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "quero passagem para Bahia", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
+		t.Fatalf("unsupported follow-up must stay blocked during availability option choice: %+v", got)
+	}
+}
+
+func TestIntentRouterDocumentConfirmationWinsOverStaleAvailability(t *testing.T) {
+	history := append(availabilitySelectionHistory(t), Message{
+		Direction:        "OUTBOUND",
+		Body:             "Consegui identificar estes dados. Eles conferem?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	})
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "isso mesmo", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentDocumentConfirmation {
+		t.Fatalf("expected document confirmation, got %+v", got)
+	}
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("document confirmation must not reuse stale availability list: %+v", got)
+	}
+}
+
+func TestIntentRouterPaymentPreferenceSinalWithActivePrompt(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "sinal", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentPaymentPreference {
+		t.Fatalf("expected payment preference, got %+v", got)
+	}
+}
+
+func TestIntentRouterPaymentPreferencePixStillUnknown(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "pix", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentPaymentPreference {
+		t.Fatalf("pix-only answer must not become payment preference: %+v", got)
+	}
+	if got.Intent != IntentUnknown {
+		t.Fatalf("expected pix-only payment preference answer to remain unknown, got %+v", got)
+	}
+}
+
+func TestIntentRouterPassengerCountWithActivePrompt(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	for _, text := range []string{"só eu", "somente eu", "eu e mais uma pessoa", "2 pessoas"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPassengerCountReply {
+				t.Fatalf("expected passenger count reply, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterLapChildAssignmentDoesNotBecomeAvailabilitySelection(t *testing.T) {
+	history := append(availabilitySelectionHistory(t), Message{
+		Direction:        "OUTBOUND",
+		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	})
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "1", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("lap child assignment index must not select availability option: %+v", got)
+	}
+	if got.Intent != IntentLapChildAssignmentAnswer {
+		t.Fatalf("expected lap child assignment answer, got %+v", got)
 	}
 }
 
@@ -284,6 +521,60 @@ func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message 
 	}
 }
 
+func availabilityDateSelectionWithFiveOptionsHistory(t *testing.T) []Message {
+	t.Helper()
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "De qual cidade do Maranhao voce vai sair?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+		},
+		{
+			Direction: "OUTBOUND",
+			Body: "Encontrei estas opcoes:\n" +
+				"1. Santa Ines/MA para Videira/SC, 2026-07-06, saida 08:00, R$ 950\n" +
+				"2. Santa Ines/MA para Videira/SC, 2026-07-06, saida 10:00, R$ 950\n" +
+				"3. Santa Ines/MA para Videira/SC, 2026-07-06, saida 12:00, R$ 950\n" +
+				"4. Santa Ines/MA para Videira/SC, 2026-07-06, saida 14:00, R$ 950\n" +
+				"5. Santa Ines/MA para Videira/SC, 2026-07-06, saida 16:00, R$ 950\n\n" +
+				"Qual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+				},
+			},
+		},
+	}
+}
+
+func availabilityDateChoiceAfterRouteQuestionHistory(t *testing.T) []Message {
+	t.Helper()
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "De qual cidade do Maranhao voce vai sair?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Tenho datas disponiveis para essa viagem. Qual data prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+				},
+			},
+		},
+	}
+}
+
 func availabilityDateSelectionTestResult() AvailabilitySearchResult {
 	return AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
@@ -309,4 +600,31 @@ func availabilityDateSelectionTestResult() AvailabilitySearchResult {
 			PackageName:            packageToSantaCatarina,
 		}},
 	}
+}
+
+func availabilityDateSelectionFiveOptionsTestResult() AvailabilitySearchResult {
+	result := availabilityDateSelectionTestResult()
+	first := result.Results[0]
+	second := first
+	second.TripID = "trip-2026-07-06-2"
+	second.BoardStopID = "board-2026-07-06-2"
+	second.AlightStopID = "alight-2026-07-06-2"
+	second.OriginDepartTime = "10:00"
+	third := first
+	third.TripID = "trip-2026-07-06-3"
+	third.BoardStopID = "board-2026-07-06-3"
+	third.AlightStopID = "alight-2026-07-06-3"
+	third.OriginDepartTime = "12:00"
+	fourth := first
+	fourth.TripID = "trip-2026-07-06-4"
+	fourth.BoardStopID = "board-2026-07-06-4"
+	fourth.AlightStopID = "alight-2026-07-06-4"
+	fourth.OriginDepartTime = "14:00"
+	fifth := first
+	fifth.TripID = "trip-2026-07-06-5"
+	fifth.BoardStopID = "board-2026-07-06-5"
+	fifth.AlightStopID = "alight-2026-07-06-5"
+	fifth.OriginDepartTime = "16:00"
+	result.Results = []AvailabilitySearchItem{first, second, third, fourth, fifth}
+	return result
 }
