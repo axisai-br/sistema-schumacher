@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -347,6 +349,80 @@ func TestIntentRouterLapChildAssignmentDoesNotBecomeAvailabilitySelection(t *tes
 	}
 }
 
+func TestIntentRouterActivePromptLapChildAssignmentFallback(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	invalid := routeDeterministicIntent(history, "ok", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	if invalid.Intent != IntentUnknown || invalid.Action != "safe_fallback" {
+		t.Fatalf("expected lap child assignment fallback, got %+v", invalid)
+	}
+
+	outOfRange := routeDeterministicIntent(history, "3", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	if outOfRange.Intent != IntentUnknown || outOfRange.Action != "safe_fallback" {
+		t.Fatalf("expected out-of-range lap child assignment fallback, got %+v", outOfRange)
+	}
+}
+
+func TestIntentRouterActivePromptLapChildAssignmentAcceptsMultiDigitOption(t *testing.T) {
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+	cases := []struct {
+		passengerCount int
+		reply          string
+		wantIndex      int
+	}{
+		{passengerCount: 10, reply: "10", wantIndex: 10},
+		{passengerCount: 12, reply: "12", wantIndex: 12},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.reply, func(t *testing.T) {
+			history := lapChildAssignmentHistoryWithPassengers(t, tc.passengerCount)
+
+			got := routeDeterministicIntent(history, tc.reply, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentLapChildAssignmentAnswer {
+				t.Fatalf("expected lap child assignment answer, got %+v", got)
+			}
+			if got.SelectedOptionIndex != tc.wantIndex {
+				t.Fatalf("expected selected option %d, got %+v", tc.wantIndex, got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterActivePromptLapChildAssignmentMultiDigitOutOfRangeFallback(t *testing.T) {
+	history := lapChildAssignmentHistoryWithPassengers(t, 10)
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "11", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentUnknown || got.Action != "safe_fallback" {
+		t.Fatalf("expected out-of-range multi-digit lap child assignment fallback, got %+v", got)
+	}
+}
+
+func TestActivePromptLapChildAssignmentOptionCountParsesMultiDigitLines(t *testing.T) {
+	ctx := ActivePromptContext{SourceMessageBody: strings.Join([]string{
+		"Recebi os dados. Qual passageiro e a crianca?",
+		"1. Ana",
+		"10. Maria",
+		"12) Pedro",
+		"3 - Joao",
+		"CPF 123",
+		"Passageiro sem numero",
+	}, "\n")}
+
+	if got := activePromptLapChildAssignmentOptionCount(ctx); got != 12 {
+		t.Fatalf("expected max option 12, got %d", got)
+	}
+}
+
 func TestIntentRouterReservationStartTemplateOnlyInDiscovery(t *testing.T) {
 	discovery := routeDeterministicIntent(nil, "como faço uma reserva?", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
 	if discovery.Intent != IntentAvailabilitySearch || discovery.TemplateName != TemplateAskReservationRouteSC {
@@ -628,6 +704,24 @@ func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message 
 			},
 		},
 	}
+}
+
+func lapChildAssignmentHistoryWithPassengers(t *testing.T, passengerCount int) []Message {
+	t.Helper()
+	var builder strings.Builder
+	builder.WriteString("Recebi os dados dos passageiros. Qual deles e a crianca de ate 5 anos?")
+	for i := 1; i <= passengerCount; i++ {
+		builder.WriteString("\n")
+		builder.WriteString(strconv.Itoa(i))
+		builder.WriteString(". Passageiro ")
+		builder.WriteString(strconv.Itoa(i))
+	}
+	return []Message{{
+		Direction:        "OUTBOUND",
+		Body:             builder.String(),
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
 }
 
 func availabilityDateSelectionWithFiveOptionsHistory(t *testing.T) []Message {
