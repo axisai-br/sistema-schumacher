@@ -374,6 +374,106 @@ func TestIntentRouterReservationStartTemplateOnlyInDiscovery(t *testing.T) {
 	}
 }
 
+func TestReservationHowToProceedHelpersRecognizeNaturalReservationHelp(t *testing.T) {
+	cases := []string{
+		"queria saber como é que eu faço pra reservar uma passagem",
+		"como é que eu faço pra reservar uma passagem",
+		"como faço pra reservar uma passagem",
+		"como faço para reservar uma passagem",
+		"como reservar uma passagem",
+	}
+
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			if !looksLikeReservationHowToProceedIntent(text) {
+				t.Fatalf("expected looksLikeReservationHowToProceedIntent to recognize %q", text)
+			}
+			if !looksLikeReservationStartTemplateIntent(text) {
+				t.Fatalf("expected looksLikeReservationStartTemplateIntent to recognize %q", text)
+			}
+			if query, ok := inferUnsupportedPackageQuery(text); ok {
+				t.Fatalf("reservation help must not be unsupported package, got %+v", query)
+			}
+		})
+	}
+}
+
+func TestInferUnsupportedPackageQueryKeepsRealDestinationInReservationHelp(t *testing.T) {
+	cases := []struct {
+		text            string
+		unsupported     bool
+		wantDestination string
+	}{
+		{text: "como faço pra reservar uma passagem"},
+		{text: "Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem."},
+		{text: "como faço pra reservar passagem para Bahia", unsupported: true, wantDestination: "bahia"},
+		{text: "como é que eu faço pra reservar passagem para Bahia", unsupported: true, wantDestination: "bahia"},
+		{text: "quero passagem para Bahia", unsupported: true, wantDestination: "bahia"},
+		{text: "como faço pra reservar passagem para Santa Catarina"},
+		{text: "como faço pra reservar passagem para Monção"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			query, unsupported := inferUnsupportedPackageQuery(tc.text)
+			if unsupported != tc.unsupported {
+				t.Fatalf("expected unsupported=%v for %q, got %v query=%+v", tc.unsupported, tc.text, unsupported, query)
+			}
+			if tc.wantDestination != "" && query.Destination != tc.wantDestination {
+				t.Fatalf("expected destination %q, got %+v", tc.wantDestination, query)
+			}
+		})
+	}
+}
+
+func TestIntentRouterNaturalReservationHelpStartsReservationInDiscovery(t *testing.T) {
+	got := routeDeterministicIntent(
+		nil,
+		"Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
+		CanonicalConversationState{Phase: ConversationPhaseDiscovery},
+		time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC),
+	)
+
+	if got.Intent != IntentAvailabilitySearch {
+		t.Fatalf("expected availability search intent, got %+v", got)
+	}
+	if got.Source != "deterministic_reservation_start" {
+		t.Fatalf("expected deterministic_reservation_start source, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskReservationRouteSC {
+		t.Fatalf("expected template %s, got %+v", TemplateAskReservationRouteSC, got)
+	}
+	if got.Action != "template" {
+		t.Fatalf("expected template action, got %+v", got)
+	}
+}
+
+func TestIntentRouterExplicitSupportedRouteStillSearchesAvailability(t *testing.T) {
+	for _, text := range []string{
+		"de Monção para Videira",
+		"como faço para reservar de Monção para Videira",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(
+				nil,
+				text,
+				CanonicalConversationState{Phase: ConversationPhaseDiscovery},
+				time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC),
+			)
+
+			if got.Intent != IntentAvailabilitySearch {
+				t.Fatalf("expected availability search for supported route, got %+v", got)
+			}
+			if got.TemplateName == TemplateAskReservationRouteSC {
+				t.Fatalf("explicit route must not become generic reservation start template: %+v", got)
+			}
+			if got.AvailabilityInput == nil {
+				t.Fatalf("expected availability input for supported route, got %+v", got)
+			}
+		})
+	}
+}
+
 func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringPassengerCollection(t *testing.T) {
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Para qual cidade no Maranhao voce vai?"},
@@ -409,12 +509,21 @@ func TestIntentRouterDoesNotClassifyUnsupportedRouteDuringBookingPending(t *test
 }
 
 func TestDiscoveryUnsupportedPackageQueryStillMatches(t *testing.T) {
-	query, ok := inferUnsupportedPackageQuery("quero passagem para Bahia")
-	if !ok {
-		t.Fatal("expected unsupported package query in discovery")
+	cases := map[string]string{
+		"quero passagem para Bahia": "bahia",
+		"quero ir para Bahia":       "bahia",
 	}
-	if query.Destination != "bahia" {
-		t.Fatalf("expected destination bahia, got %+v", query)
+
+	for text, wantDestination := range cases {
+		t.Run(text, func(t *testing.T) {
+			query, ok := inferUnsupportedPackageQuery(text)
+			if !ok {
+				t.Fatal("expected unsupported package query in discovery")
+			}
+			if query.Destination != wantDestination {
+				t.Fatalf("expected destination %q, got %+v", wantDestination, query)
+			}
+		})
 	}
 }
 

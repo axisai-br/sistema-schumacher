@@ -37,6 +37,21 @@ type IntentDecision struct {
 	TemplateData        map[string]interface{}
 }
 
+var reservationStartTemplateIntentPhrases = []string{
+	"como posso fazer para reservar",
+	"como posso fazer pra reservar",
+	"como posso fazer uma reserva",
+	"como e que eu faco para reservar",
+	"como e que eu faco pra reservar",
+	"como faco para reservar",
+	"como faco pra reservar",
+	"como faco uma reserva",
+	"como fazer uma reserva",
+	"como reservar uma passagem",
+	"como reservar passagem",
+	"quero reservar",
+}
+
 func routeDeterministicIntent(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
 	body := NormalizeIncomingCustomerText(currentTurn)
 	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
@@ -488,15 +503,10 @@ func looksLikeReservationHowToProceedIntent(text string) bool {
 	if hasExplicitRouteContextForReservationHelp(body) {
 		return false
 	}
+	if foldedContainsAnyReservationPhrase(folded, reservationStartTemplateIntentPhrases) {
+		return true
+	}
 	for _, phrase := range []string{
-		"como posso fazer para reservar",
-		"como posso fazer pra reservar",
-		"como posso fazer uma reserva",
-		"como faco para reservar",
-		"como faco pra reservar",
-		"como faco uma reserva",
-		"como fazer uma reserva",
-		"quero reservar",
 		"como reserva",
 		"como prosseguir",
 		"como agendar",
@@ -567,16 +577,11 @@ func looksLikeReservationStartTemplateIntent(text string) bool {
 	if folded == "" {
 		return false
 	}
-	for _, phrase := range []string{
-		"como posso fazer para reservar",
-		"como posso fazer pra reservar",
-		"como posso fazer uma reserva",
-		"como faco para reservar",
-		"como faco pra reservar",
-		"como faco uma reserva",
-		"como fazer uma reserva",
-		"quero reservar",
-	} {
+	return foldedContainsAnyReservationPhrase(folded, reservationStartTemplateIntentPhrases)
+}
+
+func foldedContainsAnyReservationPhrase(folded string, phrases []string) bool {
+	for _, phrase := range phrases {
 		if folded == phrase || strings.Contains(folded, phrase) {
 			return true
 		}

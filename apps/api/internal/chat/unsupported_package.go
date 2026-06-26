@@ -17,10 +17,25 @@ func inferUnsupportedPackageQuery(text string) (unsupportedPackageQuery, bool) {
 	if !ok {
 		return unsupportedPackageQuery{}, false
 	}
+	if isReservationHelpActionDestinationFragment(text, destination) {
+		return unsupportedPackageQuery{}, false
+	}
 	if isSupportedPackageDestination(destination) {
 		return unsupportedPackageQuery{}, false
 	}
 	return unsupportedPackageQuery{Destination: destination}, true
+}
+
+func isReservationHelpActionDestinationFragment(text string, destination string) bool {
+	if !looksLikeReservationHowToProceedIntent(text) {
+		return false
+	}
+	switch strings.Join(strings.Fields(foldChatText(destination)), " ") {
+	case "reservar", "reservar passagem", "reservar uma passagem":
+		return true
+	default:
+		return false
+	}
 }
 
 func inferUnsupportedRouteFollowUp(history []Message, text string) (unsupportedPackageQuery, bool) {

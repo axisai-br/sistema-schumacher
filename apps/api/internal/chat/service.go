@@ -1256,7 +1256,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		}
 	}
 	unsupportedPackage, unsupportedPackageHandled := inferUnsupportedPackageQuery(currentTurn)
-	if looksLikeReservationHowToProceedIntent(currentTurn) || looksLikeVerifyAllOptionsIntent(currentTurn) {
+	if looksLikeVerifyAllOptionsIntent(currentTurn) {
 		unsupportedPackageHandled = false
 	}
 	if documentCollectionMediaTurn {

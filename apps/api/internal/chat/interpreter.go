@@ -174,6 +174,17 @@ func InterpretStructuredTurn(input StructuredInterpreterInput) StructuredInterpr
 		return out
 	}
 
+	if looksLikeReservationHowToProceedIntent(body) {
+		out := newStructuredInterpretation(
+			StructuredIntentAvailabilitySearch,
+			TurnMeaningNewRequest,
+			0.91,
+			"deterministic_reservation_start",
+		)
+		out.Reasons = []string{"reservation_start_help"}
+		return out
+	}
+
 	if looksLikeStructuredGreeting(folded) {
 		out := newStructuredInterpretation(
 			StructuredIntentGreeting,
