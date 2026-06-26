@@ -353,7 +353,7 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-reservation-start-1",
 			IdempotencyKey:    "idem-reservation-start-1",
-			Body:              "como faço uma reserva?",
+			Body:              "Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
 		},
 	})
 	if err != nil {
@@ -373,6 +373,12 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 	if out.Draft == nil {
 		t.Fatal("expected draft")
 	}
+	if got := strings.TrimSpace(out.Draft.Body); got != askReservationRouteSCReply {
+		t.Fatalf("expected reservation start reply %q, got %q", askReservationRouteSCReply, got)
+	}
+	if strings.TrimSpace(out.Draft.Body) == buildUnsupportedPackageReply() {
+		t.Fatalf("reservation start must not use unsupported package reply")
+	}
 	folded := foldChatText(out.Draft.Body)
 	for _, want := range []string{"de qual cidade", "para qual cidade", "santa catarina"} {
 		if !strings.Contains(folded, strings.TrimSpace(foldChatText(want))) {
@@ -387,6 +393,9 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskReservationRouteSC) {
 		t.Fatalf("expected template %s, got %q", TemplateAskReservationRouteSC, got)
 	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
+		t.Fatalf("reservation start must not use unsupported package template, got %+v", out.Draft.NormalizedPayload)
+	}
 
 	if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusEligible {
 		t.Fatalf("expected reservation start draft to be auto-send eligible, got %s reasons=%v", got, readDraftAutoSendReasons(*out.Draft))
@@ -394,6 +403,32 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 	if reasons := readDraftAutoSendReasons(*out.Draft); len(reasons) != 0 {
 		t.Fatalf("expected no auto-send block reasons, got %v", reasons)
 	}
+}
+
+func TestReservationHelpWithUnsupportedDestinationReturnsSupportWithoutOpenAI(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-reservation-start-unsupported-bahia-1",
+			IdempotencyKey:    "idem-reservation-start-unsupported-bahia-1",
+			Body:              "como faço pra reservar passagem para Bahia",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest unsupported reservation help: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess unsupported reservation help: %v", err)
+	}
+	assertUnsupportedPackageDraftWithoutTools(t, out, runner, searcher)
 }
 
 func TestReservationPhraseInPassengerCollectionDoesNotResetRoute(t *testing.T) {
