@@ -283,12 +283,18 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 			return IntentDecision{Intent: IntentPaymentCreate, Source: "deterministic_payer_document_reply", Action: "tool"}, true
 		}
 	case ActivePromptLapChildAssignment:
-		if index := extractSelectedOptionIndex(body); index > 0 {
+		if index := activePromptLapChildAssignmentAnswerIndex(body); index > 0 {
+			if count := activePromptLapChildAssignmentOptionCount(ctx); count > 0 && index > count {
+				return buildActivePromptLapChildAssignmentFallbackDecision("deterministic_active_prompt_lap_child_assignment_out_of_range"), true
+			}
 			return IntentDecision{
 				Intent:              IntentLapChildAssignmentAnswer,
 				Source:              "deterministic_active_prompt_lap_child_assignment",
 				SelectedOptionIndex: index,
 			}, true
+		}
+		if activePromptLapChildAssignmentOptionCount(ctx) > 0 {
+			return buildActivePromptLapChildAssignmentFallbackDecision("deterministic_active_prompt_fallback_lap_child_assignment"), true
 		}
 	}
 
