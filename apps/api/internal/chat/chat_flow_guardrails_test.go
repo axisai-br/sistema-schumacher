@@ -216,7 +216,7 @@ func TestGuardrailAdvancedPhasesUseSafeFallbackInsteadOfFreeFormLLM(t *testing.T
 		notContains string
 	}{
 		{name: "route_selection", seed: seedRouteSelectionPhase, wantFolded: "data"},
-		{name: "trip_selection", seed: seedTripSelectionPhase, wantFolded: "opcoes"},
+		{name: "trip_selection", seed: seedTripSelectionPhase, wantFolded: "opcao"},
 		{name: "passenger_collection", seed: seedPassengerCollectionPhase, wantFolded: "passagem"},
 		{name: "booking_pending", seed: seedBookingPendingPhase, wantFolded: "conferem"},
 		{name: "booked", seed: seedBookedPhase, wantFolded: "valor integral"},

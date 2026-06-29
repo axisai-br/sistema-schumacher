@@ -30,6 +30,16 @@ const (
 	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 	TemplatePaymentCreate         ResponseTemplateName = "PAYMENT_CREATE"
 	TemplatePaymentMethods        ResponseTemplateName = "PAYMENT_METHODS"
+
+	TemplateContextFallbackAvailabilityOption   ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_OPTION"
+	TemplateContextFallbackAvailabilityDate     ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_DATE"
+	TemplateContextFallbackPassengerCount       ResponseTemplateName = "CONTEXT_FALLBACK_PASSENGER_COUNT"
+	TemplateContextFallbackChildUnder5          ResponseTemplateName = "CONTEXT_FALLBACK_CHILD_UNDER_5"
+	TemplateContextFallbackLapChildAssignment   ResponseTemplateName = "CONTEXT_FALLBACK_LAP_CHILD_ASSIGNMENT"
+	TemplateContextFallbackPassengerDocuments   ResponseTemplateName = "CONTEXT_FALLBACK_PASSENGER_DOCUMENTS"
+	TemplateContextFallbackDocumentConfirmation ResponseTemplateName = "CONTEXT_FALLBACK_DOCUMENT_CONFIRMATION"
+	TemplateContextFallbackPaymentPreference    ResponseTemplateName = "CONTEXT_FALLBACK_PAYMENT_PREFERENCE"
+	TemplateContextFallbackPayerCPF             ResponseTemplateName = "CONTEXT_FALLBACK_PAYER_CPF"
 )
 
 const (
@@ -74,6 +84,24 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return "Vou te encaminhar para um atendente continuar por aqui.", true
 	case TemplatePaymentMethods:
 		return paymentMethodsSupportReply, true
+	case TemplateContextFallbackAvailabilityOption:
+		return "Não consegui identificar qual opção você escolheu. Responda com o número da opção, por exemplo: 1.", true
+	case TemplateContextFallbackAvailabilityDate:
+		return "Não consegui identificar a data. Me envie a data no formato dia/mês, por exemplo: 06/07.", true
+	case TemplateContextFallbackPassengerCount:
+		return "A passagem é só para você ou vai mais alguém junto? Também preciso saber se tem criança de 5 anos ou menos.", true
+	case TemplateContextFallbackChildUnder5:
+		return "Tem criança de 5 anos ou menos viajando? Responda sim ou não.", true
+	case TemplateContextFallbackLapChildAssignment:
+		return "Me diga qual passageiro é a criança de 5 anos ou menos usando o número da lista.", true
+	case TemplateContextFallbackPassengerDocuments:
+		return "Ainda preciso do nome completo e CPF, RG ou CNH do passageiro. Se preferir, envie uma foto legível do documento.", true
+	case TemplateContextFallbackDocumentConfirmation:
+		return "Esses dados conferem? Responda sim para prosseguir ou envie a correção.", true
+	case TemplateContextFallbackPaymentPreference:
+		return "O pagamento é por PIX. Você prefere pagar o valor integral ou apenas o sinal?", true
+	case TemplateContextFallbackPayerCPF:
+		return "Para gerar o PIX, preciso do CPF do pagador. Envie somente os 11 números do CPF.", true
 	default:
 		return "", false
 	}
@@ -271,6 +299,23 @@ func canRealizeWithoutLLM(decision IntentDecision, state CanonicalConversationSt
 	return true
 }
 
+func isContextualFallbackTemplate(name ResponseTemplateName) bool {
+	switch name {
+	case TemplateContextFallbackAvailabilityOption,
+		TemplateContextFallbackAvailabilityDate,
+		TemplateContextFallbackPassengerCount,
+		TemplateContextFallbackChildUnder5,
+		TemplateContextFallbackLapChildAssignment,
+		TemplateContextFallbackPassengerDocuments,
+		TemplateContextFallbackDocumentConfirmation,
+		TemplateContextFallbackPaymentPreference,
+		TemplateContextFallbackPayerCPF:
+		return true
+	default:
+		return false
+	}
+}
+
 func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, context agentToolContext) bool {
 	if decision.Intent != IntentAvailabilitySearch || decision.Action != "tool" || context.Availability == nil {
 		return false
@@ -293,6 +338,9 @@ func hasCanonicalSelectedTrip(state CanonicalConversationState, selectedIndex in
 }
 
 func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decision IntentDecision) CanonicalConversationState {
+	if isContextualFallbackTemplate(decision.TemplateName) {
+		return state
+	}
 	if decision.AvailabilityInput != nil {
 		state.Route.Origin = firstNonEmpty(state.Route.Origin, strings.TrimSpace(decision.AvailabilityInput.Origin))
 		state.Route.Destination = firstNonEmpty(state.Route.Destination, strings.TrimSpace(decision.AvailabilityInput.Destination))
