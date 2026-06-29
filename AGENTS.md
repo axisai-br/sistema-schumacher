@@ -84,6 +84,25 @@ tipo(escopo): ação objetiva
 - `docs`
 - `ci`
 
+## Workflow com tracker de execução
+
+- Sempre leia `docs/EXECUTION_TRACKER.md` antes de iniciar uma tarefa de arquitetura, etapa, hotfix ou bug.
+- O tracker é fonte de contexto e rastreio, não backlog autoexecutável.
+- Execute somente a etapa ou hotfix explicitamente pedido no `/goal`.
+- Não avance para a próxima etapa sem pedido explícito.
+- Se encontrar melhoria fora do escopo, registre como observação/backlog no tracker, mas não implemente.
+- Para tarefas com plano detalhado, leia também o arquivo informado em `plans/`.
+- `plans/` contém planos locais/operacionais e pode estar ignorado pelo Git.
+- Ao final da execução, atualize `docs/EXECUTION_TRACKER.md` com:
+
+  - status;
+  - arquivos alterados;
+  - testes executados;
+  - resultado do review;
+  - necessidade de teste em produção;
+  - próxima ação recomendada.
+- Não faça commit nem push, salvo pedido explícito.
+
 ## Formato da resposta
 
 Quando sugerir commit, responda com:
