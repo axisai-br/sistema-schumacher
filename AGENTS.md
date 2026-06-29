@@ -103,6 +103,17 @@ tipo(escopo): ação objetiva
   - próxima ação recomendada.
 - Não faça commit nem push, salvo pedido explícito.
 
+### Validação padrão para mudanças em `apps/api/internal/chat`
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+Use essa validação para qualquer etapa, hotfix ou bug que altere o fluxo de chat.
+
 ## Formato da resposta
 
 Quando sugerir commit, responda com:
