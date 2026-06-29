@@ -107,10 +107,10 @@ Problema corrigido localmente: não cai mais em UNSUPPORTED_PACKAGE
 Esperado: ASK_RESERVATION_ROUTE_SC  
 ```  
   
-Depois da validação, se houver pedido explícito:
-  
+Etapa 3.6A executada localmente em 2026-06-29; validar review antes de qualquer uso no fluxo real.
+
 ```text  
-Próxima etapa arquitetural: 3.6A — Local Interpretation Validator  
+Próxima etapa arquitetural, com pedido explícito: 3.6B — Corpus canônico versionado
 ```  
   
 ---  
@@ -517,7 +517,7 @@ Regras no código garantem.
   
 ## Etapa 3.6A — Local Interpretation Validator  
   
-**Status:** Próxima etapa arquitetural após o hotfix H-2026-06-29.  
+**Status:** Concluída localmente em 2026-06-29; em review.
   
 **O que faz:** cria um validador local puro para uma `StructuredInterpretation`, seja ela vinda do interpreter local ou da OpenAI.  
   
@@ -550,6 +550,54 @@ Fallback: CONTEXT_FALLBACK_PAYMENT_PREFERENCE
 ```  
   
 **Objetivo:** construir o sistema imunológico antes de permitir que o LLM influencie decisão real.  
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/interpreter_validation.go
+apps/api/internal/chat/interpreter_validation_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+criado ValidateStructuredInterpretation como validador puro/local
+retorna Accepted, RejectReason e FallbackTemplate
+valida ActivePromptContext, fase, slots, range, documentos, pagamento, CPF e unsupported destination
+rejeita intents de resposta sem active prompt confiavel
+nao altera Service.Reprocess nem fluxo real de producao
+```
+
+**Exemplos cobertos:**
+
+```text
+pix quando o bot perguntou integral/sinal → rejeita com CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+sinal/integral no mesmo contexto → aceita PAYMENT_PREFERENCE
+opcao 10 em lista com 5 opcoes → rejeita com CONTEXT_FALLBACK_AVAILABILITY_OPTION
+ok quando o bot pediu data/documentos/CPF → rejeita com fallback contextual
+31/02 quando o bot pediu data → rejeita com CONTEXT_FALLBACK_AVAILABILITY_DATE
+CPF invalido como documento de passageiro → rejeita com CONTEXT_FALLBACK_PASSENGER_DOCUMENTS
+SELECT_AVAILABILITY_OPTION sem active prompt → rejeita com fallback de opcao
+como faço pra fazer uma reserva? → aceita AVAILABILITY_SEARCH / NEW_REQUEST
+como faço pra reservar passagem para Bahia → rejeita availability normal com UNSUPPORTED_PACKAGE
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'TestValidateStructuredInterpretation'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P2 corrigidos: intents answer-only sem active prompt confiavel agora rejeitam; CPF invalido em documentos de passageiro rejeita; data invalida como `31/02` rejeita em vez de aceitar por formato. Diff local revisado; somente arquivos permitidos pela etapa 3.6A foram alterados/criados. Sem alteracao em `Service.Reprocess`, OpenAI, shadow runtime, tools, banco, endpoints, auto-send, infra, n8n, vector base ou planner.
+
+**Riscos restantes:** o validator ainda nao esta integrado ao fluxo real; proximas etapas devem validar corpus/assistencia antes de qualquer decisao operacional baseada em proposta LLM.
+
+**Próxima etapa recomendada:** 3.6B — Corpus canônico versionado, somente com novo pedido explícito.
   
 ---  
   
