@@ -601,47 +601,82 @@ git diff --check
   
 ---  
   
-## Etapa 3.6B — Corpus canônico versionado  
-  
-**Status:** Pendente.  
-  
-**O que faz:** cria arquivos versionados com casos canônicos estruturados, ainda sem vector DB.  
-  
-**Exemplo:**  
-  
-```json  
-{  
-"id": "reservation_help_001",  
-"current_turn": "como faço pra fazer uma reserva?",  
-"phase": "DISCOVERY",  
-"active_prompt_kind": "UNKNOWN",  
-"expected_intent": "AVAILABILITY_SEARCH",  
-"expected_turn_meaning": "NEW_REQUEST",  
-"expected_template": "ASK_RESERVATION_ROUTE_SC",  
-"must_not": ["UNSUPPORTED_PACKAGE"],  
-"notes": "Ajuda para reserva sem destino explícito real."  
-}  
-```  
-  
-**Categorias iniciais:**  
-  
-```text  
-reservation_help  
-unsupported_package  
-availability_option  
-availability_date  
-passenger_count  
-child_under_5  
-lap_child_assignment  
-documents  
-document_confirmation  
-payment_preference  
-payer_cpf  
-human_support  
-booking_cancel  
-```  
-  
-**Objetivo:** transformar bugs corrigidos em conhecimento testável e reutilizável.  
+## Etapa 3.6B — Corpus canônico versionado
+
+**Status:** Concluída localmente em 2026-06-29; em review.
+
+**O que faz:** cria arquivos versionados com casos canônicos estruturados, ainda sem vector DB.
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/testdata/interpreter_cases.jsonl
+apps/api/internal/chat/interpreter_cases.go
+apps/api/internal/chat/interpreter_cases_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+criado corpus JSONL versionado com 27 casos canonicos
+criado loader puro/local LoadInterpreterCases e LoadInterpreterCasesFromReader
+loader valida JSON linha a linha, campos obrigatorios e IDs duplicados
+testes garantem categorias minimas, hotfixes de producao e erros claros de JSONL
+nao altera runtime, Service.Reprocess, OpenAI, tools, banco, endpoints, auto-send, infra, n8n, vector base ou planner
+```
+
+**Categorias cobertas:**
+
+```text
+reservation_help
+unsupported_package
+availability_date
+availability_option
+contextual_fallback
+passenger_count
+child_under_5
+lap_child_assignment
+passenger_documents
+document_confirmation
+payment_preference
+payer_cpf
+human_support
+booking_cancel
+```
+
+**Casos principais adicionados:**
+
+```text
+"como faço pra fazer uma reserva?" → AVAILABILITY_SEARCH / ASK_RESERVATION_ROUTE_SC, proibindo UNSUPPORTED_PACKAGE
+"como faço pra reservar passagem para Bahia" → UNSUPPORTED_PACKAGE
+"como faço pra fazer uma reserva para Bahia" → UNSUPPORTED_PACKAGE
+"06/7" em pergunta de data → AVAILABILITY_SEARCH
+"31/02" em pergunta de data → CONTEXT_FALLBACK_AVAILABILITY_DATE
+"essa mesmo" com uma opção → SELECT_AVAILABILITY_OPTION
+"ok" com múltiplas opções → CONTEXT_FALLBACK_AVAILABILITY_OPTION
+"10" em lista com 10+ passageiros → LAP_CHILD_ASSIGNMENT_ANSWER
+"pix" após pergunta integral/sinal → CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+CPF sintético válido do pagador → PAYMENT_CREATE
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'TestInterpreterCases'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** diff local revisado; alterações restritas aos arquivos permitidos pela etapa 3.6B. Sem mudança em runtime, OpenAI, vector, planner, tools, banco, endpoints, auto-send, infra ou n8n.
+
+**Necessidade de teste em produção:** nenhuma nesta etapa; o corpus e o loader não influenciam comportamento de produção.
+
+**Riscos restantes:** o corpus ainda não é executado contra interpreter local, OpenAI interpreter ou validator; isso pertence à próxima etapa.
+
+**Próxima etapa recomendada:** 3.6C — avaliação local contra corpus, somente com novo pedido explícito.
   
 ---  
   
