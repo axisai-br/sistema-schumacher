@@ -1,0 +1,686 @@
+{
+  "nodes": [
+    {
+      "id": "grp-current-flow",
+      "type": "group",
+      "x": -160,
+      "y": -120,
+      "width": 2760,
+      "height": 520,
+      "label": "Fluxo atual de atendimento automático",
+      "color": "1"
+    },
+    {
+      "id": "grp-interpretation",
+      "type": "group",
+      "x": -160,
+      "y": 480,
+      "width": 2760,
+      "height": 520,
+      "label": "Interpretação e roteamento",
+      "color": "2"
+    },
+    {
+      "id": "grp-domain-tools",
+      "type": "group",
+      "x": -160,
+      "y": 1080,
+      "width": 2760,
+      "height": 520,
+      "label": "Tools de domínio e fonte de verdade",
+      "color": "3"
+    },
+    {
+      "id": "grp-observability",
+      "type": "group",
+      "x": -160,
+      "y": 1680,
+      "width": 2760,
+      "height": 520,
+      "label": "Observabilidade, segurança e evolução",
+      "color": "4"
+    },
+    {
+      "id": "grp-roadmap",
+      "type": "group",
+      "x": 2700,
+      "y": -120,
+      "width": 1060,
+      "height": 2320,
+      "label": "Roadmap técnico atualizado",
+      "color": "5"
+    },
+    {
+      "id": "evolution",
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 290,
+      "height": 150,
+      "text": "Evolution / WhatsApp\nEntrada pública\n- messages.upsert\n- messages.update\n- presence.update\n- webhookSecret",
+      "color": "1"
+    },
+    {
+      "id": "automation",
+      "type": "text",
+      "x": 360,
+      "y": 0,
+      "width": 310,
+      "height": 150,
+      "text": "internal/automation\nAdapter do canal\n- normaliza payload\n- ignora fromMe\n- preserva mídia/documento\n- dispara jobs",
+      "color": "1"
+    },
+    {
+      "id": "ingest-buffer",
+      "type": "text",
+      "x": 740,
+      "y": 0,
+      "width": 320,
+      "height": 150,
+      "text": "Chat ingest + buffer\ninternal/chat\n- chat_sessions\n- chat_messages\n- debounce\n- coalescência de mensagens",
+      "color": "1"
+    },
+    {
+      "id": "reprocess",
+      "type": "text",
+      "x": 1130,
+      "y": 0,
+      "width": 320,
+      "height": 150,
+      "text": "Service.Reprocess\nCoração do atendimento\n- seleciona candidatos\n- carrega histórico\n- resolve contexto\n- gera draft/resposta",
+      "color": "1"
+    },
+    {
+      "id": "memory-state",
+      "type": "text",
+      "x": 1520,
+      "y": 0,
+      "width": 340,
+      "height": 150,
+      "text": "Memória + estado canônico\n- phase\n- rota\n- availability context\n- booking/payment context\n- última etapa conhecida",
+      "color": "1"
+    },
+    {
+      "id": "draft-autosend",
+      "type": "text",
+      "x": 1930,
+      "y": 0,
+      "width": 340,
+      "height": 150,
+      "text": "Draft + auto-send\n- AUTOMATION_DRAFT\n- AUTO_SEND_ELIGIBLE\n- REVIEW_REQUIRED\n- retry idempotente\n- bloqueio por HUMAN",
+      "color": "1"
+    },
+    {
+      "id": "sender",
+      "type": "text",
+      "x": 2340,
+      "y": 0,
+      "width": 300,
+      "height": 150,
+      "text": "Evolution sender\n- BOT_AUTO_REPLY\n- outbound_messages\n- provider_message_id\n- retry sem duplicar",
+      "color": "1"
+    },
+    {
+      "id": "active-prompt",
+      "type": "text",
+      "x": 0,
+      "y": 610,
+      "width": 330,
+      "height": 170,
+      "text": "ActivePromptContext\nPróxima fundação\nPergunta: qual resposta o bot espera agora?\n- opção\n- data\n- passageiros\n- documento\n- pagamento",
+      "color": "2"
+    },
+    {
+      "id": "local-interpreter",
+      "type": "text",
+      "x": 400,
+      "y": 610,
+      "width": 330,
+      "height": 170,
+      "text": "Local structured interpreter\nNÃO usa OpenAI\n- Go puro\n- regex/parsers\n- estado/histórico\n- retorna intent estruturada",
+      "color": "2"
+    },
+    {
+      "id": "openai-shadow",
+      "type": "text",
+      "x": 800,
+      "y": 610,
+      "width": 340,
+      "height": 170,
+      "text": "OpenAI structured interpreter\nUsa OpenAI em SHADOW\n- schema strict\n- compara com local\n- não decide fluxo real\n- mede divergências",
+      "color": "2"
+    },
+    {
+      "id": "det-router",
+      "type": "text",
+      "x": 1210,
+      "y": 610,
+      "width": 340,
+      "height": 170,
+      "text": "Deterministic router\nDecisor real do fluxo\n- regras específicas primeiro\n- resposta esperada\n- tools/templates\n- fallback só no fim",
+      "color": "2"
+    },
+    {
+      "id": "contextual-fallback",
+      "type": "text",
+      "x": 1620,
+      "y": 610,
+      "width": 340,
+      "height": 170,
+      "text": "Fallback contextual\nFuturo próximo\n- se esperava opção, pedir número\n- se esperava data, pedir data da lista\n- evitar unsupported genérico",
+      "color": "2"
+    },
+    {
+      "id": "llm-runner",
+      "type": "text",
+      "x": 2030,
+      "y": 610,
+      "width": 340,
+      "height": 170,
+      "text": "OpenAI runner geral\nUsa LLM para redigir draft\n- prompt + tool context\n- não deve inventar fato\n- saída passa por auto-send policy",
+      "color": "2"
+    },
+    {
+      "id": "availability",
+      "type": "text",
+      "x": 0,
+      "y": 1210,
+      "width": 320,
+      "height": 170,
+      "text": "availability_search\nConsulta disponibilidade real\n- origem/destino/data\n- trip_id\n- board_stop_id\n- alight_stop_id\n- preço/assentos",
+      "color": "3"
+    },
+    {
+      "id": "booking-create",
+      "type": "text",
+      "x": 390,
+      "y": 1210,
+      "width": 320,
+      "height": 170,
+      "text": "booking_create\nCria reserva com validação\n- opção escolhida\n- passageiros\n- documentos confirmados\n- idempotency_key",
+      "color": "3"
+    },
+    {
+      "id": "document-extract",
+      "type": "text",
+      "x": 780,
+      "y": 1210,
+      "width": 320,
+      "height": 170,
+      "text": "document_extract\nExtração de documento\n- imagem/PDF/metadados\n- confirma nome + documento\n- não cria reserva sozinho",
+      "color": "3"
+    },
+    {
+      "id": "payment-create",
+      "type": "text",
+      "x": 1170,
+      "y": 1210,
+      "width": 320,
+      "height": 170,
+      "text": "payment_create\nGera PIX\n- sinal/integral\n- CPF do pagador quando necessário\n- sem checkout_url ao cliente",
+      "color": "3"
+    },
+    {
+      "id": "cancel-reschedule",
+      "type": "text",
+      "x": 1560,
+      "y": 1210,
+      "width": 340,
+      "height": 170,
+      "text": "booking_cancel + reschedule_lookup\n- cancelamento idempotente\n- reagendamento assistido\n- revisão humana quando necessário",
+      "color": "3"
+    },
+    {
+      "id": "supabase",
+      "type": "text",
+      "x": 1970,
+      "y": 1210,
+      "width": 340,
+      "height": 170,
+      "text": "Supabase / Postgres\nFonte de verdade\n- routes/stops/trips\n- bookings/passengers/payments\n- chat_sessions/messages",
+      "color": "3"
+    },
+    {
+      "id": "redis",
+      "type": "text",
+      "x": 2380,
+      "y": 1210,
+      "width": 290,
+      "height": 170,
+      "text": "Redis / idempotência\n- chaves de reserva\n- evitar duplicidade\n- apoio operacional",
+      "color": "3"
+    },
+    {
+      "id": "shadow-report",
+      "type": "text",
+      "x": 0,
+      "y": 1810,
+      "width": 330,
+      "height": 170,
+      "text": "3.4A Shadow report\nAgregador puro/local\n- agreement\n- divergência\n- erros OpenAI\n- latência\n- scan sensível",
+      "color": "4"
+    },
+    {
+      "id": "loader-34b",
+      "type": "text",
+      "x": 400,
+      "y": 1810,
+      "width": 330,
+      "height": 170,
+      "text": "3.4B Loader real\nPendente\n- ler chat_messages.normalized_payload\n- alimentar relatório\n- medir produção",
+      "color": "4"
+    },
+    {
+      "id": "canonical-corpus",
+      "type": "text",
+      "x": 800,
+      "y": 1810,
+      "width": 340,
+      "height": 170,
+      "text": "3.6 Corpus canônico\nFuturo\n- casos sintéticos/redigidos\n- expected_intent\n- forbidden_intents\n- versionado no repo",
+      "color": "4"
+    },
+    {
+      "id": "retrieval-vector",
+      "type": "text",
+      "x": 1210,
+      "y": 1810,
+      "width": 340,
+      "height": 170,
+      "text": "Retrieval / Vector DB\nFuturo, não agora\n- primeiro metadata/keyword\n- depois pgvector/vector store\n- nunca fonte de verdade",
+      "color": "4"
+    },
+    {
+      "id": "infra",
+      "type": "text",
+      "x": 1620,
+      "y": 1810,
+      "width": 320,
+      "height": 170,
+      "text": "Infra e deploy\n- GHCR\n- Docker Swarm\n- Traefik\n- Cloudflare\n- health/readiness",
+      "color": "4"
+    },
+    {
+      "id": "n8n-legacy",
+      "type": "text",
+      "x": 1990,
+      "y": 1810,
+      "width": 330,
+      "height": 170,
+      "text": "n8n legado\n- não é mais centro do fluxo\n- histórico/apoio/rollback curto\n- API é fonte operacional",
+      "color": "4"
+    },
+    {
+      "id": "r0",
+      "type": "text",
+      "x": 2820,
+      "y": 0,
+      "width": 360,
+      "height": 190,
+      "text": "Concluído\n- internal/chat + automation\n- webhook Evolution\n- buffer + Reprocess\n- auto-send + retry\n- tools principais internalizadas",
+      "color": "5"
+    },
+    {
+      "id": "r1",
+      "type": "text",
+      "x": 2820,
+      "y": 260,
+      "width": 360,
+      "height": 190,
+      "text": "Concluído recente\n- reserva inicial segura\n- data flexível 06/7\n- seleção contextual 'essa mesmo'\n- availability antes de unsupported",
+      "color": "5"
+    },
+    {
+      "id": "r2",
+      "type": "text",
+      "x": 2820,
+      "y": 520,
+      "width": 360,
+      "height": 190,
+      "text": "Agora\n3.5A ActivePromptContext puro/local\nCriar camada única de última pergunta ativa, sem mudar fluxo real no primeiro corte.",
+      "color": "5"
+    },
+    {
+      "id": "r3",
+      "type": "text",
+      "x": 2820,
+      "y": 780,
+      "width": 360,
+      "height": 190,
+      "text": "Depois\n3.5B usar ActivePromptContext no router\nEvitar que fallback genérico capture respostas curtas de contexto.",
+      "color": "5"
+    },
+    {
+      "id": "r4",
+      "type": "text",
+      "x": 2820,
+      "y": 1040,
+      "width": 360,
+      "height": 190,
+      "text": "Depois\n3.5C usar ActivePromptContext no interpreter local\nReduzir UNKNOWN e aumentar agreement com OpenAI quando ela estiver certa.",
+      "color": "5"
+    },
+    {
+      "id": "r5",
+      "type": "text",
+      "x": 2820,
+      "y": 1300,
+      "width": 360,
+      "height": 190,
+      "text": "Depois\n3.5D fallback contextual\nPerguntar de novo do jeito certo conforme a pergunta ativa.",
+      "color": "5"
+    },
+    {
+      "id": "r6",
+      "type": "text",
+      "x": 2820,
+      "y": 1560,
+      "width": 360,
+      "height": 190,
+      "text": "Depois\n3.4B loader real do relatório\nMedir divergências em dados reais de chat_messages.",
+      "color": "5"
+    },
+    {
+      "id": "r7",
+      "type": "text",
+      "x": 2820,
+      "y": 1820,
+      "width": 360,
+      "height": 190,
+      "text": "Futuro\n3.6 corpus canônico + retrieval\nSó depois pensar em vector DB. Exemplo ajuda, mas backend decide.",
+      "color": "5"
+    },
+    {
+      "id": "r8",
+      "type": "text",
+      "x": 2820,
+      "y": 2080,
+      "width": 360,
+      "height": 190,
+      "text": "Futuro distante\nPlanner local/shadow/autonomia controlada\nNão iniciar antes de estado, contexto e fallback estarem robustos.",
+      "color": "5"
+    }
+  ],
+  "edges": [
+    {
+      "id": "flow-0",
+      "fromNode": "evolution",
+      "toNode": "automation",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "webhook"
+    },
+    {
+      "id": "flow-1",
+      "fromNode": "automation",
+      "toNode": "ingest-buffer",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "normaliza"
+    },
+    {
+      "id": "flow-2",
+      "fromNode": "ingest-buffer",
+      "toNode": "reprocess",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "flush"
+    },
+    {
+      "id": "flow-3",
+      "fromNode": "reprocess",
+      "toNode": "memory-state",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "carrega"
+    },
+    {
+      "id": "flow-4",
+      "fromNode": "memory-state",
+      "toNode": "draft-autosend",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "gera"
+    },
+    {
+      "id": "flow-5",
+      "fromNode": "draft-autosend",
+      "toNode": "sender",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "envia"
+    },
+    {
+      "id": "interp-0",
+      "fromNode": "memory-state",
+      "toNode": "active-prompt",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "contexto"
+    },
+    {
+      "id": "interp-1",
+      "fromNode": "active-prompt",
+      "toNode": "local-interpreter",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "apoia"
+    },
+    {
+      "id": "interp-2",
+      "fromNode": "local-interpreter",
+      "toNode": "openai-shadow",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "compara"
+    },
+    {
+      "id": "interp-3",
+      "fromNode": "active-prompt",
+      "toNode": "det-router",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "prioriza"
+    },
+    {
+      "id": "interp-4",
+      "fromNode": "det-router",
+      "toNode": "contextual-fallback",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "se falhar"
+    },
+    {
+      "id": "interp-5",
+      "fromNode": "det-router",
+      "toNode": "llm-runner",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "quando precisa texto"
+    },
+    {
+      "id": "interp-6",
+      "fromNode": "llm-runner",
+      "toNode": "draft-autosend",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "draft"
+    },
+    {
+      "id": "tool-0",
+      "fromNode": "det-router",
+      "toNode": "availability",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "tool"
+    },
+    {
+      "id": "tool-1",
+      "fromNode": "det-router",
+      "toNode": "booking-create",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "tool"
+    },
+    {
+      "id": "tool-2",
+      "fromNode": "det-router",
+      "toNode": "document-extract",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "tool"
+    },
+    {
+      "id": "tool-3",
+      "fromNode": "det-router",
+      "toNode": "payment-create",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "tool"
+    },
+    {
+      "id": "tool-4",
+      "fromNode": "det-router",
+      "toNode": "cancel-reschedule",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "tool"
+    },
+    {
+      "id": "tool-5",
+      "fromNode": "availability",
+      "toNode": "supabase",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "consulta"
+    },
+    {
+      "id": "tool-6",
+      "fromNode": "booking-create",
+      "toNode": "supabase",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "grava"
+    },
+    {
+      "id": "tool-7",
+      "fromNode": "payment-create",
+      "toNode": "supabase",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "grava"
+    },
+    {
+      "id": "tool-8",
+      "fromNode": "booking-create",
+      "toNode": "redis",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "idempotência"
+    },
+    {
+      "id": "obs-0",
+      "fromNode": "openai-shadow",
+      "toNode": "shadow-report",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "métricas"
+    },
+    {
+      "id": "obs-1",
+      "fromNode": "shadow-report",
+      "toNode": "loader-34b",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "próximo"
+    },
+    {
+      "id": "obs-2",
+      "fromNode": "loader-34b",
+      "toNode": "canonical-corpus",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "casos reais"
+    },
+    {
+      "id": "obs-3",
+      "fromNode": "canonical-corpus",
+      "toNode": "retrieval-vector",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "evolui"
+    },
+    {
+      "id": "obs-4",
+      "fromNode": "draft-autosend",
+      "toNode": "infra",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "deploy/ops"
+    },
+    {
+      "id": "obs-5",
+      "fromNode": "n8n-legacy",
+      "toNode": "automation",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "legado"
+    },
+    {
+      "id": "road-0",
+      "fromNode": "r0",
+      "toNode": "r1",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-1",
+      "fromNode": "r1",
+      "toNode": "r2",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-2",
+      "fromNode": "r2",
+      "toNode": "r3",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-3",
+      "fromNode": "r3",
+      "toNode": "r4",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-4",
+      "fromNode": "r4",
+      "toNode": "r5",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-5",
+      "fromNode": "r5",
+      "toNode": "r6",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-6",
+      "fromNode": "r6",
+      "toNode": "r7",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "road-7",
+      "fromNode": "r7",
+      "toNode": "r8",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ]
+}
