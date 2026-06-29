@@ -31,7 +31,7 @@ func isReservationHelpActionDestinationFragment(text string, destination string)
 		return false
 	}
 	switch strings.Join(strings.Fields(foldChatText(destination)), " ") {
-	case "reservar", "reservar passagem", "reservar uma passagem":
+	case "fazer reserva", "fazer uma reserva", "reservar", "reservar passagem", "reservar uma passagem":
 		return true
 	default:
 		return false

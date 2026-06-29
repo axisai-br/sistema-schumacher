@@ -478,23 +478,31 @@ func TestInterpretStructuredTurnActivePromptReservationRouteAnswer(t *testing.T)
 }
 
 func TestInterpretStructuredTurnNaturalReservationHelpIsAvailabilityNewRequest(t *testing.T) {
-	got := InterpretStructuredTurn(StructuredInterpreterInput{
-		CurrentTurn: "Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
-		State:       CanonicalConversationState{Phase: ConversationPhaseDiscovery},
-		ObservedAt:  time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
-	})
+	for _, text := range []string{
+		"Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
+		"como faço pra fazer uma reserva?",
+		"quero fazer uma reserva",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := InterpretStructuredTurn(StructuredInterpreterInput{
+				CurrentTurn: text,
+				State:       CanonicalConversationState{Phase: ConversationPhaseDiscovery},
+				ObservedAt:  time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
+			})
 
-	if got.Intent != StructuredIntentAvailabilitySearch {
-		t.Fatalf("expected availability search for reservation help, got %+v", got)
-	}
-	if got.TurnMeaning != TurnMeaningNewRequest {
-		t.Fatalf("expected new request meaning, got %+v", got)
-	}
-	if got.Source != "deterministic_reservation_start" {
-		t.Fatalf("expected deterministic reservation start source, got %+v", got)
-	}
-	if got.Safety.ExecutesTool || got.Safety.MutatesState || got.Safety.SendsMessage || got.Safety.CallsExternalProvider {
-		t.Fatalf("local interpretation must not expose side effects, got %+v", got.Safety)
+			if got.Intent != StructuredIntentAvailabilitySearch {
+				t.Fatalf("expected availability search for reservation help, got %+v", got)
+			}
+			if got.TurnMeaning != TurnMeaningNewRequest {
+				t.Fatalf("expected new request meaning, got %+v", got)
+			}
+			if got.Source != "deterministic_reservation_start" {
+				t.Fatalf("expected deterministic reservation start source, got %+v", got)
+			}
+			if got.Safety.ExecutesTool || got.Safety.MutatesState || got.Safety.SendsMessage || got.Safety.CallsExternalProvider {
+				t.Fatalf("local interpretation must not expose side effects, got %+v", got.Safety)
+			}
+		})
 	}
 }
 

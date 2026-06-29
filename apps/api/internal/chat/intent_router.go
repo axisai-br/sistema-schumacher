@@ -42,13 +42,18 @@ var reservationStartTemplateIntentPhrases = []string{
 	"como posso fazer pra reservar",
 	"como posso fazer uma reserva",
 	"como e que eu faco para reservar",
+	"como e que eu faco para fazer uma reserva",
 	"como e que eu faco pra reservar",
+	"como e que eu faco pra fazer uma reserva",
 	"como faco para reservar",
+	"como faco para fazer uma reserva",
 	"como faco pra reservar",
+	"como faco pra fazer uma reserva",
 	"como faco uma reserva",
 	"como fazer uma reserva",
 	"como reservar uma passagem",
 	"como reservar passagem",
+	"quero fazer uma reserva",
 	"quero reservar",
 }
 
