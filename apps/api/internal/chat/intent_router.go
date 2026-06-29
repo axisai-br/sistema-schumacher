@@ -71,9 +71,11 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if activePrompt.Kind == ActivePromptPaymentPreference &&
 		looksLikePixOnlyPaymentReply(folded) &&
 		!looksLikePaymentCreateIntent(body) {
-		return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_payment_preference"}
+		if decision, ok := buildActivePromptContextualFallbackDecision(activePrompt, body, folded, state); ok {
+			return decision
+		}
 	}
-	if looksLikeUnsupportedPaymentMethodQuestion(body) {
+	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice && looksLikeUnsupportedPaymentMethodQuestion(body) {
 		return IntentDecision{Intent: IntentPaymentMethodQuestion, Source: "deterministic_payment_method_question", TemplateName: TemplatePaymentMethods, Action: "template"}
 	}
 	if looksLikePaymentLookupIntent(body) {
@@ -100,6 +102,9 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	if decision, ok := routeActivePromptAnswer(activePrompt, history, body, folded, state, observedAt); ok {
 		return decision
 	}
+	if decision, ok := buildActivePromptContextualFallbackDecision(activePrompt, body, folded, state); ok {
+		return decision
+	}
 
 	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice {
 		optionCount := activePrompt.AvailabilityOptionCount
@@ -120,6 +125,9 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 			AvailabilityInput: &input,
 			Action:            "tool",
 		}
+	}
+	if looksLikeUnsupportedPaymentMethodQuestion(body) {
+		return IntentDecision{Intent: IntentPaymentMethodQuestion, Source: "deterministic_payment_method_question", TemplateName: TemplatePaymentMethods, Action: "template"}
 	}
 	if looksLikeVerifyAllOptionsIntent(body) {
 		input, missing := parseVerifyAllOptionsAvailabilityInput(history, observedAt)
@@ -243,12 +251,6 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic_active_prompt_availability_option", true); ok {
 			return decision, true
 		}
-		if optionCount > 1 && looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
-			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_availability_option_ambiguous"}, true
-		}
-		if extractSelectedOptionIndex(body) > 0 {
-			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_availability_option_out_of_range"}, true
-		}
 	case ActivePromptAvailabilityDateChoice:
 		if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
 			return IntentDecision{
@@ -275,26 +277,20 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 		if preference := detectStructuredPaymentPreference(body); preference != "" {
 			return IntentDecision{Intent: IntentPaymentPreference, Source: "deterministic_active_prompt_payment_preference"}, true
 		}
-		if looksLikePixOnlyPaymentReply(folded) {
-			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_active_prompt_payment_preference"}, true
-		}
 	case ActivePromptPayerCPF:
-		if isPaymentDocumentReplyPhase(state.Phase) && looksLikeBareCPF(body) {
+		if (state.Phase == "" || isPaymentDocumentReplyPhase(state.Phase)) && looksLikeBareCPF(body) {
 			return IntentDecision{Intent: IntentPaymentCreate, Source: "deterministic_payer_document_reply", Action: "tool"}, true
 		}
 	case ActivePromptLapChildAssignment:
 		if index := activePromptLapChildAssignmentAnswerIndex(body); index > 0 {
 			if count := activePromptLapChildAssignmentOptionCount(ctx); count > 0 && index > count {
-				return buildActivePromptLapChildAssignmentFallbackDecision("deterministic_active_prompt_lap_child_assignment_out_of_range"), true
+				return IntentDecision{}, false
 			}
 			return IntentDecision{
 				Intent:              IntentLapChildAssignmentAnswer,
 				Source:              "deterministic_active_prompt_lap_child_assignment",
 				SelectedOptionIndex: index,
 			}, true
-		}
-		if activePromptLapChildAssignmentOptionCount(ctx) > 0 {
-			return buildActivePromptLapChildAssignmentFallbackDecision("deterministic_active_prompt_fallback_lap_child_assignment"), true
 		}
 	}
 

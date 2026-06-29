@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"reflect"
 	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"testing"
@@ -190,6 +191,107 @@ func TestSelectAvailabilityOptionContextualEssaMesmoAsksPassengerCount(t *testin
 	intentDecision := asMap(out.Memory["intent_decision"])
 	if got := asInt(intentDecision["selected_option_index"]); got != 1 {
 		t.Fatalf("expected selected option index 1, got %d memory=%+v", got, intentDecision)
+	}
+}
+
+func TestAvailabilityOptionMultipleAmbiguousReplyUsesContextualFallback(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  availabilityDateSelectionFiveOptionsTestResult(),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511888888888",
+		CustomerPhone:  "5511888888888",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
+	seedInboundSent(t, store, session.ID, "opcao 2", now.Add(-150*time.Second))
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-contextual-availability-multiple-options",
+		Body:             buildAvailabilityListReply(availabilityDateSelectionFiveOptionsTestResult()),
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+			},
+		},
+		RecordedAt: now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed availability draft: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-contextual-availability-multiple-ok",
+			IdempotencyKey:    "idem-contextual-availability-multiple-ok",
+			Body:              "ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest ambiguous selection: %v", err)
+	}
+	historyBeforeReprocess, err := store.ListMessages(context.Background(), ingested.Session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list messages before reprocess: %v", err)
+	}
+	canonicalStateBeforeReprocess := deriveCanonicalConversationState(ingested.Session, historyBeforeReprocess, "ok")
+	if canonicalStateBeforeReprocess.Phase == ConversationPhaseRouteSelection || canonicalStateBeforeReprocess.Route.SelectedOptionIndex == 0 {
+		t.Fatalf("test setup must start from selected trip state, got %+v", canonicalStateBeforeReprocess)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess ambiguous selection: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic fallback to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no new availability search, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	reply, ok := realizeResponseTemplate(TemplateContextFallbackAvailabilityOption)
+	if !ok {
+		t.Fatal("expected availability option fallback template")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != reply {
+		t.Fatalf("expected contextual fallback reply %q, got %q", reply, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateContextFallbackAvailabilityOption) {
+		t.Fatalf("expected template %s, got %q payload=%+v", TemplateContextFallbackAvailabilityOption, got, out.Draft.NormalizedPayload)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskPassengerCount) {
+		t.Fatalf("ambiguous reply must not advance to passenger count, got %+v", out.Draft.NormalizedPayload)
+	}
+	intentDecision := asMap(out.Memory["intent_decision"])
+	if got := asInt(intentDecision["selected_option_index"]); got != 0 {
+		t.Fatalf("ambiguous reply must not select option 1, got %d memory=%+v", got, intentDecision)
+	}
+	canonicalStateAfterReprocess, ok := out.Memory["canonical_state"].(CanonicalConversationState)
+	if !ok {
+		t.Fatalf("expected canonical_state in memory, got %#v", out.Memory["canonical_state"])
+	}
+	if !reflect.DeepEqual(canonicalStateAfterReprocess, canonicalStateBeforeReprocess) {
+		t.Fatalf("contextual fallback must not mutate canonical_state\nbefore=%+v\nafter=%+v", canonicalStateBeforeReprocess, canonicalStateAfterReprocess)
 	}
 }
 

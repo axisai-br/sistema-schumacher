@@ -33,6 +33,41 @@ func TestIntentRouterDeterministicCases(t *testing.T) {
 	}
 }
 
+func assertContextualFallbackDecision(t *testing.T, got IntentDecision, templateName ResponseTemplateName) {
+	t.Helper()
+	if got.Intent != IntentUnknown {
+		t.Fatalf("expected unknown contextual fallback intent, got %+v", got)
+	}
+	if got.Action != "template" {
+		t.Fatalf("expected template action, got %+v", got)
+	}
+	if got.TemplateName != templateName {
+		t.Fatalf("expected template %s, got %+v", templateName, got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("contextual fallback must not set selected option index, got %+v", got)
+	}
+}
+
+func TestIntentRouterCancelIntentWinsOverContextualFallback(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	got := routeDeterministicIntent(history, "quero cancelar", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent != IntentBookingCancel {
+		t.Fatalf("expected cancellation to win over contextual fallback, got %+v", got)
+	}
+	if got.TemplateName != "" {
+		t.Fatalf("did not expect contextual template on cancellation, got %+v", got)
+	}
+}
+
 func TestIntentRouterPrioritizesContextualAvailabilitySelectionOverUnsupportedFollowUp(t *testing.T) {
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
@@ -114,13 +149,14 @@ func TestIntentRouterRejectsOutOfRangeOptionWithActivePrompt(t *testing.T) {
 	if got.SelectedOptionIndex != 0 {
 		t.Fatalf("out-of-range option must not set selected index: %+v", got)
 	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
 }
 
 func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(t *testing.T) {
 	history := availabilityDateSelectionWithFiveOptionsHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "pode ser", "essa mesmo", "essa mesma", "pode ser essa"} {
+	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "pode ser", "essa mesmo", "essa mesma", "pode ser essa", "cartao"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
@@ -136,6 +172,7 @@ func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(
 			if got.Intent == IntentUnsupportedPackage || got.TemplateName == TemplateUnsupportedPackage {
 				t.Fatalf("ambiguous availability reply must not become unsupported package: %+v", got)
 			}
+			assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
 		})
 	}
 }
@@ -231,6 +268,15 @@ func TestIntentRouterUsesActivePromptForAvailabilityDate(t *testing.T) {
 	}
 }
 
+func TestIntentRouterActivePromptAvailabilityDateFallback(t *testing.T) {
+	history := availabilityDateChoiceAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	got := routeDeterministicIntent(history, "ok", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityDate)
+}
+
 func TestIntentRouterDoesNotLetUnsupportedStealAvailabilityOptionContext(t *testing.T) {
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
@@ -275,6 +321,44 @@ func TestIntentRouterDocumentConfirmationWinsOverStaleAvailability(t *testing.T)
 	}
 }
 
+func TestIntentRouterPassengerDocumentsContextualFallback(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Pode enviar o nome completo e CPF, RG ou CNH completo do passageiro. Se preferir, envie foto legivel do documento.",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	got := routeDeterministicIntent(history, "ok", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackPassengerDocuments)
+
+	got = routeDeterministicIntent(history, "Joao da Silva CPF 52998224725", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	if got.Intent != IntentPassengerDocumentsProvided {
+		t.Fatalf("expected passenger documents intent, got %+v", got)
+	}
+}
+
+func TestIntentRouterDocumentConfirmationContextualFallback(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
+
+	got := routeDeterministicIntent(history, "talvez", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackDocumentConfirmation)
+
+	got = routeDeterministicIntent(history, "certo", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	if got.Intent != IntentDocumentConfirmation {
+		t.Fatalf("expected document confirmation, got %+v", got)
+	}
+}
+
 func TestIntentRouterPaymentPreferenceSinalWithActivePrompt(t *testing.T) {
 	history := []Message{{
 		Direction:        "OUTBOUND",
@@ -291,7 +375,7 @@ func TestIntentRouterPaymentPreferenceSinalWithActivePrompt(t *testing.T) {
 	}
 }
 
-func TestIntentRouterPaymentPreferencePixStillUnknown(t *testing.T) {
+func TestIntentRouterPaymentPreferencePixUsesContextualFallback(t *testing.T) {
 	history := []Message{{
 		Direction:        "OUTBOUND",
 		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
@@ -305,8 +389,26 @@ func TestIntentRouterPaymentPreferencePixStillUnknown(t *testing.T) {
 	if got.Intent == IntentPaymentPreference {
 		t.Fatalf("pix-only answer must not become payment preference: %+v", got)
 	}
-	if got.Intent != IntentUnknown {
-		t.Fatalf("expected pix-only payment preference answer to remain unknown, got %+v", got)
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackPaymentPreference)
+}
+
+func TestIntentRouterPaymentPreferenceUnsupportedMethodStillUsesPaymentMethodsTemplate(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	for _, text := range []string{"boleto", "cartao"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPaymentMethodQuestion || got.TemplateName != TemplatePaymentMethods || got.Action != "template" {
+				t.Fatalf("expected payment methods template, got %+v", got)
+			}
+		})
 	}
 }
 
@@ -328,6 +430,38 @@ func TestIntentRouterPassengerCountWithActivePrompt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIntentRouterPassengerCountContextualFallback(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	got := routeDeterministicIntent(history, "ok", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackPassengerCount)
+}
+
+func TestIntentRouterLapChildQuestionWithActivePrompt(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Tem criança de 5 anos ou menos viajando?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	got := routeDeterministicIntent(history, "não", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	if got.Intent != IntentPassengerCountReply {
+		t.Fatalf("expected passenger count reply, got %+v", got)
+	}
+
+	got = routeDeterministicIntent(history, "talvez", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackChildUnder5)
 }
 
 func TestIntentRouterLapChildAssignmentDoesNotBecomeAvailabilitySelection(t *testing.T) {
@@ -359,14 +493,10 @@ func TestIntentRouterActivePromptLapChildAssignmentFallback(t *testing.T) {
 	state := CanonicalConversationState{Phase: ConversationPhaseBookingPending}
 
 	invalid := routeDeterministicIntent(history, "ok", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
-	if invalid.Intent != IntentUnknown || invalid.Action != "safe_fallback" {
-		t.Fatalf("expected lap child assignment fallback, got %+v", invalid)
-	}
+	assertContextualFallbackDecision(t, invalid, TemplateContextFallbackLapChildAssignment)
 
 	outOfRange := routeDeterministicIntent(history, "3", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
-	if outOfRange.Intent != IntentUnknown || outOfRange.Action != "safe_fallback" {
-		t.Fatalf("expected out-of-range lap child assignment fallback, got %+v", outOfRange)
-	}
+	assertContextualFallbackDecision(t, outOfRange, TemplateContextFallbackLapChildAssignment)
 }
 
 func TestIntentRouterActivePromptLapChildAssignmentAcceptsMultiDigitOption(t *testing.T) {
@@ -402,9 +532,7 @@ func TestIntentRouterActivePromptLapChildAssignmentMultiDigitOutOfRangeFallback(
 
 	got := routeDeterministicIntent(history, "11", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
-	if got.Intent != IntentUnknown || got.Action != "safe_fallback" {
-		t.Fatalf("expected out-of-range multi-digit lap child assignment fallback, got %+v", got)
-	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackLapChildAssignment)
 }
 
 func TestActivePromptLapChildAssignmentOptionCountParsesMultiDigitLines(t *testing.T) {
@@ -647,6 +775,18 @@ func TestIntentRouterDoesNotRouteInvalidBareCPF(t *testing.T) {
 	if got.Intent == IntentPaymentCreate {
 		t.Fatalf("did not expect invalid CPF to route to payment create, got %+v", got)
 	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackPayerCPF)
+}
+
+func TestIntentRouterPayerCPFContextualFallback(t *testing.T) {
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador."},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	got := routeDeterministicIntent(history, "ok", state, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
+
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackPayerCPF)
 }
 
 func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {

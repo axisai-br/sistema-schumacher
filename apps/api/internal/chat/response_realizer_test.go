@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,15 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 		TemplatePublicSCTable,
 		TemplateUnsupportedCargo,
 		TemplateHumanHandoff,
+		TemplateContextFallbackAvailabilityOption,
+		TemplateContextFallbackAvailabilityDate,
+		TemplateContextFallbackPassengerCount,
+		TemplateContextFallbackChildUnder5,
+		TemplateContextFallbackLapChildAssignment,
+		TemplateContextFallbackPassengerDocuments,
+		TemplateContextFallbackDocumentConfirmation,
+		TemplateContextFallbackPaymentPreference,
+		TemplateContextFallbackPayerCPF,
 	}
 	for _, template := range templates {
 		reply, ok := realizeResponseTemplate(template)
@@ -38,6 +48,74 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 			t.Fatalf("expected template %s to render", template)
 		}
 		assertNoEmptyTemplateArtifacts(t, reply)
+	}
+}
+
+func TestResponseRealizerContextualFallbackTemplates(t *testing.T) {
+	templates := []ResponseTemplateName{
+		TemplateContextFallbackAvailabilityOption,
+		TemplateContextFallbackAvailabilityDate,
+		TemplateContextFallbackPassengerCount,
+		TemplateContextFallbackChildUnder5,
+		TemplateContextFallbackLapChildAssignment,
+		TemplateContextFallbackPassengerDocuments,
+		TemplateContextFallbackDocumentConfirmation,
+		TemplateContextFallbackPaymentPreference,
+		TemplateContextFallbackPayerCPF,
+	}
+
+	for _, template := range templates {
+		t.Run(string(template), func(t *testing.T) {
+			reply, ok := realizeIntentResponseTemplate(IntentDecision{TemplateName: template})
+			if !ok || strings.TrimSpace(reply) == "" {
+				t.Fatalf("expected contextual fallback template %s to render, ok=%t reply=%q", template, ok, reply)
+			}
+			assertNoEmptyTemplateArtifacts(t, reply)
+		})
+	}
+}
+
+func TestApplyIntentDecisionContextualFallbackDoesNotMutateCanonicalState(t *testing.T) {
+	before := CanonicalConversationState{
+		SessionID: "session-1",
+		Phase:     ConversationPhaseTripSelection,
+		Route: CanonicalRouteState{
+			Origin:              "Santa Ines/MA",
+			Destination:         "Videira/SC",
+			PackageName:         packageToSantaCatarina,
+			SelectedOptionIndex: 2,
+			TripID:              "trip-2",
+		},
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: map[string]interface{}{
+				"package_name": packageToSantaCatarina,
+			},
+		},
+		AllowedNextActions: []string{string(IntentSelectAvailabilityOption)},
+	}
+	templates := []ResponseTemplateName{
+		TemplateContextFallbackAvailabilityOption,
+		TemplateContextFallbackAvailabilityDate,
+		TemplateContextFallbackPassengerCount,
+		TemplateContextFallbackChildUnder5,
+		TemplateContextFallbackLapChildAssignment,
+		TemplateContextFallbackPassengerDocuments,
+		TemplateContextFallbackDocumentConfirmation,
+		TemplateContextFallbackPaymentPreference,
+		TemplateContextFallbackPayerCPF,
+	}
+
+	for _, template := range templates {
+		t.Run(string(template), func(t *testing.T) {
+			after := applyIntentDecisionToCanonicalState(before, IntentDecision{
+				Intent:       IntentUnknown,
+				Action:       "template",
+				TemplateName: template,
+			})
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("contextual fallback must not mutate canonical_state\nbefore=%+v\nafter=%+v", before, after)
+			}
+		})
 	}
 }
 
