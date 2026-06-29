@@ -455,7 +455,7 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-reservation-start-1",
 			IdempotencyKey:    "idem-reservation-start-1",
-			Body:              "Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
+			Body:              "como faço pra fazer uma reserva?",
 		},
 	})
 	if err != nil {
@@ -508,29 +508,36 @@ func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testi
 }
 
 func TestReservationHelpWithUnsupportedDestinationReturnsSupportWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
-	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
-	searcher := &fakeAvailabilitySearcher{enabled: true}
-	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+	for _, text := range []string{
+		"como faço pra reservar passagem para Bahia",
+		"como faço pra fazer uma reserva para Bahia",
+	} {
+		t.Run(text, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
 
-	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
-		ContactKey: "5511999999999",
-		Message: IngestMessagePayload{
-			Direction:         "INBOUND",
-			ProviderMessageID: "msg-reservation-start-unsupported-bahia-1",
-			IdempotencyKey:    "idem-reservation-start-unsupported-bahia-1",
-			Body:              "como faço pra reservar passagem para Bahia",
-		},
-	})
-	if err != nil {
-		t.Fatalf("ingest unsupported reservation help: %v", err)
-	}
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: "5511999999999",
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: "msg-reservation-start-unsupported-bahia-1",
+					IdempotencyKey:    "idem-reservation-start-unsupported-bahia-1",
+					Body:              text,
+				},
+			})
+			if err != nil {
+				t.Fatalf("ingest unsupported reservation help: %v", err)
+			}
 
-	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
-	if err != nil {
-		t.Fatalf("reprocess unsupported reservation help: %v", err)
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess unsupported reservation help: %v", err)
+			}
+			assertUnsupportedPackageDraftWithoutTools(t, out, runner, searcher)
+		})
 	}
-	assertUnsupportedPackageDraftWithoutTools(t, out, runner, searcher)
 }
 
 func TestReservationPhraseInPassengerCollectionDoesNotResetRoute(t *testing.T) {

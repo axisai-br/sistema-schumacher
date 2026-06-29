@@ -98,16 +98,16 @@ O fluxo real de reserva está mais estável, mas ainda existem bugs de variaçã
   
 ## Próxima decisão prática  
   
-Antes de iniciar arquitetura LLM-first gated, corrigir o hotfix pendente:  
+Hotfix local concluído em 2026-06-29; validar em produção/homologação a variação real:
   
 ```text  
 Hotfix H-2026-06-29 — reservation-help variant  
 Entrada: "como faço pra fazer uma reserva?"  
-Problema: ainda cai em UNSUPPORTED_PACKAGE  
+Problema corrigido localmente: não cai mais em UNSUPPORTED_PACKAGE
 Esperado: ASK_RESERVATION_ROUTE_SC  
 ```  
   
-Depois desse hotfix:  
+Depois da validação, se houver pedido explícito:
   
 ```text  
 Próxima etapa arquitetural: 3.6A — Local Interpretation Validator  
@@ -201,10 +201,10 @@ fallbacks contextuais
 "10" funciona em lista de criança de colo com 10+ passageiros  
 ```  
   
-**Bug pendente:**  
+**Bug corrigido localmente, pendente validação em produção:**
   
 ```text  
-"como faço pra fazer uma reserva?" ainda pode cair em UNSUPPORTED_PACKAGE.  
+"como faço pra fazer uma reserva?" → ASK_RESERVATION_ROUTE_SC.
 ```  
   
 **Objetivo:** deixar o fluxo real estável antes de aumentar autonomia com LLM.  
@@ -424,7 +424,7 @@ Cliente: pix
   
 ## Hotfix H-2026-06-29 — Reservation-help variant  
   
-**Status:** Pendente / Próxima ação prática.  
+**Status:** Concluído localmente em 2026-06-29; pendente validação em produção.
   
 **Sintoma em produção:**  
   
@@ -447,15 +447,25 @@ pra fazer uma reserva
 "como faço pra fazer uma reserva?"  
 → ASK_RESERVATION_ROUTE_SC  
 ```  
+
+**O que mudou:**
+
+```text
+reservation-help reconhece "como faço pra fazer uma reserva?"
+destination fragment "fazer uma reserva" deixa de ser tratado como destino
+destino real fora de cobertura continua unsupported
+```
   
 **Não quebrar:**  
   
 ```text  
 "como faço pra reservar passagem para Bahia"  
 → UNSUPPORTED_PACKAGE  
+"como faço pra fazer uma reserva para Bahia"
+→ UNSUPPORTED_PACKAGE
 ```  
   
-**Arquivos prováveis:**  
+**Arquivos alterados:**
   
 ```text  
 apps/api/internal/chat/intent_router.go  
@@ -463,7 +473,24 @@ apps/api/internal/chat/unsupported_package.go
 apps/api/internal/chat/intent_router_test.go  
 apps/api/internal/chat/interpreter_test.go  
 apps/api/internal/chat/incremental_flow_test.go  
-```  
+docs/EXECUTION_TRACKER.md
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test(ReservationHowToProceedHelpersRecognizeNaturalReservationHelp|InferUnsupportedPackageQueryKeepsRealDestinationInReservationHelp|IntentRouterNaturalReservationHelpStartsReservationInDiscovery|InterpretStructuredTurnNaturalReservationHelpIsAvailabilityNewRequest|ReservationHowToProceedAsksRouteToSCWithoutPassengerCollection|ReservationHelpWithUnsupportedDestinationReturnsSupportWithoutOpenAI)$'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** diff revisado; alterações restritas aos arquivos permitidos do plano; sem mudança em `Service.Reprocess`, OpenAI, tools, banco, endpoints, auto-send, infra ou n8n.
+
+**Riscos restantes:** precisa validação em produção/homologação para confirmar que a frase real gera `ASK_RESERVATION_ROUTE_SC` com auto-send esperado.
+
+**Próxima ação recomendada:** validar o hotfix em produção/homologação; só iniciar 3.6A com novo pedido explícito.
   
 **Objetivo:** corrigir variação textual real antes de iniciar a etapa 3.6A.  
   
@@ -874,13 +901,15 @@ document_extract
   
 ## H-008 — `como faço pra fazer uma reserva?`  
   
-**Status:** Pendente.  
+**Status:** Corrigido localmente em 2026-06-29; pendente validação em produção.
   
 **Sintoma:** frase natural de início de reserva cai em `UNSUPPORTED_PACKAGE`.  
   
 **Causa provável:** `destinationAfterLastConnector` extrai `fazer uma reserva` como destino após `pra`.  
   
-**Correção planejada:** ampliar reservation-help phrases e ignorar fragmentos de ação como destino, sem suprimir destino real fora de atendimento.  
+**Correção aplicada:** ampliadas as frases de `reservation-help` e ignorado o fragmento de ação `fazer uma reserva` como destino, sem suprimir destino real fora de atendimento como Bahia.
+
+**Testes executados:** `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
   
 ---  
   

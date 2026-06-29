@@ -582,9 +582,12 @@ func TestReservationHowToProceedHelpersRecognizeNaturalReservationHelp(t *testin
 	cases := []string{
 		"queria saber como é que eu faço pra reservar uma passagem",
 		"como é que eu faço pra reservar uma passagem",
+		"como faço pra fazer uma reserva?",
+		"como faço para fazer uma reserva",
 		"como faço pra reservar uma passagem",
 		"como faço para reservar uma passagem",
 		"como reservar uma passagem",
+		"quero fazer uma reserva",
 	}
 
 	for _, text := range cases {
@@ -608,9 +611,12 @@ func TestInferUnsupportedPackageQueryKeepsRealDestinationInReservationHelp(t *te
 		unsupported     bool
 		wantDestination string
 	}{
+		{text: "como faço pra fazer uma reserva?"},
+		{text: "quero fazer uma reserva"},
 		{text: "como faço pra reservar uma passagem"},
 		{text: "Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem."},
 		{text: "como faço pra reservar passagem para Bahia", unsupported: true, wantDestination: "bahia"},
+		{text: "como faço pra fazer uma reserva para Bahia", unsupported: true, wantDestination: "bahia"},
 		{text: "como é que eu faço pra reservar passagem para Bahia", unsupported: true, wantDestination: "bahia"},
 		{text: "quero passagem para Bahia", unsupported: true, wantDestination: "bahia"},
 		{text: "como faço pra reservar passagem para Santa Catarina"},
@@ -631,24 +637,32 @@ func TestInferUnsupportedPackageQueryKeepsRealDestinationInReservationHelp(t *te
 }
 
 func TestIntentRouterNaturalReservationHelpStartsReservationInDiscovery(t *testing.T) {
-	got := routeDeterministicIntent(
-		nil,
+	for _, text := range []string{
 		"Oi, tudo certo. Queria saber como é que eu faço pra reservar uma passagem.",
-		CanonicalConversationState{Phase: ConversationPhaseDiscovery},
-		time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC),
-	)
+		"como faço pra fazer uma reserva?",
+		"quero fazer uma reserva",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(
+				nil,
+				text,
+				CanonicalConversationState{Phase: ConversationPhaseDiscovery},
+				time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC),
+			)
 
-	if got.Intent != IntentAvailabilitySearch {
-		t.Fatalf("expected availability search intent, got %+v", got)
-	}
-	if got.Source != "deterministic_reservation_start" {
-		t.Fatalf("expected deterministic_reservation_start source, got %+v", got)
-	}
-	if got.TemplateName != TemplateAskReservationRouteSC {
-		t.Fatalf("expected template %s, got %+v", TemplateAskReservationRouteSC, got)
-	}
-	if got.Action != "template" {
-		t.Fatalf("expected template action, got %+v", got)
+			if got.Intent != IntentAvailabilitySearch {
+				t.Fatalf("expected availability search intent, got %+v", got)
+			}
+			if got.Source != "deterministic_reservation_start" {
+				t.Fatalf("expected deterministic_reservation_start source, got %+v", got)
+			}
+			if got.TemplateName != TemplateAskReservationRouteSC {
+				t.Fatalf("expected template %s, got %+v", TemplateAskReservationRouteSC, got)
+			}
+			if got.Action != "template" {
+				t.Fatalf("expected template action, got %+v", got)
+			}
+		})
 	}
 }
 
