@@ -19,10 +19,19 @@ const (
 	StructuredInterpreterShadowError          StructuredInterpreterShadowStatus = "error"
 )
 
+type StructuredInterpreterShadowValidationStatus string
+
+const (
+	StructuredInterpreterShadowValidationSkipped  StructuredInterpreterShadowValidationStatus = "skipped"
+	StructuredInterpreterShadowValidationAccepted StructuredInterpreterShadowValidationStatus = "accepted"
+	StructuredInterpreterShadowValidationRejected StructuredInterpreterShadowValidationStatus = "rejected"
+)
+
 type StructuredInterpreterShadowSummary struct {
-	Local     StructuredInterpreterSummary   `json:"local"`
-	OpenAI    OpenAIInterpreterShadowSummary `json:"openai"`
-	Agreement StructuredInterpreterAgreement `json:"agreement"`
+	Local            StructuredInterpreterSummary      `json:"local"`
+	OpenAI           OpenAIInterpreterShadowSummary    `json:"openai"`
+	OpenAIValidation OpenAIInterpreterShadowValidation `json:"openai_validation"`
+	Agreement        StructuredInterpreterAgreement    `json:"agreement"`
 }
 
 type StructuredInterpreterSummary struct {
@@ -41,6 +50,13 @@ type OpenAIInterpreterShadowSummary struct {
 	ProviderResponseID string  `json:"provider_response_id,omitempty"`
 	LatencyMs          int64   `json:"latency_ms"`
 	ErrorCode          string  `json:"error_code,omitempty"`
+}
+
+type OpenAIInterpreterShadowValidation struct {
+	Status           string               `json:"status"`
+	Accepted         bool                 `json:"accepted"`
+	RejectReason     string               `json:"reject_reason"`
+	FallbackTemplate ResponseTemplateName `json:"fallback_template"`
 }
 
 type StructuredInterpreterAgreement struct {
@@ -88,6 +104,7 @@ type StructuredInterpreterShadowInput struct {
 	Enabled             bool
 	OpenAIInterpreter   OpenAIStructuredInterpreter
 	StructuredInput     StructuredInterpreterInput
+	ActivePrompt        ActivePromptContext
 	LocalInterpretation StructuredInterpretation
 	IdempotencyKey      string
 }
@@ -98,6 +115,7 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 		OpenAI: OpenAIInterpreterShadowSummary{
 			Status: string(StructuredInterpreterShadowDisabled),
 		},
+		OpenAIValidation: skippedOpenAIInterpreterShadowValidation("shadow_disabled"),
 	}
 
 	if !input.Enabled {
@@ -106,6 +124,7 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 
 	if input.OpenAIInterpreter == nil || !input.OpenAIInterpreter.Enabled() {
 		summary.OpenAI.Status = string(StructuredInterpreterShadowOpenAIDisabled)
+		summary.OpenAIValidation = skippedOpenAIInterpreterShadowValidation("openai_disabled")
 		return summary
 	}
 
@@ -121,6 +140,17 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 		summary.OpenAI.Status = string(StructuredInterpreterShadowError)
 		summary.OpenAI.ErrorCode = sanitizeOpenAIInterpreterShadowError(err)
 		summary.OpenAI.LatencyMs = latencyMs
+		if proposal, ok := parseableOpenAIInterpreterShadowInvalidProposal(result, err); ok {
+			summary.OpenAI.Intent = string(proposal.Intent)
+			summary.OpenAI.TurnMeaning = string(proposal.TurnMeaning)
+			summary.OpenAI.Confidence = proposal.Confidence
+			summary.OpenAI.Source = proposal.Source
+			summary.OpenAI.ProviderResponseID = result.ProviderResponseID
+			summary.Agreement = compareStructuredInterpretations(input.LocalInterpretation, proposal)
+			summary.OpenAIValidation = validateOpenAIInterpreterShadowProposal(input, proposal)
+			return summary
+		}
+		summary.OpenAIValidation = skippedOpenAIInterpreterShadowValidation(openAIInterpreterShadowValidationSkipReason(err))
 		return summary
 	}
 
@@ -134,8 +164,88 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 		LatencyMs:          latencyMs,
 	}
 	summary.Agreement = compareStructuredInterpretations(input.LocalInterpretation, result.Interpretation)
+	summary.OpenAIValidation = validateOpenAIInterpreterShadowProposal(input, result.Interpretation)
 
 	return summary
+}
+
+func parseableOpenAIInterpreterShadowInvalidProposal(result OpenAIStructuredInterpreterRunResult, err error) (StructuredInterpretation, bool) {
+	if !errors.Is(err, ErrOpenAIStructuredInterpreterInvalidOutput) || result.Validation.Valid {
+		return StructuredInterpretation{}, false
+	}
+	proposal := result.Validation.Interpretation
+	if !openAIInterpreterShadowProposalLooksParseable(proposal) {
+		return StructuredInterpretation{}, false
+	}
+	return proposal, true
+}
+
+func openAIInterpreterShadowProposalLooksParseable(proposal StructuredInterpretation) bool {
+	if proposal.Intent == "" || proposal.TurnMeaning == "" {
+		return false
+	}
+	if !openAIStructuredIntentAllowed(proposal.Intent) || !openAITurnMeaningAllowed(proposal.TurnMeaning) {
+		return false
+	}
+	if proposal.Confidence < 0 || proposal.Confidence > 1 {
+		return false
+	}
+	return true
+}
+
+func validateOpenAIInterpreterShadowProposal(input StructuredInterpreterShadowInput, proposal StructuredInterpretation) OpenAIInterpreterShadowValidation {
+	if proposal.Intent == "" || proposal.TurnMeaning == "" {
+		return skippedOpenAIInterpreterShadowValidation("openai_missing_result")
+	}
+
+	activePrompt := input.ActivePrompt
+	if activePrompt.Kind == "" {
+		activePrompt = InferActivePromptContext(input.StructuredInput.History, input.StructuredInput.State)
+	}
+
+	result := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:     proposal,
+		CurrentTurn:  input.StructuredInput.CurrentTurn,
+		History:      input.StructuredInput.History,
+		State:        input.StructuredInput.State,
+		ActivePrompt: activePrompt,
+		ObservedAt:   input.StructuredInput.ObservedAt,
+	})
+	if result.Accepted {
+		return OpenAIInterpreterShadowValidation{
+			Status:   string(StructuredInterpreterShadowValidationAccepted),
+			Accepted: true,
+		}
+	}
+	return OpenAIInterpreterShadowValidation{
+		Status:           string(StructuredInterpreterShadowValidationRejected),
+		Accepted:         false,
+		RejectReason:     result.RejectReason,
+		FallbackTemplate: result.FallbackTemplate,
+	}
+}
+
+func skippedOpenAIInterpreterShadowValidation(reason string) OpenAIInterpreterShadowValidation {
+	return OpenAIInterpreterShadowValidation{
+		Status:       string(StructuredInterpreterShadowValidationSkipped),
+		Accepted:     false,
+		RejectReason: strings.TrimSpace(reason),
+	}
+}
+
+func openAIInterpreterShadowValidationSkipReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrOpenAIStructuredInterpreterDisabled):
+		return "openai_disabled"
+	case errors.Is(err, ErrOpenAIStructuredInterpreterInvalidOutput):
+		return "openai_schema_invalid"
+	case errors.Is(err, ErrOpenAIStructuredInterpreterEmptyOutput):
+		return "openai_missing_result"
+	default:
+		return "openai_error"
+	}
 }
 
 func sanitizeOpenAIInterpreterShadowError(err error) string {

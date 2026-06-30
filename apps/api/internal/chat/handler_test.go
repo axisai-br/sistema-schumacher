@@ -4714,10 +4714,94 @@ func TestReprocessStructuredInterpreterShadowEnabledValidDoesNotChangeDraftOrToo
 	if got, ok := agreement["turn_meaning"].(bool); !ok || !got {
 		t.Fatalf("expected turn meaning agreement, got %#v", agreement["turn_meaning"])
 	}
+	validation := mustNestedMap(t, shadow, "openai_validation")
+	if got := asString(validation["status"]); got != string(StructuredInterpreterShadowValidationAccepted) {
+		t.Fatalf("expected OpenAI validation status %q, got %q", StructuredInterpreterShadowValidationAccepted, got)
+	}
+	if got, ok := validation["accepted"].(bool); !ok || !got {
+		t.Fatalf("expected OpenAI validation accepted, got %#v", validation["accepted"])
+	}
 	draftShadow := mustStructuredInterpreterShadowMap(t, out.Draft.NormalizedPayload[structuredInterpreterShadowKey])
 	draftOpenAIShadow := mustNestedMap(t, draftShadow, "openai")
 	if got := asString(draftOpenAIShadow["status"]); got != string(StructuredInterpreterShadowValid) {
 		t.Fatalf("expected draft shadow status %q, got %q", StructuredInterpreterShadowValid, got)
+	}
+	draftValidation := mustNestedMap(t, draftShadow, "openai_validation")
+	if got := asString(draftValidation["status"]); got != string(StructuredInterpreterShadowValidationAccepted) {
+		t.Fatalf("expected draft validation status %q, got %q", StructuredInterpreterShadowValidationAccepted, got)
+	}
+}
+
+func TestReprocessStructuredInterpreterShadowValidationDoesNotChangeDraftToolsOrCanonicalState(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          "Temos saidas para Santa Catarina. Qual cidade de destino voce quer consultar?",
+			Model:              "gpt-test",
+			ProviderResponseID: "resp_shadow_validation_runtime",
+		},
+	}
+	proposal := validationProposal(StructuredIntentPaymentPreference, TurnMeaningAnswerToQuestion)
+	proposal.Payment.PaymentPreference = "sinal"
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation:     proposal,
+			ProviderResponseID: "resp_shadow_validation_runtime_openai",
+		},
+	}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+
+	out := ingestAndReprocessShadowDraft(t, svc, "5511900000106", "oi")
+
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to be called once, got %d", openAI.calls)
+	}
+	if out.Draft == nil {
+		t.Fatalf("expected draft to be generated")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != runner.result.ReplyText {
+		t.Fatalf("expected real draft body to remain %q, got %q", runner.result.ReplyText, got)
+	}
+	if len(out.ToolCalls) != 0 {
+		t.Fatalf("validation-only OpenAI proposal must not create tool calls, got %+v", out.ToolCalls)
+	}
+
+	agent := asMap(out.Session.Metadata["agent"])
+	state, ok := agent["canonical_state"].(CanonicalConversationState)
+	if !ok {
+		t.Fatalf("expected canonical_state in agent metadata, got %#v", agent["canonical_state"])
+	}
+	if state.Phase != ConversationPhaseDiscovery {
+		t.Fatalf("expected real canonical phase to remain %s, got %+v", ConversationPhaseDiscovery, state)
+	}
+	if strings.TrimSpace(state.Payment.Preference) != "" {
+		t.Fatalf("OpenAI validation must not set payment preference in canonical state, got %+v", state.Payment)
+	}
+
+	shadow := mustStructuredInterpreterShadowMap(t, out.Memory[structuredInterpreterShadowKey])
+	validation := mustNestedMap(t, shadow, "openai_validation")
+	if got := asString(validation["status"]); got != string(StructuredInterpreterShadowValidationRejected) {
+		t.Fatalf("expected OpenAI validation status %q, got %q", StructuredInterpreterShadowValidationRejected, got)
+	}
+	if got, ok := validation["accepted"].(bool); !ok || got {
+		t.Fatalf("expected OpenAI validation rejected, got %#v", validation["accepted"])
+	}
+	if got := asString(validation["reject_reason"]); got != "active_prompt_required" {
+		t.Fatalf("expected reject reason active_prompt_required, got %q", got)
+	}
+	if got := asString(validation["fallback_template"]); got != string(TemplateContextFallbackPaymentPreference) {
+		t.Fatalf("expected payment preference fallback, got %q", got)
+	}
+
+	draftShadow := mustStructuredInterpreterShadowMap(t, out.Draft.NormalizedPayload[structuredInterpreterShadowKey])
+	draftValidation := mustNestedMap(t, draftShadow, "openai_validation")
+	if got := asString(draftValidation["status"]); got != string(StructuredInterpreterShadowValidationRejected) {
+		t.Fatalf("expected draft validation status %q, got %q", StructuredInterpreterShadowValidationRejected, got)
 	}
 }
 
