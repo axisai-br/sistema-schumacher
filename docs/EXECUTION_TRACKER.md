@@ -107,11 +107,13 @@ Problema corrigido localmente: não cai mais em UNSUPPORTED_PACKAGE
 Esperado: ASK_RESERVATION_ROUTE_SC  
 ```  
   
-Etapa 3.6A executada localmente em 2026-06-29; validar review antes de qualquer uso no fluxo real.
+Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
 
-```text  
-Próxima etapa arquitetural, com pedido explícito: 3.6B — Corpus canônico versionado
-```  
+```text
+Etapa 3.6C — Avaliação local do corpus canônico
+Baseline local: 27 casos avaliados; 22 passaram; 5 falharam; 0 pulados
+Produção não mudou
+```
   
 ---  
   
@@ -676,17 +678,102 @@ git diff --check
 
 **Riscos restantes:** o corpus ainda não é executado contra interpreter local, OpenAI interpreter ou validator; isso pertence à próxima etapa.
 
-**Próxima etapa recomendada:** 3.6C — avaliação local contra corpus, somente com novo pedido explícito.
+**Próxima etapa recomendada:** etapa 3.6C executada localmente em 2026-06-29; ver seção seguinte.
   
 ---  
   
-## Etapa 3.6C — OpenAI Interpreter Assist Gated  
+## Etapa 3.6C — Avaliação local do corpus canônico
   
-**Status:** Pendente.  
+**Status:** Concluída localmente em 2026-06-29; P2 de review corrigido localmente em 2026-06-30.
   
-**O que faz:** roda OpenAI interpreter como assistente avaliado pelo validator local.  
-  
-**Fluxo:**  
+**O que faz:** cria avaliador puro/local para rodar o corpus canônico contra:
+
+```text
+InterpretStructuredTurn
+ValidateStructuredInterpretation
+```
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/interpreter_cases_eval.go
+apps/api/internal/chat/interpreter_cases_eval_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+criado EvaluateInterpreterCases como avaliador local do corpus
+avaliador monta CanonicalConversationState, ActivePromptContext e history sinteticos
+avaliador executa interpreter local e validator local por caso
+validator principal valida apenas o output real do InterpretStructuredTurn
+expected_intent do corpus nao alimenta proposta sintetica para simular sucesso local
+validator_probe opcional fica separado e nao altera pass/fail principal
+relatorio expõe total, passed, failed, skipped e resultado por caso
+casos criticos do plano ficam protegidos por testes especificos
+nao altera runtime, Service.Reprocess, OpenAI, shadow runtime, tools, banco, endpoints, auto-send, infra, n8n, vector base ou planner
+```
+
+**Baseline local:**
+
+```text
+Total: 27
+Passed: 22
+Failed: 5
+Skipped: 0
+```
+
+**Casos críticos cobertos e passando:**
+
+```text
+reservation_help_001 — "como faço pra fazer uma reserva?" não vira UNSUPPORTED_PACKAGE
+unsupported_package_001 — "como faço pra reservar passagem para Bahia" preserva UNSUPPORTED_PACKAGE
+availability_option_003 — "ok" em lista múltipla não seleciona opção automaticamente e aponta CONTEXT_FALLBACK_AVAILABILITY_OPTION
+payment_preference_003 — "pix" após integral/sinal não aceita PAYMENT_PREFERENCE e aponta CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+availability_date_002 — "31/02" em prompt de data aponta CONTEXT_FALLBACK_AVAILABILITY_DATE
+passenger_documents_002 — "12345678900" em documentos aponta CONTEXT_FALLBACK_PASSENGER_DOCUMENTS
+```
+
+**Falhas de baseline registradas, fora de correção nesta etapa:**
+
+```text
+unsupported_package_003 — interpreter estruturado local retorna UNKNOWN para "quero passagem para Bahia"; unsupported_package fica coberto pelo roteador deterministico, nao pelo interpreter local
+availability_option_002 — interpreter seleciona "essa mesmo" com uma opção, mas validator rejeita como CONTEXT_FALLBACK_AVAILABILITY_OPTION
+lap_child_assignment_001 — interpreter local ainda não interpreta "10" como LAP_CHILD_ASSIGNMENT_ANSWER neste fixture
+payer_cpf_001 — interpreter local retorna UNKNOWN para CPF valido em PAYER_CPF; caso nao passa mais por proposta sintetica baseada em expected_intent
+human_support_001 — HUMAN_SUPPORT é intenção do roteador determinístico, não do interpreter estruturado local
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'TestInterpreterCaseEvaluationLoadsAndEvaluatesCorpus' -v
+go test -count=1 ./internal/chat -run 'TestInterpreterCase'
+go test -count=1 ./internal/chat -run TestInterpreterCase -v
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P2 corrigido em 2026-06-30. O evaluator nao usa mais `expected_intent` para fabricar proposta principal quando o interpreter local retorna `UNKNOWN`; probes sinteticos ficam separados em `validator_probe` e nao contam para pass/fail principal. Diff local restrito aos arquivos permitidos pela etapa 3.6C; evaluator e testes são puros/locais. Sem mudança em `Service.Reprocess`, runtime, OpenAI, shadow runtime, tools, banco, endpoints, auto-send, infra, n8n, vector base, embeddings, File Search ou planner.
+
+**Necessidade de teste em produção:** nenhuma nesta etapa; o avaliador não é integrado ao fluxo real.
+
+**Riscos restantes:** baseline agora expõe 5 falhas reais do interpreter estruturado local/validator principal que devem ser analisadas em etapa explícita de alinhamento local ou aceitas como limite atual antes de qualquer assist OpenAI.
+
+**Próxima etapa recomendada:** revisar a correção do P2 da 3.6C; depois escolher explicitamente entre corrigir/alinhar as 5 falhas de baseline ou iniciar 3.6D — OpenAI Interpreter Assist Gated em shadow. 3.6D não foi iniciada nesta correção.
+
+---
+
+## Etapa 3.6D — OpenAI Interpreter Assist Gated
+
+**Status:** Pendente.
+
+**O que faz:** roda OpenAI interpreter como assistente avaliado pelo validator local.
+
+**Fluxo:**
   
 ```text  
 local interpreter roda  
@@ -700,7 +787,7 @@ fluxo real continua local
   
 ---  
   
-## Etapa 3.6D — Vector Base Shadow  
+## Etapa 3.6E — Vector Base Shadow
   
 **Status:** Pendente.  
   
@@ -738,7 +825,7 @@ assentos/datas reais como fonte de verdade
   
 ---  
   
-## Etapa 3.6E — Vector-assisted Interpreter para UNKNOWN/baixa confiança  
+## Etapa 3.6F — Vector-assisted Interpreter para UNKNOWN/baixa confiança
   
 **Status:** Pendente.  
   
