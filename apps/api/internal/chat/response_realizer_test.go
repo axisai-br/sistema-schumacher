@@ -32,6 +32,8 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 		TemplatePublicSCTable,
 		TemplateUnsupportedCargo,
 		TemplateHumanHandoff,
+		TemplatePaymentOptionsInfo,
+		TemplatePayingPassengerInfo,
 		TemplateContextFallbackAvailabilityOption,
 		TemplateContextFallbackAvailabilityDate,
 		TemplateContextFallbackPassengerCount,
@@ -48,6 +50,24 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 			t.Fatalf("expected template %s to render", template)
 		}
 		assertNoEmptyTemplateArtifacts(t, reply)
+	}
+}
+
+func TestResponseRealizerPaymentInfoTemplates(t *testing.T) {
+	paymentReply, ok := realizeResponseTemplate(TemplatePaymentOptionsInfo)
+	if !ok || paymentReply != paymentOptionsInfoReply {
+		t.Fatalf("unexpected payment options info template: ok=%t reply=%q", ok, paymentReply)
+	}
+	if paymentReply != "O pagamento pode ser realizado de 2 formas: você pode pagar agora o valor integral, ou pagar agora apenas o sinal de R$ 250 por passageiro pagante e pagar o restante no embarque." {
+		t.Fatalf("payment options reply does not match expected production text: %q", paymentReply)
+	}
+
+	passengerReply, ok := realizeResponseTemplate(TemplatePayingPassengerInfo)
+	if !ok || passengerReply != payingPassengerInfoReply {
+		t.Fatalf("unexpected paying passenger info template: ok=%t reply=%q", ok, passengerReply)
+	}
+	if passengerReply != "Passageiro pagante é o passageiro maior de 5 anos." {
+		t.Fatalf("paying passenger reply does not match expected production text: %q", passengerReply)
 	}
 }
 
@@ -114,6 +134,44 @@ func TestApplyIntentDecisionContextualFallbackDoesNotMutateCanonicalState(t *tes
 			})
 			if !reflect.DeepEqual(after, before) {
 				t.Fatalf("contextual fallback must not mutate canonical_state\nbefore=%+v\nafter=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestApplyIntentDecisionInformationalTemplatesDoNotMutateCanonicalState(t *testing.T) {
+	before := CanonicalConversationState{
+		SessionID: "session-1",
+		Phase:     ConversationPhaseBooked,
+		Route: CanonicalRouteState{
+			Origin:              "Santa Ines/MA",
+			Destination:         "Videira/SC",
+			PackageName:         packageToSantaCatarina,
+			SelectedOptionIndex: 1,
+			TripID:              "trip-1",
+		},
+		Booking: CanonicalBookingState{BookingID: "booking-1"},
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: map[string]interface{}{
+				"package_name": packageToSantaCatarina,
+			},
+		},
+		AllowedNextActions: []string{string(IntentPaymentPreference), string(IntentPaymentCreate)},
+	}
+	templates := []ResponseTemplateName{
+		TemplatePaymentOptionsInfo,
+		TemplatePayingPassengerInfo,
+	}
+
+	for _, template := range templates {
+		t.Run(string(template), func(t *testing.T) {
+			after := applyIntentDecisionToCanonicalState(before, IntentDecision{
+				Intent:       IntentPaymentInfoQuestion,
+				Action:       "template",
+				TemplateName: template,
+			})
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("informational template must not mutate canonical_state\nbefore=%+v\nafter=%+v", before, after)
 			}
 		})
 	}
