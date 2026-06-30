@@ -383,7 +383,7 @@ func containsOperationalAutoSendClaimWithoutTool(text string) bool {
 		return false
 	}
 
-	if looksLikePublicSCTableReply(folded) {
+	if looksLikePublicSCTableReply(folded) || looksLikePaymentOptionsInfoReply(folded) {
 		return false
 	}
 
@@ -418,6 +418,11 @@ func containsOperationalAutoSendClaimWithoutTool(text string) bool {
 		return true
 	}
 	return false
+}
+
+func looksLikePaymentOptionsInfoReply(folded string) bool {
+	canonical := strings.Join(strings.Fields(foldChatText(paymentOptionsInfoReply)), " ")
+	return strings.Join(strings.Fields(folded), " ") == canonical
 }
 
 func mentionsSupportedCityForAutoSend(folded string, candidates map[string]string) bool {

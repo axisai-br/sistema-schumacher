@@ -128,6 +128,24 @@ Respostas curtas como "só o sinal", "apenas o sinal" e "o valor integral" tamb�
 Review P1 adicional corrigido localmente:
 Quando a última pergunta é integral/sinal, frases reais de status como "já paguei o sinal", "o pagamento do sinal caiu?", "já paguei integral" e "confirma se meu pagamento entrou?" vencem PAYMENT_PREFERENCE e roteiam para PAYMENT_STATUS_QUERY.
 ```
+
+Hotfix local concluído em 2026-06-30; validar em produção/homologação as variações reais:
+
+```text
+Hotfix H-2026-06-30B — "essa msm" e auto-send do pagamento informativo
+Entrada: "essa msm" após lista com uma opção
+Esperado: SELECT_AVAILABILITY_OPTION + ASK_PASSENGER_COUNT
+
+Entrada: "essa msm" após lista com múltiplas opções
+Esperado: CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selecionar opção 1
+
+Entrada: "dia 13/07, ai o pagamento faz logo ou só no dia mesmo?"
+Esperado: PAYMENT_OPTIONS_INFO + AUTO_SEND_ELIGIBLE, sem operational_claim_without_tool
+
+Review P2 corrigido localmente:
+PAYMENT_OPTIONS_INFO e PAYING_PASSENGER_INFO não viram ActivePromptPaymentPreference.
+Após PAYMENT_OPTIONS_INFO, "quero reservar", rota/cidade, data ou "como faço pra reservar" não caem em CONTEXT_FALLBACK_PAYMENT_PREFERENCE.
+```
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
 
@@ -239,7 +257,10 @@ fallbacks contextuais
 ```text  
 "como faço pra fazer uma reserva?" → ASK_RESERVATION_ROUTE_SC.
 "isso msm" após lista com uma opção → SELECT_AVAILABILITY_OPTION / ASK_PASSENGER_COUNT.
+"essa msm" após lista com uma opção → SELECT_AVAILABILITY_OPTION / ASK_PASSENGER_COUNT.
+"essa msm" após lista com múltiplas opções → CONTEXT_FALLBACK_AVAILABILITY_OPTION.
 "o pagamento faz logo ou só no dia mesmo?" → PAYMENT_OPTIONS_INFO.
+"dia 13/07, ai o pagamento faz logo ou só no dia mesmo?" → PAYMENT_OPTIONS_INFO / AUTO_SEND_ELIGIBLE.
 "o que é passageiro pagante?" → PAYING_PASSENGER_INFO.
 ```  
   
@@ -633,6 +654,81 @@ lista com uma opção → "isso msm" → ASK_PASSENGER_COUNT
 **Riscos restantes:** frases comerciais muito diferentes ainda podem cair em fallback/LLM; o corpus 3.6C agora registra casos informativos que o interpreter local não cobre, então não usar esse baseline como bloqueio do hotfix determinístico.
 
 **Próxima ação recomendada:** validar H-2026-06-29 e H-2026-06-30 em produção/homologação; retomar 3.6D somente após validação explícita.
+
+---
+
+## Hotfix H-2026-06-30B — "essa msm" e auto-send do PAYMENT_OPTIONS_INFO
+
+**Status:** Concluído localmente em 2026-06-30; P2 de review corrigido localmente; pendente validação em produção.
+
+**Motivo:** dois bugs reais observados em produção após os hotfixes anteriores:
+
+```text
+1. Cliente respondeu "essa msm" em lista com uma única opção e caiu em fallback de opção.
+2. Cliente perguntou "dia 13/07, ai o pagamento faz logo ou só no dia mesmo?"; o template PAYMENT_OPTIONS_INFO foi gerado, mas ficou como AUTOMATION_DRAFT por operational_claim_without_tool.
+```
+
+**O que mudou:**
+
+```text
+looksLikeContextualAvailabilitySelection reconhece "essa msm", "esse msm" e "esta msm" como confirmações contextuais fechadas
+essas confirmações selecionam opção 1 somente no caminho já protegido por optionCount == 1
+múltiplas opções + "essa msm"/"isso msm"/"sim"/"ok"/"certo" continuam em CONTEXT_FALLBACK_AVAILABILITY_OPTION e não selecionam opção 1
+PAYMENT_OPTIONS_INFO fica elegível para auto-send por comparação normalizada exata com paymentOptionsInfoReply
+textos dinâmicos com rota, data, horário, disponibilidade ou preço sem tool continuam bloqueados por operational_claim_without_tool
+review P2 corrigido: paymentOptionsInfoReply e payingPassengerInfoReply não são inferidos como ActivePromptPaymentPreference
+ASK_PAYMENT_CHOICE continua sendo inferido como ActivePromptPaymentPreference
+após PAYMENT_OPTIONS_INFO, próximos turnos de reserva/rota/data não caem no fallback de preferência de pagamento
+```
+
+**Arquivos alterados:**
+
+```text
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/agent.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/response_realizer_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**Corpus canônico:** não alterado. O evaluator 3.6C não mede auto-send, e o fixture atual de opção única já tem limitação conhecida para representar corretamente listas com uma única opção.
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*Payment.*Info|Test.*AutoSend|Test.*InterpreterCase'
+go test -count=1 ./internal/chat -run 'Test.*ActivePrompt|Test.*Payment.*Info|Test.*AutoSend|Test.*Availability.*Option|Test.*InterpreterCase'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P2 corrigido localmente. O texto fechado `PAYMENT_OPTIONS_INFO` continua auto-send eligible, mas deixa de virar prompt ativo de preferência de pagamento; `PAYING_PASSENGER_INFO` também permanece informativo. Prompts reais como `ASK_PAYMENT_CHOICE` continuam `ActivePromptPaymentPreference`. Diff local restrito ao hotfix. Não houve alteração em `Service.Reprocess`, OpenAI primary, OpenAI shadow validation da 3.6D, `interpreter_shadow.go`, vector base, embeddings, File Search, planner, banco, endpoints, infra, n8n, `booking_create`, `payment_create`, `payment_status` ou `document_extract`. A exceção de auto-send é estreita para o texto fechado `paymentOptionsInfoReply`.
+
+**Necessidade de teste em produção:** sim. Repetir o fluxo real:
+
+```text
+13/07
+essa msm
+dia 13/07, ai o pagamento faz logo ou só no dia mesmo?
+```
+
+Esperado:
+
+```text
+"essa msm" após lista com uma opção → ASK_PASSENGER_COUNT
+"dia 13/07..." → PAYMENT_OPTIONS_INFO com AUTO_SEND_ELIGIBLE
+lista com múltiplas opções + "essa msm" → fallback contextual, sem selecionar opção 1
+após PAYMENT_OPTIONS_INFO, "quero reservar"/rota/cidade/"13/07"/"como faço pra reservar" não caem em CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+```
+
+**Riscos restantes:** variações novas fora das frases fechadas ainda podem cair em fallback ou LLM; a exceção de auto-send depende do texto estático `paymentOptionsInfoReply`, então alteração futura nesse template deve manter os testes de política.
+
+**Próxima ação recomendada:** validar H-2026-06-30B em produção/homologação antes de retomar 3.6E ou qualquer promoção de interpretação OpenAI.
 
 ---
   
