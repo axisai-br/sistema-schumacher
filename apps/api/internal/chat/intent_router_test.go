@@ -92,7 +92,7 @@ func TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo(t *testing.T
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"essa mesmo", "essa mesma", "isso msm", "isso mesmo", "sim", "certo", "pode ser"} {
+	for _, text := range []string{"essa mesmo", "essa mesma", "essa msm", "esse msm", "esta msm", "isso msm", "isso mesmo", "sim", "certo", "pode ser"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
@@ -156,7 +156,7 @@ func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(
 	history := availabilityDateSelectionWithFiveOptionsHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "isso msm", "pode ser", "essa mesmo", "essa mesma", "pode ser essa", "cartao"} {
+	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "isso msm", "pode ser", "essa mesmo", "essa mesma", "essa msm", "esse msm", "esta msm", "pode ser essa", "cartao"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
@@ -193,6 +193,47 @@ func TestIntentRouterPaymentInfoQuestionsUseClosedTemplate(t *testing.T) {
 			}
 			if got.TemplateName != TemplatePaymentOptionsInfo || got.Action != "template" {
 				t.Fatalf("expected payment options info template, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPaymentInfoReplyDoesNotBecomePaymentPreferencePrompt(t *testing.T) {
+	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		ID:               "payment-info",
+		Direction:        "OUTBOUND",
+		Body:             paymentOptionsInfoReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"template_name": string(TemplatePaymentOptionsInfo),
+			"intent":        string(IntentPaymentInfoQuestion),
+		},
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseDiscovery}
+
+	activePrompt := InferActivePromptContext(history, state)
+	if activePrompt.Kind != ActivePromptUnknown {
+		t.Fatalf("payment info reply must not become active prompt, got %+v", activePrompt)
+	}
+
+	for _, text := range []string{
+		"quero reservar",
+		"quero ir de Videira para Santa Inês",
+		"13/07",
+		"como faço pra reservar",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+
+			if got.TemplateName == TemplateContextFallbackPaymentPreference {
+				t.Fatalf("payment info reply must not force payment preference fallback for %q: %+v", text, got)
+			}
+			if text == "quero reservar" || text == "como faço pra reservar" {
+				if got.TemplateName != TemplateAskReservationRouteSC {
+					t.Fatalf("expected reservation start to remain available for %q, got %+v", text, got)
+				}
 			}
 		})
 	}

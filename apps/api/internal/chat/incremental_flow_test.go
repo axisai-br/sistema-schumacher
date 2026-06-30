@@ -81,7 +81,16 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 	}
 }
 
-func TestSelectAvailabilityOptionContextualIssoMsmAsksPassengerCount(t *testing.T) {
+func TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount(t *testing.T) {
+	for _, text := range []string{"isso msm", "essa msm"} {
+		t.Run(text, func(t *testing.T) {
+			assertContextualAvailabilitySelectionAsksPassengerCount(t, text)
+		})
+	}
+}
+
+func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text string) {
+	t.Helper()
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -150,7 +159,7 @@ func TestSelectAvailabilityOptionContextualIssoMsmAsksPassengerCount(t *testing.
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-contextual-availability-selection",
 			IdempotencyKey:    "idem-contextual-availability-selection",
-			Body:              "isso msm",
+			Body:              text,
 		},
 	})
 	if err != nil {
@@ -1325,7 +1334,7 @@ func TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool(t *testin
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-payment-info-before-booking",
 			IdempotencyKey:    "idem-payment-info-before-booking",
-			Body:              "o pagamento faz logo ou só no dia mesmo?",
+			Body:              "dia 13/07, ai o pagamento faz logo ou só no dia mesmo?",
 		},
 	})
 	if err != nil {
@@ -1353,6 +1362,12 @@ func TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool(t *testin
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentPaymentInfoQuestion) {
 		t.Fatalf("expected payment info intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+	}
+	if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusEligible {
+		t.Fatalf("expected payment info draft to be auto-send eligible, got %s reasons=%v", got, readDraftAutoSendReasons(*out.Draft))
+	}
+	if reasons := readDraftAutoSendReasons(*out.Draft); len(reasons) != 0 {
+		t.Fatalf("expected no auto-send reasons for payment info template, got %+v", reasons)
 	}
 }
 

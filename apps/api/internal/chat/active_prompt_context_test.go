@@ -54,8 +54,18 @@ func TestInferActivePromptContextKindsFromLatestReliablePrompt(t *testing.T) {
 		},
 		{
 			name: "payment preference",
-			body: "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?",
+			body: askPaymentChoiceReply,
 			want: ActivePromptPaymentPreference,
+		},
+		{
+			name: "payment options info is not a prompt",
+			body: paymentOptionsInfoReply,
+			want: ActivePromptUnknown,
+		},
+		{
+			name: "paying passenger info is not a prompt",
+			body: payingPassengerInfoReply,
+			want: ActivePromptUnknown,
 		},
 		{
 			name: "payer cpf",

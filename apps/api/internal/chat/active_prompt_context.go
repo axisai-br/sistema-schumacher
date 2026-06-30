@@ -146,9 +146,22 @@ func activePromptLooksLikePayerCPF(folded string) bool {
 }
 
 func activePromptLooksLikePaymentPreference(folded string) bool {
+	if activePromptLooksLikeInformationalPaymentReply(folded) {
+		return false
+	}
 	return looksLikePaymentPreferencePrompt(folded) ||
 		(strings.Contains(folded, "integral") && strings.Contains(folded, "sinal")) ||
 		(strings.Contains(folded, "pagar tudo") && strings.Contains(folded, "entrada"))
+}
+
+func activePromptLooksLikeInformationalPaymentReply(folded string) bool {
+	switch strings.Join(strings.Fields(folded), " ") {
+	case activePromptFolded(paymentOptionsInfoReply),
+		activePromptFolded(payingPassengerInfoReply):
+		return true
+	default:
+		return false
+	}
 }
 
 func activePromptLooksLikeDocumentConfirmation(folded string) bool {
