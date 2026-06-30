@@ -136,6 +136,15 @@ Etapa 3.6C — Avaliação local do corpus canônico
 Baseline local atual após H-2026-06-30: 30 casos avaliados; 22 passaram; 8 falharam; 0 pulados
 Produção não mudou
 ```
+
+Etapa 3.6D executada localmente em 2026-06-30; produção continua sem promoção da OpenAI para decisão real.
+
+```text
+OpenAI interpreter continua shadow
+ValidateStructuredInterpretation avalia a proposta OpenAI em shadow
+Payload structured_interpreter_shadow registra openai_validation
+Runtime real, tools, canonical_state, auto-send, planner e vector base não foram promovidos/alterados
+```
   
 ---  
   
@@ -895,13 +904,13 @@ git diff --check
 
 **Riscos restantes:** baseline agora expõe 5 falhas reais do interpreter estruturado local/validator principal que devem ser analisadas em etapa explícita de alinhamento local ou aceitas como limite atual antes de qualquer assist OpenAI.
 
-**Próxima etapa recomendada:** revisar a correção do P2 da 3.6C; depois escolher explicitamente entre corrigir/alinhar as 5 falhas de baseline ou iniciar 3.6D — OpenAI Interpreter Assist Gated em shadow. 3.6D não foi iniciada nesta correção.
+**Próxima etapa recomendada:** revisar a 3.6D executada localmente; depois escolher explicitamente entre etapa intermediária de relatório/observabilidade da validação OpenAI em shadow, alinhamento das falhas de baseline locais, ou 3.6E. Não iniciar 3.6E/3.7 sem pedido explícito.
 
 ---
 
 ## Etapa 3.6D — OpenAI Interpreter Assist Gated
 
-**Status:** Pendente.
+**Status:** Concluída localmente em 2026-06-30; em review.
 
 **O que faz:** roda OpenAI interpreter como assistente avaliado pelo validator local.
 
@@ -916,6 +925,78 @@ fluxo real continua local
 ```  
   
 **Objetivo:** medir quando o LLM acerta onde o local falha, sem alterar produção.  
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/interpreter_shadow.go
+apps/api/internal/chat/interpreter_shadow_test.go
+apps/api/internal/chat/handler_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+RunStructuredInterpreterShadow agora registra um bloco openai_validation
+propostas OpenAI válidas passam por ValidateStructuredInterpretation usando currentTurn, history, canonical state e ActivePromptContext inferido/fornecido
+resultado accepted/rejected/skipped fica apenas no payload de shadow
+schema estrutural inválido, OpenAI disabled, shadow disabled, erro OpenAI sem proposta parseável e resultado ausente viram validation skipped
+output OpenAI parseável, com enums válidos, mas rejeitado semanticamente pelo runner passa pelo validator local e vira accepted/rejected
+decisão real do bot continua vindo do fluxo atual
+resultado da validação OpenAI não aciona tool, não escolhe template real e não altera canonical_state
+```
+
+**Campos adicionados ao payload `structured_interpreter_shadow`:**
+
+```json
+{
+  "openai_validation": {
+    "status": "accepted|rejected|skipped",
+    "accepted": true,
+    "reject_reason": "",
+    "fallback_template": ""
+  }
+}
+```
+
+**Casos cobertos:**
+
+```text
+accepted: GREETING em saudação
+accepted: AVAILABILITY_SEARCH / NEW_REQUEST para "como faço pra fazer uma reserva?"
+accepted: PAYMENT_PREFERENCE sinal após pergunta integral/sinal
+rejected: PAYMENT_PREFERENCE pix após pergunta integral/sinal, com CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+rejected: SELECT_AVAILABILITY_OPTION para "ok" sem active prompt confiável
+rejected: AVAILABILITY_SEARCH normal para destino Bahia, com UNSUPPORTED_PACKAGE
+rejected: PASSENGER_DOCUMENTS_PROVIDED para CPF inválido em documentos
+rejected no caminho real do runner: safety.executes_tool=true
+rejected no caminho real do runner: PAYMENT_PREFERENCE pix após pergunta integral/sinal
+rejected no caminho real do runner: SELECT_AVAILABILITY_OPTION sem lista/contexto confiável
+skipped: shadow disabled
+skipped: OpenAI disabled
+skipped no caminho real do runner: schema estrutural inválido
+skipped: erro OpenAI
+skipped: resultado OpenAI ausente
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Shadow.*Validation|Test.*OpenAI.*Validation|Test.*ValidateStructuredInterpretation'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P2 corrigido. Quando o runner OpenAI retorna `ErrOpenAIStructuredInterpreterInvalidOutput` com `result.Validation.Interpretation` parseável e enums válidos, o shadow agora valida essa proposta com `ValidateStructuredInterpretation` e registra `openai_validation.status=rejected` com `reject_reason`/`fallback_template` quando aplicável. Schema estrutural inválido continua `skipped/openai_schema_invalid`. Diff local revisado; alterações restritas à etapa 3.6D. Não houve promoção para OpenAI primary. Não houve alteração em decisão real do bot, execução de tools, `booking_create`, `payment_create`, `document_extract`, `booking_cancel`, endpoints, banco/migrations, auto-send, infra, n8n, vector base, embeddings, File Search, planner ou etapas 3.6E/3.7.
+
+**Necessidade de teste em produção:** nenhuma para decisão operacional, porque a etapa só adiciona observabilidade no payload de shadow. Se shadow estiver habilitado em homologação/produção, validar apenas que `structured_interpreter_shadow.openai_validation` aparece sem alterar resposta, tools ou auto-send.
+
+**Riscos restantes:** o relatório agregado atual ainda não expõe métricas específicas de `openai_validation`; se a próxima decisão depender de taxa de accepted/rejected por intent, criar etapa explícita de observabilidade antes de qualquer uso operacional.
+
+**Próxima etapa recomendada:** revisar esta 3.6D; depois decidir explicitamente entre relatório/observabilidade da validação OpenAI em shadow, alinhamento local das falhas de baseline, ou 3.6E. Não iniciar OpenAI primary, vector base, planner, 3.6E ou 3.7 sem novo pedido explícito.
   
 ---  
   
