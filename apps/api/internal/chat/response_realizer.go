@@ -30,6 +30,8 @@ const (
 	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
 	TemplatePaymentCreate         ResponseTemplateName = "PAYMENT_CREATE"
 	TemplatePaymentMethods        ResponseTemplateName = "PAYMENT_METHODS"
+	TemplatePaymentOptionsInfo    ResponseTemplateName = "PAYMENT_OPTIONS_INFO"
+	TemplatePayingPassengerInfo   ResponseTemplateName = "PAYING_PASSENGER_INFO"
 
 	TemplateContextFallbackAvailabilityOption   ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_OPTION"
 	TemplateContextFallbackAvailabilityDate     ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_DATE"
@@ -47,6 +49,8 @@ const (
 	askChildUnder5Reply         = "Tem crianca de 5 anos ou menos viajando?"
 	askReservationRouteSCReply  = "Para fazer a reserva, primeiro preciso saber o trecho da viagem. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
 	askPaymentChoiceReply       = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
+	paymentOptionsInfoReply     = "O pagamento pode ser realizado de 2 formas: você pode pagar agora o valor integral, ou pagar agora apenas o sinal de R$ 250 por passageiro pagante e pagar o restante no embarque."
+	payingPassengerInfoReply    = "Passageiro pagante é o passageiro maior de 5 anos."
 	paymentMethodsSupportReply  = "Por aqui consigo seguir apenas com PIX. Para verificar outras formas de pagamento, fale com o suporte: 55 49 99986-2222."
 	publicSCTableReply          = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
 	unsupportedPDFDocumentReply = "Não consigo ler PDF com segurança por aqui. Por favor, envie uma foto nítida do documento ou escreva o nome completo e CPF/RG do passageiro."
@@ -84,6 +88,10 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return "Vou te encaminhar para um atendente continuar por aqui.", true
 	case TemplatePaymentMethods:
 		return paymentMethodsSupportReply, true
+	case TemplatePaymentOptionsInfo:
+		return paymentOptionsInfoReply, true
+	case TemplatePayingPassengerInfo:
+		return payingPassengerInfoReply, true
 	case TemplateContextFallbackAvailabilityOption:
 		return "Não consegui identificar qual opção você escolheu. Responda com o número da opção, por exemplo: 1.", true
 	case TemplateContextFallbackAvailabilityDate:
@@ -316,6 +324,16 @@ func isContextualFallbackTemplate(name ResponseTemplateName) bool {
 	}
 }
 
+func isInformationalTemplate(name ResponseTemplateName) bool {
+	switch name {
+	case TemplatePaymentOptionsInfo,
+		TemplatePayingPassengerInfo:
+		return true
+	default:
+		return false
+	}
+}
+
 func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, context agentToolContext) bool {
 	if decision.Intent != IntentAvailabilitySearch || decision.Action != "tool" || context.Availability == nil {
 		return false
@@ -338,7 +356,7 @@ func hasCanonicalSelectedTrip(state CanonicalConversationState, selectedIndex in
 }
 
 func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decision IntentDecision) CanonicalConversationState {
-	if isContextualFallbackTemplate(decision.TemplateName) {
+	if isContextualFallbackTemplate(decision.TemplateName) || isInformationalTemplate(decision.TemplateName) {
 		return state
 	}
 	if decision.AvailabilityInput != nil {

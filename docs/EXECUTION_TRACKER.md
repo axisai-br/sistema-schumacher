@@ -7,7 +7,7 @@ ____
 > 
 > Objetivo: manter visível **em que etapa o projeto está**, **qual o próximo slice**, **quais hotfixes interferem no plano** e **quais regras não podem ser quebradas**. Nada de deixar o projeto virar aquele condomínio de decisões perdidas que todo backend eventualmente vira.  
   
----  
+---
   
 ## Como usar este arquivo com o Codex  
   
@@ -106,12 +106,34 @@ Entrada: "como faço pra fazer uma reserva?"
 Problema corrigido localmente: não cai mais em UNSUPPORTED_PACKAGE
 Esperado: ASK_RESERVATION_ROUTE_SC  
 ```  
+
+Hotfix local concluído em 2026-06-30; validar em produção/homologação as variações reais:
+
+```text
+Hotfix H-2026-06-30 — opção única e pagamento informativo
+Entrada: "isso msm" após lista com uma opção
+Esperado: SELECT_AVAILABILITY_OPTION + ASK_PASSENGER_COUNT
+
+Entrada: "o pagamento faz logo ou só no dia mesmo?"
+Esperado: PAYMENT_OPTIONS_INFO, sem payment_status
+
+Entrada: "o que é passageiro pagante?"
+Esperado: PAYING_PASSENGER_INFO
+
+Review P1/P2 anteriores corrigidos localmente:
+Quando a última pergunta é integral/sinal, respostas como "quero pagar o sinal", "vou pagar só o sinal", "sinal por passageiro pagante", "quero pagar integral" e "vou pagar tudo agora" preservam PAYMENT_PREFERENCE e avançam para payment_create.
+
+Respostas curtas como "só o sinal", "apenas o sinal" e "o valor integral" também preservam PAYMENT_PREFERENCE no prompt ativo de integral/sinal.
+
+Review P1 adicional corrigido localmente:
+Quando a última pergunta é integral/sinal, frases reais de status como "já paguei o sinal", "o pagamento do sinal caiu?", "já paguei integral" e "confirma se meu pagamento entrou?" vencem PAYMENT_PREFERENCE e roteiam para PAYMENT_STATUS_QUERY.
+```
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
 
 ```text
 Etapa 3.6C — Avaliação local do corpus canônico
-Baseline local: 27 casos avaliados; 22 passaram; 5 falharam; 0 pulados
+Baseline local atual após H-2026-06-30: 30 casos avaliados; 22 passaram; 8 falharam; 0 pulados
 Produção não mudou
 ```
   
@@ -207,6 +229,9 @@ fallbacks contextuais
   
 ```text  
 "como faço pra fazer uma reserva?" → ASK_RESERVATION_ROUTE_SC.
+"isso msm" após lista com uma opção → SELECT_AVAILABILITY_OPTION / ASK_PASSENGER_COUNT.
+"o pagamento faz logo ou só no dia mesmo?" → PAYMENT_OPTIONS_INFO.
+"o que é passageiro pagante?" → PAYING_PASSENGER_INFO.
 ```  
   
 **Objetivo:** deixar o fluxo real estável antes de aumentar autonomia com LLM.  
@@ -424,7 +449,7 @@ Cliente: pix
   
 ---  
   
-## Hotfix H-2026-06-29 — Reservation-help variant  
+## Hotfix H-2026-06-29 — Reservation-help variant
   
 **Status:** Concluído localmente em 2026-06-29; pendente validação em produção.
   
@@ -497,6 +522,110 @@ git diff --check
 **Objetivo:** corrigir variação textual real antes de iniciar a etapa 3.6A.  
   
 ---  
+
+## Hotfix H-2026-06-30 — Seleção de opção única e pagamento informativo
+
+**Status:** Concluído localmente em 2026-06-30; pendente validação em produção.
+
+**Motivo:** dois bugs reais de produção antes da etapa 3.6D:
+
+```text
+1. Cliente responde "isso msm" para lista com uma única opção e recebia fallback de opção.
+2. Cliente pergunta "o pagamento faz logo ou só no dia mesmo?" e a dúvida comercial podia virar PAYMENT_STATUS_QUERY.
+```
+
+**O que mudou:**
+
+```text
+confirmações contextuais como "isso msm", "isso mesmo", "sim", "certo" e "pode ser" selecionam opção 1 somente quando há exatamente uma opção
+múltiplas opções + "ok/sim/certo/isso mesmo/isso msm" continuam em fallback contextual e não selecionam opção 1
+criado template PAYMENT_OPTIONS_INFO com explicação fixa de integral/sinal
+criado template PAYING_PASSENGER_INFO com definição fixa de passageiro pagante
+dúvidas comerciais de pagamento roteam para template fechado sem cair no payment_status genérico
+consultas reais de status como "paguei", "já paguei o sinal", "o pagamento do sinal caiu?", "já paguei integral", "confirma se meu pagamento entrou?", "pagamento aprovado?", "qual o status do pagamento?" e "já caiu?" continuam PAYMENT_STATUS_QUERY
+review P1 anterior corrigido: respostas afirmativas ao prompt ativo de integral/sinal são priorizadas antes dos templates PAYMENT_OPTIONS_INFO/PAYING_PASSENGER_INFO
+review P2 corrigido: respostas curtas como "só o sinal", "apenas o sinal" e "o valor integral" também viram PAYMENT_PREFERENCE antes dos templates informativos
+review P1 adicional corrigido: status real de pagamento vence PAYMENT_PREFERENCE durante ActivePromptPaymentPreference, mesmo mencionando "sinal" ou "integral"
+perguntas reais no prompt ativo, como "como funciona o pagamento?", "paga agora ou no embarque?" e "o que é passageiro pagante?", continuam recebendo templates informativos
+templates informativos não alteram canonical_state
+```
+
+**Arquivos alterados:**
+
+```text
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/response_realizer_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/chat_flow_guardrails_test.go
+apps/api/internal/chat/testdata/interpreter_cases.jsonl
+docs/EXECUTION_TRACKER.md
+```
+
+**Observação de escopo:** `chat_flow_guardrails_test.go` foi ajustado apenas para remover a expectativa antiga de `PAYMENT_METHODS` em `"quais formas de pagamento?"`, porque o plano do hotfix passou essa frase para `PAYMENT_OPTIONS_INFO`. Não houve alteração em `Service.Reprocess`, OpenAI, shadow runtime, validator, tools, `payment_create`, `payment_status` executor, `booking_create`, banco, endpoints, auto-send, infra, n8n, vector base, planner ou 3.6D.
+
+**Corpus canônico:**
+
+```text
+adicionados availability_option_single_isso_msm
+adicionados payment_info_now_or_boarding
+adicionados paying_passenger_definition
+baseline local após novos casos: 30 total; 22 passaram; 8 falharam; 0 pulados
+as novas falhas de payment_info/paying_passenger são esperadas no evaluator 3.6C porque o hotfix é no roteador determinístico, não no interpreter local
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*Payment.*Info|Test.*PayingPassenger|Test.*InterpreterCase'
+go test -count=1 ./internal/chat -run 'TestGuardrailPaymentAmountChoiceStillAllowsPaymentCreate'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+go test -count=1 ./internal/chat -run 'TestInterpreterCaseEvaluationLoadsAndEvaluatesCorpus' -v
+git diff --check
+```
+
+Após correção do review P2, executados novamente:
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*Payment.*Info|Test.*PayingPassenger|Test.*InterpreterCase'
+go test -count=1 ./internal/chat -run 'TestGuardrailPaymentAmountChoiceStillAllowsPaymentCreate'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+Após correção do review P1 adicional de status vs preferência, executados novamente:
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Payment.*Info|Test.*PayingPassenger|Test.*PaymentPreference|Test.*PaymentStatus|Test.*Availability.*Option|Test.*InterpreterCase'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P1/P2 anteriores e P1 adicional corrigidos em 2026-06-30. O roteamento agora prioriza frases reais de status antes da resposta ao `ActivePromptPaymentPreference`, e `detectActivePromptPaymentPreferenceReply` também rejeita essas frases como preferência. Respostas diretas como "só o sinal", "apenas o sinal", "o valor integral", "quero pagar o sinal" e "quero pagar integral" continuam `PAYMENT_PREFERENCE`; perguntas comerciais reais continuam em templates informativos. Diff local revisado; alterações restritas ao hotfix. Múltiplas opções continuam protegidas contra seleção automática; status real de pagamento continua `PAYMENT_STATUS_QUERY`; dúvidas comerciais usam template fechado e não chamam tool de payment_status no fluxo testado antes de reserva.
+
+**Necessidade de teste em produção:** sim. Validar em produção/homologação:
+
+```text
+lista com uma opção → "isso msm" → ASK_PASSENGER_COUNT
+"o pagamento faz logo ou só no dia mesmo?" → PAYMENT_OPTIONS_INFO
+"o que é passageiro pagante?" → PAYING_PASSENGER_INFO
+"sinal"/"só o sinal"/"apenas o sinal"/"quero pagar o sinal"/"vou pagar só o sinal"/"sinal por passageiro pagante" após pergunta integral/sinal → PAYMENT_PREFERENCE + payment_create
+"integral"/"o valor integral"/"quero pagar integral"/"vou pagar tudo agora" após pergunta integral/sinal → PAYMENT_PREFERENCE + payment_create
+"paguei"/"já paguei o sinal"/"o pagamento do sinal caiu?"/"já paguei integral"/"confirma se meu pagamento entrou?"/"pagamento aprovado?"/"já caiu?" continuam fluxo de status real
+```
+
+**Riscos restantes:** frases comerciais muito diferentes ainda podem cair em fallback/LLM; o corpus 3.6C agora registra casos informativos que o interpreter local não cobre, então não usar esse baseline como bloqueio do hotfix determinístico.
+
+**Próxima ação recomendada:** validar H-2026-06-29 e H-2026-06-30 em produção/homologação; retomar 3.6D somente após validação explícita.
+
+---
   
 # Próxima fase: LLM-first gated interpretation  
   
@@ -715,12 +844,12 @@ casos criticos do plano ficam protegidos por testes especificos
 nao altera runtime, Service.Reprocess, OpenAI, shadow runtime, tools, banco, endpoints, auto-send, infra, n8n, vector base ou planner
 ```
 
-**Baseline local:**
+**Baseline local atual após H-2026-06-30:**
 
 ```text
-Total: 27
+Total: 30
 Passed: 22
-Failed: 5
+Failed: 8
 Skipped: 0
 ```
 
@@ -740,7 +869,10 @@ passenger_documents_002 — "12345678900" em documentos aponta CONTEXT_FALLBACK_
 ```text
 unsupported_package_003 — interpreter estruturado local retorna UNKNOWN para "quero passagem para Bahia"; unsupported_package fica coberto pelo roteador deterministico, nao pelo interpreter local
 availability_option_002 — interpreter seleciona "essa mesmo" com uma opção, mas validator rejeita como CONTEXT_FALLBACK_AVAILABILITY_OPTION
+availability_option_single_isso_msm — caso canônico do hotfix fica registrado, mas o fixture atual do evaluator infere lista múltipla para essa frase e não representa a condição real de opção única
 lap_child_assignment_001 — interpreter local ainda não interpreta "10" como LAP_CHILD_ASSIGNMENT_ANSWER neste fixture
+payment_info_now_or_boarding — dúvida comercial de pagamento é coberta pelo roteador determinístico/template, não pelo interpreter local 3.6C
+paying_passenger_definition — definição comercial é coberta pelo roteador determinístico/template, não pelo interpreter local 3.6C
 payer_cpf_001 — interpreter local retorna UNKNOWN para CPF valido em PAYER_CPF; caso nao passa mais por proposta sintetica baseada em expected_intent
 human_support_001 — HUMAN_SUPPORT é intenção do roteador determinístico, não do interpreter estruturado local
 ```
@@ -1082,8 +1214,20 @@ document_extract
 **Testes executados:** `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
   
 ---  
-  
-# Regra final de arquitetura  
+
+## H-009 — Status real no prompt integral/sinal
+
+**Status:** Corrigido localmente em 2026-06-30; pendente validação em produção.
+
+**Sintoma:** durante `ActivePromptPaymentPreference`, frases como "já paguei o sinal" ou "o pagamento do sinal caiu?" podiam ser aceitas como `PAYMENT_PREFERENCE` porque mencionavam "sinal" ou "integral".
+
+**Correção aplicada:** `PAYMENT_STATUS_QUERY` passou a vencer a resposta de preferência, e o helper de preferência ativa rejeita frases de status antes de aceitar `sinal`/`integral`.
+
+**Testes executados:** `go test -count=1 ./internal/chat -run 'Test.*Payment.*Info|Test.*PayingPassenger|Test.*PaymentPreference|Test.*PaymentStatus|Test.*Availability.*Option|Test.*InterpreterCase'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
+
+---
+
+# Regra final de arquitetura
   
 ```text  
 LLM pode propor entendimento.  

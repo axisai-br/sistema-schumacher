@@ -81,7 +81,7 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 	}
 }
 
-func TestSelectAvailabilityOptionContextualEssaMesmoAsksPassengerCount(t *testing.T) {
+func TestSelectAvailabilityOptionContextualIssoMsmAsksPassengerCount(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -150,7 +150,7 @@ func TestSelectAvailabilityOptionContextualEssaMesmoAsksPassengerCount(t *testin
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-contextual-availability-selection",
 			IdempotencyKey:    "idem-contextual-availability-selection",
-			Body:              "essa mesmo",
+			Body:              "isso msm",
 		},
 	})
 	if err != nil {
@@ -1310,6 +1310,49 @@ func TestPaymentCannotStartWithoutBooking(t *testing.T) {
 	input, ok := parsePaymentCreateInput(Session{}, nil, "manda o pix", nil, nil)
 	if ok {
 		t.Fatalf("expected payment create to be blocked without booking, got %+v", input)
+	}
+}
+
+func TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, paymentSearcher)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511999999999",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-payment-info-before-booking",
+			IdempotencyKey:    "idem-payment-info-before-booking",
+			Body:              "o pagamento faz logo ou só no dia mesmo?",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest payment info question: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess payment info question: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected payment info template to avoid LLM, got %d calls", runner.calls)
+	}
+	if paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no payment status tool, calls=%d tool_calls=%+v", paymentSearcher.calls, out.ToolCalls)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != paymentOptionsInfoReply {
+		t.Fatalf("expected payment info reply %q, got %q", paymentOptionsInfoReply, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
+		t.Fatalf("expected template %s, got %q payload=%+v", TemplatePaymentOptionsInfo, got, out.Draft.NormalizedPayload)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentPaymentInfoQuestion) {
+		t.Fatalf("expected payment info intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
 	}
 }
 

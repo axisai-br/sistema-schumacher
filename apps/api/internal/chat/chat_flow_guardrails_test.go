@@ -572,7 +572,6 @@ func TestGuardrailExplicitAgendarRouteUsesAvailabilitySearch(t *testing.T) {
 
 func TestGuardrailPaymentMethodQuestionsUsePixSupportTemplate(t *testing.T) {
 	for _, body := range []string{
-		"quais formas de pagamento?",
 		"aceita cartão?",
 		"posso parcelar?",
 	} {
@@ -663,14 +662,23 @@ func TestGuardrailPixPaymentStillAllowsPaymentCreate(t *testing.T) {
 
 func TestGuardrailPaymentAmountChoiceStillAllowsPaymentCreate(t *testing.T) {
 	tests := []struct {
+		name            string
 		body            string
 		wantPaymentType string
 	}{
-		{body: "integral", wantPaymentType: "integral"},
-		{body: "sinal", wantPaymentType: "sinal"},
+		{name: "integral", body: "integral", wantPaymentType: "integral"},
+		{name: "sinal", body: "sinal", wantPaymentType: "sinal"},
+		{name: "so_o_sinal", body: "só o sinal", wantPaymentType: "sinal"},
+		{name: "apenas_o_sinal", body: "apenas o sinal", wantPaymentType: "sinal"},
+		{name: "quero_pagar_o_sinal", body: "quero pagar o sinal", wantPaymentType: "sinal"},
+		{name: "vou_pagar_so_o_sinal", body: "vou pagar só o sinal", wantPaymentType: "sinal"},
+		{name: "sinal_por_passageiro_pagante", body: "sinal por passageiro pagante", wantPaymentType: "sinal"},
+		{name: "o_valor_integral", body: "o valor integral", wantPaymentType: "integral"},
+		{name: "quero_pagar_integral", body: "quero pagar integral", wantPaymentType: "integral"},
+		{name: "vou_pagar_tudo_agora", body: "vou pagar tudo agora", wantPaymentType: "integral"},
 	}
 	for _, tc := range tests {
-		t.Run(tc.body, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			store := newFakeStore()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			paymentCreator := &fakePaymentCreator{
@@ -691,8 +699,8 @@ func TestGuardrailPaymentAmountChoiceStillAllowsPaymentCreate(t *testing.T) {
 				ContactKey: session.ContactKey,
 				Message: IngestMessagePayload{
 					Direction:         "INBOUND",
-					ProviderMessageID: "msg-payment-amount-" + tc.body,
-					IdempotencyKey:    "idem-payment-amount-" + tc.body,
+					ProviderMessageID: "msg-payment-amount-" + tc.name,
+					IdempotencyKey:    "idem-payment-amount-" + tc.name,
 					Body:              tc.body,
 				},
 			}); err != nil {

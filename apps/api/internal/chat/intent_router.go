@@ -8,23 +8,25 @@ import (
 type Intent string
 
 const (
-	IntentUnknown                    Intent = "UNKNOWN"
-	IntentAvailabilitySearch         Intent = "AVAILABILITY_SEARCH"
-	IntentSelectAvailabilityOption   Intent = "SELECT_AVAILABILITY_OPTION"
-	IntentPassengerCountReply        Intent = "PASSENGER_COUNT_REPLY"
-	IntentPassengerDocumentsProvided Intent = "PASSENGER_DOCUMENTS_PROVIDED"
-	IntentLapChildAssignmentAnswer   Intent = "LAP_CHILD_ASSIGNMENT_ANSWER"
-	IntentDocumentConfirmation       Intent = "DOCUMENT_CONFIRMATION"
-	IntentBookingCreateConfirmation  Intent = "BOOKING_CREATE_CONFIRMATION"
-	IntentPaymentPreference          Intent = "PAYMENT_PREFERENCE"
-	IntentPaymentMethodQuestion      Intent = "PAYMENT_METHOD_QUESTION"
-	IntentPaymentStatusQuery         Intent = "PAYMENT_STATUS_QUERY"
-	IntentPaymentCreate              Intent = "PAYMENT_CREATE"
-	IntentBookingCancel              Intent = "BOOKING_CANCEL"
-	IntentReschedule                 Intent = "RESCHEDULE"
-	IntentUnsupportedCargo           Intent = "UNSUPPORTED_CARGO"
-	IntentUnsupportedPackage         Intent = "UNSUPPORTED_PACKAGE"
-	IntentHumanSupport               Intent = "HUMAN_SUPPORT"
+	IntentUnknown                     Intent = "UNKNOWN"
+	IntentAvailabilitySearch          Intent = "AVAILABILITY_SEARCH"
+	IntentSelectAvailabilityOption    Intent = "SELECT_AVAILABILITY_OPTION"
+	IntentPassengerCountReply         Intent = "PASSENGER_COUNT_REPLY"
+	IntentPassengerDocumentsProvided  Intent = "PASSENGER_DOCUMENTS_PROVIDED"
+	IntentLapChildAssignmentAnswer    Intent = "LAP_CHILD_ASSIGNMENT_ANSWER"
+	IntentDocumentConfirmation        Intent = "DOCUMENT_CONFIRMATION"
+	IntentBookingCreateConfirmation   Intent = "BOOKING_CREATE_CONFIRMATION"
+	IntentPaymentPreference           Intent = "PAYMENT_PREFERENCE"
+	IntentPaymentInfoQuestion         Intent = "PAYMENT_INFO_QUESTION"
+	IntentPaymentMethodQuestion       Intent = "PAYMENT_METHOD_QUESTION"
+	IntentPayingPassengerInfoQuestion Intent = "PAYING_PASSENGER_INFO_QUESTION"
+	IntentPaymentStatusQuery          Intent = "PAYMENT_STATUS_QUERY"
+	IntentPaymentCreate               Intent = "PAYMENT_CREATE"
+	IntentBookingCancel               Intent = "BOOKING_CANCEL"
+	IntentReschedule                  Intent = "RESCHEDULE"
+	IntentUnsupportedCargo            Intent = "UNSUPPORTED_CARGO"
+	IntentUnsupportedPackage          Intent = "UNSUPPORTED_PACKAGE"
+	IntentHumanSupport                Intent = "HUMAN_SUPPORT"
 )
 
 type IntentDecision struct {
@@ -72,6 +74,20 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 	}
 	if looksLikeBookingCancelIntent(body) {
 		return IntentDecision{Intent: IntentBookingCancel, Source: "deterministic"}
+	}
+	if looksLikePaymentStatusInfoQuestion(folded) {
+		return IntentDecision{Intent: IntentPaymentStatusQuery, Source: "deterministic_payment_status_query"}
+	}
+	if activePrompt.Kind == ActivePromptPaymentPreference {
+		if decision, ok := routeActivePromptAnswer(activePrompt, history, body, folded, state, observedAt); ok {
+			return decision
+		}
+	}
+	if looksLikePaymentOptionsInfoQuestion(folded) {
+		return IntentDecision{Intent: IntentPaymentInfoQuestion, Source: "deterministic_payment_options_info", TemplateName: TemplatePaymentOptionsInfo, Action: "template"}
+	}
+	if looksLikePayingPassengerInfoQuestion(folded) {
+		return IntentDecision{Intent: IntentPayingPassengerInfoQuestion, Source: "deterministic_paying_passenger_info", TemplateName: TemplatePayingPassengerInfo, Action: "template"}
 	}
 	if activePrompt.Kind == ActivePromptPaymentPreference &&
 		looksLikePixOnlyPaymentReply(folded) &&
@@ -279,7 +295,7 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 			return IntentDecision{Intent: IntentDocumentConfirmation, Source: "deterministic_active_prompt_document_confirmation"}, true
 		}
 	case ActivePromptPaymentPreference:
-		if preference := detectStructuredPaymentPreference(body); preference != "" {
+		if preference := detectActivePromptPaymentPreferenceReply(body, folded); preference != "" {
 			return IntentDecision{Intent: IntentPaymentPreference, Source: "deterministic_active_prompt_payment_preference"}, true
 		}
 	case ActivePromptPayerCPF:
@@ -483,7 +499,11 @@ func hasCurrentAvailabilitySelectionContext(history []Message) bool {
 
 func looksLikeContextualAvailabilitySelection(folded string) bool {
 	switch folded {
-	case "essa",
+	case "certo",
+		"confirmo",
+		"e isso",
+		"eh isso",
+		"essa",
 		"essa ai",
 		"essa mesmo",
 		"essa mesma",
@@ -494,11 +514,175 @@ func looksLikeContextualAvailabilitySelection(folded string) bool {
 		"esta opcao",
 		"esse",
 		"esse horario",
-		"pode ser essa":
+		"fechado",
+		"isso",
+		"isso mesmo",
+		"isso msm",
+		"pode ser",
+		"pode ser essa",
+		"pode ser sim",
+		"sim":
 		return true
 	default:
 		return false
 	}
+}
+
+func looksLikePaymentOptionsInfoQuestion(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" || looksLikePaymentStatusInfoQuestion(folded) {
+		return false
+	}
+	if looksLikePaymentPreferenceAssertion(folded) {
+		return false
+	}
+
+	hasPaymentWord := strings.Contains(folded, "pagamento") ||
+		strings.Contains(folded, "pagar") ||
+		strings.Contains(folded, "paga")
+	if !hasPaymentWord {
+		return false
+	}
+	if strings.Contains(folded, "como funciona") && strings.Contains(folded, "pagamento") {
+		return true
+	}
+	if (strings.Contains(folded, "forma") || strings.Contains(folded, "formas") || strings.Contains(folded, "opcoes")) &&
+		strings.Contains(folded, "pagamento") {
+		return true
+	}
+	if containsFoldedAny(folded, "agora", "logo") && containsFoldedAny(folded, "dia", "embarque") {
+		return true
+	}
+	if strings.Contains(folded, "paga tudo agora") || strings.Contains(folded, "pagar tudo agora") {
+		return true
+	}
+	if strings.Contains(folded, "sinal") &&
+		(strings.Contains(folded, "so") || strings.Contains(folded, "apenas") || strings.Contains(folded, "pagar") || strings.Contains(folded, "paga")) {
+		return true
+	}
+	if strings.Contains(folded, "restante") && containsFoldedAny(folded, "embarque", "dia") {
+		return true
+	}
+	return false
+}
+
+func looksLikePayingPassengerInfoQuestion(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" {
+		return false
+	}
+	if strings.Contains(folded, "passageiro pagante") {
+		if looksLikePaymentPreferenceAssertion(folded) {
+			return false
+		}
+		return containsFoldedAny(
+			folded,
+			"o que",
+			"quem",
+			"qual",
+			"significa",
+			"quer dizer",
+			"idade",
+			"crianca",
+			"maior",
+			"anos",
+			"paga",
+		)
+	}
+	if strings.Contains(folded, "crianca") && strings.Contains(folded, "paga") {
+		return true
+	}
+	if strings.Contains(folded, "maior de 5 anos") && strings.Contains(folded, "paga") {
+		return true
+	}
+	if strings.Contains(folded, "maior que 5") && strings.Contains(folded, "paga") {
+		return true
+	}
+	return false
+}
+
+func detectActivePromptPaymentPreferenceReply(body string, folded string) string {
+	if looksLikePaymentStatusInfoQuestion(folded) {
+		return ""
+	}
+	preference := detectStructuredPaymentPreference(body)
+	if preference == "" {
+		return ""
+	}
+	if looksLikePaymentPreferenceInfoQuestion(folded) {
+		return ""
+	}
+	return preference
+}
+
+func looksLikePaymentPreferenceInfoQuestion(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" {
+		return false
+	}
+	return containsFoldedAny(
+		folded,
+		"posso pagar",
+		"pode pagar",
+		"tem como pagar",
+		"da pra pagar",
+		"consigo pagar",
+	)
+}
+
+func looksLikePaymentPreferenceAssertion(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" {
+		return false
+	}
+	if folded == "sinal" || folded == "integral" {
+		return true
+	}
+	if strings.HasPrefix(folded, "sinal ") || strings.HasPrefix(folded, "integral ") {
+		return true
+	}
+	if strings.HasPrefix(folded, "pagar ") &&
+		containsFoldedAny(folded, "sinal", "integral", "tudo", "total") {
+		return true
+	}
+	return containsFoldedAny(
+		folded,
+		"quero pagar",
+		"vou pagar",
+		"irei pagar",
+		"prefiro pagar",
+		"escolho",
+		"fico com",
+	)
+}
+
+func looksLikePaymentStatusInfoQuestion(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" {
+		return false
+	}
+	if strings.Contains(folded, "paguei") || strings.Contains(folded, "ja paguei") {
+		return true
+	}
+	if strings.Contains(folded, "status") && strings.Contains(folded, "pagamento") {
+		return true
+	}
+	if strings.Contains(folded, "pagamento") && containsFoldedAny(folded, "aprovado", "caiu", "entrou") {
+		return true
+	}
+	if folded == "caiu" || folded == "ja caiu" || strings.Contains(folded, "ja caiu") {
+		return true
+	}
+	return false
+}
+
+func containsFoldedAny(folded string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(folded, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func looksLikeReservationHowToProceedIntent(text string) bool {

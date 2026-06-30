@@ -92,7 +92,7 @@ func TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo(t *testing.T
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"essa mesmo", "essa mesma"} {
+	for _, text := range []string{"essa mesmo", "essa mesma", "isso msm", "isso mesmo", "sim", "certo", "pode ser"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
@@ -156,7 +156,7 @@ func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(
 	history := availabilityDateSelectionWithFiveOptionsHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "pode ser", "essa mesmo", "essa mesma", "pode ser essa", "cartao"} {
+	for _, text := range []string{"sim", "ok", "certo", "isso", "isso mesmo", "isso msm", "pode ser", "essa mesmo", "essa mesma", "pode ser essa", "cartao"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
@@ -173,6 +173,102 @@ func TestIntentRouterDoesNotSelectAmbiguousAvailabilityReplyFromMultipleOptions(
 				t.Fatalf("ambiguous availability reply must not become unsupported package: %+v", got)
 			}
 			assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+		})
+	}
+}
+
+func TestIntentRouterPaymentInfoQuestionsUseClosedTemplate(t *testing.T) {
+	for _, text := range []string{
+		"o pagamento faz logo ou só no dia mesmo?",
+		"paga agora ou no embarque?",
+		"posso pagar só o sinal?",
+		"como funciona o pagamento?",
+		"quais formas de pagamento?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(nil, text, CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPaymentInfoQuestion {
+				t.Fatalf("expected payment info intent, got %+v", got)
+			}
+			if got.TemplateName != TemplatePaymentOptionsInfo || got.Action != "template" {
+				t.Fatalf("expected payment options info template, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPaymentStatusQueriesStayPaymentStatus(t *testing.T) {
+	for _, text := range []string{
+		"paguei",
+		"já paguei",
+		"já paguei o sinal",
+		"já paguei integral",
+		"meu pagamento caiu?",
+		"o pagamento do sinal caiu?",
+		"pagamento aprovado?",
+		"confirma se o pagamento entrou",
+		"confirma se meu pagamento entrou?",
+		"qual o status do pagamento?",
+		"já caiu?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(nil, text, CanonicalConversationState{Phase: ConversationPhaseBooked}, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPaymentStatusQuery {
+				t.Fatalf("expected payment status query, got %+v", got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo {
+				t.Fatalf("payment status query must not become payment info template: %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPaymentStatusWinsOverPaymentPreferencePrompt(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	for _, text := range []string{
+		"já paguei o sinal",
+		"o pagamento do sinal caiu?",
+		"já paguei integral",
+		"confirma se meu pagamento entrou?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPaymentStatusQuery {
+				t.Fatalf("expected payment status to win over active prompt preference, got %+v", got)
+			}
+			if got.Intent == IntentPaymentPreference {
+				t.Fatalf("status phrase must not become payment preference: %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPayingPassengerInfoQuestionsUseClosedTemplate(t *testing.T) {
+	for _, text := range []string{
+		"o que é passageiro pagante?",
+		"quem é passageiro pagante?",
+		"criança paga?",
+		"maior de 5 anos paga?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(nil, text, CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentPayingPassengerInfoQuestion {
+				t.Fatalf("expected paying passenger info intent, got %+v", got)
+			}
+			if got.TemplateName != TemplatePayingPassengerInfo || got.Action != "template" {
+				t.Fatalf("expected paying passenger info template, got %+v", got)
+			}
 		})
 	}
 }
@@ -359,7 +455,7 @@ func TestIntentRouterDocumentConfirmationContextualFallback(t *testing.T) {
 	}
 }
 
-func TestIntentRouterPaymentPreferenceSinalWithActivePrompt(t *testing.T) {
+func TestIntentRouterPaymentPreferenceRepliesWinBeforePaymentInfoTemplates(t *testing.T) {
 	history := []Message{{
 		Direction:        "OUTBOUND",
 		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
@@ -368,10 +464,68 @@ func TestIntentRouterPaymentPreferenceSinalWithActivePrompt(t *testing.T) {
 	}}
 	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
 
-	got := routeDeterministicIntent(history, "sinal", state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+	for _, text := range []string{
+		"sinal",
+		"só o sinal",
+		"apenas o sinal",
+		"quero pagar o sinal",
+		"vou pagar só o sinal",
+		"sinal por passageiro pagante",
+		"integral",
+		"o valor integral",
+		"quero pagar integral",
+		"vou pagar tudo agora",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
-	if got.Intent != IntentPaymentPreference {
-		t.Fatalf("expected payment preference, got %+v", got)
+			if got.Intent != IntentPaymentPreference {
+				t.Fatalf("expected payment preference, got %+v", got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo || got.TemplateName == TemplatePayingPassengerInfo {
+				t.Fatalf("payment preference reply must not become informational template: %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPaymentPreferencePromptStillAnswersPaymentInfoQuestions(t *testing.T) {
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             "Prefere pagar o valor integral ou apenas o sinal?",
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Now().UTC().Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+	tests := []struct {
+		text     string
+		intent   Intent
+		template ResponseTemplateName
+	}{
+		{text: "como funciona o pagamento?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "paga agora ou no embarque?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "o pagamento faz logo ou só no dia?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "posso pagar só o sinal?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "o que é passageiro pagante?", intent: IntentPayingPassengerInfoQuestion, template: TemplatePayingPassengerInfo},
+		{text: "quem é passageiro pagante?", intent: IntentPayingPassengerInfoQuestion, template: TemplatePayingPassengerInfo},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, tc.text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != tc.intent || got.TemplateName != tc.template || got.Action != "template" {
+				t.Fatalf("expected %s template %s, got %+v", tc.intent, tc.template, got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterAffirmativePayingPassengerPhraseIsNotInfoQuestion(t *testing.T) {
+	got := routeDeterministicIntent(nil, "sinal por passageiro pagante", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+
+	if got.Intent == IntentPayingPassengerInfoQuestion || got.TemplateName == TemplatePayingPassengerInfo {
+		t.Fatalf("affirmative payment preference phrase must not become paying passenger info: %+v", got)
 	}
 }
 
