@@ -69,6 +69,11 @@ type StructuredInterpreterAgreement struct {
 	PaymentPreference   bool `json:"payment_preference"`
 }
 
+type OpenAIInterpreterReusableResult struct {
+	Result OpenAIStructuredInterpreterRunResult
+	Err    error
+}
+
 func buildStructuredInterpreterSummary(value StructuredInterpretation) StructuredInterpreterSummary {
 	return StructuredInterpreterSummary{
 		Intent:      string(value.Intent),
@@ -110,6 +115,11 @@ type StructuredInterpreterShadowInput struct {
 }
 
 func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpreterShadowInput) StructuredInterpreterShadowSummary {
+	summary, _ := RunStructuredInterpreterShadowWithReusableResult(ctx, input)
+	return summary
+}
+
+func RunStructuredInterpreterShadowWithReusableResult(ctx context.Context, input StructuredInterpreterShadowInput) (StructuredInterpreterShadowSummary, *OpenAIInterpreterReusableResult) {
 	summary := StructuredInterpreterShadowSummary{
 		Local: buildStructuredInterpreterSummary(input.LocalInterpretation),
 		OpenAI: OpenAIInterpreterShadowSummary{
@@ -119,13 +129,13 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 	}
 
 	if !input.Enabled {
-		return summary
+		return summary, nil
 	}
 
 	if input.OpenAIInterpreter == nil || !input.OpenAIInterpreter.Enabled() {
 		summary.OpenAI.Status = string(StructuredInterpreterShadowOpenAIDisabled)
 		summary.OpenAIValidation = skippedOpenAIInterpreterShadowValidation("openai_disabled")
-		return summary
+		return summary, nil
 	}
 
 	startedAt := time.Now()
@@ -135,6 +145,7 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 		IdempotencyKey:      input.IdempotencyKey,
 	})
 	latencyMs := time.Since(startedAt).Milliseconds()
+	reusableResult := &OpenAIInterpreterReusableResult{Result: result, Err: err}
 
 	if err != nil {
 		summary.OpenAI.Status = string(StructuredInterpreterShadowError)
@@ -148,10 +159,10 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 			summary.OpenAI.ProviderResponseID = result.ProviderResponseID
 			summary.Agreement = compareStructuredInterpretations(input.LocalInterpretation, proposal)
 			summary.OpenAIValidation = validateOpenAIInterpreterShadowProposal(input, proposal)
-			return summary
+			return summary, reusableResult
 		}
 		summary.OpenAIValidation = skippedOpenAIInterpreterShadowValidation(openAIInterpreterShadowValidationSkipReason(err))
-		return summary
+		return summary, reusableResult
 	}
 
 	summary.OpenAI = OpenAIInterpreterShadowSummary{
@@ -166,7 +177,7 @@ func RunStructuredInterpreterShadow(ctx context.Context, input StructuredInterpr
 	summary.Agreement = compareStructuredInterpretations(input.LocalInterpretation, result.Interpretation)
 	summary.OpenAIValidation = validateOpenAIInterpreterShadowProposal(input, result.Interpretation)
 
-	return summary
+	return summary, reusableResult
 }
 
 func parseableOpenAIInterpreterShadowInvalidProposal(result OpenAIStructuredInterpreterRunResult, err error) (StructuredInterpretation, bool) {

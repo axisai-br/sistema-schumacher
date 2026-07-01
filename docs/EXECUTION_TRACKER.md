@@ -4,7 +4,7 @@ ____
 # Roadmap de execução — sistema-schumacher  
   
 > Arquivo de acompanhamento para o Codex, ChatGPT e revisão humana.  
-> 
+>
 > Objetivo: manter visível **em que etapa o projeto está**, **qual o próximo slice**, **quais hotfixes interferem no plano** e **quais regras não podem ser quebradas**. Nada de deixar o projeto virar aquele condomínio de decisões perdidas que todo backend eventualmente vira.  
   
 ---
@@ -129,7 +129,7 @@ Review P1 adicional corrigido localmente:
 Quando a última pergunta é integral/sinal, frases reais de status como "já paguei o sinal", "o pagamento do sinal caiu?", "já paguei integral" e "confirma se meu pagamento entrou?" vencem PAYMENT_PREFERENCE e roteiam para PAYMENT_STATUS_QUERY.
 ```
 
-Hotfix local concluído em 2026-06-30; validar em produção/homologação as variações reais:
+Hotfix local concluído em 2026-06-30; deploy e smoke confirmados em produção/homologação em 2026-07-01:
 
 ```text
 Hotfix H-2026-06-30B — "essa msm" e auto-send do pagamento informativo
@@ -162,6 +162,19 @@ OpenAI interpreter continua shadow
 ValidateStructuredInterpretation avalia a proposta OpenAI em shadow
 Payload structured_interpreter_shadow registra openai_validation
 Runtime real, tools, canonical_state, auto-send, planner e vector base não foram promovidos/alterados
+```
+
+Etapa 3.6E executada localmente em 2026-07-01; produção depende de habilitar `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED`.
+
+```text
+OpenAI Interpreter Runtime Assist Gated para UNKNOWN/baixa confiança
+Sem vector base, sem File Search e sem planner
+Determinístico, tools/templates locais e fallback seguro continuam vencendo
+Proposta OpenAI só influencia se confidence >= 0.70 e passar por ValidateStructuredInterpretation
+booking_create, payment_create, booking_cancel, document_extract e payment_status continuam bloqueados para proposta OpenAI
+
+Review P2 restante corrigido localmente:
+confidence gate agora é aplicado antes de qualquer fallback user-visible; shadow + assist reutilizam uma única chamada ao provider OpenAI por turno.
 ```
   
 ---  
@@ -659,7 +672,7 @@ lista com uma opção → "isso msm" → ASK_PASSENGER_COUNT
 
 ## Hotfix H-2026-06-30B — "essa msm" e auto-send do PAYMENT_OPTIONS_INFO
 
-**Status:** Concluído localmente em 2026-06-30; P2 de review corrigido localmente; pendente validação em produção.
+**Status:** Concluído localmente em 2026-06-30; P2 de review corrigido localmente; deploy/smoke confirmado em produção/homologação em 2026-07-01.
 
 **Motivo:** dois bugs reais observados em produção após os hotfixes anteriores:
 
@@ -709,7 +722,7 @@ git diff --check
 
 **Resultado do review:** P2 corrigido localmente. O texto fechado `PAYMENT_OPTIONS_INFO` continua auto-send eligible, mas deixa de virar prompt ativo de preferência de pagamento; `PAYING_PASSENGER_INFO` também permanece informativo. Prompts reais como `ASK_PAYMENT_CHOICE` continuam `ActivePromptPaymentPreference`. Diff local restrito ao hotfix. Não houve alteração em `Service.Reprocess`, OpenAI primary, OpenAI shadow validation da 3.6D, `interpreter_shadow.go`, vector base, embeddings, File Search, planner, banco, endpoints, infra, n8n, `booking_create`, `payment_create`, `payment_status` ou `document_extract`. A exceção de auto-send é estreita para o texto fechado `paymentOptionsInfoReply`.
 
-**Necessidade de teste em produção:** sim. Repetir o fluxo real:
+**Necessidade de teste em produção:** concluída em 2026-07-01, conforme confirmação do usuário. Fluxo real validado:
 
 ```text
 13/07
@@ -726,9 +739,11 @@ lista com múltiplas opções + "essa msm" → fallback contextual, sem selecion
 após PAYMENT_OPTIONS_INFO, "quero reservar"/rota/cidade/"13/07"/"como faço pra reservar" não caem em CONTEXT_FALLBACK_PAYMENT_PREFERENCE
 ```
 
+**Resultado do smoke/deploy:** PR #36 confirmado mergeado na `main` (`7dabc80158ec8abb8cef2d6c7a087eb45720ec76`, contendo `33d26adf3e0be143812dd5fd8d96b6b1beaf710b`). Usuário confirmou deploy do passo anterior e teste do fluxo em produção/homologação em 2026-07-01, com `essa msm` selecionando a opção única, pergunta de passageiros, `PAYMENT_OPTIONS_INFO` enviado automaticamente e `quero reservar` sem cair em `CONTEXT_FALLBACK_PAYMENT_PREFERENCE`.
+
 **Riscos restantes:** variações novas fora das frases fechadas ainda podem cair em fallback ou LLM; a exceção de auto-send depende do texto estático `paymentOptionsInfoReply`, então alteração futura nesse template deve manter os testes de política.
 
-**Próxima ação recomendada:** validar H-2026-06-30B em produção/homologação antes de retomar 3.6E ou qualquer promoção de interpretação OpenAI.
+**Próxima ação recomendada:** iniciar 3.6E Runtime Assist Gated, sem vector base, File Search, planner, banco, infra ou n8n.
 
 ---
   
@@ -1092,45 +1107,110 @@ git diff --check
 
 **Riscos restantes:** o relatório agregado atual ainda não expõe métricas específicas de `openai_validation`; se a próxima decisão depender de taxa de accepted/rejected por intent, criar etapa explícita de observabilidade antes de qualquer uso operacional.
 
-**Próxima etapa recomendada:** revisar esta 3.6D; depois decidir explicitamente entre relatório/observabilidade da validação OpenAI em shadow, alinhamento local das falhas de baseline, ou 3.6E. Não iniciar OpenAI primary, vector base, planner, 3.6E ou 3.7 sem novo pedido explícito.
+**Próxima etapa recomendada:** 3.6E foi solicitada explicitamente e executada localmente em 2026-07-01; ver seção seguinte. Não iniciar OpenAI primary, vector base, planner ou 3.7 sem novo pedido explícito.
   
 ---  
   
-## Etapa 3.6E — Vector Base Shadow
-  
-**Status:** Pendente.  
-  
-**O que faz:** adiciona busca vetorial em shadow sobre o corpus canônico.  
-  
-**Fluxo:**  
-  
-```text  
-currentTurn + state + activePrompt  
-→ vector retrieval de exemplos/regras  
-→ topK exemplos recuperados  
-→ log/relatório  
-→ não altera decisão real  
-```  
-  
-**Objetivo:** medir se busca semântica recupera exemplos úteis antes de usar em produção.  
-  
-**Importante:** não colocar dados sensíveis na vector base.  
-  
-Proibido:  
-  
-```text  
-CPF real  
-RG real  
-CNH real  
-foto de documento  
-PIX copia e cola  
-booking_id real  
-telefone completo  
-nome completo real  
-payload bruto do WhatsApp  
-status transacional de pagamento  
-assentos/datas reais como fonte de verdade  
-```  
+## Etapa 3.6E — OpenAI Interpreter Runtime Assist Gated sem vector
+
+**Status:** Concluída localmente em 2026-07-01; review P1/P2 corrigido localmente; pendente novo review e decisão operacional de habilitação.
+
+**Pré-condição cumprida:** H-2026-06-30B teve PR #36 mergeado na `main` e o usuário confirmou deploy/smoke em produção/homologação em 2026-07-01 com o fluxo:
+
+```text
+13/07
+essa msm
+dia 13/07, ai o pagamento faz logo ou só no dia mesmo?
+quero reservar
+```
+
+**O que faz:** permite que o OpenAI structured interpreter influencie o runtime real apenas quando o caminho local não resolveu com segurança:
+
+```text
+local structured interpreter = UNKNOWN ou confidence < 0.70
+deterministic router/tools/templates/fallback seguro não resolveram
+→ OpenAI structured interpreter propõe interpretação
+→ ValidateStructuredInterpretation valida localmente
+→ conversão segura para template fechado/continuação textual/pergunta segura
+→ fallback seguro se rejeitado
+```
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/shared/config/config.go
+apps/api/internal/chat/interpreter_shadow.go
+apps/api/internal/chat/openai_interpreter_assist.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/response_realizer_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+criado OpenAI Interpreter Runtime Assist Gated
+adicionada flag CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED, desligada por padrão
+assist só é considerado se local = UNKNOWN ou local confidence < 0.70
+deterministicDecision, deterministicToolHandled, deterministicBookingHandled e documentCollectionMediaTurn bloqueiam o assist
+runner OpenAI estruturado existente continua com store=false e tools=[]
+confidence gate OpenAI é aplicado antes de qualquer fallback runtime user-visible
+se confidence < 0.70, o assist retorna rejected/openai_confidence_below_threshold com fallback_template vazio
+proposta OpenAI parseável com enums válidos e confidence >= 0.70 passa por ValidateStructuredInterpretation antes de qualquer fallback runtime
+propostas com safety side effects, baixa confiança OpenAI, schema inválido ou erro não executam decisão
+shadow + assist habilitados no mesmo turno reutilizam o resultado do shadow e fazem no máximo uma chamada ao provider OpenAI
+metadata openai_interpreter_assist é gravada no draft para accepted, rejected e skipped
+reasons brutos da OpenAI não são persistidos; metadata mantém apenas campos controlados e controlled_reason_codes do backend
+```
+
+**Conversões permitidas nesta etapa:**
+
+```text
+AVAILABILITY_SEARCH → nunca executa availability/pricing por proposta OpenAI; input completo é rejected/openai_assist_tool_action_not_allowed
+AVAILABILITY_SEARCH de início de reserva → somente template seguro de pergunta de rota/data, sem tool call
+SELECT_AVAILABILITY_OPTION → somente com active prompt de opção e índice validado
+PASSENGER_COUNT_REPLY → continuação textual/template de reserva
+LAP_CHILD_ASSIGNMENT_ANSWER → continuação textual/template de reserva, sem booking_create
+```
+
+**Bloqueios explícitos:**
+
+```text
+booking_create não pode ser acionado por proposta OpenAI
+payment_create não pode ser acionado por proposta OpenAI
+booking_cancel não pode ser acionado por proposta OpenAI
+document_extract não pode ser acionado por proposta OpenAI
+payment_status não pode ser acionado por proposta OpenAI
+availability_search não pode ser acionado por proposta OpenAI
+pricing_quote não pode ser acionado por proposta OpenAI
+sem vector base
+sem embeddings
+sem File Search
+sem planner
+sem banco/migrations
+sem infra
+sem n8n
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+gofmt -w internal/chat/interpreter_shadow.go internal/chat/openai_interpreter_assist.go internal/chat/openai_interpreter_assist_test.go internal/chat/service.go
+go test -count=1 ./internal/chat -run 'Test.*OpenAI.*Assist|Test.*Interpreter.*Assist|Test.*StructuredInterpreter.*Shadow|Test.*ValidateStructuredInterpretation|Test.*IntentRouter|Test.*Payment.*Info|Test.*Availability.*Option|Test.*AutoSend'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** P1/P2 corrigidos localmente; P2 restantes corrigidos em 2026-07-01. Proposta OpenAI aceita não gera `Action == "tool"` nem aciona availability/pricing. Propostas de baixa confiança agora são rejeitadas por `openai_confidence_below_threshold` antes de qualquer fallback user-visible, com `fallback_template` vazio, mesmo que o validator pudesse rejeitar com fallback contextual. Quando `CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED` e `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED` estão ambos habilitados, o runtime reutiliza o resultado OpenAI do shadow no assist e evita segunda chamada ao provider no mesmo turno. Metadata `skipped` continua persistida mesmo com `considered=false`; reasons livres da OpenAI não são persistidos e seguem substituídos por códigos controlados do backend. Diff revisado localmente; integração continua depois do roteador determinístico e do safe phase fallback, antes do JSON/free-form LLM. Determinístico continua vencendo. OpenAI assist não adiciona vector base, embeddings, File Search, planner, function tools ou execução direta de tools críticas. A metadata não salva texto bruto do cliente, CPF/RG/CNH, telefone, PIX, booking_id real ou payload bruto.
+
+**Necessidade de teste em produção:** sim, apenas se a flag `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED` for habilitada. Validar que drafts com `openai_interpreter_assist.status` accepted/rejected/skipped não executam tools críticas nem availability/pricing por proposta OpenAI e que fallback seguro vence rejeições do validator.
+
+**Riscos restantes:** com a flag desligada, produção não muda. Com a flag ligada, o assist pode chamar OpenAI em turnos `UNKNOWN`/baixa confiança quando shadow estiver desligado; quando shadow e assist estiverem ligados juntos, a chamada é reutilizada. A utilidade real fica limitada a templates/perguntas seguras e continua sem execução de tools por proposta OpenAI. Métricas agregadas específicas do assist ainda não foram adicionadas ao endpoint de relatório. Não houve vector base, embeddings, File Search, planner, banco, migrations, infra, n8n ou tools críticas acionadas por OpenAI.
+
+**Próxima etapa recomendada:** pedir novo `/review` desta 3.6E corrigida antes de commit. Depois decidir explicitamente entre observabilidade agregada do runtime assist, alinhamento das falhas locais do corpus 3.6C ou uma nova etapa de vector shadow; não iniciar vector/File Search/planner sem novo pedido explícito.
   
 ---  
   
