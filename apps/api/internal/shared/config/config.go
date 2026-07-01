@@ -40,6 +40,7 @@ type Config struct {
 	AbacatePayCompletionURL            string
 	ChatReviewAlertWebhookURL          string
 	ChatOpenAIInterpreterShadowEnabled bool
+	ChatOpenAIInterpreterAssistEnabled bool
 	OpenAIAPIKey                       string
 	OpenAIModel                        string
 	OpenAIVisionModel                  string
@@ -118,6 +119,7 @@ func Load() (Config, error) {
 		ChatDefaultHandoffMode:             getEnv("CHAT_DEFAULT_HANDOFF_MODE", "BOT"),
 		ChatAgentMode:                      getEnv("CHAT_AGENT_MODE", "legacy"),
 		ChatOpenAIInterpreterShadowEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED")),
+		ChatOpenAIInterpreterAssistEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED")),
 		GoogleSheetsSpreadsheetID:          strings.TrimSpace(os.Getenv("GOOGLE_SHEETS_SPREADSHEET_ID")),
 		GoogleServiceAccountJSON:           strings.TrimSpace(os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
 	}

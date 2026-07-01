@@ -444,3 +444,38 @@ func TestReservationStartTemplateDoesNotTriggerOperationalClaimWithoutTool(t *te
 		t.Fatalf("expected reservation start template to be auto-send eligible, got %s reasons=%v", policy.Status, policy.Reasons)
 	}
 }
+
+func TestPaymentOptionsInfoTemplateDoesNotTriggerOperationalAutoSendBlock(t *testing.T) {
+	if containsOperationalAutoSendClaimWithoutTool(paymentOptionsInfoReply) {
+		t.Fatalf("payment options info template must not look like dynamic operational claim: %q", paymentOptionsInfoReply)
+	}
+
+	policy := evaluateDraftAutoSendPolicy(nil, nil, paymentOptionsInfoReply)
+	if policy.Status != draftAutoSendStatusEligible {
+		t.Fatalf("expected payment options info template to be auto-send eligible, got %s reasons=%v", policy.Status, policy.Reasons)
+	}
+	if len(policy.Reasons) != 0 {
+		t.Fatalf("expected no auto-send reasons for payment options info template, got %+v", policy.Reasons)
+	}
+}
+
+func TestAutoSendPolicyStillBlocksDynamicOperationalClaimsWithoutTool(t *testing.T) {
+	for _, text := range []string{
+		"Encontrei estas opções: 1. Videira/SC para Santa Inês/MA, 2026-07-13, saída 13:00, R$ 950",
+		"Tem disponibilidade para 13/07 às 13:00 por R$ 950.",
+		"A saída é às 13:00 e custa R$ 950.",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if !containsOperationalAutoSendClaimWithoutTool(text) {
+				t.Fatalf("expected dynamic operational text to be blocked: %q", text)
+			}
+			policy := evaluateDraftAutoSendPolicy(nil, nil, text)
+			if policy.Status != draftAutoSendStatusReviewNeeded {
+				t.Fatalf("expected review for dynamic operational text, got %+v", policy)
+			}
+			if !containsString(policy.Reasons, draftAutoSendReasonOperationalClaimWithoutTool) {
+				t.Fatalf("expected reason %s, got %+v", draftAutoSendReasonOperationalClaimWithoutTool, policy.Reasons)
+			}
+		})
+	}
+}
