@@ -784,13 +784,15 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		History:     history,
 		ObservedAt:  observedAt,
 	}
+	activePrompt := InferActivePromptContext(history, structuredCanonicalState)
 
 	localInterpretation := InterpretStructuredTurn(structuredInput)
 
-	shadow := RunStructuredInterpreterShadow(ctx, StructuredInterpreterShadowInput{
+	shadow, reusableOpenAIInterpreterResult := RunStructuredInterpreterShadowWithReusableResult(ctx, StructuredInterpreterShadowInput{
 		Enabled:             s.cfg.ChatOpenAIInterpreterShadowEnabled,
 		OpenAIInterpreter:   s.openaiInterpreter,
 		StructuredInput:     structuredInput,
+		ActivePrompt:        activePrompt,
 		LocalInterpretation: localInterpretation,
 		IdempotencyKey:      buildStructuredInterpreterShadowIdempotencyKey(session.ID, candidates),
 	})
@@ -1292,6 +1294,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		unsupportedPackageHandled = false
 	}
 	deterministicDecision := IntentDecision{Intent: IntentUnknown}
+	var openAIAssistMetadata map[string]interface{}
 	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !documentCollectionMediaTurn {
 		if intentRouterEnabled() && templateRealizerEnabled() {
 			decision := routeDeterministicIntent(history, currentTurn, canonicalState, observedAt)
@@ -1441,6 +1444,109 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					rolloutMetadata.DecisionValid = boolPtr(true)
 					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
 				}
+			}
+		}
+	}
+	if !unsupportedCargoHandled && !unsupportedPackageHandled && !deterministicBookingHandled && !deterministicToolHandled && !documentCollectionMediaTurn {
+		assist := RunOpenAIInterpreterRuntimeAssist(ctx, OpenAIInterpreterAssistInput{
+			Enabled:                     s.cfg.ChatOpenAIInterpreterAssistEnabled,
+			OpenAIInterpreter:           s.openaiInterpreter,
+			ReusableOpenAIResult:        reusableOpenAIInterpreterResult,
+			StructuredInput:             structuredInput,
+			ActivePrompt:                activePrompt,
+			LocalInterpretation:         localInterpretation,
+			DeterministicDecision:       deterministicDecision,
+			DeterministicToolHandled:    deterministicToolHandled,
+			DeterministicBookingHandled: deterministicBookingHandled,
+			DocumentCollectionMediaTurn: documentCollectionMediaTurn,
+			IdempotencyKey:              draftID + ":openai_interpreter_assist",
+		})
+		if assist.Status == OpenAIInterpreterAssistAccepted ||
+			assist.Status == OpenAIInterpreterAssistRejected ||
+			assist.Status == OpenAIInterpreterAssistSkipped {
+			openAIAssistMetadata = assist.Metadata()
+			memory[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
+			agentState[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
+		}
+		if assist.Status == OpenAIInterpreterAssistAccepted {
+			decision := assist.IntentDecision
+			switch {
+			case decision.Action == "template" && canRealizeWithoutLLM(decision, canonicalState):
+				reply, ok := realizeIntentResponseTemplate(decision)
+				if ok && strings.TrimSpace(reply) != "" {
+					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
+					agentState["canonical_state"] = canonicalState
+					memory["canonical_state"] = canonicalState
+					memory["intent_decision"] = map[string]interface{}{
+						"intent":                string(decision.Intent),
+						"intent_source":         decision.Source,
+						"selected_option_index": decision.SelectedOptionIndex,
+						"template_name":         string(decision.TemplateName),
+						"action":                decision.Action,
+					}
+					run := buildTemplateDraftRunFromDecision(decision, reply)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "openai_interpreter_assist"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.DecisionConfidence = float64Ptr(assist.OpenAIConfidence)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				}
+			case decision.Action == "booking_continuation":
+				bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+				bookingAction := decideNextBookingStep(bookingDraft)
+				reply := buildBookingContinuationReply(bookingDraft, bookingAction)
+				if bookingAction == BookingNextCallCreate {
+					reply = "Recebi os dados. Eles conferem para criar a reserva?"
+				}
+				if strings.TrimSpace(reply) != "" {
+					var run RunAgentResult
+					if bookingAction == BookingNextCallCreate {
+						run = buildSafeFallbackDraftRun(reply, canonicalState, "openai_interpreter_assist_critical_tool_blocked")
+					} else {
+						run = buildBookingContinuationDraftRun(reply, bookingAction, bookingDraft)
+					}
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "openai_interpreter_assist"
+					rolloutMetadata.DecisionValid = boolPtr(true)
+					rolloutMetadata.DecisionConfidence = float64Ptr(assist.OpenAIConfidence)
+					rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+				}
+			}
+		} else if assist.Status == OpenAIInterpreterAssistRejected && !deterministicBookingHandled {
+			if assist.FallbackTemplate != "" {
+				decision := IntentDecision{
+					Intent:       IntentUnknown,
+					Source:       "openai_interpreter_assist_rejected",
+					TemplateName: assist.FallbackTemplate,
+					Action:       "template",
+				}
+				reply, ok := realizeIntentResponseTemplate(decision)
+				if ok && strings.TrimSpace(reply) != "" {
+					run := buildTemplateDraftRunFromDecision(decision, reply)
+					deterministicBookingRun = &run
+					deterministicBookingHandled = true
+					rolloutMetadata.DecisionSource = "openai_interpreter_assist"
+					rolloutMetadata.DecisionValid = boolPtr(false)
+					rolloutMetadata.DecisionConfidence = float64Ptr(assist.OpenAIConfidence)
+					rolloutMetadata.ValidationErrors = []string{assist.RejectReason}
+					rolloutMetadata.FallbackReason = assist.RejectReason
+				}
+			} else if assist.RejectReason == "openai_assist_tool_action_not_allowed" {
+				bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+				reply, ok := buildSafeFallbackReplyForPhase(canonicalState, bookingDraft, currentTurn)
+				if !ok || strings.TrimSpace(reply) == "" {
+					reply = "Para continuar, preciso confirmar os dados da viagem."
+				}
+				run := buildSafeFallbackDraftRun(reply, canonicalState, assist.RejectReason)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+				rolloutMetadata.DecisionSource = "openai_interpreter_assist"
+				rolloutMetadata.DecisionValid = boolPtr(false)
+				rolloutMetadata.DecisionConfidence = float64Ptr(assist.OpenAIConfidence)
+				rolloutMetadata.ValidationErrors = []string{assist.RejectReason}
+				rolloutMetadata.FallbackReason = assist.RejectReason
 			}
 		}
 	}
@@ -1867,6 +1973,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	draftAgentState[structuredInterpreterShadowKey] = shadow
 	draftPayload[structuredInterpreterShadowKey] = shadow
 	draftNormalizedPayload[structuredInterpreterShadowKey] = shadow
+	if len(openAIAssistMetadata) > 0 {
+		draftAgentState[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
+		draftPayload[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
+		draftNormalizedPayload[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
+	}
 
 	s.logReprocess(
 		"chat reprocess event=save_agent_draft_start session_id=%s trigger=%s job_run_id=%s idempotency_key=%s tool_call_count=%d",
