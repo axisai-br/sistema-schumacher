@@ -628,6 +628,31 @@ func TestFindLatestAvailabilityContextIgnoresInvisibleAvailabilityFacts(t *testi
 	}
 }
 
+func TestFindLatestAvailabilityContextIgnoresBotAutoReplyMirrorFactsWithoutSourceDraft(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	result := bookingCreateSelectionAvailabilityResult("mirror-trip", "mirror-board", "mirror-alight")
+	history := []Message{
+		{
+			ID:               "mirror-list",
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(result),
+			ProcessingStatus: "PENDING",
+			ReceivedAt:       now,
+			Payload: map[string]interface{}{
+				"mode":             "BOT_AUTO_REPLY",
+				"draft_message_id": "missing-draft",
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+				},
+			},
+		},
+	}
+
+	if got := findLatestAvailabilityContext(history); got != nil {
+		t.Fatalf("BOT_AUTO_REPLY without source draft must not expose availability facts, got %+v", got)
+	}
+}
+
 func TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSelection(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	visibleResult := bookingCreateSelectionAvailabilityResult("visible-trip", "visible-board", "visible-alight")

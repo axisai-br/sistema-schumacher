@@ -118,6 +118,39 @@ func TestValidateStructuredInterpretationAcceptsCurrentSingleAvailabilityOptionC
 	assertInterpretationAccepted(t, got)
 }
 
+func TestValidateStructuredInterpretationAcceptsBotAutoReplyDeliveryMirrorSourceDraft(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(1),
+		CurrentTurn: "essa msm",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationAccepted(t, got)
+}
+
+func TestValidateStructuredInterpretationRejectsBotAutoReplyWithoutDraftSource(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), false)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(1),
+		CurrentTurn: "essa msm",
+		History:     history,
+		State: CanonicalConversationState{
+			Phase: ConversationPhaseRouteSelection,
+			LastToolFacts: map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+			},
+		},
+	})
+
+	assertInterpretationRejected(t, got, "availability_selection_missing_current_facts", TemplateContextFallbackAvailabilityOption)
+}
+
 func TestValidateStructuredInterpretationUsesReliableAvailabilityPromptWhenInvisibleDraftFollows(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
