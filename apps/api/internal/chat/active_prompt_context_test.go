@@ -136,6 +136,8 @@ func TestInferActivePromptContextSkipsUnsentDrafts(t *testing.T) {
 	history := []Message{
 		{ID: "sent", Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
 		{ID: "draft", Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-1 * time.Minute)},
+		{ID: "reviewed", Direction: "OUTBOUND", Body: "Qual opcao voce prefere?", ProcessingStatus: messageStatusAutomationReviewed, ReceivedAt: now.Add(-45 * time.Second)},
+		{ID: "pending", Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador.", ProcessingStatus: messageStatusAutomationPending, ReceivedAt: now.Add(-30 * time.Second)},
 		{ID: "blocked", Direction: "OUTBOUND", Body: "Para gerar o PIX, preciso do CPF do pagador.", ProcessingStatus: "REVIEW_REQUIRED", ReceivedAt: now},
 	}
 
@@ -143,6 +145,57 @@ func TestInferActivePromptContextSkipsUnsentDrafts(t *testing.T) {
 
 	if got.Kind != ActivePromptPassengerCount {
 		t.Fatalf("expected sent passenger prompt after skipping unsent drafts, got %+v", got)
+	}
+	if got.SourceMessageID != "sent" {
+		t.Fatalf("expected sent message source, got %+v", got)
+	}
+}
+
+func TestInferActivePromptContextSkipsInvisibleAutomationModes(t *testing.T) {
+	now := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	for _, mode := range []string{messageStatusAutomationDraft, messageStatusAutomationReviewed, messageStatusAutomationPending} {
+		t.Run(mode, func(t *testing.T) {
+			history := []Message{
+				{ID: "sent", Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+				{
+					ID:               "invisible",
+					Direction:        "OUTBOUND",
+					Body:             "Consegui identificar estes dados. Eles conferem?",
+					ProcessingStatus: "",
+					Payload:          map[string]interface{}{"mode": mode},
+					ReceivedAt:       now.Add(-1 * time.Minute),
+				},
+			}
+
+			got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhasePassengerCollection})
+
+			if got.Kind != ActivePromptPassengerCount {
+				t.Fatalf("expected sent passenger prompt after skipping mode %s, got %+v", mode, got)
+			}
+			if got.SourceMessageID != "sent" {
+				t.Fatalf("expected sent message source after skipping mode %s, got %+v", mode, got)
+			}
+		})
+	}
+}
+
+func TestInferActivePromptContextAcceptsSentAutomationWithDraftMode(t *testing.T) {
+	now := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			ID:                "sent",
+			Direction:         "OUTBOUND",
+			Body:              "A passagem e so para voce ou vai mais alguem junto?",
+			ProcessingStatus:  messageStatusAutomationSent,
+			NormalizedPayload: map[string]interface{}{"mode": messageStatusAutomationDraft},
+			ReceivedAt:        now,
+		},
+	}
+
+	got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhasePassengerCollection})
+
+	if got.Kind != ActivePromptPassengerCount {
+		t.Fatalf("expected sent automation prompt to remain reliable despite draft mode, got %+v", got)
 	}
 	if got.SourceMessageID != "sent" {
 		t.Fatalf("expected sent message source, got %+v", got)
@@ -194,6 +247,37 @@ func TestInferActivePromptContextReadsAvailabilityOptionCount(t *testing.T) {
 	}
 	if got.AvailabilityOptionCount != 2 {
 		t.Fatalf("expected availability option count 2, got %+v", got)
+	}
+	if !got.HasAvailabilityList {
+		t.Fatalf("expected availability list flag, got %+v", got)
+	}
+}
+
+func TestInferActivePromptContextReadsAvailabilityOptionCountFromRenderedPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			ID:               "availability",
+			Direction:        "OUTBOUND",
+			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now,
+		},
+	}
+	state := CanonicalConversationState{
+		Phase: ConversationPhaseTripSelection,
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+		},
+	}
+
+	got := InferActivePromptContext(history, state)
+
+	if got.Kind != ActivePromptAvailabilityOptionChoice {
+		t.Fatalf("expected availability option choice, got %+v", got)
+	}
+	if got.AvailabilityOptionCount != 1 {
+		t.Fatalf("expected rendered availability option count 1, got %+v", got)
 	}
 	if !got.HasAvailabilityList {
 		t.Fatalf("expected availability list flag, got %+v", got)

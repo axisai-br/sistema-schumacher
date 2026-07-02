@@ -2757,20 +2757,19 @@ func buildBookingCreateIdempotencyKey(session Session, input BookingCreateInput)
 func findLatestAvailabilityContext(history []Message) *AvailabilitySearchResult {
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
-		if message.Direction != "OUTBOUND" || !isAutomationDraftStatus(message.ProcessingStatus) {
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+			!shouldMergeAvailabilityFactsFromMessage(message) {
 			continue
 		}
-		toolContext := asMap(message.Payload["tool_context"])
-		if len(toolContext) == 0 {
-			continue
-		}
-		payload := asMap(toolContext[toolNameAvailabilitySearch])
-		if len(payload) == 0 {
-			continue
-		}
-		result := parseAvailabilityContextPayload(payload)
-		if len(result.Results) > 0 {
-			return &result
+		for _, toolContext := range messageToolContexts(message) {
+			payload := asMap(toolContext[toolNameAvailabilitySearch])
+			if len(payload) == 0 {
+				continue
+			}
+			result := parseAvailabilityContextPayload(payload)
+			if len(result.Results) > 0 {
+				return &result
+			}
 		}
 	}
 	return nil

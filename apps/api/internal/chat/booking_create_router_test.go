@@ -604,6 +604,120 @@ func TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHis
 	}
 }
 
+func TestFindLatestAvailabilityContextIgnoresInvisibleAvailabilityFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	visibleResult := bookingCreateSelectionAvailabilityResult("visible-trip", "visible-board", "visible-alight")
+	hiddenResult := bookingCreateSelectionAvailabilityResult("hidden-trip", "hidden-board", "hidden-alight")
+
+	for _, status := range []string{
+		messageStatusAutomationDraft,
+		messageStatusAutomationReviewed,
+		messageStatusAutomationPending,
+	} {
+		t.Run(status, func(t *testing.T) {
+			history := bookingCreateAvailabilityHistory(now, visibleResult, hiddenResult, status)
+
+			got := findLatestAvailabilityContext(history)
+			if got == nil || len(got.Results) != 1 {
+				t.Fatalf("expected visible availability context, got %+v", got)
+			}
+			if got.Results[0].TripID != "visible-trip" {
+				t.Fatalf("expected visible trip facts, got %+v", got.Results[0])
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSelection(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	visibleResult := bookingCreateSelectionAvailabilityResult("visible-trip", "visible-board", "visible-alight")
+	hiddenResult := bookingCreateSelectionAvailabilityResult("hidden-trip", "hidden-board", "hidden-alight")
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+
+	for _, status := range []string{
+		messageStatusAutomationDraft,
+		messageStatusAutomationReviewed,
+		messageStatusAutomationPending,
+	} {
+		t.Run(status, func(t *testing.T) {
+			history := append(bookingCreateAvailabilityHistory(now, visibleResult, hiddenResult, status),
+				Message{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-50 * time.Second)},
+				Message{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-40 * time.Second)},
+				Message{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-30 * time.Second)},
+				Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-20 * time.Second)},
+				Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-10 * time.Second)},
+				Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now},
+			)
+
+			input, ok := parseBookingCreateInput(session, history, "isso", nil)
+			if !ok {
+				t.Fatalf("expected booking create input from visible availability context")
+			}
+			if input.TripID != "visible-trip" || input.BoardStopID != "visible-board" || input.AlightStopID != "visible-alight" {
+				t.Fatalf("expected booking selection to use visible trip facts, got %+v", input)
+			}
+		})
+	}
+}
+
+func bookingCreateAvailabilityHistory(now time.Time, visibleResult AvailabilitySearchResult, hiddenResult AvailabilitySearchResult, hiddenStatus string) []Message {
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(visibleResult),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(visibleResult),
+				},
+			},
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(hiddenResult),
+			ProcessingStatus: hiddenStatus,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(hiddenResult),
+				},
+			},
+		},
+	}
+}
+
+func bookingCreateSelectionAvailabilityResult(tripID string, boardStopID string, alightStopID string) AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Videira/SC",
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{{
+			TripID:                 tripID,
+			BoardStopID:            boardStopID,
+			AlightStopID:           alightStopID,
+			OriginDisplayName:      "Santa Ines/MA",
+			DestinationDisplayName: "Videira/SC",
+			OriginDepartTime:       "08:00",
+			TripDate:               "2026-07-06",
+			SeatsAvailable:         5,
+			Price:                  950,
+			Currency:               "BRL",
+			Status:                 "ACTIVE",
+			TripStatus:             "SCHEDULED",
+			PackageName:            packageToSantaCatarina,
+		}},
+	}
+}
+
 func TestParseBookingCreateInputRejectsConfirmationWhenPassengerCountStillIncomplete(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{

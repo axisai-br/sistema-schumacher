@@ -319,7 +319,10 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 }
 
 func routeAvailabilityOptionAnswer(optionCount int, history []Message, body string, folded string, source string, allowConfirmation bool) (IntentDecision, bool) {
-	if optionCount <= 0 {
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+	if promptContext.OptionCount > 0 {
+		optionCount = promptContext.OptionCount
+	} else if optionCount <= 0 {
 		optionCount = currentAvailabilitySelectionOptionCount(history)
 	}
 	if optionCount <= 0 {
@@ -330,6 +333,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 		if index > optionCount {
 			return IntentDecision{}, false
 		}
+		if !promptContext.HasCurrentFacts {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_missing_current_facts",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              source,
@@ -339,6 +348,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 		}, true
 	}
 	if optionCount == 1 && looksLikeContextualAvailabilitySelection(folded) {
+		if !promptContext.HasCurrentFacts {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_missing_current_facts",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              source,
@@ -348,6 +363,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 		}, true
 	}
 	if optionCount == 1 && allowConfirmation && looksLikeBookingCreateConfirmation(body) {
+		if !promptContext.HasCurrentFacts {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_missing_current_facts",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              "deterministic_trip_confirmation_recovery",
@@ -358,6 +379,11 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 	}
 
 	return IntentDecision{}, false
+}
+
+type availabilitySelectionPromptContext struct {
+	OptionCount     int
+	HasCurrentFacts bool
 }
 
 func looksLikeAmbiguousAvailabilityOptionReply(body string, folded string) bool {
@@ -373,13 +399,32 @@ func looksLikeAmbiguousAvailabilityOptionReply(body string, folded string) bool 
 }
 
 func currentAvailabilitySelectionOptionCount(history []Message) int {
-	if !hasCurrentAvailabilitySelectionContext(history) {
-		return 0
+	return currentAvailabilitySelectionPromptContext(history).OptionCount
+}
+
+func currentAvailabilitySelectionPromptContext(history []Message) availabilitySelectionPromptContext {
+	message, ok := latestReliableAssistantMessage(history)
+	if !ok {
+		return availabilitySelectionPromptContext{}
 	}
-	if latest := findLatestAvailabilityContext(history); latest != nil && len(latest.Results) > 0 {
-		return len(latest.Results)
+
+	body := messageTurnText(message)
+	renderedCount := availabilityOptionCountFromRenderedPrompt(body)
+	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
+	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	if renderedCount <= 0 && currentFactsCount <= 0 && !looksLikeAvailabilitySelectionPrompt(folded) {
+		return availabilitySelectionPromptContext{}
 	}
-	return 0
+
+	optionCount := renderedCount
+	if optionCount <= 0 {
+		optionCount = currentFactsCount
+	}
+	hasCurrentFacts := currentFactsCount > 0 && (renderedCount <= 0 || renderedCount == currentFactsCount)
+	return availabilitySelectionPromptContext{
+		OptionCount:     optionCount,
+		HasCurrentFacts: hasCurrentFacts,
+	}
 }
 
 func activePromptAllowsUnsupportedFollowUp(ctx ActivePromptContext) bool {
@@ -483,18 +528,7 @@ func firstAvailableOptionIndex(history []Message) int {
 }
 
 func hasCurrentAvailabilitySelectionContext(history []Message) bool {
-	message, ok := latestAssistantMessage(history)
-	if !ok {
-		return false
-	}
-	if availabilityOptionCountFromMessage(message) > 0 {
-		return true
-	}
-	body := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
-	if !looksLikeAvailabilitySelectionPrompt(body) {
-		return false
-	}
-	return hasPreviousAvailabilityList(history)
+	return currentAvailabilitySelectionPromptContext(history).OptionCount > 0
 }
 
 func looksLikeContextualAvailabilitySelection(folded string) bool {

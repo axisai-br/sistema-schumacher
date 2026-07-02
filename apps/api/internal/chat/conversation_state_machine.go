@@ -81,14 +81,46 @@ func deriveCanonicalConversationState(session Session, history []Message, curren
 	state.Passengers.ChildUnder5Count = draft.ChildUnder5Count
 	state.Passengers.DocumentsCollected = draft.HasPassengerDetails
 
-	for i := len(history) - 1; i >= 0; i-- {
-		for _, toolContext := range messageToolContexts(history[i]) {
-			mergeToolFactsIntoCanonicalState(&state, toolContext)
+	for i := 0; i < len(history); i++ {
+		message := history[i]
+		for _, toolContext := range messageToolContexts(message) {
+			mergeMessageToolFactsIntoCanonicalState(&state, message, toolContext)
 		}
 	}
 	state.Phase = inferConversationPhase(state, draft)
 	state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 	return state
+}
+
+func mergeMessageToolFactsIntoCanonicalState(state *CanonicalConversationState, message Message, toolContext map[string]interface{}) {
+	if !shouldMergeAvailabilityFactsFromMessage(message) {
+		toolContext = withoutAvailabilityToolFacts(toolContext)
+	}
+	mergeToolFactsIntoCanonicalState(state, toolContext)
+}
+
+func shouldMergeAvailabilityFactsFromMessage(message Message) bool {
+	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+		return true
+	}
+	return isReliableActivePromptOutbound(message)
+}
+
+func withoutAvailabilityToolFacts(toolContext map[string]interface{}) map[string]interface{} {
+	if _, ok := toolContext[toolNameAvailabilitySearch]; !ok {
+		return toolContext
+	}
+	if len(toolContext) == 1 {
+		return nil
+	}
+	filtered := make(map[string]interface{}, len(toolContext)-1)
+	for key, value := range toolContext {
+		if key == toolNameAvailabilitySearch {
+			continue
+		}
+		filtered[key] = value
+	}
+	return filtered
 }
 
 func mergeToolFactsIntoCanonicalState(state *CanonicalConversationState, toolContext map[string]interface{}) {
@@ -97,22 +129,30 @@ func mergeToolFactsIntoCanonicalState(state *CanonicalConversationState, toolCon
 	}
 	if availability := asMap(toolContext[toolNameAvailabilitySearch]); len(availability) > 0 {
 		state.LastToolFacts[toolNameAvailabilitySearch] = availability
-		if state.Route.PackageName == "" {
-			state.Route.PackageName = strings.TrimSpace(asString(availability["package_name"]))
+		if packageName := strings.TrimSpace(asString(availability["package_name"])); packageName != "" {
+			state.Route.PackageName = packageName
 		}
 	}
 	if booking := asMap(toolContext[toolNameBookingCreate]); len(booking) > 0 {
 		state.LastToolFacts[toolNameBookingCreate] = booking
-		state.Booking.BookingID = firstNonEmpty(state.Booking.BookingID, strings.TrimSpace(asString(booking["booking_id"])))
-		state.Booking.ReservationCode = firstNonEmpty(state.Booking.ReservationCode, strings.TrimSpace(asString(booking["reservation_code"])))
-		state.Booking.Status = firstNonEmpty(state.Booking.Status, strings.TrimSpace(asString(booking["status"])))
+		if bookingID := strings.TrimSpace(asString(booking["booking_id"])); bookingID != "" {
+			state.Booking.BookingID = bookingID
+		}
+		if reservationCode := strings.TrimSpace(asString(booking["reservation_code"])); reservationCode != "" {
+			state.Booking.ReservationCode = reservationCode
+		}
+		if status := strings.TrimSpace(asString(booking["status"])); status != "" {
+			state.Booking.Status = status
+		}
 	}
 	if payment := asMap(toolContext[toolNamePaymentStatus]); len(payment) > 0 {
 		state.LastToolFacts[toolNamePaymentStatus] = payment
 	}
 	if payment := asMap(toolContext[toolNamePaymentCreate]); len(payment) > 0 {
 		state.LastToolFacts[toolNamePaymentCreate] = payment
-		state.Payment.Status = firstNonEmpty(state.Payment.Status, strings.TrimSpace(asString(payment["payment_status"])))
+		if status := strings.TrimSpace(asString(payment["payment_status"])); status != "" {
+			state.Payment.Status = status
+		}
 	}
 }
 

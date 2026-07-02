@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -53,6 +54,7 @@ func TestValidateStructuredInterpretationAcceptsAvailabilityOptionInRange(t *tes
 	got := ValidateStructuredInterpretation(InterpretationValidationInput{
 		Proposal:     proposal,
 		CurrentTurn:  "1",
+		History:      validationAvailabilityHistory(validationAvailabilityResult(5), true),
 		ActivePrompt: ActivePromptContext{Kind: ActivePromptAvailabilityOptionChoice, AvailabilityOptionCount: 5},
 	})
 
@@ -65,6 +67,7 @@ func TestValidateStructuredInterpretationRejectsAvailabilityOptionOutOfRange(t *
 	got := ValidateStructuredInterpretation(InterpretationValidationInput{
 		Proposal:     proposal,
 		CurrentTurn:  "10",
+		History:      validationAvailabilityHistory(validationAvailabilityResult(5), true),
 		ActivePrompt: ActivePromptContext{Kind: ActivePromptAvailabilityOptionChoice, AvailabilityOptionCount: 5},
 	})
 
@@ -77,10 +80,110 @@ func TestValidateStructuredInterpretationRejectsAmbiguousAvailabilityOption(t *t
 	got := ValidateStructuredInterpretation(InterpretationValidationInput{
 		Proposal:     proposal,
 		CurrentTurn:  "ok",
+		History:      validationAvailabilityHistory(validationAvailabilityResult(5), true),
 		ActivePrompt: ActivePromptContext{Kind: ActivePromptAvailabilityOptionChoice, AvailabilityOptionCount: 5},
 	})
 
 	assertInterpretationRejected(t, got, "ambiguous_availability_option_reply", TemplateContextFallbackAvailabilityOption)
+}
+
+func TestValidateStructuredInterpretationRejectsRenderedAvailabilityOptionWithoutCurrentFacts(t *testing.T) {
+	proposal := validationAvailabilityOptionProposal(1)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    proposal,
+		CurrentTurn: "1",
+		History:     validationAvailabilityHistory(validationAvailabilityResult(1), false),
+		State: CanonicalConversationState{
+			Phase: ConversationPhaseRouteSelection,
+			LastToolFacts: map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(validationAvailabilityResult(5)),
+			},
+		},
+	})
+
+	assertInterpretationRejected(t, got, "availability_selection_missing_current_facts", TemplateContextFallbackAvailabilityOption)
+}
+
+func TestValidateStructuredInterpretationAcceptsCurrentSingleAvailabilityOptionContextualReply(t *testing.T) {
+	proposal := validationAvailabilityOptionProposal(1)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    proposal,
+		CurrentTurn: "essa msm",
+		History:     validationAvailabilityHistory(validationAvailabilityResult(1), true),
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationAccepted(t, got)
+}
+
+func TestValidateStructuredInterpretationUsesReliableAvailabilityPromptWhenInvisibleDraftFollows(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(1),
+		CurrentTurn: "essa msm",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationAccepted(t, got)
+}
+
+func TestValidateStructuredInterpretationInvisibleAvailabilityDraftDoesNotAuthorizeUnseenOption(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(5),
+		CurrentTurn: "5",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationRejected(t, got, "availability_option_index_out_of_range", TemplateContextFallbackAvailabilityOption)
+}
+
+func TestValidateStructuredInterpretationInvisibleDraftWithoutFactsDoesNotInvalidateSentAvailabilityPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionTestResult(), false)
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(1),
+		CurrentTurn: "1",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationAccepted(t, got)
+}
+
+func TestValidateStructuredInterpretationUsesVisibleCurrentAvailabilityOptionCount(t *testing.T) {
+	history := validationAvailabilityHistory(validationAvailabilityResult(8), true)
+
+	for _, index := range []int{1, 5} {
+		t.Run(fmt.Sprintf("accepts_%d", index), func(t *testing.T) {
+			got := ValidateStructuredInterpretation(InterpretationValidationInput{
+				Proposal:    validationAvailabilityOptionProposal(index),
+				CurrentTurn: fmt.Sprintf("%d", index),
+				History:     history,
+				State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+			})
+
+			assertInterpretationAccepted(t, got)
+		})
+	}
+
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(6),
+		CurrentTurn: "6",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationRejected(t, got, "availability_option_index_out_of_range", TemplateContextFallbackAvailabilityOption)
 }
 
 func TestValidateStructuredInterpretationAcceptsAvailabilityDate(t *testing.T) {
@@ -316,6 +419,53 @@ func validationAvailabilityOptionProposal(index int) StructuredInterpretation {
 	proposal.Booking.SelectedOptionIndexKnown = true
 	proposal.Booking.SelectedOptionIndex = index
 	return proposal
+}
+
+func validationAvailabilityHistory(result AvailabilitySearchResult, withFacts bool) []Message {
+	message := Message{
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(result),
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+	}
+	if withFacts {
+		message.Payload = map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+			},
+		}
+	}
+	return []Message{message}
+}
+
+func validationAvailabilityResult(count int) AvailabilitySearchResult {
+	result := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Videira/SC",
+			PackageName: packageToSantaCatarina,
+			Qty:         1,
+			Limit:       count,
+		},
+		Results: make([]AvailabilitySearchItem, 0, count),
+	}
+	for index := 1; index <= count; index++ {
+		result.Results = append(result.Results, AvailabilitySearchItem{
+			TripID:                 fmt.Sprintf("trip-validation-%02d", index),
+			BoardStopID:            fmt.Sprintf("board-validation-%02d", index),
+			AlightStopID:           fmt.Sprintf("alight-validation-%02d", index),
+			OriginDisplayName:      "Santa Ines/MA",
+			DestinationDisplayName: "Videira/SC",
+			OriginDepartTime:       fmt.Sprintf("%02d:00", 7+index),
+			SeatsAvailable:         8,
+			Price:                  950,
+			Currency:               "BRL",
+			Status:                 "ACTIVE",
+			TripStatus:             "SCHEDULED",
+			PackageName:            packageToSantaCatarina,
+		})
+	}
+	return result
 }
 
 func assertInterpretationAccepted(t *testing.T, got InterpretationValidationResult) {

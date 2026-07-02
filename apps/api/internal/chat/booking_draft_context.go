@@ -103,7 +103,7 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		}
 
 		for _, toolContext := range messageToolContexts(message) {
-			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil {
+			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil && shouldMergeAvailabilityFactsFromMessage(message) {
 				context.HasAvailabilityShown = true
 				mergeAvailabilityPayloadIntoBookingDraft(&context, availability)
 			}

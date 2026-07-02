@@ -89,6 +89,102 @@ func TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount(t *tes
 	}
 }
 
+func TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
+	}
+	searcher := &fakeAvailabilitySearcher{
+		enabled: true,
+		result:  availabilityDateSelectionTestResult(),
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999999",
+		CustomerPhone:  "5511999999999",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	seedInboundSent(t, store, session.ID, "oi queria me informar pra saber que dia o onibus sai daqui de videira pra santa ines no maranhao", now.Add(-5*time.Minute))
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-stale-availability-selection",
+		Body:             "Encontrei estas opcoes antigas.",
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+			},
+		},
+		RecordedAt: now.Add(-4 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed stale availability draft: %v", err)
+	}
+	seedInboundSent(t, store, session.ID, "13/07", now.Add(-3*time.Minute))
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-current-rendered-availability-selection",
+		Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		RecordedAt:       now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed current rendered availability draft: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-essa-msm-rendered-single-option",
+			IdempotencyKey:    "idem-essa-msm-rendered-single-option",
+			Body:              "essa msm",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest selection: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess selection: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic selection to avoid LLM, got %d calls", runner.calls)
+	}
+	if searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("expected no new availability search, searcher=%d tool_calls=%d", searcher.calls, len(out.ToolCalls))
+	}
+	if out.Draft == nil {
+		t.Fatal("expected draft")
+	}
+	reply, ok := realizeResponseTemplate(TemplateContextFallbackAvailabilityOption)
+	if !ok {
+		t.Fatal("expected availability option fallback template")
+	}
+	if got := strings.TrimSpace(out.Draft.Body); got != reply {
+		t.Fatalf("expected contextual fallback reply %q, got %q", reply, got)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateContextFallbackAvailabilityOption) {
+		t.Fatalf("expected template %s, got %q payload=%+v", TemplateContextFallbackAvailabilityOption, got, out.Draft.NormalizedPayload)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskPassengerCount) {
+		t.Fatalf("stale rendered selection must not advance to passenger count, got %+v", out.Draft.NormalizedPayload)
+	}
+	intentDecision := asMap(out.Memory["intent_decision"])
+	if got := asInt(intentDecision["selected_option_index"]); got != 0 {
+		t.Fatalf("stale rendered selection must not select option 1, got %d memory=%+v", got, intentDecision)
+	}
+}
+
 func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text string) {
 	t.Helper()
 	store := newFakeStore()
@@ -416,13 +512,13 @@ func TestIncrementalFlowUsesActivePromptForAvailabilityOptionAfterDate(t *testin
 	if second.Draft == nil {
 		t.Fatal("expected availability draft after route")
 	}
-	seedOutboundSent(t, store, sessionID, second.Draft.Body, now.Add(2*time.Minute))
+	seedOutboundDraftSent(t, store, sessionID, *second.Draft, now.Add(2*time.Minute))
 
 	third := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-date", "06/07")
 	if third.Draft == nil {
 		t.Fatal("expected availability draft after date")
 	}
-	seedOutboundSent(t, store, sessionID, third.Draft.Body, now.Add(3*time.Minute))
+	seedOutboundDraftSent(t, store, sessionID, *third.Draft, now.Add(3*time.Minute))
 
 	out := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-option", "essa mesmo")
 	if out.Draft == nil {
@@ -1499,6 +1595,22 @@ func ingestAndReprocessActivePromptFlowTurn(t *testing.T, svc *Service, contactK
 		t.Fatalf("reprocess %q: %v", body, err)
 	}
 	return out
+}
+
+func seedOutboundDraftSent(t *testing.T, store *fakeStore, sessionID string, draft Message, at time.Time) {
+	t.Helper()
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		Body:              draft.Body,
+		Payload:           draft.Payload,
+		NormalizedPayload: draft.NormalizedPayload,
+		ProcessingStatus:  messageStatusAutomationSent,
+		ReceivedAt:        at,
+	}); err != nil {
+		t.Fatalf("seed outbound draft %q: %v", draft.Body, err)
+	}
 }
 
 func availabilitySelectionHistory(t *testing.T) []Message {
