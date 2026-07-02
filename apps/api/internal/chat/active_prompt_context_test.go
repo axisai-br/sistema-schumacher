@@ -202,6 +202,152 @@ func TestInferActivePromptContextAcceptsSentAutomationWithDraftMode(t *testing.T
 	}
 }
 
+func TestInferActivePromptContextResolvesBotAutoReplyMirrorToDraftSource(t *testing.T) {
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	result := availabilityDateSelectionTestResult()
+	body := buildAvailabilityListReply(result)
+	history := []Message{
+		{
+			ID:               "draft-list",
+			Direction:        "OUTBOUND",
+			Body:             body,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"mode": messageStatusAutomationDraft,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+				},
+			},
+		},
+		{
+			ID:               "mirror-list",
+			Direction:        "OUTBOUND",
+			Body:             body,
+			ProcessingStatus: "PENDING",
+			ReceivedAt:       now.Add(-1 * time.Minute),
+			Payload: map[string]interface{}{
+				"mode":             "BOT_AUTO_REPLY",
+				"draft_message_id": "draft-list",
+			},
+		},
+	}
+
+	got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseTripSelection})
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+
+	if got.Kind != ActivePromptAvailabilityOptionChoice {
+		t.Fatalf("expected availability option prompt, got %+v", got)
+	}
+	if got.SourceMessageID != "draft-list" {
+		t.Fatalf("expected draft source message, got %+v", got)
+	}
+	if got.AvailabilityOptionCount != 1 || !got.HasAvailabilityList {
+		t.Fatalf("expected source draft availability count, got %+v", got)
+	}
+	if promptContext.OptionCount != 1 || !promptContext.HasCurrentFacts {
+		t.Fatalf("expected source draft current availability facts, got %+v", promptContext)
+	}
+}
+
+func TestInferActivePromptContextBotAutoReplyWithoutDraftSourceDoesNotExposeCurrentFacts(t *testing.T) {
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	result := availabilityDateSelectionTestResult()
+	body := buildAvailabilityListReply(result)
+	history := []Message{
+		{
+			ID:               "mirror-list",
+			Direction:        "OUTBOUND",
+			Body:             body,
+			ProcessingStatus: "PENDING",
+			ReceivedAt:       now.Add(-1 * time.Minute),
+			Payload: map[string]interface{}{
+				"mode":             "BOT_AUTO_REPLY",
+				"draft_message_id": "missing-draft",
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+				},
+			},
+		},
+	}
+
+	got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseTripSelection})
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+
+	if got.Kind != ActivePromptAvailabilityOptionChoice {
+		t.Fatalf("expected rendered availability prompt to be recognized, got %+v", got)
+	}
+	if got.SourceMessageID != "mirror-list" {
+		t.Fatalf("expected unresolved mirror as prompt body source, got %+v", got)
+	}
+	if promptContext.OptionCount != 1 {
+		t.Fatalf("expected rendered option count from mirror body, got %+v", promptContext)
+	}
+	if promptContext.HasCurrentFacts {
+		t.Fatalf("BOT_AUTO_REPLY without draft source must not expose current facts, got %+v", promptContext)
+	}
+}
+
+func TestInferActivePromptContextResolvesBotAutoReplyNonAvailabilityPrompts(t *testing.T) {
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		body string
+		want ActivePromptKind
+	}{
+		{
+			name: "passenger count",
+			body: "A passagem e so para voce ou tem mais alguem junto?",
+			want: ActivePromptPassengerCount,
+		},
+		{
+			name: "lap child question",
+			body: "Tem crianca de 5 anos ou menos viajando?",
+			want: ActivePromptLapChildQuestion,
+		},
+		{
+			name: "payment options info remains informational",
+			body: paymentOptionsInfoReply,
+			want: ActivePromptUnknown,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := []Message{
+				{
+					ID:               "draft-prompt",
+					Direction:        "OUTBOUND",
+					Body:             tc.body,
+					ProcessingStatus: messageStatusAutomationSent,
+					ReceivedAt:       now.Add(-2 * time.Minute),
+					Payload:          map[string]interface{}{"mode": messageStatusAutomationDraft},
+				},
+				{
+					ID:               "mirror-prompt",
+					Direction:        "OUTBOUND",
+					Body:             tc.body,
+					ProcessingStatus: "PENDING",
+					ReceivedAt:       now.Add(-1 * time.Minute),
+					Payload: map[string]interface{}{
+						"mode":             "BOT_AUTO_REPLY",
+						"draft_message_id": "draft-prompt",
+					},
+				},
+			}
+
+			got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhasePassengerCollection})
+
+			if got.Kind != tc.want {
+				t.Fatalf("expected kind %s, got %+v", tc.want, got)
+			}
+			if got.SourceMessageID != "draft-prompt" {
+				t.Fatalf("expected draft source message, got %+v", got)
+			}
+		})
+	}
+}
+
 func TestInferActivePromptContextReturnsUnknownWithoutReliablePrompt(t *testing.T) {
 	history := []Message{
 		{ID: "customer", Direction: "INBOUND", Body: "oi", ProcessingStatus: "PROCESSED"},

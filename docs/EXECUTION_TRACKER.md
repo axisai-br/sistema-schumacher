@@ -196,9 +196,76 @@ validar "essa msm" e "1" após lista atual com uma opção e tool_context atual;
 
 Próxima ação recomendada:
 solicitar novo /review antes de commit; depois, se aprovado, preparar commit do hotfix.
+```
+
+Hotfix local concluído em 2026-07-02; pendente review/commit/deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-02 — active prompt delivery mirror sem tool_context
+Entrada real: "13/07" → lista com 1 opção → "essa msm"
+Problema corrigido localmente: active prompt não escolhe mais o espelho BOT_AUTO_REPLY/PENDING sem tool_context como fonte canônica quando há draft source enriquecido.
+Esperado: SELECT_AVAILABILITY_OPTION + selected_option_index=1 + ASK_PASSENGER_COUNT
+
+Causa corrigida:
+latestReliableAssistantMessage escolhia a mensagem BOT_AUTO_REPLY/PENDING mais recente, sem tool_context, em vez do draft AUTOMATION_SENT enriquecido referenciado por draft_message_id.
+
+Decisão tomada:
+BOT_AUTO_REPLY passa a resolver draft_message_id no próprio histórico.
+Se o draft source existe, é OUTBOUND, é confiável/enviado, não é outro BOT_AUTO_REPLY e tem body equivalente, o active prompt usa o draft source.
+Se não houver source confiável, o espelho não expõe tool_context/facts atuais e não autoriza seleção operacional de disponibilidade.
+Facts de availability não são mergeados diretamente de BOT_AUTO_REPLY; a fonte canônica continua sendo o draft enviado.
+
+Regressões cobertas:
+BOT_AUTO_REPLY/PENDING sem tool_context + draft AUTOMATION_SENT com tool_context aceita "essa msm" como opção 1.
+"5" após lista source com 1 opção cai em CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selected_option_index.
+BOT_AUTO_REPLY sem draft source confiável cai em CONTEXT_FALLBACK_AVAILABILITY_OPTION, mesmo com LastToolFacts antigo.
+InterpretStructuredTurn e ValidateStructuredInterpretation aplicam o mesmo gate.
+Prompts não-disponibilidade com mirror/draft continuam reconhecidos: pergunta de passageiros, criança até 5 anos e payment options info informativo.
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/interpreter_test.go
+apps/api/internal/chat/interpreter_validation_test.go
+apps/api/internal/chat/booking_create_router_test.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Delivery.*Mirror|Test.*BotAutoReply|Test.*Reliable.*Assistant|Test.*Structured.*Selection|Test.*ValidateStructuredInterpretation|Test.*Booking.*Selection|Test.*Payment.*Info|Test.*AutoSend'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+Revisão local do diff sem achados P1/P2. Solicitar /review antes de commit.
+
+Necessidade de teste em produção/homologação:
+validar o fluxo real "13/07" → lista com 1 opção persistida como draft AUTOMATION_SENT + mirror BOT_AUTO_REPLY/PENDING → "essa msm".
+validar que BOT_AUTO_REPLY sem draft source confiável não seleciona disponibilidade.
+
+Não houve alteração em:
+OpenAI runtime assist
+OpenAI shadow/schema/runner
+vector base
+embeddings
+File Search
+planner
+banco/migrations
+infra
+n8n
+booking_create
+payment_create
+booking_cancel
+document_extract
+payment_status
+
+Próxima ação recomendada:
+solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy.
+```
 
 3.6F/vector/File Search/planner continuam não iniciados.
-```
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
 

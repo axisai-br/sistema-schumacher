@@ -68,9 +68,82 @@ func latestReliableAssistantMessage(history []Message) (Message, bool) {
 		if !isReliableActivePromptOutbound(message) {
 			continue
 		}
+		if isBotAutoReplyMessage(message) {
+			if source, ok := resolveBotAutoReplyPromptSourceMessage(history, i, message); ok {
+				return source, true
+			}
+			return withoutPromptToolContext(message), true
+		}
 		return message, true
 	}
 	return Message{}, false
+}
+
+func resolveBotAutoReplyPromptSourceMessage(history []Message, mirrorIndex int, mirror Message) (Message, bool) {
+	draftID := botAutoReplyDraftMessageID(mirror)
+	if draftID == "" {
+		return Message{}, false
+	}
+	mirrorBody := messageTurnText(mirror)
+	for i := mirrorIndex - 1; i >= 0; i-- {
+		candidate := history[i]
+		if strings.TrimSpace(candidate.ID) != draftID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(candidate.Direction), "OUTBOUND") {
+			return Message{}, false
+		}
+		if strings.TrimSpace(messageTurnText(candidate)) == "" {
+			return Message{}, false
+		}
+		if isBotAutoReplyMessage(candidate) || !isReliableActivePromptOutbound(candidate) {
+			return Message{}, false
+		}
+		if !equivalentAssistantPromptBody(messageTurnText(candidate), mirrorBody) {
+			return Message{}, false
+		}
+		return candidate, true
+	}
+	return Message{}, false
+}
+
+func botAutoReplyDraftMessageID(message Message) string {
+	if !isBotAutoReplyMessage(message) {
+		return ""
+	}
+	return strings.TrimSpace(firstNonEmpty(
+		asString(message.Payload["draft_message_id"]),
+		asString(message.NormalizedPayload["draft_message_id"]),
+	))
+}
+
+func equivalentAssistantPromptBody(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	if strings.Join(strings.Fields(left), " ") == strings.Join(strings.Fields(right), " ") {
+		return true
+	}
+	return activePromptFolded(left) == activePromptFolded(right)
+}
+
+func withoutPromptToolContext(message Message) Message {
+	if len(message.Payload) > 0 {
+		payload := cloneMap(message.Payload)
+		delete(payload, "tool_context")
+		message.Payload = payload
+	}
+	if len(message.NormalizedPayload) > 0 {
+		normalizedPayload := cloneMap(message.NormalizedPayload)
+		delete(normalizedPayload, "tool_context")
+		message.NormalizedPayload = normalizedPayload
+	}
+	return message
 }
 
 func isReliableActivePromptOutbound(message Message) bool {

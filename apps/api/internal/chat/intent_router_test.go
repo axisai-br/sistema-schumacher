@@ -167,6 +167,61 @@ func TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurre
 	}
 }
 
+func TestIntentRouterSelectsEssaMsmFromBotAutoReplyDeliveryMirrorSourceDraft(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "essa msm", state, now)
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected delivery mirror to select source draft availability option, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option index 1, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+		t.Fatalf("expected passenger count template decision, got %+v", got)
+	}
+}
+
+func TestIntentRouterDeliveryMirrorDoesNotAuthorizeInvisibleOption(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "5", state, now)
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("delivery mirror must not select invisible option: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("delivery mirror invisible option must not set selected index: %+v", got)
+	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+}
+
+func TestIntentRouterBotAutoReplyWithoutDraftSourceDoesNotAuthorizeAvailabilitySelection(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), false)
+	state := CanonicalConversationState{
+		Phase: ConversationPhaseTripSelection,
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+		},
+	}
+
+	got := routeDeterministicIntent(history, "essa msm", state, now)
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("BOT_AUTO_REPLY without source draft must not select availability option: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("BOT_AUTO_REPLY without source draft must not set selected index: %+v", got)
+	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+}
+
 func TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	availability := availabilityDateSelectionEightOptionsTestResult()
@@ -1257,6 +1312,40 @@ func availabilitySingleOptionHistoryWithInvisibleFollowUp(now time.Time, invisib
 			},
 		},
 		invisible,
+	}
+}
+
+func availabilityDeliveryMirrorHistory(now time.Time, result AvailabilitySearchResult, withSourceDraft bool) []Message {
+	body := buildAvailabilityListReply(result)
+	mirror := Message{
+		ID:               "mirror-list",
+		Direction:        "OUTBOUND",
+		Body:             body,
+		ProcessingStatus: "PENDING",
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"mode":             "BOT_AUTO_REPLY",
+			"draft_message_id": "draft-list",
+		},
+	}
+	if !withSourceDraft {
+		return []Message{mirror}
+	}
+	return []Message{
+		{
+			ID:               "draft-list",
+			Direction:        "OUTBOUND",
+			Body:             body,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"mode": messageStatusAutomationDraft,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+				},
+			},
+		},
+		mirror,
 	}
 }
 

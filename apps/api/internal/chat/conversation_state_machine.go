@@ -103,6 +103,9 @@ func shouldMergeAvailabilityFactsFromMessage(message Message) bool {
 	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
 		return true
 	}
+	if isBotAutoReplyMessage(message) {
+		return false
+	}
 	return isReliableActivePromptOutbound(message)
 }
 

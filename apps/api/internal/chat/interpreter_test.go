@@ -109,6 +109,49 @@ func TestInterpretStructuredTurnActivePromptSingleAvailabilityOptionContextualSe
 	}
 }
 
+func TestInterpretStructuredTurnSelectsFromBotAutoReplyDeliveryMirrorSourceDraft(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "essa msm",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+		ObservedAt:  now,
+	})
+
+	if got.Intent != StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("expected delivery mirror source draft availability selection, got %+v", got)
+	}
+	if !got.Booking.SelectedOptionIndexKnown || got.Booking.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option 1, got %+v", got.Booking)
+	}
+}
+
+func TestInterpretStructuredTurnBotAutoReplyWithoutDraftSourceDoesNotAuthorizeAvailabilitySelection(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), false)
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "essa msm",
+		History:     history,
+		State: CanonicalConversationState{
+			Phase: ConversationPhaseRouteSelection,
+			LastToolFacts: map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+			},
+		},
+		ObservedAt: now,
+	})
+
+	if got.Intent == StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("BOT_AUTO_REPLY without source draft must not select availability option: %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("BOT_AUTO_REPLY without source draft must not set selected option: %+v", got.Booking)
+	}
+}
+
 func TestInterpretStructuredTurnDoesNotSelectRenderedSingleAvailabilityOptionWithStaleFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	history := []Message{
