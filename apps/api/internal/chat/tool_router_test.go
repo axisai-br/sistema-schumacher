@@ -298,7 +298,7 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
-			ProcessingStatus: messageStatusAutomationDraft,
+			ProcessingStatus: messageStatusAutomationSent,
 			Body:             "Opções (Santa Inês → Fraiburgo — saída 12:00 — R$950):\n11/05/2026\n25/05/2026",
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{

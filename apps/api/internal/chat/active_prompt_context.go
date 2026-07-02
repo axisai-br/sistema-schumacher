@@ -37,7 +37,7 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 		Phase: state.Phase,
 	}
 
-	message, ok := latestReliableActivePromptMessage(history)
+	message, ok := latestReliableAssistantMessage(history)
 	if !ok {
 		return context
 	}
@@ -56,7 +56,7 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 	return context
 }
 
-func latestReliableActivePromptMessage(history []Message) (Message, bool) {
+func latestReliableAssistantMessage(history []Message) (Message, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
 		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
@@ -85,12 +85,16 @@ func isReliableActivePromptOutbound(message Message) bool {
 		strings.Contains(status, "BLOCKED") {
 		return false
 	}
+	if status == messageStatusAutomationSent {
+		return true
+	}
 
 	mode := strings.ToUpper(strings.TrimSpace(firstNonEmpty(
 		asString(message.Payload["mode"]),
 		asString(message.NormalizedPayload["mode"]),
 	)))
-	if mode == messageStatusAutomationDraft || mode == "AUTOMATION_DRAFT" {
+	switch mode {
+	case messageStatusAutomationDraft, messageStatusAutomationReviewed, messageStatusAutomationPending:
 		return false
 	}
 

@@ -146,6 +146,59 @@ Review P2 corrigido localmente:
 PAYMENT_OPTIONS_INFO e PAYING_PASSENGER_INFO não viram ActivePromptPaymentPreference.
 Após PAYMENT_OPTIONS_INFO, "quero reservar", rota/cidade, data ou "como faço pra reservar" não caem em CONTEXT_FALLBACK_PAYMENT_PREFERENCE.
 ```
+
+Bug residual de H-2026-06-30B corrigido localmente em 2026-07-01; pendente deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-01 — "essa msm" fallback após opção única real
+Entrada: "essa msm" após lista atual renderizada com exatamente uma opção
+Problema corrigido localmente: não cai mais em CONTEXT_FALLBACK_AVAILABILITY_OPTION quando a lista atual tem tool_context/facts atuais correspondentes
+Esperado com facts atuais na mesma mensagem: SELECT_AVAILABILITY_OPTION + selected_option_index=1 + ASK_PASSENGER_COUNT
+
+Entrada: "essa msm" após lista atual renderizada com uma opção, mas sem tool_context atual correspondente
+Esperado: CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selecionar opção 1 e sem ASK_PASSENGER_COUNT
+
+Entrada: "essa msm" após lista atual renderizada com múltiplas opções
+Esperado: CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selecionar opção 1
+
+Causa corrigida:
+optionCount renderizado continua servindo para reconhecer contexto visual
+seleção contextual de opção única agora exige facts atuais da mesma mensagem/lista
+rendered count sem facts atuais não autoriza ASK_PASSENGER_COUNT
+deriveCanonicalConversationState preserva facts mais recentes em LastToolFacts, em vez de deixar facts antigos sobrescreverem a disponibilidade atual
+
+Review P2 adicional corrigido localmente em 2026-07-01:
+InterpretStructuredTurn não autoriza SELECT_AVAILABILITY_OPTION pelo count renderizado quando a última lista não tem tool_context/facts atuais da mesma mensagem.
+InterpretStructuredTurn aceita "essa msm" como selected_option_index=1 quando a lista atual tem exatamente uma opção visível e facts atuais correspondentes.
+ValidateStructuredInterpretation aplica o mesmo gate de facts atuais para propostas SELECT_AVAILABILITY_OPTION vindas de shadow/runtime assist.
+Validator aceita "essa msm" como selected_option_index=1 somente quando a lista atual tem exatamente uma opção visível e facts atuais correspondentes.
+Listas com mais de 5 results continuam limitadas às 5 opções visíveis: índices 1..5 válidos, índice 6 rejeitado.
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/interpreter.go
+apps/api/internal/chat/interpreter_validation.go
+apps/api/internal/chat/interpreter_test.go
+apps/api/internal/chat/interpreter_validation_test.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*Structured.*Selection|Test.*ValidateStructuredInterpretation'
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Stale.*Facts|Test.*Capped.*Availability|Test.*Structured.*Selection|Test.*ValidateStructuredInterpretation|Test.*InterpreterCase|Test.*Payment.*Info|Test.*AutoSend'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+P2 de gate structured/validation corrigidos localmente.
+
+Necessidade de teste em produção/homologação:
+validar "essa msm" e "1" após lista atual com uma opção e tool_context atual; validar que lista renderizada sem tool_context atual cai em CONTEXT_FALLBACK_AVAILABILITY_OPTION.
+
+Próxima ação recomendada:
+solicitar novo /review antes de commit; depois, se aprovado, preparar commit do hotfix.
+
+3.6F/vector/File Search/planner continuam não iniciados.
+```
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
 
@@ -672,7 +725,7 @@ lista com uma opção → "isso msm" → ASK_PASSENGER_COUNT
 
 ## Hotfix H-2026-06-30B — "essa msm" e auto-send do PAYMENT_OPTIONS_INFO
 
-**Status:** Concluído localmente em 2026-06-30; P2 de review corrigido localmente; deploy/smoke confirmado em produção/homologação em 2026-07-01.
+**Status:** Concluído localmente em 2026-06-30; P2 de review corrigido localmente; deploy/smoke confirmado em produção/homologação em 2026-07-01. Bug residual identificado em 2026-07-01 na variação real com lista atual renderizada sem `tool_context` confiável/facts antigos; tratado no Hotfix H-2026-07-01.
 
 **Motivo:** dois bugs reais observados em produção após os hotfixes anteriores:
 
@@ -744,6 +797,101 @@ após PAYMENT_OPTIONS_INFO, "quero reservar"/rota/cidade/"13/07"/"como faço pra
 **Riscos restantes:** variações novas fora das frases fechadas ainda podem cair em fallback ou LLM; a exceção de auto-send depende do texto estático `paymentOptionsInfoReply`, então alteração futura nesse template deve manter os testes de política.
 
 **Próxima ação recomendada:** iniciar 3.6E Runtime Assist Gated, sem vector base, File Search, planner, banco, infra ou n8n.
+
+---
+
+## Hotfix H-2026-07-01 — "essa msm" fallback após opção única real
+
+**Status:** Concluído localmente em 2026-07-01; pendente deploy e validação em produção/homologação.
+
+**Motivo:** bug real observado após o H-2026-06-30B:
+
+```text
+13/07
+essa msm
+dia 13/07, ai o pagamento faz logo ou só no dia mesmo?
+```
+
+Na variação real, `"essa msm"` após uma lista de disponibilidade com exatamente uma opção ainda podia cair em `CONTEXT_FALLBACK_AVAILABILITY_OPTION` em vez de `SELECT_AVAILABILITY_OPTION + ASK_PASSENGER_COUNT`.
+
+**Causa:** o roteamento determinístico dependia de `tool_context`/`LastToolFacts` para saber `optionCount == 1`. Quando a última mensagem do bot tinha a lista renderizada com uma opção, mas sem `tool_context` confiável, e/ou quando facts antigos de disponibilidade tinham múltiplas opções, o contador efetivo podia virar `0` ou `>1`. Além disso, `deriveCanonicalConversationState` podia deixar tool facts antigos sobrescreverem os mais recentes.
+
+**O que mudou:**
+
+```text
+availabilityOptionCountFromRenderedPrompt conta opções numeradas no corpo renderizado da última mensagem de disponibilidade
+availabilityOptionCountFromMessage continua expondo o count visual para reconhecer ActivePromptContext, incluindo tool_context atual capado ao limite renderizado
+latestReliableAssistantMessage centraliza a mesma mensagem outbound confiável usada pelo ActivePromptContext
+currentAvailabilitySelectionPromptContext usa essa mensagem confiável e amarra a seleção operacional ao tool_context.availability_search da mesma mensagem
+AUTOMATION_DRAFT, AUTOMATION_REVIEWED e AUTOMATION_PENDING invisíveis ao cliente são ignorados como fonte de lista ativa
+AUTOMATION_SENT continua confiável mesmo quando carrega mode antigo de draft no payload normalizado
+rendered count sem facts atuais correspondentes não autoriza SELECT_AVAILABILITY_OPTION nem ASK_PASSENGER_COUNT
+InterpretStructuredTurn também rejeita SELECT_AVAILABILITY_OPTION quando o prompt renderizado não tem facts atuais correspondentes
+ValidateStructuredInterpretation usa o mesmo gate de facts atuais e a mesma mensagem confiável do router/structured local
+deriveCanonicalConversationState percorre o histórico do mais antigo para o mais recente
+mergeToolFactsIntoCanonicalState sobrescreve campos/facts com valores não vazios mais recentes
+deriveCanonicalConversationState ignora availability_search de AUTOMATION_DRAFT/AUTOMATION_REVIEWED/AUTOMATION_PENDING ao popular canonical_state.LastToolFacts
+canonical_state.LastToolFacts[availability_search] permanece apontando para a lista enviada ao cliente quando há draft/reviewed/pending posterior com facts invisíveis
+BookingDraftContext também ignora availability_search desses outbounds invisíveis para não pré-preencher rota/trip_id com lista não vista
+findLatestAvailabilityContext reutiliza o mesmo filtro e não usa availability_search de AUTOMATION_DRAFT/AUTOMATION_REVIEWED/AUTOMATION_PENDING
+parseBookingCreateInput/resolveBookingCreateSelection resolvem trip_id/board_stop_id/alight_stop_id pela lista visível/confiável, sem contaminação de draft invisível posterior
+"essa msm" após lista renderizada com 1 opção e facts atuais correspondentes seleciona option_index=1 e pergunta quantidade de passageiros
+"essa msm" após lista renderizada com 1 opção sem facts atuais correspondentes cai em fallback contextual, sem selecionar opção 1
+"essa msm" após lista renderizada com múltiplas opções continua em fallback contextual, sem selecionar opção 1
+rascunho invisível posterior não autoriza opção não vista e não invalida seleção válida da lista já enviada ao cliente
+respostas explícitas como "1" ou "5" continuam selecionando listas atuais em que availability_search trouxe mais linhas do que as 5 renderizadas
+```
+
+**Arquivos alterados:**
+
+```text
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/interpreter.go
+apps/api/internal/chat/interpreter_validation.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/conversation_state_machine_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/interpreter_test.go
+apps/api/internal/chat/interpreter_validation_test.go
+apps/api/internal/chat/tool_router_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'TestFindLatestAvailabilityContextIgnoresInvisibleAvailabilityFacts|TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSelection'
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Stale.*Facts|Test.*Capped.*Availability|Test.*Structured.*Selection|Test.*ValidateStructuredInterpretation|Test.*Reliable.*Assistant|Test.*Canonical.*Availability|Test.*DeriveCanonical.*Availability|Test.*InterpreterCase|Test.*Payment.*Info|Test.*AutoSend'
+go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Stale.*Facts|Test.*Capped.*Availability|Test.*Structured.*Selection|Test.*ValidateStructuredInterpretation|Test.*Reliable.*Assistant|Test.*Canonical.*Availability|Test.*DeriveCanonical.*Availability|Test.*FindLatestAvailability|Test.*BookingCreate.*Availability|Test.*ParseBookingCreate.*Availability|Test.*InterpreterCase|Test.*Payment.*Info|Test.*AutoSend'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review:** review final sem bloqueios. A seleção contextual por lista renderizada agora exige vínculo com facts atuais da mesma mensagem confiável usada pelo ActivePromptContext; rendered count sem facts atuais não autoriza `ASK_PASSENGER_COUNT`; stale availability facts não podem ser usados para avançar seleção visual atual. `AUTOMATION_DRAFT`, `AUTOMATION_REVIEWED` e `AUTOMATION_PENDING` posteriores à lista enviada são ignorados no gate operacional, no `canonical_state`, no `BookingDraftContext` e no lookup compartilhado `findLatestAvailabilityContext`; assim `parseBookingCreateInput`/`resolveBookingCreateSelection` resolve a opção aceita contra a mesma lista visível/confiável e não contra um draft posterior. `AUTOMATION_SENT` permanece confiável mesmo quando reaproveita `mode: AUTOMATION_DRAFT` do draft no payload normalizado, preservando compatibilidade com mensagens já enviadas pela automação. O count de facts atuais considera apenas opções visíveis futuras, respeitando o cap renderizado de 5, então uma busca atual com mais resultados no payload continua selecionável por índices renderizados válidos. O interpretador estruturado e o validator também aplicam o gate de facts atuais pela mesma mensagem confiável e não retornam/aceitam `SELECT_AVAILABILITY_OPTION` para confirmação contextual com lista rendered-only/stale facts. Revisão final confirmou que os filtros solicitados, `go test -count=1 ./internal/chat`, `go test -count=1 ./...` e `git diff --check` passam. Não houve alteração em OpenAI runtime assist, OpenAI shadow, schema/prompt/runner, vector base, embeddings, File Search, planner, banco/migrations, infra, n8n, `booking_create`, `payment_create`, `booking_cancel`, `document_extract` ou `payment_status`.
+
+**Necessidade de teste em produção:** sim. Validar em produção/homologação:
+
+```text
+"essa msm" após lista com exatamente 1 opção e tool_context atual correspondente → SELECT_AVAILABILITY_OPTION + ASK_PASSENGER_COUNT
+"essa msm" após lista com exatamente 1 opção sem tool_context atual correspondente → CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selecionar opção 1
+"essa msm" após lista com múltiplas opções → CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selecionar opção 1
+lista enviada com 1 opção + AUTOMATION_DRAFT/AUTOMATION_REVIEWED/AUTOMATION_PENDING posterior invisível → "essa msm" e "1" selecionam a opção enviada
+lista enviada com 1 opção + AUTOMATION_DRAFT posterior com 5 opções invisíveis → "5" cai em CONTEXT_FALLBACK_AVAILABILITY_OPTION, sem selected_option_index=5
+"dia 13/07, ai o pagamento faz logo ou só no dia mesmo?" → PAYMENT_OPTIONS_INFO + AUTO_SEND_ELIGIBLE
+após PAYMENT_OPTIONS_INFO, "quero reservar" não cai em CONTEXT_FALLBACK_PAYMENT_PREFERENCE
+```
+
+**Riscos restantes:** se o texto renderizado de disponibilidade mudar para um formato sem linhas numeradas (`1.`, `1)` ou `1 -`), o contador visual não será inferido pelo corpo; se a mensagem de disponibilidade for enviada sem `tool_context` atual, o sistema deve preferir fallback seguro em vez de avançar reserva. A confiabilidade da lista ativa depende de `ProcessingStatus`/`mode` continuarem distinguindo mensagem enviada de rascunho invisível. Deploy e smoke não foram feitos nesta execução.
+
+**Próxima ação recomendada:** preparar commit do hotfix determinístico; depois validar em produção/homologação somente os cenários listados acima após deploy controlado. Não iniciar 3.6F/vector/File Search/planner sem pedido explícito.
 
 ---
   
@@ -1481,6 +1629,20 @@ document_extract
 **Correção aplicada:** `PAYMENT_STATUS_QUERY` passou a vencer a resposta de preferência, e o helper de preferência ativa rejeita frases de status antes de aceitar `sinal`/`integral`.
 
 **Testes executados:** `go test -count=1 ./internal/chat -run 'Test.*Payment.*Info|Test.*PayingPassenger|Test.*PaymentPreference|Test.*PaymentStatus|Test.*Availability.*Option|Test.*InterpreterCase'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
+
+---
+
+## H-010 — `essa msm` em opção única renderizada caía em fallback
+
+**Status:** Corrigido localmente em 2026-07-01; pendente deploy e validação em produção/homologação.
+
+**Sintoma:** `"essa msm"` após lista atual com exatamente uma opção podia cair em `CONTEXT_FALLBACK_AVAILABILITY_OPTION`.
+
+**Causa:** `optionCount` não era inferido do corpo renderizado da última mensagem de disponibilidade, facts antigos de `availability_search` podiam sobrescrever facts mais recentes em `LastToolFacts`, e a primeira correção pós-count permitia seleção operacional usando somente o count renderizado sem facts atuais correspondentes. O ajuste inicial também comparava o count renderizado com o total bruto do payload, rejeitando listas atuais capadas, e o interpretador estruturado ainda podia aceitar confirmação contextual com facts antigos.
+
+**Correção aplicada:** contador determinístico de opções numeradas renderizadas na última mensagem de disponibilidade; seleção contextual de opção única exige `tool_context.availability_search` atual na mesma mensagem/lista; count atual usa apenas opções visíveis futuras e respeita o cap renderizado de 5; rendered count sem facts atuais cai em fallback seguro também no interpretador estruturado; facts mais recentes passam a vencer em `deriveCanonicalConversationState`.
+
+**Testes executados:** `go test -count=1 ./internal/chat -run 'TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts|TestIntentRouterDoesNotSelectEssaMsmFromRenderedSingleAvailabilityOptionWithStaleFacts|TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurrentFacts|TestIntentRouterDoesNotSelectEssaMsmFromRenderedMultipleAvailabilityOptions|TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback|TestInterpretStructuredTurnDoesNotSelectRenderedSingleAvailabilityOptionWithStaleFacts|TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount|TestDeriveCanonicalConversationStateKeepsLatestAvailabilityFacts|TestInferActivePromptContextReadsAvailabilityOptionCountFromRenderedPrompt'`; `go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Stale.*Facts|Test.*InterpreterCase|Test.*Payment.*Info|Test.*AutoSend'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
 
 ---
 

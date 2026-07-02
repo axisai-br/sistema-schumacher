@@ -133,7 +133,8 @@ func InterpretStructuredTurn(input StructuredInterpreterInput) StructuredInterpr
 	}
 
 	if index := extractSelectedOptionIndex(body); index > 0 {
-		if optionCount, ok := structuredAvailabilitySelectionOptionCount(input.History); ok && index <= optionCount {
+		promptContext := currentAvailabilitySelectionPromptContext(input.History)
+		if promptContext.HasCurrentFacts && promptContext.OptionCount > 0 && index <= promptContext.OptionCount {
 			out := newStructuredInterpretation(
 				StructuredIntentSelectAvailabilityOption,
 				TurnMeaningAnswerToQuestion,
@@ -244,14 +245,20 @@ func interpretActivePromptAnswer(ctx ActivePromptContext, input StructuredInterp
 			return out, true
 		}
 	case ActivePromptAvailabilityOptionChoice:
+		promptContext := currentAvailabilitySelectionPromptContext(input.History)
 		optionCount := ctx.AvailabilityOptionCount
-		if optionCount <= 0 {
+		if promptContext.OptionCount > 0 {
+			optionCount = promptContext.OptionCount
+		} else if optionCount <= 0 {
 			if count, ok := structuredAvailabilitySelectionOptionCount(input.History); ok {
 				optionCount = count
 			}
 		}
 		if index := extractSelectedOptionIndex(body); index > 0 {
 			if optionCount > 0 && index <= optionCount {
+				if !promptContext.HasCurrentFacts {
+					return activePromptUnknownStructuredInterpretation("availability_option_missing_current_facts", "deterministic_active_prompt_availability_option"), true
+				}
 				out := newStructuredInterpretation(
 					StructuredIntentSelectAvailabilityOption,
 					TurnMeaningAnswerToQuestion,
@@ -270,6 +277,9 @@ func interpretActivePromptAnswer(ctx ActivePromptContext, input StructuredInterp
 			return activePromptUnknownStructuredInterpretation(reason, "deterministic_active_prompt_availability_option"), true
 		}
 		if optionCount == 1 && (looksLikeContextualAvailabilitySelection(folded) || looksLikeBookingCreateConfirmation(body)) {
+			if !promptContext.HasCurrentFacts {
+				return activePromptUnknownStructuredInterpretation("availability_option_missing_current_facts", "deterministic_active_prompt_availability_option"), true
+			}
 			out := newStructuredInterpretation(
 				StructuredIntentSelectAvailabilityOption,
 				TurnMeaningAnswerToQuestion,
@@ -420,37 +430,66 @@ func hasStructuredPaymentPreferenceContext(history []Message, state CanonicalCon
 }
 
 func structuredAvailabilitySelectionOptionCount(history []Message) (int, bool) {
-	message, ok := latestAssistantMessage(history)
-	if !ok {
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+	if !promptContext.HasCurrentFacts || promptContext.OptionCount <= 0 {
 		return 0, false
 	}
-	body := strings.TrimSpace(messageTurnText(message))
-	folded := normalizeStructuredFolded(body)
-	if count := availabilityOptionCountFromMessage(message); count > 0 {
-		return count, true
-	}
-	if !looksLikeAvailabilitySelectionPrompt(folded) {
-		return 0, false
-	}
-	latest := findLatestAvailabilityContext(history)
-	if latest == nil || len(latest.Results) == 0 {
-		return 0, false
-	}
-	return len(latest.Results), true
+	return promptContext.OptionCount, true
 }
 
 func availabilityOptionCountFromMessage(message Message) int {
+	if count := availabilityOptionCountFromRenderedPrompt(messageTurnText(message)); count > 0 {
+		return count
+	}
+	return availabilityOptionCountFromMessageToolContext(message)
+}
+
+func availabilityOptionCountFromMessageToolContext(message Message) int {
 	for _, toolContext := range messageToolContexts(message) {
 		payload := asMap(toolContext[toolNameAvailabilitySearch])
 		if len(payload) == 0 {
 			continue
 		}
 		result := parseAvailabilityContextPayload(payload)
-		if len(result.Results) > 0 {
-			return len(result.Results)
+		if count := visibleAvailabilityOptionCount(result); count > 0 {
+			return count
 		}
 	}
 	return 0
+}
+
+func visibleAvailabilityOptionCount(result AvailabilitySearchResult) int {
+	options := futureAvailabilityOptions(result.Results, time.Now())
+	if len(options) == 0 {
+		return 0
+	}
+	if len(options) > 5 {
+		return 5
+	}
+	return len(options)
+}
+
+func availabilityOptionCountFromRenderedPrompt(body string) int {
+	folded := normalizeStructuredFolded(body)
+	if folded == "" {
+		return 0
+	}
+	if !strings.Contains(folded, "encontrei estas opcoes") &&
+		!strings.Contains(folded, "encontrei essas opcoes") &&
+		!strings.Contains(folded, "qual opcao voce prefere") &&
+		!strings.Contains(folded, "qual opcao prefere") &&
+		!looksLikeAvailabilitySelectionPrompt(folded) {
+		return 0
+	}
+
+	maxIndex := 0
+	for _, line := range strings.Split(body, "\n") {
+		index, ok := parseLeadingNumberedListIndex(line)
+		if ok && index > maxIndex {
+			maxIndex = index
+		}
+	}
+	return maxIndex
 }
 
 func looksLikeAvailabilitySelectionPrompt(folded string) bool {

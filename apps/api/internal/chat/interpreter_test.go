@@ -90,18 +90,148 @@ func TestInterpretStructuredTurnStaleAvailabilityListDoesNotSelectOption(t *test
 }
 
 func TestInterpretStructuredTurnActivePromptSingleAvailabilityOptionContextualSelection(t *testing.T) {
+	for _, text := range []string{"essa mesmo", "essa msm"} {
+		t.Run(text, func(t *testing.T) {
+			got := InterpretStructuredTurn(StructuredInterpreterInput{
+				CurrentTurn: text,
+				History:     availabilityDateSelectionAfterRouteQuestionHistory(t),
+				State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+				ObservedAt:  time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
+			})
+
+			if got.Intent != StructuredIntentSelectAvailabilityOption {
+				t.Fatalf("expected active prompt availability option selection, got %+v", got)
+			}
+			if !got.Booking.SelectedOptionIndexKnown || got.Booking.SelectedOptionIndex != 1 {
+				t.Fatalf("expected selected option 1, got %+v", got.Booking)
+			}
+		})
+	}
+}
+
+func TestInterpretStructuredTurnDoesNotSelectRenderedSingleAvailabilityOptionWithStaleFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(availabilityDateSelectionFiveOptionsTestResult()),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+				},
+			},
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+		},
+	}
+
 	got := InterpretStructuredTurn(StructuredInterpreterInput{
-		CurrentTurn: "essa mesmo",
-		History:     availabilityDateSelectionAfterRouteQuestionHistory(t),
+		CurrentTurn: "essa msm",
+		History:     history,
 		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
-		ObservedAt:  time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
+		ObservedAt:  now,
+	})
+
+	if got.Intent == StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("stale rendered availability prompt must not select option: %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("stale rendered availability prompt must not set selected option: %+v", got.Booking)
+	}
+}
+
+func TestInterpretStructuredTurnNonActiveRenderedAvailabilityOptionRequiresCurrentFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	result := validationAvailabilityResult(1)
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(result),
+			ProcessingStatus: messageStatusAutomationPending,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+		},
+	}
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "1",
+		History:     history,
+		State: CanonicalConversationState{
+			Phase: ConversationPhaseRouteSelection,
+			LastToolFacts: map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(validationAvailabilityResult(5)),
+			},
+		},
+		ObservedAt: now,
+	})
+
+	if got.Intent == StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("rendered non-active availability prompt without current facts must not select option: %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("rendered non-active availability prompt must not set selected option: %+v", got.Booking)
+	}
+}
+
+func TestInterpretStructuredTurnUsesReliableAvailabilityPromptWhenInvisibleDraftFollows(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "essa msm",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+		ObservedAt:  now,
 	})
 
 	if got.Intent != StructuredIntentSelectAvailabilityOption {
-		t.Fatalf("expected active prompt availability option selection, got %+v", got)
+		t.Fatalf("expected selection from sent availability prompt after invisible draft, got %+v", got)
 	}
 	if !got.Booking.SelectedOptionIndexKnown || got.Booking.SelectedOptionIndex != 1 {
-		t.Fatalf("expected selected option 1, got %+v", got.Booking)
+		t.Fatalf("expected sent option index 1 after invisible draft, got %+v", got.Booking)
+	}
+}
+
+func TestInterpretStructuredTurnInvisibleAvailabilityDraftDoesNotAuthorizeUnseenOption(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "5",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+		ObservedAt:  now,
+	})
+
+	if got.Intent == StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("invisible draft option must not be selectable: %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("invisible draft option must not set selected index: %+v", got.Booking)
+	}
+}
+
+func TestInterpretStructuredTurnInvisibleDraftWithoutFactsDoesNotInvalidateSentAvailabilityPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionTestResult(), false)
+
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "1",
+		History:     history,
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+		ObservedAt:  now,
+	})
+
+	if got.Intent != StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("expected selection from sent availability prompt despite draft without facts, got %+v", got)
+	}
+	if !got.Booking.SelectedOptionIndexKnown || got.Booking.SelectedOptionIndex != 1 {
+		t.Fatalf("expected sent option index 1 despite draft without facts, got %+v", got.Booking)
 	}
 }
 

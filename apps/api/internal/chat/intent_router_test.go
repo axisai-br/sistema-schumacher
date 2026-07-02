@@ -109,6 +109,152 @@ func TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo(t *testing.T
 	}
 }
 
+func TestIntentRouterDoesNotSelectEssaMsmFromRenderedSingleAvailabilityOptionWithStaleFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+		},
+	}
+	state := CanonicalConversationState{
+		Phase: ConversationPhaseTripSelection,
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionFiveOptionsTestResult()),
+		},
+	}
+
+	got := routeDeterministicIntent(history, "essa msm", state, now)
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("rendered-only option with stale facts must not select option 1: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("stale rendered selection must not set selected option index: %+v", got)
+	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+}
+
+func TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurrentFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+				},
+			},
+		},
+	}
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "essa msm", state, now)
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected rendered single option selection with current facts, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected selected option index 1, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+		t.Fatalf("expected passenger count template decision, got %+v", got)
+	}
+}
+
+func TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	availability := availabilityDateSelectionEightOptionsTestResult()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(availability),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+				},
+			},
+		},
+	}
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	for _, text := range []string{"1", "5"} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected capped current availability selection, got %+v", got)
+			}
+			if got.SelectedOptionIndex != extractSelectedOptionIndex(text) {
+				t.Fatalf("expected selected option %s, got %+v", text, got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+				t.Fatalf("expected passenger count template decision, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterUsesReliableAvailabilityPromptWhenInvisibleOutboundFollows(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	for _, invisibleStatus := range []string{messageStatusAutomationDraft, messageStatusAutomationReviewed, messageStatusAutomationPending} {
+		t.Run(invisibleStatus, func(t *testing.T) {
+			history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, invisibleStatus, availabilityDateSelectionFiveOptionsTestResult(), true)
+			state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+			got := routeDeterministicIntent(history, "essa msm", state, now)
+
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected selection from sent availability prompt after invisible %s, got %+v", invisibleStatus, got)
+			}
+			if got.SelectedOptionIndex != 1 {
+				t.Fatalf("expected sent option index 1 after invisible %s, got %+v", invisibleStatus, got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+				t.Fatalf("expected passenger count template after invisible %s, got %+v", invisibleStatus, got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterInvisibleAvailabilityDraftDoesNotAuthorizeUnseenOption(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionFiveOptionsTestResult(), true)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "5", state, now)
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("invisible draft option must not be selectable: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("invisible draft option must not set selected index: %+v", got)
+	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+}
+
+func TestIntentRouterInvisibleDraftWithoutFactsDoesNotInvalidateSentAvailabilityPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := availabilitySingleOptionHistoryWithInvisibleFollowUp(now, messageStatusAutomationDraft, availabilityDateSelectionTestResult(), false)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "1", state, now)
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected selection from sent availability prompt despite draft without facts, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected sent option index 1 despite draft without facts, got %+v", got)
+	}
+}
+
 func TestIntentRouterUsesActivePromptForAvailabilityOptionPodeSerEssa(t *testing.T) {
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
@@ -148,6 +294,32 @@ func TestIntentRouterRejectsOutOfRangeOptionWithActivePrompt(t *testing.T) {
 	}
 	if got.SelectedOptionIndex != 0 {
 		t.Fatalf("out-of-range option must not set selected index: %+v", got)
+	}
+	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+}
+
+func TestIntentRouterDoesNotSelectEssaMsmFromRenderedMultipleAvailabilityOptions(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	history := []Message{
+		{
+			Direction: "OUTBOUND",
+			Body: "Encontrei estas opcoes:\n" +
+				"1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n" +
+				"2. Videira/SC para Santa Ines/MA, 2026-07-13, saida 20:00, R$ 950\n\n" +
+				"Qual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-1 * time.Minute),
+		},
+	}
+	state := CanonicalConversationState{Phase: ConversationPhaseTripSelection}
+
+	got := routeDeterministicIntent(history, "essa msm", state, now)
+
+	if got.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("rendered multiple options must not select option 1: %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("ambiguous rendered selection must not set selected option index: %+v", got)
 	}
 	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
 }
@@ -1055,6 +1227,39 @@ func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message 
 	}
 }
 
+func availabilitySingleOptionHistoryWithInvisibleFollowUp(now time.Time, invisibleStatus string, invisibleResult AvailabilitySearchResult, withInvisibleFacts bool) []Message {
+	sentResult := availabilityDateSelectionTestResult()
+	invisible := Message{
+		ID:               "invisible-availability",
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(invisibleResult),
+		ProcessingStatus: invisibleStatus,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}
+	if withInvisibleFacts {
+		invisible.Payload = map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(invisibleResult),
+			},
+		}
+	}
+	return []Message{
+		{
+			ID:               "sent-availability",
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(sentResult),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(sentResult),
+				},
+			},
+		},
+		invisible,
+	}
+}
+
 func lapChildAssignmentHistoryWithPassengers(t *testing.T, passengerCount int) []Message {
 	t.Helper()
 	var builder strings.Builder
@@ -1178,5 +1383,19 @@ func availabilityDateSelectionFiveOptionsTestResult() AvailabilitySearchResult {
 	fifth.AlightStopID = "alight-2026-07-06-5"
 	fifth.OriginDepartTime = "16:00"
 	result.Results = []AvailabilitySearchItem{first, second, third, fourth, fifth}
+	return result
+}
+
+func availabilityDateSelectionEightOptionsTestResult() AvailabilitySearchResult {
+	result := availabilityDateSelectionFiveOptionsTestResult()
+	first := result.Results[0]
+	for i := 6; i <= 8; i++ {
+		item := first
+		item.TripID = "trip-2026-07-06-" + strconv.Itoa(i)
+		item.BoardStopID = "board-2026-07-06-" + strconv.Itoa(i)
+		item.AlightStopID = "alight-2026-07-06-" + strconv.Itoa(i)
+		item.OriginDepartTime = strconv.Itoa(6+i*2) + ":00"
+		result.Results = append(result.Results, item)
+	}
 	return result
 }

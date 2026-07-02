@@ -92,16 +92,20 @@ func validateAvailabilityOptionInterpretation(proposal StructuredInterpretation,
 	if proposal.Intent != StructuredIntentSelectAvailabilityOption {
 		return rejectInterpretation("intent_not_allowed_by_active_prompt", TemplateContextFallbackAvailabilityOption)
 	}
-	optionCount := activePrompt.AvailabilityOptionCount
-	if optionCount <= 0 {
-		if count, ok := structuredAvailabilitySelectionOptionCount(history); ok {
-			optionCount = count
-		}
-	}
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+	optionCount := promptContext.OptionCount
 	if optionCount <= 0 {
 		return rejectInterpretation("availability_options_unavailable", TemplateContextFallbackAvailabilityOption)
 	}
+	if !promptContext.HasCurrentFacts {
+		return rejectInterpretation("availability_selection_missing_current_facts", TemplateContextFallbackAvailabilityOption)
+	}
 	textIndex := validationSelectedOptionIndex(body)
+	if textIndex <= 0 {
+		if optionCount == 1 && (looksLikeContextualAvailabilitySelection(folded) || looksLikeBookingCreateConfirmation(body)) {
+			textIndex = 1
+		}
+	}
 	if textIndex <= 0 {
 		if looksLikeContextualAvailabilitySelection(folded) || looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
 			return rejectInterpretation("ambiguous_availability_option_reply", TemplateContextFallbackAvailabilityOption)
