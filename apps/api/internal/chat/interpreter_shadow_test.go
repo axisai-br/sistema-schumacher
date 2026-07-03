@@ -60,6 +60,37 @@ func TestRunStructuredInterpreterShadowDisabledDoesNotCallOpenAI(t *testing.T) {
 	}
 }
 
+func TestRunStructuredInterpreterShadowSkipReasonDoesNotCallOpenAI(t *testing.T) {
+	fake := &fakeOpenAIInterpreter{enabled: true}
+
+	local := StructuredInterpretation{
+		Intent:      StructuredIntentUnknown,
+		TurnMeaning: TurnMeaningUnknown,
+		Confidence:  0,
+		Source:      "deterministic_test",
+	}
+
+	summary := RunStructuredInterpreterShadow(context.Background(), StructuredInterpreterShadowInput{
+		Enabled:             true,
+		SkipReason:          "test_skip_reason",
+		OpenAIInterpreter:   fake,
+		StructuredInput:     StructuredInterpreterInput{CurrentTurn: "paga agora?"},
+		LocalInterpretation: local,
+		IdempotencyKey:      "test-key",
+	})
+
+	if fake.calls != 0 {
+		t.Fatalf("expected OpenAI not to be called when shadow has skip reason, got calls=%d", fake.calls)
+	}
+	if summary.OpenAI.Status != string(StructuredInterpreterShadowSkipped) {
+		t.Fatalf("expected OpenAI status %q, got %q", StructuredInterpreterShadowSkipped, summary.OpenAI.Status)
+	}
+	if summary.OpenAIValidation.Status != string(StructuredInterpreterShadowValidationSkipped) ||
+		summary.OpenAIValidation.RejectReason != "test_skip_reason" {
+		t.Fatalf("expected skip validation reason, got %+v", summary.OpenAIValidation)
+	}
+}
+
 func TestRunStructuredInterpreterShadowEnabledButRunnerDisabled(t *testing.T) {
 	fake := &fakeOpenAIInterpreter{enabled: false}
 

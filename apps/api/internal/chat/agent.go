@@ -829,6 +829,7 @@ func copyRunMetadata(target map[string]interface{}, run RunAgentResult) {
 	for _, key := range []string{
 		"intent",
 		"template_name",
+		"template_data",
 		"action",
 		"chat_agent_mode",
 		"decision_source",

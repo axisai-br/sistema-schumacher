@@ -185,6 +185,16 @@ func inferActivePromptKind(text string, availabilityOptionCount int) ActivePromp
 		return ActivePromptUnknown
 	}
 
+	if continuation := activePromptContinuationReminderFolded(folded); continuation != "" {
+		if kind := inferActivePromptKindFromFolded(continuation, availabilityOptionCount); kind != ActivePromptUnknown {
+			return kind
+		}
+	}
+
+	return inferActivePromptKindFromFolded(folded, availabilityOptionCount)
+}
+
+func inferActivePromptKindFromFolded(folded string, availabilityOptionCount int) ActivePromptKind {
 	switch {
 	case activePromptLooksLikePayerCPF(folded):
 		return ActivePromptPayerCPF
@@ -209,6 +219,15 @@ func inferActivePromptKind(text string, availabilityOptionCount int) ActivePromp
 	default:
 		return ActivePromptUnknown
 	}
+}
+
+func activePromptContinuationReminderFolded(folded string) string {
+	const marker = "para continuar"
+	index := strings.LastIndex(folded, marker)
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimSpace(folded[index+len(marker):])
 }
 
 func activePromptFolded(text string) string {

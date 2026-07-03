@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"schumacher-tur/api/internal/shared/config"
 	"strings"
 	"testing"
@@ -581,6 +582,661 @@ func TestAvailabilityDraftDoesNotStealPassengerCountWithoutActiveDraft(t *testin
 	if searcher.calls != 0 {
 		t.Fatalf("expected no availability search for passenger count flow, got %d", searcher.calls)
 	}
+}
+
+func TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools(t *testing.T) {
+	cases := []struct {
+		name         string
+		text         string
+		template     ResponseTemplateName
+		wantInfoFold string
+	}{
+		{
+			name:         "payment_two_sided",
+			text:         "ai o pagamento faz logo ou só no dia mesmo?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "payment_paga_agora",
+			text:         "paga agora?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "payment_paga_no_dia",
+			text:         "paga no dia?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "payment_precisa_pagar_agora",
+			text:         "precisa pagar agora?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "payment_tem_que_pagar_agora",
+			text:         "tem que pagar agora?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "payment_pode_pagar_no_embarque",
+			text:         "pode pagar no embarque?",
+			template:     TemplatePaymentOptionsInfo,
+			wantInfoFold: "pagamento pode ser realizado",
+		},
+		{
+			name:         "documents",
+			text:         "quais documentos precisa?",
+			template:     TemplateDocumentRequirementsInfo,
+			wantInfoFold: "preciso do nome completo",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			bookingCreator := &fakeBookingCreator{enabled: true}
+			paymentCreator := &fakePaymentCreator{enabled: true}
+			openAI := &fakeOpenAIInterpreter{enabled: true}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+				ChatOpenAIInterpreterAssistEnabled: true,
+			}, runner, searcher, bookingCreator, paymentCreator, openAI)
+			session := seedPassengerCollectionPhase(t, store)
+
+			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: "msg-out-of-turn-" + tc.name,
+					IdempotencyKey:    "idem-out-of-turn-" + tc.name,
+					Body:              tc.text,
+				},
+			}); err != nil {
+				t.Fatalf("ingest out-of-turn info: %v", err)
+			}
+
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+			if err != nil {
+				t.Fatalf("reprocess out-of-turn info: %v", err)
+			}
+			if runner.calls != 0 {
+				t.Fatalf("expected deterministic template without LLM/document_extract, got runner calls=%d", runner.calls)
+			}
+			assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+			if openAI.calls != 1 {
+				t.Fatalf("expected OpenAI shadow to run without deterministic out-of-turn skip, got calls=%d", openAI.calls)
+			}
+			if searcher.calls != 0 {
+				t.Fatalf("expected no availability search, got %d", searcher.calls)
+			}
+			if bookingCreator.calls != 0 {
+				t.Fatalf("expected no booking_create, got %d", bookingCreator.calls)
+			}
+			if paymentCreator.calls != 0 {
+				t.Fatalf("expected no payment_create, got %d", paymentCreator.calls)
+			}
+			if len(out.ToolCalls) != 0 {
+				t.Fatalf("expected no tool calls, got %+v", out.ToolCalls)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected out-of-turn info draft")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(tc.template) {
+				t.Fatalf("expected template %s, got %q payload=%+v", tc.template, got, out.Draft.NormalizedPayload)
+			}
+			templateData := asMap(out.Draft.NormalizedPayload["template_data"])
+			if pending := ResponseTemplateName(asString(templateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackPassengerCount {
+				t.Fatalf("expected pending passenger prompt in template data, got %+v", templateData)
+			}
+			body := strings.TrimSpace(out.Draft.Body)
+			folded := foldChatText(body)
+			if !strings.Contains(folded, tc.wantInfoFold) {
+				t.Fatalf("expected info text %q in draft %q", tc.wantInfoFold, body)
+			}
+			if !strings.Contains(folded, "para continuar") ||
+				!strings.Contains(folded, "passagem e so para voce") {
+				t.Fatalf("expected passenger prompt reminder, got %q", body)
+			}
+		})
+	}
+}
+
+func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{name: "so_eu_paga_agora", text: "só eu, paga agora?"},
+		{name: "so_pra_mim_paga_no_dia", text: "só pra mim, paga no dia?"},
+		{name: "apenas_eu_pagamento_faz_logo", text: "apenas eu, pagamento faz logo?"},
+		{name: "so_pra_mim_pagar_no_embarque", text: "é só pra mim, pode pagar no embarque?"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			bookingCreator := &fakeBookingCreator{enabled: true}
+			paymentCreator := &fakePaymentCreator{enabled: true}
+			openAI := &fakeOpenAIInterpreter{
+				enabled: true,
+				result: OpenAIStructuredInterpreterRunResult{
+					Interpretation: StructuredInterpretation{
+						Intent:      StructuredIntentPassengerCountReply,
+						TurnMeaning: TurnMeaningAnswerToQuestion,
+						Confidence:  0.94,
+						Source:      "openai_test",
+					},
+				},
+			}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+				ChatOpenAIInterpreterAssistEnabled: true,
+			}, runner, searcher, bookingCreator, paymentCreator, openAI)
+			session := seedPassengerCollectionPhase(t, store)
+
+			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: "msg-mixed-passenger-payment-" + tc.name,
+					IdempotencyKey:    "idem-mixed-passenger-payment-" + tc.name,
+					Body:              tc.text,
+				},
+			}); err != nil {
+				t.Fatalf("ingest mixed passenger/payment reply: %v", err)
+			}
+
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+			if err != nil {
+				t.Fatalf("reprocess mixed passenger/payment reply: %v", err)
+			}
+			if runner.calls != 0 {
+				t.Fatalf("expected passenger count handling without LLM/document_extract, got runner calls=%d", runner.calls)
+			}
+			if openAI.calls != 1 {
+				t.Fatalf("expected OpenAI shadow not to be skipped as deterministic out-of-turn, got calls=%d", openAI.calls)
+			}
+			if searcher.calls != 0 {
+				t.Fatalf("expected no availability search, got %d", searcher.calls)
+			}
+			if bookingCreator.calls != 0 {
+				t.Fatalf("expected no booking_create, got %d", bookingCreator.calls)
+			}
+			if paymentCreator.calls != 0 {
+				t.Fatalf("expected no payment_create, got %d", paymentCreator.calls)
+			}
+			if len(out.ToolCalls) != 0 {
+				t.Fatalf("expected no tool calls, got %+v", out.ToolCalls)
+			}
+			if got := asInt(out.Memory["passenger_count"]); got != 1 {
+				t.Fatalf("expected passenger_count=1, got %d", got)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected passenger-count continuation draft")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentPassengerCountReply) {
+				t.Fatalf("expected passenger count intent in draft payload, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskChildUnder5) {
+				t.Fatalf("expected child-under-5 prompt, got template %q payload=%+v", got, out.Draft.NormalizedPayload)
+			}
+			body := strings.TrimSpace(out.Draft.Body)
+			folded := foldChatText(body)
+			if !strings.Contains(folded, "tem crianca de 5 anos ou menos") {
+				t.Fatalf("expected passenger flow to continue with child question, got %q", body)
+			}
+			if strings.Contains(folded, "pagamento pode ser realizado") ||
+				strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])) == string(TemplatePaymentOptionsInfo) {
+				t.Fatalf("mixed passenger answer must not become payment info draft: %q payload=%+v", body, out.Draft.NormalizedPayload)
+			}
+		})
+	}
+}
+
+func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
+	t.Run("payment choice cancellation wins over payment info", func(t *testing.T) {
+		store := newFakeStore()
+		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+		openAI := &fakeOpenAIInterpreter{enabled: true}
+		bookingSearcher := &fakeBookingLookupSearcher{
+			enabled: true,
+			result: BookingLookupResult{
+				Results: []BookingLookupItem{{
+					ID:              "BK-ABC123456",
+					Status:          "PENDING",
+					ReservationCode: "ABC12345",
+					PassengerName:   "Maria Silva",
+					PassengerPhone:  "48999999999",
+					CreatedAt:       time.Now().UTC(),
+				}},
+			},
+		}
+		bookingCanceler := &fakeBookingCanceler{
+			enabled: true,
+			result: BookingCancelResult{
+				Mode:            "cancel",
+				BookingID:       "BK-ABC123456",
+				ReservationCode: "ABC12345",
+				PreviousStatus:  "PENDING",
+				BookingStatus:   "CANCELLED",
+				Reason:          "customer_requested",
+				Actor:           "CUSTOMER",
+				MessageForAgent: "Cancelamento aplicado com sucesso. Confirme ao cliente que a reserva foi cancelada.",
+			},
+		}
+		paymentCreator := &fakePaymentCreator{enabled: true}
+		svc := NewService(store, config.Config{
+			ChatDebounceWindowMS:               1500,
+			ChatOpenAIInterpreterShadowEnabled: true,
+		}, runner, bookingSearcher, bookingCanceler, paymentCreator, openAI)
+		session := seedBookedPhase(t, store)
+		seedOutboundSent(t, store, session.ID, askPaymentChoiceReply, time.Now().UTC().Add(-30*time.Second))
+
+		if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+			ContactKey: session.ContactKey,
+			Message: IngestMessagePayload{
+				Direction:         "INBOUND",
+				ProviderMessageID: "msg-cancel-payment-info",
+				IdempotencyKey:    "idem-cancel-payment-info",
+				Body:              "quero cancelar, paga agora?",
+			},
+		}); err != nil {
+			t.Fatalf("ingest cancellation/payment mixed turn: %v", err)
+		}
+
+		out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+		if err != nil {
+			t.Fatalf("reprocess cancellation/payment mixed turn: %v", err)
+		}
+		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+		if openAI.calls != 1 {
+			t.Fatalf("expected OpenAI shadow to run for cancellation guardrail, got calls=%d", openAI.calls)
+		}
+		if paymentCreator.calls != 0 {
+			t.Fatalf("expected no payment_create for cancellation guardrail, got %d calls", paymentCreator.calls)
+		}
+		if bookingCanceler.calls != 1 {
+			t.Fatalf("expected booking_cancel to win over payment info, got %d calls", bookingCanceler.calls)
+		}
+		if out.Draft == nil {
+			t.Fatal("expected cancellation draft")
+		}
+		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplatePaymentOptionsInfo) {
+			t.Fatalf("cancellation guardrail must not become payment info draft: payload=%+v body=%q", out.Draft.NormalizedPayload, out.Draft.Body)
+		}
+	})
+
+	t.Run("payment choice handoff wins over payment info", func(t *testing.T) {
+		store := newFakeStore()
+		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+		openAI := &fakeOpenAIInterpreter{enabled: true}
+		paymentCreator := &fakePaymentCreator{enabled: true}
+		svc := NewService(store, config.Config{
+			ChatDebounceWindowMS:               1500,
+			ChatOpenAIInterpreterShadowEnabled: true,
+		}, runner, paymentCreator, openAI)
+		session := seedBookedPhase(t, store)
+		seedOutboundSent(t, store, session.ID, askPaymentChoiceReply, time.Now().UTC().Add(-30*time.Second))
+
+		if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+			ContactKey: session.ContactKey,
+			Message: IngestMessagePayload{
+				Direction:         "INBOUND",
+				ProviderMessageID: "msg-handoff-payment-info",
+				IdempotencyKey:    "idem-handoff-payment-info",
+				Body:              "quero falar com atendente, paga agora?",
+			},
+		}); err != nil {
+			t.Fatalf("ingest handoff/payment mixed turn: %v", err)
+		}
+
+		out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+		if err != nil {
+			t.Fatalf("reprocess handoff/payment mixed turn: %v", err)
+		}
+		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+		if openAI.calls != 1 {
+			t.Fatalf("expected OpenAI shadow to run for handoff guardrail, got calls=%d", openAI.calls)
+		}
+		if paymentCreator.calls != 0 {
+			t.Fatalf("expected no payment_create for handoff guardrail, got %d calls", paymentCreator.calls)
+		}
+		if runner.calls != 0 {
+			t.Fatalf("expected handoff template without LLM, got runner calls=%d", runner.calls)
+		}
+		if out.Draft == nil {
+			t.Fatal("expected handoff draft")
+		}
+		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateHumanHandoff) {
+			t.Fatalf("expected human handoff template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+		}
+	})
+
+	t.Run("unsupported cargo wins over passenger payment info", func(t *testing.T) {
+		store := newFakeStore()
+		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+		searcher := &fakeAvailabilitySearcher{enabled: true}
+		bookingCreator := &fakeBookingCreator{enabled: true}
+		paymentCreator := &fakePaymentCreator{enabled: true}
+		openAI := &fakeOpenAIInterpreter{enabled: true}
+		svc := NewService(store, config.Config{
+			ChatDebounceWindowMS:               1500,
+			ChatOpenAIInterpreterShadowEnabled: true,
+		}, runner, searcher, bookingCreator, paymentCreator, openAI)
+		session := seedPassengerCollectionPhase(t, store)
+
+		if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+			ContactKey: session.ContactKey,
+			Message: IngestMessagePayload{
+				Direction:         "INBOUND",
+				ProviderMessageID: "msg-cargo-payment-info",
+				IdempotencyKey:    "idem-cargo-payment-info",
+				Body:              "paga agora? posso levar uma moto?",
+			},
+		}); err != nil {
+			t.Fatalf("ingest cargo/payment mixed turn: %v", err)
+		}
+
+		out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+		if err != nil {
+			t.Fatalf("reprocess cargo/payment mixed turn: %v", err)
+		}
+		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+		if openAI.calls != 1 {
+			t.Fatalf("expected OpenAI shadow to run for unsupported cargo guardrail, got calls=%d", openAI.calls)
+		}
+		if searcher.calls != 0 {
+			t.Fatalf("expected no availability search for unsupported cargo, got %d", searcher.calls)
+		}
+		if bookingCreator.calls != 0 {
+			t.Fatalf("expected no booking_create for unsupported cargo, got %d", bookingCreator.calls)
+		}
+		if paymentCreator.calls != 0 {
+			t.Fatalf("expected no payment_create for unsupported cargo, got %d", paymentCreator.calls)
+		}
+		if out.Draft == nil {
+			t.Fatal("expected unsupported cargo draft")
+		}
+		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateUnsupportedCargo) {
+			t.Fatalf("expected unsupported cargo template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+		}
+	})
+
+	t.Run("pure passenger payment question runs shadow and emits info template", func(t *testing.T) {
+		store := newFakeStore()
+		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+		searcher := &fakeAvailabilitySearcher{enabled: true}
+		bookingCreator := &fakeBookingCreator{enabled: true}
+		paymentCreator := &fakePaymentCreator{enabled: true}
+		openAI := &fakeOpenAIInterpreter{enabled: true}
+		svc := NewService(store, config.Config{
+			ChatDebounceWindowMS:               1500,
+			ChatOpenAIInterpreterShadowEnabled: true,
+		}, runner, searcher, bookingCreator, paymentCreator, openAI)
+		session := seedPassengerCollectionPhase(t, store)
+
+		if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+			ContactKey: session.ContactKey,
+			Message: IngestMessagePayload{
+				Direction:         "INBOUND",
+				ProviderMessageID: "msg-pure-payment-info",
+				IdempotencyKey:    "idem-pure-payment-info",
+				Body:              "paga agora?",
+			},
+		}); err != nil {
+			t.Fatalf("ingest pure payment info turn: %v", err)
+		}
+
+		out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+		if err != nil {
+			t.Fatalf("reprocess pure payment info turn: %v", err)
+		}
+		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+		if openAI.calls != 1 {
+			t.Fatalf("expected OpenAI shadow to run for pure out-of-turn payment info, got calls=%d", openAI.calls)
+		}
+		if runner.calls != 0 {
+			t.Fatalf("expected payment info template without LLM, got runner calls=%d", runner.calls)
+		}
+		if searcher.calls != 0 {
+			t.Fatalf("expected no availability search for payment info, got %d", searcher.calls)
+		}
+		if bookingCreator.calls != 0 {
+			t.Fatalf("expected no booking_create for payment info, got %d", bookingCreator.calls)
+		}
+		if paymentCreator.calls != 0 {
+			t.Fatalf("expected no payment_create for payment info, got %d", paymentCreator.calls)
+		}
+		if out.Draft == nil {
+			t.Fatal("expected payment info draft")
+		}
+		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
+			t.Fatalf("expected payment info template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+		}
+		folded := foldChatText(out.Draft.Body)
+		if !strings.Contains(folded, "pagamento pode ser realizado") ||
+			!strings.Contains(folded, "para continuar") ||
+			!strings.Contains(folded, "passagem e so para voce") {
+			t.Fatalf("expected payment info with pending passenger reminder, got %q", out.Draft.Body)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		env  string
+	}{
+		{name: "intent router flag disables shortcut", env: "CHAT_INTENT_ROUTER_ENABLED"},
+		{name: "template realizer flag disables shortcut", env: "CHAT_TEMPLATE_REALIZER_ENABLED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.env, "false")
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			bookingCreator := &fakeBookingCreator{enabled: true}
+			paymentCreator := &fakePaymentCreator{enabled: true}
+			openAI := &fakeOpenAIInterpreter{enabled: true}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+			}, runner, searcher, bookingCreator, paymentCreator, openAI)
+			session := seedPassengerCollectionPhase(t, store)
+
+			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: "msg-payment-info-flag-disabled-" + tc.env,
+					IdempotencyKey:    "idem-payment-info-flag-disabled-" + tc.env,
+					Body:              "paga agora?",
+				},
+			}); err != nil {
+				t.Fatalf("ingest pure payment info with %s disabled: %v", tc.env, err)
+			}
+
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+			if err != nil {
+				t.Fatalf("reprocess pure payment info with %s disabled: %v", tc.env, err)
+			}
+			assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+			if openAI.calls != 1 {
+				t.Fatalf("expected OpenAI shadow to run with %s disabled, got calls=%d", tc.env, openAI.calls)
+			}
+			if searcher.calls != 0 {
+				t.Fatalf("expected no availability search with %s disabled, got %d", tc.env, searcher.calls)
+			}
+			if bookingCreator.calls != 0 {
+				t.Fatalf("expected no booking_create with %s disabled, got %d", tc.env, bookingCreator.calls)
+			}
+			if paymentCreator.calls != 0 {
+				t.Fatalf("expected no payment_create with %s disabled, got %d", tc.env, paymentCreator.calls)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected draft with shortcut disabled")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplatePaymentOptionsInfo) {
+				t.Fatalf("expected %s to disable out-of-turn payment template, got payload=%+v body=%q", tc.env, out.Draft.NormalizedPayload, out.Draft.Body)
+			}
+			if strings.Contains(foldChatText(out.Draft.Body), "pagamento pode ser realizado") {
+				t.Fatalf("expected %s to disable payment info shortcut, got %q", tc.env, out.Draft.Body)
+			}
+		})
+	}
+}
+
+func TestServiceOutOfTurnInfoDocumentMediaDoesNotRecordShadowSkip(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Claudecir Schumacher","document_type":"CPF","document":"529.982.247-25","confidence":0.93}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-out-of-turn-payment-caption",
+		},
+	}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709091")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-doc-image-payment-caption",
+			IdempotencyKey:    "idem-doc-image-payment-caption",
+			Body:              "paga agora?",
+			NormalizedPayload: map[string]interface{}{
+				"image_data_url":  "data:image/jpeg;base64,/9j/2Q==",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest document image with payment caption: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess document image with payment caption: %v", err)
+	}
+	assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to run for document media turn, got calls=%d", openAI.calls)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected document_extract runner to win over out-of-turn info, got calls=%d", runner.calls)
+	}
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected document_extract tool call, got %+v", out.ToolCalls)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected document extraction draft")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplatePaymentOptionsInfo) {
+		t.Fatalf("document media turn must not become payment info draft: payload=%+v body=%q", out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	if strings.Contains(foldChatText(out.Draft.Body), "pagamento pode ser realizado") {
+		t.Fatalf("document media turn must not render payment info shortcut, got %q", out.Draft.Body)
+	}
+	if !strings.Contains(out.Draft.Body, "Claudecir Schumacher | CPF | 529.***.***-25") {
+		t.Fatalf("expected extracted document confirmation, got %q", out.Draft.Body)
+	}
+}
+
+func TestServiceOutOfTurnInfoDocumentMediaFailureDoesNotUseShortcut(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		err:     errors.New("vision failed"),
+	}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709092")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-doc-image-payment-caption-failed",
+			IdempotencyKey:    "idem-doc-image-payment-caption-failed",
+			Body:              "paga agora?",
+			NormalizedPayload: map[string]interface{}{
+				"image_data_url":  "data:image/jpeg;base64,/9j/2Q==",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest document image with payment caption: %v", err)
+	}
+
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess document image with failed extraction and payment caption: %v", err)
+	}
+	assertShadowNotSkippedAsOutOfTurnInfo(t, out)
+	if openAI.calls != 1 {
+		t.Fatalf("expected OpenAI shadow to run for failed document media turn, got calls=%d", openAI.calls)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected one document_extract attempt without out-of-turn shortcut, got calls=%d", runner.calls)
+	}
+	if len(runner.inputs) == 0 || !strings.Contains(runner.inputs[0].SystemPrompt, "extrai dados de documentos brasileiros") {
+		t.Fatalf("expected first runner call to be document_extract, got %+v", runner.inputs)
+	}
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected failed document_extract tool call, got %+v", out.ToolCalls)
+	}
+	if got := strings.TrimSpace(out.ToolCalls[0].Status); got != "FAILED" {
+		t.Fatalf("expected failed document_extract status, got %q in %+v", got, out.ToolCalls[0])
+	}
+	if got := strings.TrimSpace(out.ToolCalls[0].ErrorCode); got != "DOCUMENT_EXTRACT_ERROR" {
+		t.Fatalf("expected document_extract error code, got %q in %+v", got, out.ToolCalls[0])
+	}
+	if out.Draft == nil {
+		t.Fatal("expected fallback draft after document_extract failure")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplatePaymentOptionsInfo) {
+		t.Fatalf("failed document media turn must not become payment info draft: payload=%+v body=%q", out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	if strings.Contains(foldChatText(out.Draft.Body), "pagamento pode ser realizado") {
+		t.Fatalf("failed document media turn must not render payment info shortcut, got %q", out.Draft.Body)
+	}
+}
+
+func assertShadowNotSkippedAsOutOfTurnInfo(t *testing.T, out ReprocessResult) {
+	t.Helper()
+	shadow := structuredShadowSummaryFromMemory(t, out)
+	if shadow.OpenAIValidation.RejectReason == "deterministic_out_of_turn_info" {
+		t.Fatalf("shadow must not be skipped as deterministic_out_of_turn_info, got %+v", shadow)
+	}
+}
+
+func structuredShadowSummaryFromMemory(t *testing.T, out ReprocessResult) StructuredInterpreterShadowSummary {
+	t.Helper()
+	shadow, ok := out.Memory[structuredInterpreterShadowKey].(StructuredInterpreterShadowSummary)
+	if !ok {
+		t.Fatalf("expected structured shadow summary in memory, got %T: %+v", out.Memory[structuredInterpreterShadowKey], out.Memory[structuredInterpreterShadowKey])
+	}
+	return shadow
 }
 
 func TestAvailabilityDraftPendingQuestionDoesNotBlockHumanSupportOrCancellation(t *testing.T) {

@@ -10,28 +10,33 @@ import (
 type ResponseTemplateName string
 
 const (
-	TemplateAskPassengerCount     ResponseTemplateName = "ASK_PASSENGER_COUNT"
-	TemplateAskChildUnder5        ResponseTemplateName = "ASK_CHILD_UNDER_5"
-	TemplateAskDocuments          ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
-	TemplateAskLapChildAssignment ResponseTemplateName = "ASK_LAP_CHILD_ASSIGNMENT"
-	TemplateAskPaymentChoice      ResponseTemplateName = "ASK_PAYMENT_CHOICE"
-	TemplateAskMAOrigin           ResponseTemplateName = "ASK_MA_ORIGIN"
-	TemplateAskMADestination      ResponseTemplateName = "ASK_MA_DESTINATION"
-	TemplateAskSCOrigin           ResponseTemplateName = "ASK_SC_ORIGIN"
-	TemplateAskSCOriginForMA      ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
-	TemplateAskReservationRouteSC ResponseTemplateName = "ASK_RESERVATION_ROUTE_SC"
-	TemplatePublicSCTable         ResponseTemplateName = "PUBLIC_SC_TABLE"
-	TemplateAvailabilityList      ResponseTemplateName = "AVAILABILITY_LIST"
-	TemplateNoAvailability        ResponseTemplateName = "NO_AVAILABILITY"
-	TemplateUnsupportedCargo      ResponseTemplateName = "UNSUPPORTED_CARGO"
-	TemplateUnsupportedPackage    ResponseTemplateName = "UNSUPPORTED_PACKAGE"
-	TemplateHumanHandoff          ResponseTemplateName = "HUMAN_HANDOFF"
-	TemplateBookingCreated        ResponseTemplateName = "BOOKING_CREATED"
-	TemplateConfirmDocument       ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
-	TemplatePaymentCreate         ResponseTemplateName = "PAYMENT_CREATE"
-	TemplatePaymentMethods        ResponseTemplateName = "PAYMENT_METHODS"
-	TemplatePaymentOptionsInfo    ResponseTemplateName = "PAYMENT_OPTIONS_INFO"
-	TemplatePayingPassengerInfo   ResponseTemplateName = "PAYING_PASSENGER_INFO"
+	TemplateAskPassengerCount        ResponseTemplateName = "ASK_PASSENGER_COUNT"
+	TemplateAskChildUnder5           ResponseTemplateName = "ASK_CHILD_UNDER_5"
+	TemplateAskDocuments             ResponseTemplateName = "ASK_PASSENGER_DOCUMENTS"
+	TemplateAskLapChildAssignment    ResponseTemplateName = "ASK_LAP_CHILD_ASSIGNMENT"
+	TemplateAskPaymentChoice         ResponseTemplateName = "ASK_PAYMENT_CHOICE"
+	TemplateAskMAOrigin              ResponseTemplateName = "ASK_MA_ORIGIN"
+	TemplateAskMADestination         ResponseTemplateName = "ASK_MA_DESTINATION"
+	TemplateAskSCOrigin              ResponseTemplateName = "ASK_SC_ORIGIN"
+	TemplateAskSCOriginForMA         ResponseTemplateName = "ASK_SC_ORIGIN_FOR_MA"
+	TemplateAskReservationRouteSC    ResponseTemplateName = "ASK_RESERVATION_ROUTE_SC"
+	TemplatePublicSCTable            ResponseTemplateName = "PUBLIC_SC_TABLE"
+	TemplateAvailabilityList         ResponseTemplateName = "AVAILABILITY_LIST"
+	TemplateNoAvailability           ResponseTemplateName = "NO_AVAILABILITY"
+	TemplateUnsupportedCargo         ResponseTemplateName = "UNSUPPORTED_CARGO"
+	TemplateUnsupportedPackage       ResponseTemplateName = "UNSUPPORTED_PACKAGE"
+	TemplateHumanHandoff             ResponseTemplateName = "HUMAN_HANDOFF"
+	TemplateBookingCreated           ResponseTemplateName = "BOOKING_CREATED"
+	TemplateConfirmDocument          ResponseTemplateName = "CONFIRM_EXTRACTED_DOCUMENT"
+	TemplatePaymentCreate            ResponseTemplateName = "PAYMENT_CREATE"
+	TemplatePaymentMethods           ResponseTemplateName = "PAYMENT_METHODS"
+	TemplatePaymentOptionsInfo       ResponseTemplateName = "PAYMENT_OPTIONS_INFO"
+	TemplatePayingPassengerInfo      ResponseTemplateName = "PAYING_PASSENGER_INFO"
+	TemplateDocumentRequirementsInfo ResponseTemplateName = "DOCUMENT_REQUIREMENTS_INFO"
+	TemplateChildPolicyInfo          ResponseTemplateName = "CHILD_POLICY_INFO"
+	TemplateBaggageInfo              ResponseTemplateName = "BAGGAGE_INFO"
+	TemplateBoardingInfo             ResponseTemplateName = "BOARDING_INFO"
+	TemplateHumanSupportInfo         ResponseTemplateName = "HUMAN_SUPPORT_INFO"
 
 	TemplateContextFallbackAvailabilityOption   ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_OPTION"
 	TemplateContextFallbackAvailabilityDate     ResponseTemplateName = "CONTEXT_FALLBACK_AVAILABILITY_DATE"
@@ -45,15 +50,20 @@ const (
 )
 
 const (
-	askPassengerCountReply      = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
-	askChildUnder5Reply         = "Tem crianca de 5 anos ou menos viajando?"
-	askReservationRouteSCReply  = "Para fazer a reserva, primeiro preciso saber o trecho da viagem. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
-	askPaymentChoiceReply       = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
-	paymentOptionsInfoReply     = "O pagamento pode ser realizado de 2 formas: você pode pagar agora o valor integral, ou pagar agora apenas o sinal de R$ 250 por passageiro pagante e pagar o restante no embarque."
-	payingPassengerInfoReply    = "Passageiro pagante é o passageiro maior de 5 anos."
-	paymentMethodsSupportReply  = "Por aqui consigo seguir apenas com PIX. Para verificar outras formas de pagamento, fale com o suporte: 55 49 99986-2222."
-	publicSCTableReply          = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
-	unsupportedPDFDocumentReply = "Não consigo ler PDF com segurança por aqui. Por favor, envie uma foto nítida do documento ou escreva o nome completo e CPF/RG do passageiro."
+	askPassengerCountReply        = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
+	askChildUnder5Reply           = "Tem crianca de 5 anos ou menos viajando?"
+	askReservationRouteSCReply    = "Para fazer a reserva, primeiro preciso saber o trecho da viagem. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
+	askPaymentChoiceReply         = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
+	paymentOptionsInfoReply       = "O pagamento pode ser realizado de 2 formas: você pode pagar agora o valor integral, ou pagar agora apenas o sinal de R$ 250 por passageiro pagante e pagar o restante no embarque."
+	payingPassengerInfoReply      = "Passageiro pagante é o passageiro maior de 5 anos."
+	documentRequirementsInfoReply = "Para seguir com a reserva, preciso do nome completo e de CPF, RG ou CNH do passageiro. Se preferir, pode enviar uma foto legivel do documento."
+	childPolicyInfoReply          = "Crianca de 5 anos ou menos nao entra como passageiro pagante, mas preciso saber se vai alguma crianca nessa idade para registrar corretamente."
+	baggageInfoReply              = "No atendimento automatico consigo orientar sobre bagagens comuns do passageiro. Para itens especiais ou algo que nao seja bagagem comum, fale com o suporte: +55 49 9886-2222."
+	boardingInfoReply             = "O local e o horario de embarque dependem da opcao de viagem escolhida. Depois que a reserva estiver com a opcao correta, o atendimento confirma esses detalhes."
+	humanSupportInfoReply         = "Se precisar falar com o suporte, o contato e +55 49 9886-2222."
+	paymentMethodsSupportReply    = "Por aqui consigo seguir apenas com PIX. Para verificar outras formas de pagamento, fale com o suporte: 55 49 99986-2222."
+	publicSCTableReply            = "Sim, temos. Segue a tabela de valores para Santa Catarina:\n\nFraiburgo: R$ 950\nMonte Carlo: R$ 950\nVideira: R$ 950\nCampos Novos: R$ 1000\nChapeco: R$ 1100\nConcordia: R$ 1100\nIpumirim: R$ 1100\nPetrolandia: R$ 1100\nItuporanga: R$ 1100\nSeara: R$ 1100\n\nSe quiser, me diga a cidade e a data para eu verificar.\nCaso queira consultar outra cidade, entre em contato com +55 49 9886-2222."
+	unsupportedPDFDocumentReply   = "Não consigo ler PDF com segurança por aqui. Por favor, envie uma foto nítida do documento ou escreva o nome completo e CPF/RG do passageiro."
 )
 
 func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
@@ -92,6 +102,16 @@ func realizeResponseTemplate(name ResponseTemplateName) (string, bool) {
 		return paymentOptionsInfoReply, true
 	case TemplatePayingPassengerInfo:
 		return payingPassengerInfoReply, true
+	case TemplateDocumentRequirementsInfo:
+		return documentRequirementsInfoReply, true
+	case TemplateChildPolicyInfo:
+		return childPolicyInfoReply, true
+	case TemplateBaggageInfo:
+		return baggageInfoReply, true
+	case TemplateBoardingInfo:
+		return boardingInfoReply, true
+	case TemplateHumanSupportInfo:
+		return humanSupportInfoReply, true
 	case TemplateContextFallbackAvailabilityOption:
 		return "Não consegui identificar qual opção você escolheu. Responda com o número da opção, por exemplo: 1.", true
 	case TemplateContextFallbackAvailabilityDate:
@@ -130,6 +150,11 @@ func buildTemplateDraftRunFromDecision(decision IntentDecision, reply string) Ru
 		"template_name": string(decision.TemplateName),
 		"intent":        string(decision.Intent),
 		"action":        decision.Action,
+	}
+
+	if len(decision.TemplateData) > 0 {
+		requestPayload["template_data"] = cloneMap(decision.TemplateData)
+		responsePayload["template_data"] = cloneMap(decision.TemplateData)
 	}
 
 	if decision.AvailabilityInput != nil {
@@ -327,7 +352,12 @@ func isContextualFallbackTemplate(name ResponseTemplateName) bool {
 func isInformationalTemplate(name ResponseTemplateName) bool {
 	switch name {
 	case TemplatePaymentOptionsInfo,
-		TemplatePayingPassengerInfo:
+		TemplatePayingPassengerInfo,
+		TemplateDocumentRequirementsInfo,
+		TemplateChildPolicyInfo,
+		TemplateBaggageInfo,
+		TemplateBoardingInfo,
+		TemplateHumanSupportInfo:
 		return true
 	default:
 		return false
@@ -410,8 +440,46 @@ func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {
 		return realizeResponseTemplate(decision.TemplateName)
 
 	default:
-		return realizeResponseTemplate(decision.TemplateName)
+		reply, ok := realizeResponseTemplate(decision.TemplateName)
+		if !ok {
+			return "", false
+		}
+		return appendOutOfTurnPendingPromptReminder(reply, decision), true
 	}
+}
+
+func appendOutOfTurnPendingPromptReminder(reply string, decision IntentDecision) string {
+	reply = strings.TrimSpace(reply)
+	if reply == "" || !templateDataBool(decision.TemplateData, outOfTurnTemplateDataKey) {
+		return reply
+	}
+
+	pendingTemplate := ResponseTemplateName(strings.TrimSpace(asString(decision.TemplateData[outOfTurnPendingPromptTemplateDataKey])))
+	if pendingTemplate == "" {
+		return reply
+	}
+	pendingReply, ok := realizeResponseTemplate(pendingTemplate)
+	if !ok || strings.TrimSpace(pendingReply) == "" {
+		return reply
+	}
+	return reply + "\n\nPara continuar: " + trimTrailingSentencePunctuation(pendingReply)
+}
+
+func templateDataBool(data map[string]interface{}, key string) bool {
+	value, ok := data[key]
+	if !ok {
+		return false
+	}
+	typed, ok := value.(bool)
+	return ok && typed
+}
+
+func trimTrailingSentencePunctuation(text string) string {
+	text = strings.TrimSpace(text)
+	for strings.HasSuffix(text, ".") || strings.HasSuffix(text, "?") || strings.HasSuffix(text, "!") {
+		text = strings.TrimSpace(text[:len(text)-1])
+	}
+	return text
 }
 
 func cleanStateCityName(value string) string {

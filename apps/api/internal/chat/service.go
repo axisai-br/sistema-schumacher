@@ -787,6 +787,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	activePrompt := InferActivePromptContext(history, structuredCanonicalState)
 
 	localInterpretation := InterpretStructuredTurn(structuredInput)
+	precomputedDeterministicDecision := routeDeterministicIntent(history, currentTurn, structuredCanonicalState, observedAt)
 
 	shadow, reusableOpenAIInterpreterResult := RunStructuredInterpreterShadowWithReusableResult(ctx, StructuredInterpreterShadowInput{
 		Enabled:             s.cfg.ChatOpenAIInterpreterShadowEnabled,
@@ -963,6 +964,38 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			if draftRun != nil {
 				deterministicBookingRun = draftRun
 				deterministicBookingHandled = true
+			}
+		}
+	}
+	if intentRouterEnabled() && templateRealizerEnabled() &&
+		!unsupportedCargoHandled &&
+		!deterministicBookingHandled &&
+		!deterministicToolHandled &&
+		!documentCollectionMediaTurn &&
+		!documentAttempted &&
+		!documentHandled {
+		decision := precomputedDeterministicDecision
+		if canShortcutOutOfTurnInfoDecision(decision, canonicalState) {
+			reply, realized := realizeIntentResponseTemplate(decision)
+			if realized && strings.TrimSpace(reply) != "" {
+				canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
+				agentState["canonical_state"] = canonicalState
+				memory["canonical_state"] = canonicalState
+				memory["intent_decision"] = map[string]interface{}{
+					"intent":                string(decision.Intent),
+					"intent_source":         decision.Source,
+					"selected_option_index": decision.SelectedOptionIndex,
+					"template_name":         string(decision.TemplateName),
+					"action":                decision.Action,
+					"template_data":         cloneMap(decision.TemplateData),
+				}
+
+				run := buildTemplateDraftRunFromDecision(decision, reply)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+				rolloutMetadata.DecisionSource = "deterministic"
+				rolloutMetadata.DecisionValid = boolPtr(true)
+				rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
 			}
 		}
 	}

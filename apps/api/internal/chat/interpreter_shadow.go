@@ -107,6 +107,7 @@ func compareKnownInt(aKnown bool, a int, bKnown bool, b int) bool {
 
 type StructuredInterpreterShadowInput struct {
 	Enabled             bool
+	SkipReason          string
 	OpenAIInterpreter   OpenAIStructuredInterpreter
 	StructuredInput     StructuredInterpreterInput
 	ActivePrompt        ActivePromptContext
@@ -129,6 +130,12 @@ func RunStructuredInterpreterShadowWithReusableResult(ctx context.Context, input
 	}
 
 	if !input.Enabled {
+		return summary, nil
+	}
+
+	if reason := strings.TrimSpace(input.SkipReason); reason != "" {
+		summary.OpenAI.Status = string(StructuredInterpreterShadowSkipped)
+		summary.OpenAIValidation = skippedOpenAIInterpreterShadowValidation(reason)
 		return summary, nil
 	}
 

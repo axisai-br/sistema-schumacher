@@ -611,6 +611,161 @@ Cliente: pix
 **Objetivo:** trocar fallback genérico burro por fallback útil e seguro.  
   
 ---  
+
+## Etapa 3.5E — Out-of-turn informational interruptions
+
+**Status:** Concluída localmente em 2026-07-02; P2 de perguntas de pagamento de um lado só corrigido localmente; P2 de prioridade do active prompt no `Reprocess` corrigido localmente; P2 restantes de guardrails/SkipReason corrigidos localmente em 2026-07-03; P2 de `document_extract` attempted com `handled=false` corrigido localmente em 2026-07-03; pendente review, commit, deploy e validação em produção/homologação.
+
+**O que mudou:** criada camada determinística para dúvidas informativas laterais durante prompts ativos de reserva. A ordem efetiva fica: guardrails críticos, resposta clara ao active prompt, dúvida informativa fora de turno, fallback contextual.
+
+**Comportamento antes:** em `ASK_PASSENGER_COUNT`, perguntas como `ai o pagamento faz logo ou só no dia mesmo?`, `paga agora?`, `paga no dia?`, `precisa pagar agora?`, `tem que pagar agora?`, `pode pagar no embarque?` ou `quais documentos precisa?` podiam ser consumidas pelo bloco de continuação de passageiros e reemitir a pergunta, sem responder a dúvida.
+
+**Comportamento depois:** durante `ASK_PASSENGER_COUNT`, `ASK_CHILD_UNDER_5`, `ASK_PASSENGER_DOCUMENTS`, `DOCUMENT_CONFIRMATION`, `PAYMENT_PREFERENCE` e `PAYER_CPF`, dúvidas sobre pagamento, passageiro pagante, documentos, criança, bagagem, embarque e contato de suporte usam template informativo fechado e anexam `Para continuar:` com o prompt pendente. O `canonical_state` não é alterado por esses templates.
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/out_of_turn_info.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/interpreter_shadow.go
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/agent.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/response_realizer_test.go
+apps/api/internal/chat/availability_draft_test.go
+apps/api/internal/chat/interpreter_shadow_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**Templates/intents adicionados:**
+
+```text
+DOCUMENT_REQUIREMENTS_INFO
+CHILD_POLICY_INFO
+BAGGAGE_INFO
+BOARDING_INFO
+HUMAN_SUPPORT_INFO
+
+DOCUMENT_REQUIREMENTS_INFO_QUESTION
+CHILD_POLICY_INFO_QUESTION
+BAGGAGE_INFO_QUESTION
+BOARDING_INFO_QUESTION
+HUMAN_SUPPORT_INFO_QUESTION
+```
+
+**Regressões cobertas:**
+
+```text
+ASK_PASSENGER_COUNT + "ai o pagamento faz logo ou só no dia mesmo?"
+→ PAYMENT_OPTIONS_INFO + lembrete de CONTEXT_FALLBACK_PASSENGER_COUNT
+→ sem availability_search, booking_create, payment_create, OpenAI assist ou chamada LLM/document_extract
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_COUNT + "paga agora?"
+ASK_PASSENGER_COUNT + "paga no dia?"
+ASK_PASSENGER_COUNT + "precisa pagar agora?"
+ASK_PASSENGER_COUNT + "tem que pagar agora?"
+ASK_PASSENGER_COUNT + "pode pagar no embarque?"
+→ PAYMENT_OPTIONS_INFO + lembrete de CONTEXT_FALLBACK_PASSENGER_COUNT
+→ sem fallback de ASK_PASSENGER_COUNT
+→ sem availability_search, booking_create, payment_create, OpenAI assist ou chamada LLM/document_extract
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_COUNT + "quais documentos precisa?"
+→ DOCUMENT_REQUIREMENTS_INFO + lembrete de CONTEXT_FALLBACK_PASSENGER_COUNT
+→ sem availability_search, booking_create, payment_create, OpenAI assist ou chamada LLM/document_extract
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+Após resposta informativa com "Para continuar:", "só eu" continua sendo PASSENGER_COUNT_REPLY.
+
+ASK_PASSENGER_COUNT + "só eu, paga agora?"
+ASK_PASSENGER_COUNT + "só pra mim, paga no dia?"
+ASK_PASSENGER_COUNT + "apenas eu, pagamento faz logo?"
+ASK_PASSENGER_COUNT + "é só pra mim, pode pagar no embarque?"
+→ PASSENGER_COUNT_REPLY vence PAYMENT_OPTIONS_INFO
+→ fluxo continua para ASK_CHILD_UNDER_5 sem pedir o cliente repetir "só eu"
+→ sem availability_search, booking_create, payment_create ou chamada LLM/document_extract
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info, porque o branch out-of-turn não é elegível
+
+ASK_PAYMENT_CHOICE + "quero cancelar, paga agora?"
+→ BOOKING_CANCEL vence PAYMENT_OPTIONS_INFO
+→ sem payment_create
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PAYMENT_CHOICE + "quero falar com atendente, paga agora?"
+→ HUMAN_HANDOFF vence PAYMENT_OPTIONS_INFO
+→ sem payment_create
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_COUNT + "paga agora? posso levar uma moto?"
+→ UNSUPPORTED_CARGO vence PAYMENT_OPTIONS_INFO
+→ sem availability_search, booking_create ou payment_create
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_COUNT + "paga agora?"
+→ PAYMENT_OPTIONS_INFO com lembrete de CONTEXT_FALLBACK_PASSENGER_COUNT
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_DOCUMENTS + imagem com legenda "paga agora?"
+→ document_extract vence o shortcut informativo
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+ASK_PASSENGER_DOCUMENTS + imagem com legenda "paga agora?" + document_extract FAILED/handled=false
+→ shortcut out-of-turn fica bloqueado por documentCollectionMediaTurn/documentAttempted
+→ não emite PAYMENT_OPTIONS_INFO
+→ registra tool_call document_extract FAILED com DOCUMENT_EXTRACT_ERROR
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+CHAT_INTENT_ROUTER_ENABLED=false + ASK_PASSENGER_COUNT + "paga agora?"
+CHAT_TEMPLATE_REALIZER_ENABLED=false + ASK_PASSENGER_COUNT + "paga agora?"
+→ shortcut out-of-turn fica desabilitado
+→ não emite PAYMENT_OPTIONS_INFO
+→ shadow OpenAI não usa SkipReason=deterministic_out_of_turn_info
+
+PAYMENT_PREFERENCE + "vou pagar o sinal"
+→ PAYMENT_PREFERENCE preservado.
+
+PAYMENT_PREFERENCE + "quero pagar integral"
+→ PAYMENT_PREFERENCE preservado.
+
+PAYMENT_PREFERENCE + "pode pagar só o sinal?"
+→ PAYMENT_OPTIONS_INFO com lembrete de PAYMENT_PREFERENCE.
+
+ASK_PASSENGER_COUNT + "já paguei"
+ASK_PASSENGER_COUNT + "pagamento caiu?"
+→ PAYMENT_STATUS_QUERY preservado.
+
+"qual telefone do suporte?"
+→ HUMAN_SUPPORT_INFO
+
+"quero falar com atendente"
+→ HUMAN_HANDOFF preservado.
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'TestServiceOutOfTurnInfoDocumentMediaDoesNotRecordShadowSkip|TestServiceOutOfTurnInfoDocumentMediaFailureDoesNotUseShortcut|TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision|TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools|TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut'
+go test -count=1 ./internal/chat -run 'TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision|TestServiceOutOfTurnInfoDocumentMediaDoesNotRecordShadowSkip|TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools|TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut|TestIntentRouterOutOfTurn|TestIntentRouterPassengerCountAnswerWinsOverOutOfTurnPaymentQuestion|TestRunStructuredInterpreterShadowSkipReasonDoesNotCallOpenAI'
+go test -count=1 ./internal/chat -run 'TestIntentRouterPassengerCountAnswerWinsOverOutOfTurnPaymentQuestion|TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut|TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools'
+go test -count=1 ./internal/chat -run 'TestIntentRouter.*OutOfTurn|TestIntentRouterOneSidedPayment|TestIntentRouterPaymentStatusWins|TestIntentRouterPaymentPreference|TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools|TestRunStructuredInterpreterShadow'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+```
+
+**Resultado do review local:** P2 restantes corrigidos. O `service.go` não usa mais `buildOutOfTurnInfoDecision` isolado como prova de que o shortcut venceu; ele pré-computa a decisão completa com `routeDeterministicIntent` e só permite o shortcut quando `CHAT_INTENT_ROUTER_ENABLED` e `CHAT_TEMPLATE_REALIZER_ENABLED` estão habilitados, a decisão final tem `Source=deterministic_out_of_turn_info`, `Action=template`, template informativo e realização local sem LLM. O gate antecipado também exige `!documentCollectionMediaTurn` e `!documentAttempted`, além de `!documentHandled`, para impedir que imagem/documento em `ASK_PASSENGER_DOCUMENTS` com caption como `paga agora?` vire `PAYMENT_OPTIONS_INFO` depois de tentativa de `document_extract` com `handled=false`/falha. O `SkipReason=deterministic_out_of_turn_info` foi removido nesta etapa para evitar observabilidade falsa quando outro handler posterior vence, como `document_extract` em imagem com legenda de pagamento. Assim, guardrails de cancelamento, handoff humano e carga não suportada vencem antes de PAYMENT_OPTIONS_INFO, respostas claras ao active prompt continuam vencendo dúvidas laterais, flags de rollback desabilitam o shortcut e turnos documentais tentados permanecem no fluxo documental. A mudança não altera OpenAI schema/prompt/runner, vector base, embeddings, File Search, planner, banco/migrations, infra, n8n, booking_create, payment_create, booking_cancel ou document_extract.
+
+**Riscos restantes:** detecção é determinística por frases e pode não cobrir todas as variações reais de dúvidas laterais; templates de bagagem/embarque são deliberadamente conservadores e podem exigir ajuste de texto após validação operacional; pedidos explícitos de humano continuam interrompendo o fluxo por guardrail e não recebem lembrete do prompt.
+
+**Necessidade de teste em produção/homologação:** validar `ASK_PASSENGER_COUNT → paga agora?/paga no dia?/precisa pagar agora?/tem que pagar agora?/pode pagar no embarque? → só eu`; validar `ASK_PASSENGER_COUNT → só eu, paga agora?` e `ASK_PASSENGER_COUNT → só pra mim, paga no dia?`; validar `PAYMENT_PREFERENCE → pode pagar só o sinal?`; validar que `já paguei` e `pagamento caiu?` continuam status; validar que `ASK_PAYMENT_CHOICE → quero cancelar, paga agora?` não vira PAYMENT_OPTIONS_INFO; validar que `ASK_PAYMENT_CHOICE → quero falar com atendente, paga agora?` continua handoff; validar que `ASK_PASSENGER_COUNT → paga agora? posso levar uma moto?` continua carga não suportada; validar em homologação `ASK_PASSENGER_DOCUMENTS → imagem/documento com legenda paga agora?` tanto com extração bem-sucedida quanto com falha de extração.
+
+**Próxima etapa recomendada:** solicitar `/review` antes de commit; depois, se aprovado, preparar commit da etapa 3.5E.
+
+---
   
 ## Hotfix H-2026-06-29 — Reservation-help variant
   
