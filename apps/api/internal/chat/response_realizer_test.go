@@ -34,6 +34,11 @@ func TestResponseRealizerEveryStaticTemplateRendersWithoutEmptyPlaceholders(t *t
 		TemplateHumanHandoff,
 		TemplatePaymentOptionsInfo,
 		TemplatePayingPassengerInfo,
+		TemplateDocumentRequirementsInfo,
+		TemplateChildPolicyInfo,
+		TemplateBaggageInfo,
+		TemplateBoardingInfo,
+		TemplateHumanSupportInfo,
 		TemplateContextFallbackAvailabilityOption,
 		TemplateContextFallbackAvailabilityDate,
 		TemplateContextFallbackPassengerCount,
@@ -161,6 +166,11 @@ func TestApplyIntentDecisionInformationalTemplatesDoNotMutateCanonicalState(t *t
 	templates := []ResponseTemplateName{
 		TemplatePaymentOptionsInfo,
 		TemplatePayingPassengerInfo,
+		TemplateDocumentRequirementsInfo,
+		TemplateChildPolicyInfo,
+		TemplateBaggageInfo,
+		TemplateBoardingInfo,
+		TemplateHumanSupportInfo,
 	}
 
 	for _, template := range templates {
@@ -174,6 +184,29 @@ func TestApplyIntentDecisionInformationalTemplatesDoNotMutateCanonicalState(t *t
 				t.Fatalf("informational template must not mutate canonical_state\nbefore=%+v\nafter=%+v", before, after)
 			}
 		})
+	}
+}
+
+func TestResponseRealizerOutOfTurnInfoAppendsPendingPromptReminder(t *testing.T) {
+	reply, ok := realizeIntentResponseTemplate(IntentDecision{
+		Intent:       IntentPaymentInfoQuestion,
+		Action:       "template",
+		TemplateName: TemplatePaymentOptionsInfo,
+		TemplateData: map[string]interface{}{
+			outOfTurnTemplateDataKey:              true,
+			outOfTurnPendingPromptTemplateDataKey: string(TemplateContextFallbackPassengerCount),
+		},
+	})
+	if !ok {
+		t.Fatal("expected out-of-turn payment info template to render")
+	}
+	folded := foldChatText(reply)
+	if !strings.Contains(folded, "pagamento pode ser realizado") {
+		t.Fatalf("expected payment answer in reply, got %q", reply)
+	}
+	if !strings.Contains(folded, "para continuar") ||
+		!strings.Contains(folded, "passagem e so para voce") {
+		t.Fatalf("expected pending passenger prompt reminder, got %q", reply)
 	}
 }
 

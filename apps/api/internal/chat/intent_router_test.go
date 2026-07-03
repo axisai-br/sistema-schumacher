@@ -425,6 +425,297 @@ func TestIntentRouterPaymentInfoQuestionsUseClosedTemplate(t *testing.T) {
 	}
 }
 
+func TestIntentRouterOutOfTurnInfoQuestionsPreservePassengerCountPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	cases := []struct {
+		text     string
+		intent   Intent
+		template ResponseTemplateName
+		wantInfo string
+	}{
+		{
+			text:     "ai o pagamento faz logo ou só no dia mesmo?",
+			intent:   IntentPaymentInfoQuestion,
+			template: TemplatePaymentOptionsInfo,
+			wantInfo: "pagamento pode ser realizado",
+		},
+		{
+			text:     "quais documentos precisa?",
+			intent:   IntentDocumentRequirementsInfoQuestion,
+			template: TemplateDocumentRequirementsInfo,
+			wantInfo: "preciso do nome completo",
+		},
+		{
+			text:     "o que é passageiro pagante?",
+			intent:   IntentPayingPassengerInfoQuestion,
+			template: TemplatePayingPassengerInfo,
+			wantInfo: "passageiro pagante",
+		},
+		{
+			text:     "criança de colo tem que informar?",
+			intent:   IntentChildPolicyInfoQuestion,
+			template: TemplateChildPolicyInfo,
+			wantInfo: "crianca de 5 anos ou menos",
+		},
+		{
+			text:     "quantas malas posso levar?",
+			intent:   IntentBaggageInfoQuestion,
+			template: TemplateBaggageInfo,
+			wantInfo: "bagagens comuns",
+		},
+		{
+			text:     "onde é o embarque?",
+			intent:   IntentBoardingInfoQuestion,
+			template: TemplateBoardingInfo,
+			wantInfo: "local e o horario de embarque",
+		},
+		{
+			text:     "qual telefone do suporte?",
+			intent:   IntentHumanSupportInfoQuestion,
+			template: TemplateHumanSupportInfo,
+			wantInfo: "suporte",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, tc.text, state, now)
+			if got.Intent != tc.intent {
+				t.Fatalf("expected intent %s, got %+v", tc.intent, got)
+			}
+			if got.TemplateName != tc.template || got.Action != "template" {
+				t.Fatalf("expected template %s, got %+v", tc.template, got)
+			}
+			if got.Source != "deterministic_out_of_turn_info" {
+				t.Fatalf("expected out-of-turn source, got %+v", got)
+			}
+			if pending := ResponseTemplateName(asString(got.TemplateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackPassengerCount {
+				t.Fatalf("expected pending passenger prompt, got %+v", got.TemplateData)
+			}
+
+			reply, ok := realizeIntentResponseTemplate(got)
+			if !ok {
+				t.Fatalf("expected reply to render for %+v", got)
+			}
+			folded := foldChatText(reply)
+			if !strings.Contains(folded, tc.wantInfo) {
+				t.Fatalf("expected info text %q in reply %q", tc.wantInfo, reply)
+			}
+			if !strings.Contains(folded, "para continuar") ||
+				!strings.Contains(folded, "passagem e so para voce") {
+				t.Fatalf("expected pending passenger prompt reminder, got %q", reply)
+			}
+		})
+	}
+}
+
+func TestIntentRouterOneSidedPaymentQuestionsPreservePassengerCountPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	for _, text := range []string{
+		"paga agora?",
+		"paga no dia?",
+		"precisa pagar agora?",
+		"tem que pagar agora?",
+		"pode pagar no embarque?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+			if got.Intent != IntentPaymentInfoQuestion ||
+				got.TemplateName != TemplatePaymentOptionsInfo ||
+				got.Action != "template" ||
+				got.Source != "deterministic_out_of_turn_info" {
+				t.Fatalf("expected out-of-turn payment info template, got %+v", got)
+			}
+			if got.TemplateName == TemplateContextFallbackPassengerCount {
+				t.Fatalf("payment question must not become passenger-count fallback: %+v", got)
+			}
+			if pending := ResponseTemplateName(asString(got.TemplateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackPassengerCount {
+				t.Fatalf("expected pending passenger prompt, got %+v", got.TemplateData)
+			}
+			reply, ok := realizeIntentResponseTemplate(got)
+			if !ok {
+				t.Fatalf("expected reply to render for %+v", got)
+			}
+			folded := foldChatText(reply)
+			if !strings.Contains(folded, "pagamento pode ser realizado") ||
+				!strings.Contains(folded, "para continuar") ||
+				!strings.Contains(folded, "passagem e so para voce") {
+				t.Fatalf("expected payment answer with passenger reminder, got %q", reply)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPassengerCountAnswerWinsOverOutOfTurnPaymentQuestion(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	for _, text := range []string{
+		"só eu, paga agora?",
+		"só pra mim, paga no dia?",
+		"apenas eu, pagamento faz logo?",
+		"é só pra mim, pode pagar no embarque?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+			if got.Intent != IntentPassengerCountReply ||
+				got.Source != "deterministic_active_prompt_passenger_count" {
+				t.Fatalf("expected passenger count active prompt answer to win, got %+v", got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo ||
+				got.Source == "deterministic_out_of_turn_info" {
+				t.Fatalf("mixed passenger answer must not become out-of-turn payment info: %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterOutOfTurnInfoAppliesToReservationActivePrompts(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name            string
+		prompt          string
+		phase           ConversationPhase
+		pendingTemplate ResponseTemplateName
+	}{
+		{
+			name:            "passenger_count",
+			prompt:          askPassengerCountReply,
+			phase:           ConversationPhasePassengerCollection,
+			pendingTemplate: TemplateContextFallbackPassengerCount,
+		},
+		{
+			name:            "child_under_5",
+			prompt:          askChildUnder5Reply,
+			phase:           ConversationPhasePassengerCollection,
+			pendingTemplate: TemplateContextFallbackChildUnder5,
+		},
+		{
+			name:            "passenger_documents",
+			prompt:          buildAskDocumentsReply(1, 0),
+			phase:           ConversationPhasePassengerCollection,
+			pendingTemplate: TemplateContextFallbackPassengerDocuments,
+		},
+		{
+			name:            "document_confirmation",
+			prompt:          "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?",
+			phase:           ConversationPhaseBookingPending,
+			pendingTemplate: TemplateContextFallbackDocumentConfirmation,
+		},
+		{
+			name:            "payment_preference",
+			prompt:          askPaymentChoiceReply,
+			phase:           ConversationPhaseBooked,
+			pendingTemplate: TemplateContextFallbackPaymentPreference,
+		},
+		{
+			name:            "payer_cpf",
+			prompt:          "Para gerar o PIX, preciso do CPF do pagador.",
+			phase:           ConversationPhaseBooked,
+			pendingTemplate: TemplateContextFallbackPayerCPF,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := []Message{{
+				Direction:        "OUTBOUND",
+				Body:             tc.prompt,
+				ProcessingStatus: messageStatusAutomationSent,
+				ReceivedAt:       now.Add(-1 * time.Minute),
+			}}
+			got := routeDeterministicIntent(history, "como funciona o pagamento?", CanonicalConversationState{Phase: tc.phase}, now)
+			if got.Intent != IntentPaymentInfoQuestion ||
+				got.TemplateName != TemplatePaymentOptionsInfo ||
+				got.Source != "deterministic_out_of_turn_info" {
+				t.Fatalf("expected out-of-turn payment info for %s, got %+v", tc.name, got)
+			}
+			if pending := ResponseTemplateName(asString(got.TemplateData[outOfTurnPendingPromptTemplateDataKey])); pending != tc.pendingTemplate {
+				t.Fatalf("expected pending template %s for %s, got %+v", tc.pendingTemplate, tc.name, got.TemplateData)
+			}
+		})
+	}
+}
+
+func TestIntentRouterOutOfTurnInfoReplyKeepsPassengerCountActive(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	infoDecision := routeDeterministicIntent(history, "quais documentos precisa?", state, now)
+	infoReply, ok := realizeIntentResponseTemplate(infoDecision)
+	if !ok || strings.TrimSpace(infoReply) == "" {
+		t.Fatalf("expected out-of-turn info reply, got ok=%t decision=%+v", ok, infoDecision)
+	}
+	history = append(history, Message{
+		Direction:        "OUTBOUND",
+		Body:             infoReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	})
+
+	got := routeDeterministicIntent(history, "só eu", state, now)
+	if got.Intent != IntentPassengerCountReply {
+		t.Fatalf("expected passenger count reply after out-of-turn info, got %+v", got)
+	}
+}
+
+func TestIntentRouterOutOfTurnPaymentPreferenceKeepsAnswerPriority(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPaymentChoiceReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhaseBooked}
+
+	answer := routeDeterministicIntent(history, "vou pagar o sinal", state, now)
+	if answer.Intent != IntentPaymentPreference {
+		t.Fatalf("expected payment preference answer to win, got %+v", answer)
+	}
+	if answer.TemplateName == TemplatePaymentOptionsInfo {
+		t.Fatalf("payment preference answer must not become info template: %+v", answer)
+	}
+
+	question := routeDeterministicIntent(history, "pode pagar só o sinal?", state, now)
+	if question.Intent != IntentPaymentInfoQuestion ||
+		question.TemplateName != TemplatePaymentOptionsInfo ||
+		question.Source != "deterministic_out_of_turn_info" {
+		t.Fatalf("expected out-of-turn payment info question, got %+v", question)
+	}
+	if pending := ResponseTemplateName(asString(question.TemplateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackPaymentPreference {
+		t.Fatalf("expected pending payment preference prompt, got %+v", question.TemplateData)
+	}
+}
+
 func TestIntentRouterPaymentInfoReplyDoesNotBecomePaymentPreferencePrompt(t *testing.T) {
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	history := []Message{{
@@ -521,6 +812,33 @@ func TestIntentRouterPaymentStatusWinsOverPaymentPreferencePrompt(t *testing.T) 
 	}
 }
 
+func TestIntentRouterPaymentStatusWinsOverPassengerCountOutOfTurnInfo(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+	}}
+	state := CanonicalConversationState{Phase: ConversationPhasePassengerCollection}
+
+	for _, text := range []string{
+		"já paguei",
+		"pagamento caiu?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+			if got.Intent != IntentPaymentStatusQuery {
+				t.Fatalf("expected payment status query to win, got %+v", got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo ||
+				got.TemplateName == TemplateContextFallbackPassengerCount {
+				t.Fatalf("status query must not become info/fallback template: %+v", got)
+			}
+		})
+	}
+}
+
 func TestIntentRouterPayingPassengerInfoQuestionsUseClosedTemplate(t *testing.T) {
 	for _, text := range []string{
 		"o que é passageiro pagante?",
@@ -538,6 +856,24 @@ func TestIntentRouterPayingPassengerInfoQuestionsUseClosedTemplate(t *testing.T)
 				t.Fatalf("expected paying passenger info template, got %+v", got)
 			}
 		})
+	}
+}
+
+func TestIntentRouterHumanSupportInfoDoesNotBreakExplicitHandoff(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+
+	info := routeDeterministicIntent(nil, "qual telefone do suporte?", CanonicalConversationState{Phase: ConversationPhaseDiscovery}, now)
+	if info.Intent != IntentHumanSupportInfoQuestion ||
+		info.TemplateName != TemplateHumanSupportInfo ||
+		info.Action != "template" {
+		t.Fatalf("expected human support info template, got %+v", info)
+	}
+
+	handoff := routeDeterministicIntent(nil, "quero falar com atendente", CanonicalConversationState{Phase: ConversationPhasePassengerCollection}, now)
+	if handoff.Intent != IntentHumanSupport ||
+		handoff.TemplateName != TemplateHumanHandoff ||
+		handoff.Action != "template" {
+		t.Fatalf("expected explicit handoff to stay protected, got %+v", handoff)
 	}
 }
 
@@ -771,6 +1107,11 @@ func TestIntentRouterPaymentPreferencePromptStillAnswersPaymentInfoQuestions(t *
 		template ResponseTemplateName
 	}{
 		{text: "como funciona o pagamento?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "paga agora?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "paga no dia?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "precisa pagar agora?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "tem que pagar agora?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
+		{text: "pode pagar no embarque?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
 		{text: "paga agora ou no embarque?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
 		{text: "o pagamento faz logo ou só no dia?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
 		{text: "posso pagar só o sinal?", intent: IntentPaymentInfoQuestion, template: TemplatePaymentOptionsInfo},
