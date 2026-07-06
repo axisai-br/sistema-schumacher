@@ -352,7 +352,8 @@ func buildAutoSendReplyIdempotencyKey(draftID string) string {
 	return "chat-auto-reply-" + strings.TrimSpace(draftID)
 }
 
-func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, replyText string) draftAutoSendPolicy {
+func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, run RunAgentResult) draftAutoSendPolicy {
+	replyText := strings.TrimSpace(run.ReplyText)
 	reasons := make([]string, 0, 2)
 	if len(toolCalls) > 0 && !hasOnlyAutoSendSafeToolCalls(toolCalls) {
 		reasons = append(reasons, draftAutoSendReasonToolCall)
@@ -362,7 +363,9 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, rep
 	if hasBlockingNonTextCandidate(candidates, allowHandledDocumentMedia) {
 		reasons = append(reasons, draftAutoSendReasonNonTextTurn)
 	}
-	if len(toolCalls) == 0 && containsOperationalAutoSendClaimWithoutTool(replyText) {
+	if len(toolCalls) == 0 &&
+		containsOperationalAutoSendClaimWithoutTool(replyText) &&
+		!isAutoSendSafeInformationalTemplateReply(run) {
 		reasons = append(reasons, draftAutoSendReasonOperationalNoTool)
 	}
 	if containsOutOfDomainSchedulingVocabulary(replyText) {
@@ -377,13 +380,74 @@ func evaluateDraftAutoSendPolicy(candidates []Message, toolCalls []ToolCall, rep
 	return policy
 }
 
+func isAutoSendSafeInformationalTemplateReply(run RunAgentResult) bool {
+	replyText := strings.TrimSpace(run.ReplyText)
+	if replyText == "" {
+		return false
+	}
+
+	templateName := ResponseTemplateName(firstNonEmpty(
+		strings.TrimSpace(asString(run.ResponsePayload["template_name"])),
+		strings.TrimSpace(asString(run.RequestPayload["template_name"])),
+	))
+	if !isInformationalTemplate(templateName) {
+		return false
+	}
+
+	action := firstNonEmpty(
+		strings.TrimSpace(asString(run.ResponsePayload["action"])),
+		strings.TrimSpace(asString(run.RequestPayload["action"])),
+	)
+	if action != "" && action != "template" {
+		return false
+	}
+
+	templateData := asMap(run.ResponsePayload["template_data"])
+	if len(templateData) == 0 {
+		templateData = asMap(run.RequestPayload["template_data"])
+	}
+	if len(templateData) > 0 && !validAutoSendOutOfTurnInfoTemplateData(templateName, templateData) {
+		return false
+	}
+
+	expected, ok := realizeIntentResponseTemplate(IntentDecision{
+		TemplateName: templateName,
+		Action:       "template",
+		TemplateData: cloneMap(templateData),
+	})
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(expected) == replyText
+}
+
+func validAutoSendOutOfTurnInfoTemplateData(templateName ResponseTemplateName, templateData map[string]interface{}) bool {
+	if !templateDataBool(templateData, outOfTurnTemplateDataKey) {
+		return false
+	}
+
+	pendingTemplate := ResponseTemplateName(strings.TrimSpace(asString(templateData[outOfTurnPendingPromptTemplateDataKey])))
+	if pendingTemplate == "" || !isContextualFallbackTemplate(pendingTemplate) {
+		return false
+	}
+
+	if kind := OutOfTurnInfoKind(strings.TrimSpace(asString(templateData[outOfTurnInfoKindTemplateDataKey]))); kind != "" {
+		expectedTemplate, ok := outOfTurnInfoTemplateName(kind)
+		if !ok || expectedTemplate != templateName {
+			return false
+		}
+	}
+
+	return true
+}
+
 func containsOperationalAutoSendClaimWithoutTool(text string) bool {
 	folded := foldChatText(text)
 	if folded == "" {
 		return false
 	}
 
-	if looksLikePublicSCTableReply(folded) || looksLikePaymentOptionsInfoReply(folded) {
+	if looksLikePublicSCTableReply(folded) {
 		return false
 	}
 
@@ -418,11 +482,6 @@ func containsOperationalAutoSendClaimWithoutTool(text string) bool {
 		return true
 	}
 	return false
-}
-
-func looksLikePaymentOptionsInfoReply(folded string) bool {
-	canonical := strings.Join(strings.Fields(foldChatText(paymentOptionsInfoReply)), " ")
-	return strings.Join(strings.Fields(folded), " ") == canonical
 }
 
 func mentionsSupportedCityForAutoSend(folded string, candidates map[string]string) bool {

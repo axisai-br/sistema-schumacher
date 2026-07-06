@@ -1996,7 +1996,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	applyRolloutMetadataToRun(&run, rolloutMetadata)
 
 	runAt := time.Now().UTC()
-	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run.ReplyText)
+	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run)
 	draftAgentState := buildDraftGeneratedAgentState(persisted.Session.Metadata, candidates, draftID, run, toolContext.Calls, autoSendPolicy, runAt)
 	if canonicalStateEnabled() {
 		draftAgentState["canonical_state"] = canonicalState
