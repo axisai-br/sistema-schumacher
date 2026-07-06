@@ -34,6 +34,12 @@ func TestStructuredInterpreterShadowReportItemFromMessageMapsValidShadow(t *test
 					"provider_response_id": "resp_shadow_1",
 					"latency_ms":           float64(237),
 				},
+				"openai_validation": map[string]interface{}{
+					"status":            string(StructuredInterpreterShadowValidationAccepted),
+					"accepted":          true,
+					"reject_reason":     "",
+					"fallback_template": "",
+				},
 				"agreement": map[string]interface{}{
 					"intent":                true,
 					"turn_meaning":          true,
@@ -76,6 +82,12 @@ func TestStructuredInterpreterShadowReportItemFromMessageMapsValidShadow(t *test
 	}
 	if item.SensitiveScanPayload != nil {
 		t.Fatalf("loader must not expose sensitive scan payload by default, got %+v", item.SensitiveScanPayload)
+	}
+	if item.Summary.OpenAIValidation.Status != string(StructuredInterpreterShadowValidationAccepted) ||
+		!item.Summary.OpenAIValidation.Accepted ||
+		item.Summary.OpenAIValidation.RejectReason != "" ||
+		item.Summary.OpenAIValidation.FallbackTemplate != "" {
+		t.Fatalf("unexpected OpenAI validation summary: %+v", item.Summary.OpenAIValidation)
 	}
 }
 
@@ -180,12 +192,116 @@ func TestStructuredInterpreterShadowReportItemFromMessageHandlesMalformedPayload
 				},
 			},
 		},
+		{
+			ID: "shadow-malformed-validation-only",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"openai_validation": "not-a-map",
+				},
+			},
+		},
 	} {
 		t.Run(message.ID, func(t *testing.T) {
 			if item, ok := StructuredInterpreterShadowReportItemFromMessage(message); ok {
 				t.Fatalf("expected malformed shadow to be ignored, got %+v", item)
 			}
 		})
+	}
+}
+
+func TestBuildStructuredInterpreterShadowReportFromMessagesCountsOpenAIValidationStatuses(t *testing.T) {
+	report := BuildStructuredInterpreterShadowReportFromMessages([]Message{
+		{ID: "no-shadow"},
+		{
+			ID: "accepted",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"local": map[string]interface{}{
+						"intent":       string(StructuredIntentUnknown),
+						"turn_meaning": string(TurnMeaningUnknown),
+						"source":       "deterministic",
+					},
+					"openai": map[string]interface{}{
+						"status":       string(StructuredInterpreterShadowValid),
+						"intent":       string(StructuredIntentPaymentPreference),
+						"turn_meaning": string(TurnMeaningAnswerToQuestion),
+						"confidence":   0.8,
+						"source":       "openai_structured",
+					},
+					"openai_validation": map[string]interface{}{
+						"status":   string(StructuredInterpreterShadowValidationAccepted),
+						"accepted": true,
+					},
+				},
+			},
+		},
+		{
+			ID: "rejected",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"local": map[string]interface{}{
+						"intent":       string(StructuredIntentAvailabilitySearch),
+						"turn_meaning": string(TurnMeaningNewRequest),
+						"source":       "deterministic",
+					},
+					"openai": map[string]interface{}{
+						"status":       string(StructuredInterpreterShadowValid),
+						"intent":       string(StructuredIntentSelectAvailabilityOption),
+						"turn_meaning": string(TurnMeaningAnswerToQuestion),
+						"confidence":   0.9,
+						"source":       "openai_structured",
+					},
+					"openai_validation": map[string]interface{}{
+						"status":            string(StructuredInterpreterShadowValidationRejected),
+						"reject_reason":     "availability_selection_missing_current_facts",
+						"fallback_template": string(TemplateContextFallbackAvailabilityOption),
+					},
+				},
+			},
+		},
+		{
+			ID: "skipped",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"local": map[string]interface{}{
+						"intent": string(StructuredIntentGreeting),
+					},
+					"openai": map[string]interface{}{
+						"status": string(StructuredInterpreterShadowOpenAIDisabled),
+					},
+					"openai_validation": map[string]interface{}{
+						"status":        string(StructuredInterpreterShadowValidationSkipped),
+						"reject_reason": "openai_disabled",
+					},
+				},
+			},
+		},
+		{
+			ID: "unknown-status",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"openai_validation": map[string]interface{}{
+						"status": "unexpected_status",
+					},
+				},
+			},
+		},
+	})
+
+	if report.TotalItems != 4 {
+		t.Fatalf("expected 4 shadow items and no-shadow ignored, got %+v", report)
+	}
+	validation := report.OpenAIValidation
+	if validation.Total != 4 || validation.Accepted != 1 || validation.Rejected != 1 || validation.Skipped != 1 || validation.UnknownStatusCount != 1 {
+		t.Fatalf("unexpected validation metrics: %+v", validation)
+	}
+	if validation.ByRejectReason["availability_selection_missing_current_facts"] != 1 ||
+		validation.ByFallbackTemplate[string(TemplateContextFallbackAvailabilityOption)] != 1 {
+		t.Fatalf("expected reject reason and fallback template metrics, got %+v", validation)
+	}
+	if validation.LocalUnknownOpenAIAccepted != 1 ||
+		validation.LocalUnknownAcceptedByOpenAIIntent[string(StructuredIntentPaymentPreference)] != 1 {
+		t.Fatalf("expected local UNKNOWN + OpenAI accepted metrics, got %+v", validation)
 	}
 }
 

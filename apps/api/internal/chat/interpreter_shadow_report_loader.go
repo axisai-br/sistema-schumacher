@@ -79,9 +79,10 @@ func structuredInterpreterShadowReportItemFromMap(payload map[string]interface{}
 
 	item := StructuredInterpreterShadowReportItem{
 		Summary: StructuredInterpreterShadowSummary{
-			Local:     structuredInterpreterSummaryFromMap(asMap(payload["local"])),
-			OpenAI:    openAIInterpreterShadowSummaryFromMap(asMap(payload["openai"])),
-			Agreement: structuredInterpreterAgreementFromMap(asMap(payload["agreement"])),
+			Local:            structuredInterpreterSummaryFromMap(asMap(payload["local"])),
+			OpenAI:           openAIInterpreterShadowSummaryFromMap(asMap(payload["openai"])),
+			OpenAIValidation: openAIInterpreterShadowValidationFromMap(asMap(payload["openai_validation"])),
+			Agreement:        structuredInterpreterAgreementFromMap(asMap(payload["agreement"])),
 		},
 		ValidationErrors: asStringSlice(payload["validation_errors"]),
 	}
@@ -101,6 +102,10 @@ func structuredInterpreterShadowReportItemHasData(item StructuredInterpreterShad
 		strings.TrimSpace(item.Summary.OpenAI.ProviderResponseID) != "" ||
 		item.Summary.OpenAI.LatencyMs != 0 ||
 		strings.TrimSpace(item.Summary.OpenAI.ErrorCode) != "" ||
+		strings.TrimSpace(item.Summary.OpenAIValidation.Status) != "" ||
+		item.Summary.OpenAIValidation.Accepted ||
+		strings.TrimSpace(item.Summary.OpenAIValidation.RejectReason) != "" ||
+		strings.TrimSpace(string(item.Summary.OpenAIValidation.FallbackTemplate)) != "" ||
 		item.Summary.Agreement.Intent ||
 		item.Summary.Agreement.TurnMeaning ||
 		item.Summary.Agreement.SelectedOptionIndex ||
@@ -155,6 +160,18 @@ func openAIInterpreterShadowSummaryFromMap(payload map[string]interface{}) OpenA
 		ProviderResponseID: strings.TrimSpace(asString(payload["provider_response_id"])),
 		LatencyMs:          structuredInterpreterShadowLatencyMs(payload["latency_ms"]),
 		ErrorCode:          strings.TrimSpace(asString(payload["error_code"])),
+	}
+}
+
+func openAIInterpreterShadowValidationFromMap(payload map[string]interface{}) OpenAIInterpreterShadowValidation {
+	if len(payload) == 0 {
+		return OpenAIInterpreterShadowValidation{}
+	}
+	return OpenAIInterpreterShadowValidation{
+		Status:           strings.TrimSpace(asString(payload["status"])),
+		Accepted:         structuredInterpreterShadowBool(payload["accepted"]),
+		RejectReason:     strings.TrimSpace(asString(payload["reject_reason"])),
+		FallbackTemplate: ResponseTemplateName(strings.TrimSpace(asString(payload["fallback_template"]))),
 	}
 }
 
