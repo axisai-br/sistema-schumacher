@@ -284,6 +284,15 @@ Payload structured_interpreter_shadow registra openai_validation
 Runtime real, tools, canonical_state, auto-send, planner e vector base não foram promovidos/alterados
 ```
 
+Etapa 3.6D-OBS executada localmente em 2026-07-06; produção continua sem mudança de decisão real.
+
+```text
+Relatório structured-interpreter-shadow agora agrega structured_interpreter_shadow.openai_validation
+accepted/rejected/skipped, reject_reason, fallback_template, intents, source, turn_meaning e confidence bucket ficam visíveis por session_id
+Endpoint continua read-only e exige session_id
+Service.Reprocess, OpenAI runner/schema/prompt, tools, canonical_state, auto-send, planner, vector/File Search, banco/migrations, infra e n8n não foram alterados
+```
+
 Etapa 3.6E executada localmente em 2026-07-01; produção depende de habilitar `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED`.
 
 ```text
@@ -1487,6 +1496,89 @@ git diff --check
 **Próxima etapa recomendada:** 3.6E foi solicitada explicitamente e executada localmente em 2026-07-01; ver seção seguinte. Não iniciar OpenAI primary, vector base, planner ou 3.7 sem novo pedido explícito.
   
 ---  
+
+## Etapa 3.6D-OBS — Observabilidade da validação OpenAI em shadow
+
+**Status:** Concluída localmente em 2026-07-06; review P1/P2 corrigido localmente; pendente novo review antes de commit.
+
+**O que faz:** estende o relatório agregado existente de `structured_interpreter_shadow` para expor métricas específicas de `openai_validation`, sem alterar a decisão real do bot.
+
+**Escopo efetivo:**
+
+```text
+loader lê structured_interpreter_shadow.openai_validation de Message.NormalizedPayload/Payload
+relatório agrega accepted/rejected/skipped por status
+relatório agrega por local intent, OpenAI intent, local/OpenAI source e local/OpenAI turn_meaning
+relatório agrega reject_reason e fallback_template
+relatório agrega confidence bucket para propostas OpenAI com payload de interpretação
+relatório destaca local UNKNOWN + OpenAI accepted/rejected
+relatório destaca intent mismatch accepted/rejected
+relatório destaca rejeições por active prompt e por missing current facts
+dimensões novas usam allowlist por dimensão; valores desconhecidos/sensíveis são redigidos como __redacted_sensitive
+contadores derivados de active prompt/missing facts usam somente reject_reason conhecido/allowlisted
+endpoint existente continua read-only, paginado e filtrado por session_id obrigatório
+booking_create_router.go ficou fora do diff desta etapa
+```
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/interpreter_shadow_report.go
+apps/api/internal/chat/interpreter_shadow_report_loader.go
+apps/api/internal/chat/interpreter_shadow_report_test.go
+apps/api/internal/chat/interpreter_shadow_report_loader_test.go
+apps/api/internal/chat/interpreter_shadow_report_endpoint_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+**Métricas expostas em `report.openai_validation`:**
+
+```text
+total
+accepted
+rejected
+skipped
+unknown_status_count
+by_status
+by_local_intent
+by_openai_intent
+by_local_source
+by_openai_source
+by_local_turn_meaning
+by_openai_turn_meaning
+by_reject_reason
+by_fallback_template
+by_confidence_bucket
+local_unknown_openai_accepted
+local_unknown_openai_rejected
+local_unknown_accepted_by_openai_intent
+local_unknown_rejected_by_openai_intent
+intent_mismatch_openai_accepted
+intent_mismatch_openai_rejected
+rejected_by_active_prompt_count
+rejected_by_missing_current_facts_count
+```
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Shadow.*Report|Test.*OpenAI.*Validation.*Report|Test.*OpenAIValidation.*Metrics|Test.*StructuredInterpreterShadow|Test.*Sensitive.*Metric|Test.*Redact'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+git diff -- apps/api/internal/chat/booking_create_router.go
+```
+
+**Resultado do review:** P1/P2 corrigidos localmente. A alteração fora de escopo em `booking_create_router.go` foi removida do diff da etapa. A sanitização das novas chaves de métricas passou a usar allowlist por dimensão para status, intent, source, turn_meaning, reject_reason, fallback_template e confidence bucket; valores desconhecidos, telefone/RG/UUID/booking ids formatados e demais entradas não confiáveis viram `__redacted_sensitive`. `RejectedByActivePromptCount` e `RejectedByMissingCurrentFactsCount` agora incrementam somente para reject reasons conhecidos e exatos, não por substring no valor bruto. Alteração restrita ao relatório/loader/testes de shadow. Não houve alteração em `Service.Reprocess`, OpenAI schema/prompt/runner, OpenAI primary, tools operacionais, `booking_create`, `payment_create`, `document_extract`, `booking_cancel`, canonical_state, auto-send, planner, vector base, File Search, banco/migrations, infra ou n8n.
+
+**Necessidade de teste em produção/homologação:** se o endpoint for consultado fora do ambiente local, validar somente leitura com um `session_id` real que tenha `structured_interpreter_shadow.openai_validation`, confirmando que `report.openai_validation` aparece sem expor body/payload bruto e sem alterar resposta, tools, canonical_state ou auto-send.
+
+**Riscos restantes:** mensagens antigas sem `openai_validation` continuam entrando no relatório geral, mas não entram no bloco específico de validação. Dimensões fora da allowlist são agrupadas como `__redacted_sensitive`, então valores novos ainda não cadastrados podem perder granularidade para preservar privacidade.
+
+**Próxima etapa recomendada:** solicitar `/review` antes de commit. Depois, se aprovado, preparar commit da etapa 3.6D-OBS. Não iniciar 3.6F/vector/File Search/planner sem pedido explícito.
+
+---
   
 ## Etapa 3.6E — OpenAI Interpreter Runtime Assist Gated sem vector
 

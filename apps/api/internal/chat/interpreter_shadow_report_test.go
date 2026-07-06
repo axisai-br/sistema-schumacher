@@ -160,6 +160,292 @@ func TestBuildStructuredInterpreterShadowReportCountsOpenAIStatusAndErrors(t *te
 	}
 }
 
+func TestBuildStructuredInterpreterShadowReportCountsOpenAIValidationMetrics(t *testing.T) {
+	items := []StructuredInterpreterShadowReportItem{
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent:      string(StructuredIntentUnknown),
+					TurnMeaning: string(TurnMeaningUnknown),
+					Source:      "deterministic",
+				},
+				OpenAI: OpenAIInterpreterShadowSummary{
+					Status:      string(StructuredInterpreterShadowValid),
+					Intent:      string(StructuredIntentPaymentPreference),
+					TurnMeaning: string(TurnMeaningAnswerToQuestion),
+					Confidence:  0.72,
+					Source:      "openai_structured",
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:   string(StructuredInterpreterShadowValidationAccepted),
+					Accepted: true,
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent:      string(StructuredIntentAvailabilitySearch),
+					TurnMeaning: string(TurnMeaningNewRequest),
+					Source:      "deterministic",
+				},
+				OpenAI: OpenAIInterpreterShadowSummary{
+					Status:      string(StructuredInterpreterShadowValid),
+					Intent:      string(StructuredIntentSelectAvailabilityOption),
+					TurnMeaning: string(TurnMeaningAnswerToQuestion),
+					Confidence:  0.91,
+					Source:      "openai_structured",
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:           string(StructuredInterpreterShadowValidationRejected),
+					RejectReason:     "availability_selection_missing_current_facts",
+					FallbackTemplate: TemplateContextFallbackAvailabilityOption,
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent:      string(StructuredIntentPassengerCountReply),
+					TurnMeaning: string(TurnMeaningAnswerToQuestion),
+					Source:      "deterministic",
+				},
+				OpenAI: OpenAIInterpreterShadowSummary{
+					Status:      string(StructuredInterpreterShadowValid),
+					Intent:      string(StructuredIntentPaymentPreference),
+					TurnMeaning: string(TurnMeaningAnswerToQuestion),
+					Confidence:  0.62,
+					Source:      "openai_structured",
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:           string(StructuredInterpreterShadowValidationRejected),
+					RejectReason:     "intent_not_allowed_by_active_prompt",
+					FallbackTemplate: TemplateContextFallbackPaymentPreference,
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent:      string(StructuredIntentGreeting),
+					TurnMeaning: string(TurnMeaningGreeting),
+					Source:      "deterministic",
+				},
+				OpenAI: OpenAIInterpreterShadowSummary{
+					Status: string(StructuredInterpreterShadowOpenAIDisabled),
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationSkipped),
+					RejectReason: "openai_disabled",
+				},
+			},
+		},
+	}
+
+	report := BuildStructuredInterpreterShadowReport(items)
+	validation := report.OpenAIValidation
+
+	if validation.Total != 4 || validation.Accepted != 1 || validation.Rejected != 2 || validation.Skipped != 1 {
+		t.Fatalf("unexpected validation status totals: %+v", validation)
+	}
+	if validation.ByStatus[string(StructuredInterpreterShadowValidationAccepted)] != 1 ||
+		validation.ByStatus[string(StructuredInterpreterShadowValidationRejected)] != 2 ||
+		validation.ByStatus[string(StructuredInterpreterShadowValidationSkipped)] != 1 {
+		t.Fatalf("unexpected validation status counts: %+v", validation.ByStatus)
+	}
+	if validation.ByLocalIntent[string(StructuredIntentUnknown)].Accepted != 1 ||
+		validation.ByLocalIntent[string(StructuredIntentAvailabilitySearch)].Rejected != 1 ||
+		validation.ByOpenAIIntent[string(StructuredIntentPaymentPreference)].Accepted != 1 ||
+		validation.ByOpenAIIntent[string(StructuredIntentPaymentPreference)].Rejected != 1 {
+		t.Fatalf("unexpected validation intent groups: local=%+v openai=%+v", validation.ByLocalIntent, validation.ByOpenAIIntent)
+	}
+	if validation.ByLocalSource["deterministic"].Accepted != 1 ||
+		validation.ByLocalSource["deterministic"].Rejected != 2 ||
+		validation.ByLocalSource["deterministic"].Skipped != 1 ||
+		validation.ByOpenAISource["openai_structured"].Accepted != 1 ||
+		validation.ByOpenAISource["openai_structured"].Rejected != 2 {
+		t.Fatalf("unexpected validation source groups: local=%+v openai=%+v", validation.ByLocalSource, validation.ByOpenAISource)
+	}
+	if validation.ByLocalTurnMeaning[string(TurnMeaningUnknown)].Accepted != 1 ||
+		validation.ByOpenAITurnMeaning[string(TurnMeaningAnswerToQuestion)].Accepted != 1 ||
+		validation.ByOpenAITurnMeaning[string(TurnMeaningAnswerToQuestion)].Rejected != 2 {
+		t.Fatalf("unexpected validation turn meaning groups: local=%+v openai=%+v", validation.ByLocalTurnMeaning, validation.ByOpenAITurnMeaning)
+	}
+	if validation.ByRejectReason["availability_selection_missing_current_facts"] != 1 ||
+		validation.ByRejectReason["intent_not_allowed_by_active_prompt"] != 1 ||
+		validation.ByRejectReason["openai_disabled"] != 1 {
+		t.Fatalf("unexpected reject reason groups: %+v", validation.ByRejectReason)
+	}
+	if validation.ByFallbackTemplate[string(TemplateContextFallbackAvailabilityOption)] != 1 ||
+		validation.ByFallbackTemplate[string(TemplateContextFallbackPaymentPreference)] != 1 {
+		t.Fatalf("unexpected fallback template groups: %+v", validation.ByFallbackTemplate)
+	}
+	if validation.ByConfidenceBucket["0.70-0.84"].Accepted != 1 ||
+		validation.ByConfidenceBucket["0.85-1.00"].Rejected != 1 ||
+		validation.ByConfidenceBucket["0.50-0.69"].Rejected != 1 {
+		t.Fatalf("unexpected confidence buckets: %+v", validation.ByConfidenceBucket)
+	}
+	if validation.LocalUnknownOpenAIAccepted != 1 ||
+		validation.LocalUnknownAcceptedByOpenAIIntent[string(StructuredIntentPaymentPreference)] != 1 {
+		t.Fatalf("expected local UNKNOWN accepted metric, got %+v", validation)
+	}
+	if validation.IntentMismatchOpenAIAccepted != 1 || validation.IntentMismatchOpenAIRejected != 2 {
+		t.Fatalf("unexpected intent mismatch metrics: %+v", validation)
+	}
+	if validation.RejectedByMissingCurrentFactsCount != 1 || validation.RejectedByActivePromptCount != 1 {
+		t.Fatalf("unexpected rejected category metrics: %+v", validation)
+	}
+}
+
+func TestBuildStructuredInterpreterShadowReportHandlesUnknownOpenAIValidationStatus(t *testing.T) {
+	report := BuildStructuredInterpreterShadowReport([]StructuredInterpreterShadowReportItem{
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent: string(StructuredIntentGreeting),
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status: "unexpected_status",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent: string(StructuredIntentGreeting),
+				},
+			},
+		},
+	})
+
+	if report.OpenAIValidation.Total != 1 {
+		t.Fatalf("expected one validation item, got %+v", report.OpenAIValidation)
+	}
+	if report.OpenAIValidation.UnknownStatusCount != 1 {
+		t.Fatalf("expected unknown status count 1, got %+v", report.OpenAIValidation)
+	}
+	if report.OpenAIValidation.ByStatus["__redacted_sensitive"] != 1 {
+		t.Fatalf("expected unknown status to be redacted, got %+v", report.OpenAIValidation.ByStatus)
+	}
+}
+
+func TestBuildStructuredInterpreterShadowReportRedactsSensitiveOpenAIValidationMetricKeys(t *testing.T) {
+	report := BuildStructuredInterpreterShadowReport([]StructuredInterpreterShadowReportItem{
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Intent: string(StructuredIntentGreeting),
+					Source: "Meu CPF e 529.982.247-25",
+				},
+				OpenAI: OpenAIInterpreterShadowSummary{
+					Intent: string(StructuredIntentPaymentPreference),
+					Source: "source with raw spaces",
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "telefone_48999999999",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "(48)99999-9999",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "12.345.678-9",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				Local: StructuredInterpreterSummary{
+					Source: "550e8400-e29b-41d4-a716-446655440000",
+				},
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:           string(StructuredInterpreterShadowValidationRejected),
+					FallbackTemplate: ResponseTemplateName("booking_550e8400-e29b-41d4-a716-446655440000"),
+				},
+			},
+		},
+	})
+
+	validation := report.OpenAIValidation
+	if validation.ByLocalSource["__redacted_sensitive"].Rejected != 2 ||
+		validation.ByOpenAISource["__redacted_sensitive"].Rejected != 1 ||
+		validation.ByRejectReason["__redacted_sensitive"] != 3 ||
+		validation.ByFallbackTemplate["__redacted_sensitive"] != 1 {
+		t.Fatalf("expected sensitive metric keys to be redacted, got %+v", validation)
+	}
+}
+
+func TestBuildStructuredInterpreterShadowReportOpenAIValidationCategoryCountersUseAllowedRejectReasons(t *testing.T) {
+	report := BuildStructuredInterpreterShadowReport([]StructuredInterpreterShadowReportItem{
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "malformed_active_prompt_customer_text",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "malformed_missing_current_facts_customer_text",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "intent_not_allowed_by_active_prompt",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "active_prompt_required",
+				},
+			},
+		},
+		{
+			Summary: StructuredInterpreterShadowSummary{
+				OpenAIValidation: OpenAIInterpreterShadowValidation{
+					Status:       string(StructuredInterpreterShadowValidationRejected),
+					RejectReason: "availability_selection_missing_current_facts",
+				},
+			},
+		},
+	})
+
+	validation := report.OpenAIValidation
+	if validation.ByRejectReason["__redacted_sensitive"] != 2 {
+		t.Fatalf("expected malformed reject reasons to be redacted, got %+v", validation.ByRejectReason)
+	}
+	if validation.ByRejectReason["intent_not_allowed_by_active_prompt"] != 1 ||
+		validation.ByRejectReason["active_prompt_required"] != 1 ||
+		validation.ByRejectReason["availability_selection_missing_current_facts"] != 1 {
+		t.Fatalf("expected known reject reasons to stay granular, got %+v", validation.ByRejectReason)
+	}
+	if validation.RejectedByActivePromptCount != 2 {
+		t.Fatalf("expected only known active prompt reasons to count, got %+v", validation)
+	}
+	if validation.RejectedByMissingCurrentFactsCount != 1 {
+		t.Fatalf("expected only known missing current facts reason to count, got %+v", validation)
+	}
+}
+
 func TestBuildStructuredInterpreterShadowReportDetectsSensitiveLeakKeys(t *testing.T) {
 	items := []StructuredInterpreterShadowReportItem{
 		{

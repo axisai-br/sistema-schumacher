@@ -58,6 +58,11 @@ func TestGetStructuredInterpreterShadowReportServiceBuildsAggregatedReport(t *te
 	if result.Report.ValidationErrorCount != 1 {
 		t.Fatalf("expected one validation error item, got %+v", result.Report)
 	}
+	if result.Report.OpenAIValidation.Total != 2 ||
+		result.Report.OpenAIValidation.Accepted != 1 ||
+		result.Report.OpenAIValidation.Rejected != 1 {
+		t.Fatalf("expected OpenAI validation metrics, got %+v", result.Report.OpenAIValidation)
+	}
 }
 
 func TestGetStructuredInterpreterShadowReportServiceRequiresSessionID(t *testing.T) {
@@ -96,9 +101,47 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 				"current_turn_body": "normalized body should not be serialized",
 			},
 		},
+		{
+			ID:        uuid.NewString(),
+			SessionID: sessionID,
+			Body:      "shadow metric dimensions with phone and booking ids must be sanitized",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"local": map[string]interface{}{
+						"intent": string(StructuredIntentGreeting),
+						"source": "550e8400-e29b-41d4-a716-446655440000",
+					},
+					"openai": map[string]interface{}{
+						"status": string(StructuredInterpreterShadowValid),
+						"source": "BK-ABC123456",
+					},
+					"openai_validation": map[string]interface{}{
+						"status":            string(StructuredInterpreterShadowValidationRejected),
+						"reject_reason":     "(48)99999-9999",
+						"fallback_template": "R--02-23-MLK08V8Q",
+					},
+				},
+			},
+		},
+		{
+			ID:        uuid.NewString(),
+			SessionID: sessionID,
+			Body:      "shadow metric dimensions with RG must be sanitized",
+			NormalizedPayload: map[string]interface{}{
+				structuredInterpreterShadowKey: map[string]interface{}{
+					"openai": map[string]interface{}{
+						"status": string(StructuredInterpreterShadowValid),
+					},
+					"openai_validation": map[string]interface{}{
+						"status":        string(StructuredInterpreterShadowValidationRejected),
+						"reject_reason": "12.345.678-9",
+					},
+				},
+			},
+		},
 	}
 
-	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?limit=3&offset=0&session_id="+sessionID)
+	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?limit=5&offset=0&session_id="+sessionID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
@@ -107,19 +150,33 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal report response: %v", err)
 	}
-	if store.shadowReportFilter.Limit != 3 || store.shadowReportFilter.Offset != 0 || store.shadowReportFilter.SessionID != sessionID {
+	if store.shadowReportFilter.Limit != 5 || store.shadowReportFilter.Offset != 0 || store.shadowReportFilter.SessionID != sessionID {
 		t.Fatalf("unexpected parsed filter: %+v", store.shadowReportFilter)
 	}
-	if out.Report.TotalItems != 2 || out.Report.IntentAgreementCount != 1 || out.Report.IntentDisagreementCount != 1 {
+	if out.Report.TotalItems != 4 || out.Report.IntentAgreementCount != 1 || out.Report.IntentDisagreementCount != 1 {
 		t.Fatalf("unexpected aggregate report: %+v", out.Report)
 	}
 	if out.Report.ValidationErrorCount != 1 {
 		t.Fatalf("expected validation error item to be counted, got %+v", out.Report)
 	}
+	if out.Report.OpenAIValidation.Total != 4 ||
+		out.Report.OpenAIValidation.Accepted != 1 ||
+		out.Report.OpenAIValidation.Rejected != 3 ||
+		out.Report.OpenAIValidation.ByRejectReason["__redacted_sensitive"] != 2 ||
+		out.Report.OpenAIValidation.ByFallbackTemplate["__redacted_sensitive"] != 1 ||
+		out.Report.OpenAIValidation.ByLocalSource["__redacted_sensitive"].Rejected != 1 ||
+		out.Report.OpenAIValidation.ByOpenAISource["__redacted_sensitive"].Rejected != 1 {
+		t.Fatalf("unexpected OpenAI validation report: %+v", out.Report.OpenAIValidation)
+	}
 
 	body := rec.Body.String()
 	for _, forbidden := range []string{
 		"CPF 529.982.247-25",
+		"550e8400-e29b-41d4-a716-446655440000",
+		"BK-ABC123456",
+		"(48)99999-9999",
+		"12.345.678-9",
+		"R--02-23-MLK08V8Q",
 		"raw_prompt",
 		"raw prompt should not be serialized",
 		"current_turn_body",
@@ -218,6 +275,7 @@ func structuredInterpreterShadowEndpointMessage(sessionID string, localIntent st
 				"intent":     openAIIntent,
 				"latency_ms": 100,
 			},
+			"openai_validation": structuredInterpreterShadowEndpointValidation(agreement),
 			"agreement": map[string]interface{}{
 				"intent": agreement,
 			},
@@ -236,6 +294,20 @@ func structuredInterpreterShadowEndpointMessage(sessionID string, localIntent st
 		NormalizedPayload: payload,
 		ProcessingStatus:  "AUTOMATION_DRAFT",
 		CreatedAt:         time.Now().UTC(),
+	}
+}
+
+func structuredInterpreterShadowEndpointValidation(agreement bool) map[string]interface{} {
+	if agreement {
+		return map[string]interface{}{
+			"status":   string(StructuredInterpreterShadowValidationAccepted),
+			"accepted": true,
+		}
+	}
+	return map[string]interface{}{
+		"status":            string(StructuredInterpreterShadowValidationRejected),
+		"reject_reason":     "intent_not_allowed_by_active_prompt",
+		"fallback_template": string(TemplateContextFallbackPaymentPreference),
 	}
 }
 
