@@ -426,7 +426,7 @@ func TestGuardrailForbiddenSchedulingVocabularyIsNormalized(t *testing.T) {
 			if !containsOutOfDomainSchedulingVocabulary(text) {
 				t.Fatalf("expected forbidden vocabulary to be detected: %q", text)
 			}
-			policy := evaluateDraftAutoSendPolicy(nil, nil, text)
+			policy := evaluateDraftAutoSendPolicy(nil, nil, RunAgentResult{ReplyText: text})
 			if policy.Status != draftAutoSendStatusReviewNeeded {
 				t.Fatalf("expected auto-send review for forbidden vocabulary, got %+v", policy)
 			}

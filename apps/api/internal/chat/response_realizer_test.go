@@ -470,7 +470,7 @@ func TestReservationStartTemplateDoesNotTriggerOperationalClaimWithoutTool(t *te
 	policy := evaluateDraftAutoSendPolicy(
 		[]Message{{Direction: "INBOUND", Body: "como faço uma reserva?"}},
 		nil,
-		askReservationRouteSCReply,
+		RunAgentResult{ReplyText: askReservationRouteSCReply},
 	)
 
 	if policy.Status != draftAutoSendStatusEligible {
@@ -479,16 +479,77 @@ func TestReservationStartTemplateDoesNotTriggerOperationalClaimWithoutTool(t *te
 }
 
 func TestPaymentOptionsInfoTemplateDoesNotTriggerOperationalAutoSendBlock(t *testing.T) {
-	if containsOperationalAutoSendClaimWithoutTool(paymentOptionsInfoReply) {
-		t.Fatalf("payment options info template must not look like dynamic operational claim: %q", paymentOptionsInfoReply)
+	if !containsOperationalAutoSendClaimWithoutTool(paymentOptionsInfoReply) {
+		t.Fatalf("payment options info text should be treated as an operational claim without template metadata: %q", paymentOptionsInfoReply)
 	}
 
-	policy := evaluateDraftAutoSendPolicy(nil, nil, paymentOptionsInfoReply)
+	run := buildTemplateDraftRunFromDecision(IntentDecision{
+		Intent:       IntentPaymentInfoQuestion,
+		Action:       "template",
+		TemplateName: TemplatePaymentOptionsInfo,
+	}, paymentOptionsInfoReply)
+	policy := evaluateDraftAutoSendPolicy(nil, nil, run)
 	if policy.Status != draftAutoSendStatusEligible {
 		t.Fatalf("expected payment options info template to be auto-send eligible, got %s reasons=%v", policy.Status, policy.Reasons)
 	}
 	if len(policy.Reasons) != 0 {
 		t.Fatalf("expected no auto-send reasons for payment options info template, got %+v", policy.Reasons)
+	}
+
+	nonTemplatePolicy := evaluateDraftAutoSendPolicy(nil, nil, RunAgentResult{ReplyText: paymentOptionsInfoReply})
+	if nonTemplatePolicy.Status != draftAutoSendStatusReviewNeeded {
+		t.Fatalf("expected payment options info without template metadata to require review, got %+v", nonTemplatePolicy)
+	}
+	if !containsString(nonTemplatePolicy.Reasons, draftAutoSendReasonOperationalClaimWithoutTool) {
+		t.Fatalf("expected reason %s, got %+v", draftAutoSendReasonOperationalClaimWithoutTool, nonTemplatePolicy.Reasons)
+	}
+}
+
+func TestOutOfTurnPaymentOptionsInfoTemplateWithReminderIsAutoSendEligible(t *testing.T) {
+	decision := IntentDecision{
+		Intent:       IntentPaymentInfoQuestion,
+		Action:       "template",
+		TemplateName: TemplatePaymentOptionsInfo,
+		TemplateData: map[string]interface{}{
+			outOfTurnTemplateDataKey:              true,
+			outOfTurnInfoKindTemplateDataKey:      string(OutOfTurnInfoPaymentOptions),
+			outOfTurnPendingPromptTemplateDataKey: string(TemplateContextFallbackPassengerCount),
+			outOfTurnActivePromptTemplateDataKey:  string(ActivePromptPassengerCount),
+		},
+	}
+	reply, ok := realizeIntentResponseTemplate(decision)
+	if !ok {
+		t.Fatal("expected out-of-turn payment options template to render")
+	}
+	if !containsOperationalAutoSendClaimWithoutTool(reply) {
+		t.Fatalf("expected composed payment options text to be treated as an operational claim without template metadata: %q", reply)
+	}
+
+	run := buildTemplateDraftRunFromDecision(decision, reply)
+	policy := evaluateDraftAutoSendPolicy(nil, nil, run)
+	if policy.Status != draftAutoSendStatusEligible {
+		t.Fatalf("expected out-of-turn payment options template to be auto-send eligible, got %s reasons=%v", policy.Status, policy.Reasons)
+	}
+	if len(policy.Reasons) != 0 {
+		t.Fatalf("expected no auto-send reasons for out-of-turn payment options template, got %+v", policy.Reasons)
+	}
+
+	nonTemplatePolicy := evaluateDraftAutoSendPolicy(nil, nil, RunAgentResult{ReplyText: reply})
+	if nonTemplatePolicy.Status != draftAutoSendStatusReviewNeeded {
+		t.Fatalf("expected composed payment options text without template metadata to require review, got %+v", nonTemplatePolicy)
+	}
+	if !containsString(nonTemplatePolicy.Reasons, draftAutoSendReasonOperationalClaimWithoutTool) {
+		t.Fatalf("expected reason %s, got %+v", draftAutoSendReasonOperationalClaimWithoutTool, nonTemplatePolicy.Reasons)
+	}
+
+	tamperedRun := run
+	tamperedRun.ReplyText += " Temos disponibilidade para hoje."
+	tamperedPolicy := evaluateDraftAutoSendPolicy(nil, nil, tamperedRun)
+	if tamperedPolicy.Status != draftAutoSendStatusReviewNeeded {
+		t.Fatalf("expected tampered template text to require review, got %+v", tamperedPolicy)
+	}
+	if !containsString(tamperedPolicy.Reasons, draftAutoSendReasonOperationalClaimWithoutTool) {
+		t.Fatalf("expected reason %s for tampered text, got %+v", draftAutoSendReasonOperationalClaimWithoutTool, tamperedPolicy.Reasons)
 	}
 }
 
@@ -502,7 +563,7 @@ func TestAutoSendPolicyStillBlocksDynamicOperationalClaimsWithoutTool(t *testing
 			if !containsOperationalAutoSendClaimWithoutTool(text) {
 				t.Fatalf("expected dynamic operational text to be blocked: %q", text)
 			}
-			policy := evaluateDraftAutoSendPolicy(nil, nil, text)
+			policy := evaluateDraftAutoSendPolicy(nil, nil, RunAgentResult{ReplyText: text})
 			if policy.Status != draftAutoSendStatusReviewNeeded {
 				t.Fatalf("expected review for dynamic operational text, got %+v", policy)
 			}

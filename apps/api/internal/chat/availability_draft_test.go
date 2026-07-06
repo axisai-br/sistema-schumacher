@@ -688,6 +688,12 @@ func TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools(t *testing.T) {
 			if out.Draft == nil {
 				t.Fatal("expected out-of-turn info draft")
 			}
+			if got := readDraftAutoSendStatus(*out.Draft); got != draftAutoSendStatusEligible {
+				t.Fatalf("expected out-of-turn info draft to be auto-send eligible, got %s reasons=%v", got, readDraftAutoSendReasons(*out.Draft))
+			}
+			if reasons := readDraftAutoSendReasons(*out.Draft); len(reasons) != 0 {
+				t.Fatalf("expected no auto-send reasons for out-of-turn info draft, got %+v", reasons)
+			}
 			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(tc.template) {
 				t.Fatalf("expected template %s, got %q payload=%+v", tc.template, got, out.Draft.NormalizedPayload)
 			}
