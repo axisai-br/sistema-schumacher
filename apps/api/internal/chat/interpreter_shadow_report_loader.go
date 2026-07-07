@@ -37,7 +37,9 @@ func StructuredInterpreterShadowReportItemsFromMessages(messages []Message) []St
 }
 
 func BuildStructuredInterpreterShadowReportFromMessages(messages []Message) StructuredInterpreterShadowReport {
-	return BuildStructuredInterpreterShadowReport(StructuredInterpreterShadowReportItemsFromMessages(messages))
+	report := BuildStructuredInterpreterShadowReport(StructuredInterpreterShadowReportItemsFromMessages(messages))
+	report.OpenAIInterpreterAssist = BuildOpenAIInterpreterAssistReportFromMessages(messages)
+	return report
 }
 
 func structuredInterpreterShadowReportItemFromPayload(payload map[string]interface{}) (StructuredInterpreterShadowReportItem, bool) {

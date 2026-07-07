@@ -196,10 +196,11 @@ type StructuredInterpreterShadowReportFilter struct {
 }
 
 type StructuredInterpreterShadowReportResponse struct {
-	Filter             StructuredInterpreterShadowReportFilter `json:"filter"`
-	LoadedMessageCount int                                     `json:"loaded_message_count"`
-	ReportItemCount    int                                     `json:"report_item_count"`
-	Report             StructuredInterpreterShadowReport       `json:"report"`
+	Filter                StructuredInterpreterShadowReportFilter `json:"filter"`
+	LoadedMessageCount    int                                     `json:"loaded_message_count"`
+	ReportItemCount       int                                     `json:"report_item_count"`
+	AssistReportItemCount int                                     `json:"assist_report_item_count"`
+	Report                StructuredInterpreterShadowReport       `json:"report"`
 }
 
 type UpsertSessionInput struct {

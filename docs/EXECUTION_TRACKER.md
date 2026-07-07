@@ -1499,7 +1499,7 @@ git diff --check
 
 ## Etapa 3.6D-OBS — Observabilidade da validação OpenAI em shadow
 
-**Status:** Concluída localmente em 2026-07-06; review P1/P2 corrigido localmente; pendente novo review antes de commit.
+**Status:** Concluída e validada em produção em 2026-07-06.
 
 **O que faz:** estende o relatório agregado existente de `structured_interpreter_shadow` para expor métricas específicas de `openai_validation`, sem alterar a decisão real do bot.
 
@@ -1570,13 +1570,40 @@ git diff --check
 git diff -- apps/api/internal/chat/booking_create_router.go
 ```
 
+**Validação em produção:**
+
+```text
+Sessão real: 03be7e6f-8963-45bb-9022-45102fd2f385
+
+Endpoint /chat/reports/structured-interpreter-shadow retornou report.openai_validation:
+total=9
+accepted=5
+rejected=4
+skipped=0
+
+by_reject_reason:
+active_prompt_required=2
+unknown_intent=2
+
+by_fallback_template:
+CONTEXT_FALLBACK_AVAILABILITY_OPTION=1
+CONTEXT_FALLBACK_DOCUMENT_CONFIRMATION=1
+
+Fluxo real validado:
+- "essa msm" → SELECT_AVAILABILITY_OPTION + ASK_PASSENGER_COUNT
+- dúvida lateral de pagamento → PAYMENT_OPTIONS_INFO + AUTOMATION_SENT + AUTO_SEND_ELIGIBLE
+- "só pra mim" → PASSENGER_COUNT_REPLY + ASK_CHILD_UNDER_5
+- documentos e confirmação seguiram o fluxo esperado
+- comportamento real do bot não mudou
+```
+
 **Resultado do review:** P1/P2 corrigidos localmente. A alteração fora de escopo em `booking_create_router.go` foi removida do diff da etapa. A sanitização das novas chaves de métricas passou a usar allowlist por dimensão para status, intent, source, turn_meaning, reject_reason, fallback_template e confidence bucket; valores desconhecidos, telefone/RG/UUID/booking ids formatados e demais entradas não confiáveis viram `__redacted_sensitive`. `RejectedByActivePromptCount` e `RejectedByMissingCurrentFactsCount` agora incrementam somente para reject reasons conhecidos e exatos, não por substring no valor bruto. Alteração restrita ao relatório/loader/testes de shadow. Não houve alteração em `Service.Reprocess`, OpenAI schema/prompt/runner, OpenAI primary, tools operacionais, `booking_create`, `payment_create`, `document_extract`, `booking_cancel`, canonical_state, auto-send, planner, vector base, File Search, banco/migrations, infra ou n8n.
 
-**Necessidade de teste em produção/homologação:** se o endpoint for consultado fora do ambiente local, validar somente leitura com um `session_id` real que tenha `structured_interpreter_shadow.openai_validation`, confirmando que `report.openai_validation` aparece sem expor body/payload bruto e sem alterar resposta, tools, canonical_state ou auto-send.
+**Necessidade de teste em produção/homologação:** cumprida em produção em 2026-07-06 com consulta read-only do endpoint `/chat/reports/structured-interpreter-shadow` para uma sessão real. `report.openai_validation` apareceu agregado, sem alteração de resposta, tools, canonical_state ou auto-send.
 
 **Riscos restantes:** mensagens antigas sem `openai_validation` continuam entrando no relatório geral, mas não entram no bloco específico de validação. Dimensões fora da allowlist são agrupadas como `__redacted_sensitive`, então valores novos ainda não cadastrados podem perder granularidade para preservar privacidade.
 
-**Próxima etapa recomendada:** solicitar `/review` antes de commit. Depois, se aprovado, preparar commit da etapa 3.6D-OBS. Não iniciar 3.6F/vector/File Search/planner sem pedido explícito.
+**Próxima etapa recomendada:** preparar commit da etapa 3.6D-OBS se o diff atual estiver aprovado. Não iniciar 3.6F/vector/File Search/planner sem pedido explícito.
 
 ---
   
@@ -1677,9 +1704,112 @@ git diff --check
 
 **Necessidade de teste em produção:** sim, apenas se a flag `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED` for habilitada. Validar que drafts com `openai_interpreter_assist.status` accepted/rejected/skipped não executam tools críticas nem availability/pricing por proposta OpenAI e que fallback seguro vence rejeições do validator.
 
-**Riscos restantes:** com a flag desligada, produção não muda. Com a flag ligada, o assist pode chamar OpenAI em turnos `UNKNOWN`/baixa confiança quando shadow estiver desligado; quando shadow e assist estiverem ligados juntos, a chamada é reutilizada. A utilidade real fica limitada a templates/perguntas seguras e continua sem execução de tools por proposta OpenAI. Métricas agregadas específicas do assist ainda não foram adicionadas ao endpoint de relatório. Não houve vector base, embeddings, File Search, planner, banco, migrations, infra, n8n ou tools críticas acionadas por OpenAI.
+**Riscos restantes:** com a flag desligada, produção não muda. Com a flag ligada, o assist pode chamar OpenAI em turnos `UNKNOWN`/baixa confiança quando shadow estiver desligado; quando shadow e assist estiverem ligados juntos, a chamada é reutilizada. A utilidade real fica limitada a templates/perguntas seguras e continua sem execução de tools por proposta OpenAI. Métricas agregadas específicas do assist foram adicionadas localmente na etapa 3.6E-OBS. Não houve vector base, embeddings, File Search, planner, banco, migrations, infra, n8n ou tools críticas acionadas por OpenAI.
 
-**Próxima etapa recomendada:** pedir novo `/review` desta 3.6E corrigida antes de commit. Depois decidir explicitamente entre observabilidade agregada do runtime assist, alinhamento das falhas locais do corpus 3.6C ou uma nova etapa de vector shadow; não iniciar vector/File Search/planner sem novo pedido explícito.
+**Próxima etapa recomendada:** revisar a 3.6E-OBS executada localmente antes de commit. Depois decidir explicitamente entre alinhamento das falhas locais do corpus 3.6C ou uma nova etapa de vector shadow; não iniciar vector/File Search/planner sem novo pedido explícito.
+
+---
+
+## Etapa 3.6E-OBS — Observabilidade do Runtime Assist Gated
+
+**Status:** Concluída localmente em 2026-07-06; review P2 corrigido localmente; pendente novo `/review`, commit e validação read-only em produção/homologação.
+
+**O que faz:** estende o endpoint read-only existente de relatório para expor métricas agregadas de `openai_interpreter_assist`, sem habilitar o assist, sem alterar decisão real do bot e sem alterar `Service.Reprocess`.
+
+**Endpoint usado:**
+
+```text
+GET /chat/reports/structured-interpreter-shadow?session_id=...&limit=...&offset=...
+```
+
+O response agora inclui:
+
+```text
+report.openai_interpreter_assist
+assist_report_item_count
+```
+
+**Arquivos principais:**
+
+```text
+apps/api/internal/chat/openai_interpreter_assist_report.go
+apps/api/internal/chat/openai_interpreter_assist_report_loader.go
+apps/api/internal/chat/openai_interpreter_assist_report_test.go
+apps/api/internal/chat/openai_interpreter_assist_report_loader_test.go
+apps/api/internal/chat/interpreter_shadow_report.go
+apps/api/internal/chat/interpreter_shadow_report_loader.go
+apps/api/internal/chat/interpreter_shadow_report_endpoint_test.go
+apps/api/internal/chat/model.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+docs/EXECUTION_TRACKER.md
+```
+
+**O que mudou:**
+
+```text
+relatório agregado OpenAIInterpreterAssistReport criado
+loader lê Message.NormalizedPayload["openai_interpreter_assist"] e faz fallback para Message.Payload
+payload malformado é contado como malformed_count sem panic e sem payload bruto
+endpoint existente continua session_id obrigatório, paginado e read-only
+consulta do shadow carrega somente mensagens com structured_interpreter_shadow
+consulta separada do assist carrega somente mensagens com openai_interpreter_assist
+resposta não inclui body, payload bruto, normalized_payload, current_turn_body ou raw prompt
+```
+
+**Métricas expostas:**
+
+```text
+total
+considered
+not_considered
+accepted
+rejected
+skipped
+unknown_status_count
+malformed_count
+by_status
+by_validation_status
+by_reason
+by_reason_status
+by_reject_reason
+by_skip_reason
+by_fallback_template
+by_intent
+by_template
+by_action
+by_source
+by_confidence_bucket
+blocked_tool_action_count
+blocked_critical_intent_count
+local_unknown_count
+local_low_confidence_count
+```
+
+**Sanitização:** todas as dimensões novas usam allowlist por status, validation_status, reason, reject_reason, skip_reason, fallback_template, intent, template, action, source e confidence_bucket. Valores desconhecidos ou sensíveis viram `__redacted_sensitive`. O relatório não usa texto livre como chave de métrica e não serializa payload bruto.
+
+**Testes executados:**
+
+```bash
+cd apps/api
+go test -count=1 ./internal/chat -run 'Test.*Assist.*Report|Test.*OpenAI.*Assist.*Report|Test.*RuntimeAssist.*Report|Test.*Sensitive.*Metric|Test.*Redact|Test.*OpenAI.*Assist|TestGetStructuredInterpreterShadowReport'
+go test -count=1 ./internal/chat -run 'TestGetStructuredInterpreterShadowReport|TestListOpenAIInterpreterAssistMessagesRequiresSessionID|TestBuildOpenAIInterpreterAssistReport'
+go test -count=1 ./internal/chat -run 'Test.*Assist.*Report|Test.*OpenAI.*Assist.*Report|Test.*RuntimeAssist.*Report|Test.*StructuredInterpreterShadowReport.*Pagination|Test.*Considered|TestGetStructuredInterpreterShadowReport'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+git diff -- apps/api/internal/chat/service.go
+```
+
+**Resultado do review:** `/review` apontou 2 P2 e ambos foram corrigidos. A paginação do relatório estruturado voltou a ser aplicada somente sobre mensagens com `structured_interpreter_shadow`; o assist agora é carregado por `ListOpenAIInterpreterAssistMessages` em consulta separada, com paginação independente, sem consumir a página do shadow. Payloads antigos de `openai_interpreter_assist` sem campo `considered` continuam contando status/reasons, mas não entram em `considered` nem `not_considered`.
+
+**Review local pós-correção:** diff restrito a relatório/loader/model/repository/service read-only e testes. `service.go` só alterou `GetStructuredInterpreterShadowReport`; `Service.Reprocess` não foi alterado. Não houve alteração em comportamento do runtime assist, OpenAI schema/prompt/runner, booking/payment/document/cancel/payment_status, auto-send, canonical_state, vector base, embeddings, File Search, planner, banco/migrations, infra ou n8n.
+
+**Necessidade de teste em produção/homologação:** sim, apenas consulta read-only do endpoint com `session_id` real que contenha drafts com `openai_interpreter_assist`, confirmando `report.openai_interpreter_assist` agregado e ausência de body/payload bruto. Não fazer deploy nesta etapa.
+
+**Riscos restantes:** o bloco novo fica dentro do endpoint de shadow por decisão de reaproveitar contrato existente; consumidores que validem schema de resposta de forma estrita podem precisar aceitar os novos campos. A granularidade depende dos campos já persistidos na metadata; `template_name` e `action` só são agregados quando existirem. Valores novos fora da allowlist serão agrupados como `__redacted_sensitive` até serem cadastrados explicitamente.
+
+**Próxima etapa recomendada:** solicitar `/review` novamente para validar as duas correções P2; se aprovado, preparar commit da 3.6E-OBS. Não iniciar 3.6F/vector/File Search/planner sem pedido explícito.
   
 ---  
   

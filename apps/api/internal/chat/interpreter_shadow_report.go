@@ -213,6 +213,7 @@ type StructuredInterpreterShadowReport struct {
 	SensitiveLeakDetected       bool                                              `json:"sensitive_leak_detected"`
 	SensitiveLeakCount          int                                               `json:"sensitive_leak_count"`
 	OpenAIValidation            StructuredInterpreterShadowOpenAIValidationReport `json:"openai_validation"`
+	OpenAIInterpreterAssist     OpenAIInterpreterAssistReport                     `json:"openai_interpreter_assist"`
 }
 
 type StructuredInterpreterShadowOpenAIValidationStatusCounts struct {
@@ -256,6 +257,7 @@ func BuildStructuredInterpreterShadowReport(items []StructuredInterpreterShadowR
 		DisagreementsByLocalIntent:  map[string]int{},
 		DisagreementsByOpenAIIntent: map[string]int{},
 		OpenAIValidation:            newStructuredInterpreterShadowOpenAIValidationReport(),
+		OpenAIInterpreterAssist:     newOpenAIInterpreterAssistReport(),
 	}
 
 	var intentComparisonCount int
