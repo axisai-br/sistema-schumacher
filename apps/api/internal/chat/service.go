@@ -2374,13 +2374,21 @@ func (s *Service) GetStructuredInterpreterShadowReport(ctx context.Context, filt
 	if err != nil {
 		return StructuredInterpreterShadowReportResponse{}, err
 	}
+	assistMessages, err := s.store.ListOpenAIInterpreterAssistMessages(ctx, filter)
+	if err != nil {
+		return StructuredInterpreterShadowReportResponse{}, err
+	}
 
 	items := StructuredInterpreterShadowReportItemsFromMessages(messages)
+	assistItems := OpenAIInterpreterAssistReportItemsFromMessages(assistMessages)
+	report := BuildStructuredInterpreterShadowReport(items)
+	report.OpenAIInterpreterAssist = BuildOpenAIInterpreterAssistReport(assistItems)
 	return StructuredInterpreterShadowReportResponse{
-		Filter:             filter,
-		LoadedMessageCount: len(messages),
-		ReportItemCount:    len(items),
-		Report:             BuildStructuredInterpreterShadowReport(items),
+		Filter:                filter,
+		LoadedMessageCount:    len(messages),
+		ReportItemCount:       len(items),
+		AssistReportItemCount: len(assistItems),
+		Report:                report,
 	}, nil
 }
 

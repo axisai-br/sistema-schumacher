@@ -34,6 +34,7 @@ func TestGetStructuredInterpreterShadowReportServiceBuildsAggregatedReport(t *te
 			},
 		},
 		structuredInterpreterShadowEndpointMessage(sessionID, string(StructuredIntentAvailabilitySearch), string(StructuredIntentPaymentPreference), false, []string{"json_decision_invalid"}),
+		openAIInterpreterAssistEndpointMessage(sessionID, string(OpenAIInterpreterAssistAccepted), string(StructuredIntentPassengerCountReply), ""),
 	}
 
 	result, err := NewService(store, config.Config{}).GetStructuredInterpreterShadowReport(context.Background(), StructuredInterpreterShadowReportFilter{
@@ -43,14 +44,17 @@ func TestGetStructuredInterpreterShadowReportServiceBuildsAggregatedReport(t *te
 		t.Fatalf("get report: %v", err)
 	}
 
-	if store.shadowReportCalls != 1 {
-		t.Fatalf("expected one store call, got %d", store.shadowReportCalls)
+	if store.shadowReportCalls != 1 || store.assistReportCalls != 1 {
+		t.Fatalf("expected one shadow and one assist store call, got shadow=%d assist=%d", store.shadowReportCalls, store.assistReportCalls)
 	}
 	if store.shadowReportFilter.Limit != 200 || store.shadowReportFilter.Offset != 0 || store.shadowReportFilter.SessionID != sessionID {
-		t.Fatalf("unexpected normalized store filter: %+v", store.shadowReportFilter)
+		t.Fatalf("unexpected normalized shadow store filter: %+v", store.shadowReportFilter)
 	}
-	if result.LoadedMessageCount != 3 || result.ReportItemCount != 2 || result.Report.TotalItems != 2 {
-		t.Fatalf("expected 3 loaded messages and 2 report items, got %+v", result)
+	if store.assistReportFilter.Limit != 200 || store.assistReportFilter.Offset != 0 || store.assistReportFilter.SessionID != sessionID {
+		t.Fatalf("unexpected normalized assist store filter: %+v", store.assistReportFilter)
+	}
+	if result.LoadedMessageCount != 2 || result.ReportItemCount != 2 || result.AssistReportItemCount != 1 || result.Report.TotalItems != 2 {
+		t.Fatalf("expected 2 loaded shadow messages, 2 shadow items and 1 assist item, got %+v", result)
 	}
 	if result.Report.IntentAgreementCount != 1 || result.Report.IntentDisagreementCount != 1 {
 		t.Fatalf("expected one agreement and one disagreement, got %+v", result.Report)
@@ -63,6 +67,41 @@ func TestGetStructuredInterpreterShadowReportServiceBuildsAggregatedReport(t *te
 		result.Report.OpenAIValidation.Rejected != 1 {
 		t.Fatalf("expected OpenAI validation metrics, got %+v", result.Report.OpenAIValidation)
 	}
+	if result.Report.OpenAIInterpreterAssist.Total != 1 ||
+		result.Report.OpenAIInterpreterAssist.Accepted != 1 ||
+		result.Report.OpenAIInterpreterAssist.ByIntent[string(StructuredIntentPassengerCountReply)].Accepted != 1 {
+		t.Fatalf("expected runtime assist metrics, got %+v", result.Report.OpenAIInterpreterAssist)
+	}
+}
+
+func TestGetStructuredInterpreterShadowReportServiceKeepsShadowPaginationSeparateFromAssist(t *testing.T) {
+	sessionID := uuid.NewString()
+	base := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	shadowMessage := structuredInterpreterShadowEndpointMessage(sessionID, string(StructuredIntentGreeting), string(StructuredIntentGreeting), true, nil)
+	shadowMessage.CreatedAt = base
+	assistMessage := openAIInterpreterAssistEndpointMessage(sessionID, string(OpenAIInterpreterAssistAccepted), string(StructuredIntentPassengerCountReply), "")
+	assistMessage.CreatedAt = base.Add(time.Minute)
+
+	store := newFakeStore()
+	store.shadowReportMessages = []Message{assistMessage, shadowMessage}
+
+	result, err := NewService(store, config.Config{}).GetStructuredInterpreterShadowReport(context.Background(), StructuredInterpreterShadowReportFilter{
+		SessionID: sessionID,
+		Limit:     1,
+	})
+	if err != nil {
+		t.Fatalf("get report: %v", err)
+	}
+
+	if result.LoadedMessageCount != 1 || result.ReportItemCount != 1 || result.Report.TotalItems != 1 {
+		t.Fatalf("expected shadow page to contain the matching shadow row, got %+v", result)
+	}
+	if result.AssistReportItemCount != 1 || result.Report.OpenAIInterpreterAssist.Total != 1 {
+		t.Fatalf("expected assist page to be loaded independently, got %+v", result.Report.OpenAIInterpreterAssist)
+	}
+	if result.Report.IntentAgreementCount != 1 || result.Report.OpenAIValidation.Accepted != 1 {
+		t.Fatalf("expected structured report metrics to survive newer assist-only rows, got %+v", result.Report)
+	}
 }
 
 func TestGetStructuredInterpreterShadowReportServiceRequiresSessionID(t *testing.T) {
@@ -71,14 +110,22 @@ func TestGetStructuredInterpreterShadowReportServiceRequiresSessionID(t *testing
 	if !errors.Is(err, ErrShadowReportSessionRequired) {
 		t.Fatalf("expected session required error, got %v", err)
 	}
-	if store.shadowReportCalls != 0 {
-		t.Fatalf("service must not call store without session_id, got %d calls", store.shadowReportCalls)
+	if store.shadowReportCalls != 0 || store.assistReportCalls != 0 {
+		t.Fatalf("service must not call store without session_id, got shadow=%d assist=%d calls", store.shadowReportCalls, store.assistReportCalls)
 	}
 }
 
 func TestListStructuredInterpreterShadowMessagesRequiresSessionID(t *testing.T) {
 	repo := &Repository{}
 	_, err := repo.ListStructuredInterpreterShadowMessages(context.Background(), StructuredInterpreterShadowReportFilter{})
+	if !errors.Is(err, ErrShadowReportSessionRequired) {
+		t.Fatalf("expected session required error, got %v", err)
+	}
+}
+
+func TestListOpenAIInterpreterAssistMessagesRequiresSessionID(t *testing.T) {
+	repo := &Repository{}
+	_, err := repo.ListOpenAIInterpreterAssistMessages(context.Background(), StructuredInterpreterShadowReportFilter{})
 	if !errors.Is(err, ErrShadowReportSessionRequired) {
 		t.Fatalf("expected session required error, got %v", err)
 	}
@@ -139,9 +186,26 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 				},
 			},
 		},
+		{
+			ID:        uuid.NewString(),
+			SessionID: sessionID,
+			Body:      "assist body with CPF 529.982.247-25 must not be serialized",
+			NormalizedPayload: map[string]interface{}{
+				openAIInterpreterAssistMetadataKey: map[string]interface{}{
+					"openai_assist_status": string(OpenAIInterpreterAssistRejected),
+					"considered":           true,
+					"openai_intent":        string(StructuredIntentPaymentPreference),
+					"openai_confidence":    0.77,
+					"reject_reason":        "telefone_(48)99999-9999",
+					"fallback_template":    "booking_550e8400-e29b-41d4-a716-446655440000",
+					"source":               "Joao Vitor Messias",
+					"current_turn_body":    "raw customer text should not be serialized",
+				},
+			},
+		},
 	}
 
-	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?limit=5&offset=0&session_id="+sessionID)
+	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?limit=10&offset=0&session_id="+sessionID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
@@ -150,8 +214,11 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal report response: %v", err)
 	}
-	if store.shadowReportFilter.Limit != 5 || store.shadowReportFilter.Offset != 0 || store.shadowReportFilter.SessionID != sessionID {
-		t.Fatalf("unexpected parsed filter: %+v", store.shadowReportFilter)
+	if store.shadowReportFilter.Limit != 10 || store.shadowReportFilter.Offset != 0 || store.shadowReportFilter.SessionID != sessionID {
+		t.Fatalf("unexpected parsed shadow filter: %+v", store.shadowReportFilter)
+	}
+	if store.assistReportFilter.Limit != 10 || store.assistReportFilter.Offset != 0 || store.assistReportFilter.SessionID != sessionID {
+		t.Fatalf("unexpected parsed assist filter: %+v", store.assistReportFilter)
 	}
 	if out.Report.TotalItems != 4 || out.Report.IntentAgreementCount != 1 || out.Report.IntentDisagreementCount != 1 {
 		t.Fatalf("unexpected aggregate report: %+v", out.Report)
@@ -168,15 +235,26 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 		out.Report.OpenAIValidation.ByOpenAISource["__redacted_sensitive"].Rejected != 1 {
 		t.Fatalf("unexpected OpenAI validation report: %+v", out.Report.OpenAIValidation)
 	}
+	if out.Report.OpenAIInterpreterAssist.Total != 1 ||
+		out.Report.OpenAIInterpreterAssist.Rejected != 1 ||
+		out.Report.OpenAIInterpreterAssist.ByRejectReason["__redacted_sensitive"] != 1 ||
+		out.Report.OpenAIInterpreterAssist.ByFallbackTemplate["__redacted_sensitive"] != 1 ||
+		out.Report.OpenAIInterpreterAssist.BySource["__redacted_sensitive"].Rejected != 1 {
+		t.Fatalf("unexpected runtime assist report: %+v", out.Report.OpenAIInterpreterAssist)
+	}
 
 	body := rec.Body.String()
 	for _, forbidden := range []string{
 		"CPF 529.982.247-25",
+		"assist body with CPF",
 		"550e8400-e29b-41d4-a716-446655440000",
+		"booking_550e8400-e29b-41d4-a716-446655440000",
 		"BK-ABC123456",
 		"(48)99999-9999",
+		"telefone_(48)99999-9999",
 		"12.345.678-9",
 		"R--02-23-MLK08V8Q",
+		"Joao Vitor Messias",
 		"raw_prompt",
 		"raw prompt should not be serialized",
 		"current_turn_body",
@@ -208,11 +286,20 @@ func TestGetStructuredInterpreterShadowReportEndpointAppliesDefaultLimit(t *test
 	if store.shadowReportFilter.Limit != 200 || out.Filter.Limit != 200 {
 		t.Fatalf("expected default limit 200, got store=%+v response=%+v", store.shadowReportFilter, out.Filter)
 	}
+	if store.assistReportFilter.Limit != 200 {
+		t.Fatalf("expected default assist limit 200, got %+v", store.assistReportFilter)
+	}
 	if store.shadowReportFilter.Offset != 0 || out.Filter.Offset != 0 {
 		t.Fatalf("expected default offset 0, got store=%+v response=%+v", store.shadowReportFilter, out.Filter)
 	}
+	if store.assistReportFilter.Offset != 0 {
+		t.Fatalf("expected default assist offset 0, got %+v", store.assistReportFilter)
+	}
 	if store.shadowReportFilter.SessionID != sessionID || out.Filter.SessionID != sessionID {
 		t.Fatalf("expected session filter %s, got store=%+v response=%+v", sessionID, store.shadowReportFilter, out.Filter)
+	}
+	if store.assistReportFilter.SessionID != sessionID {
+		t.Fatalf("expected assist session filter %s, got %+v", sessionID, store.assistReportFilter)
 	}
 }
 
@@ -232,8 +319,8 @@ func TestGetStructuredInterpreterShadowReportEndpointRejectsInvalidQuery(t *test
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 			}
-			if store.shadowReportCalls != 0 {
-				t.Fatalf("expected invalid query not to call store, got %d calls", store.shadowReportCalls)
+			if store.shadowReportCalls != 0 || store.assistReportCalls != 0 {
+				t.Fatalf("expected invalid query not to call store, got shadow=%d assist=%d calls", store.shadowReportCalls, store.assistReportCalls)
 			}
 		})
 	}
@@ -311,6 +398,40 @@ func structuredInterpreterShadowEndpointValidation(agreement bool) map[string]in
 	}
 }
 
+func openAIInterpreterAssistEndpointMessage(sessionID string, status string, openAIIntent string, rejectReason string) Message {
+	payload := map[string]interface{}{
+		openAIInterpreterAssistMetadataKey: map[string]interface{}{
+			"openai_assist_status": status,
+			"validation_status":    status,
+			"considered":           status != string(OpenAIInterpreterAssistSkipped),
+			"accepted":             status == string(OpenAIInterpreterAssistAccepted),
+			"local_intent":         string(StructuredIntentUnknown),
+			"local_confidence":     0.4,
+			"openai_intent":        openAIIntent,
+			"openai_confidence":    0.76,
+			"decision_source":      "openai_interpreter_assist",
+		},
+	}
+	if rejectReason != "" {
+		assist := payload[openAIInterpreterAssistMetadataKey].(map[string]interface{})
+		assist["reject_reason"] = rejectReason
+		assist["controlled_reason_codes"] = []string{rejectReason}
+		if status == string(OpenAIInterpreterAssistSkipped) {
+			assist["skip_reason"] = rejectReason
+		}
+	}
+	return Message{
+		ID:                uuid.NewString(),
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		Body:              "runtime assist message body must not be serialized",
+		NormalizedPayload: payload,
+		ProcessingStatus:  "AUTOMATION_DRAFT",
+		CreatedAt:         time.Now().UTC(),
+	}
+}
+
 func (s *fakeStore) ListStructuredInterpreterShadowMessages(_ context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error) {
 	filter = normalizeStructuredInterpreterShadowReportFilter(filter)
 	s.shadowReportCalls++
@@ -322,14 +443,32 @@ func (s *fakeStore) ListStructuredInterpreterShadowMessages(_ context.Context, f
 		return nil, s.shadowReportErr
 	}
 
+	return s.fakeReportMessages(filter, fakeMessageHasStructuredInterpreterShadow), nil
+}
+
+func (s *fakeStore) ListOpenAIInterpreterAssistMessages(_ context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error) {
+	filter = normalizeStructuredInterpreterShadowReportFilter(filter)
+	s.assistReportCalls++
+	s.assistReportFilter = filter
+	if filter.SessionID == "" {
+		return nil, ErrShadowReportSessionRequired
+	}
+	if s.assistReportErr != nil {
+		return nil, s.assistReportErr
+	}
+
+	return s.fakeReportMessages(filter, fakeMessageHasOpenAIInterpreterAssist), nil
+}
+
+func (s *fakeStore) fakeReportMessages(filter StructuredInterpreterShadowReportFilter, include func(Message) bool) []Message {
 	if s.shadowReportMessages != nil {
-		return paginateFakeStructuredInterpreterShadowMessages(filterFakeStructuredInterpreterShadowMessages(s.shadowReportMessages, filter, false), filter), nil
+		return paginateFakeReportMessages(filterFakeReportMessages(s.shadowReportMessages, filter, include), filter)
 	}
 
 	items := make([]Message, 0, len(s.messageOrder))
 	for _, id := range s.messageOrder {
 		message := s.messages[id]
-		if !fakeMessageHasStructuredInterpreterShadow(message) {
+		if !include(message) {
 			continue
 		}
 		if filter.SessionID != "" && message.SessionID != filter.SessionID {
@@ -340,24 +479,27 @@ func (s *fakeStore) ListStructuredInterpreterShadowMessages(_ context.Context, f
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
-	return paginateFakeStructuredInterpreterShadowMessages(items, filter), nil
+	return paginateFakeReportMessages(items, filter)
 }
 
-func filterFakeStructuredInterpreterShadowMessages(messages []Message, filter StructuredInterpreterShadowReportFilter, requireShadow bool) []Message {
+func filterFakeReportMessages(messages []Message, filter StructuredInterpreterShadowReportFilter, include func(Message) bool) []Message {
 	items := make([]Message, 0, len(messages))
 	for _, message := range messages {
 		if filter.SessionID != "" && message.SessionID != filter.SessionID {
 			continue
 		}
-		if requireShadow && !fakeMessageHasStructuredInterpreterShadow(message) {
+		if !include(message) {
 			continue
 		}
 		items = append(items, message)
 	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
 	return items
 }
 
-func paginateFakeStructuredInterpreterShadowMessages(messages []Message, filter StructuredInterpreterShadowReportFilter) []Message {
+func paginateFakeReportMessages(messages []Message, filter StructuredInterpreterShadowReportFilter) []Message {
 	if filter.Offset >= len(messages) {
 		return []Message{}
 	}
@@ -373,6 +515,16 @@ func fakeMessageHasStructuredInterpreterShadow(message Message) bool {
 		return true
 	}
 	if _, ok := message.Payload[structuredInterpreterShadowKey]; ok {
+		return true
+	}
+	return false
+}
+
+func fakeMessageHasOpenAIInterpreterAssist(message Message) bool {
+	if _, ok := message.NormalizedPayload[openAIInterpreterAssistMetadataKey]; ok {
+		return true
+	}
+	if _, ok := message.Payload[openAIInterpreterAssistMetadataKey]; ok {
 		return true
 	}
 	return false

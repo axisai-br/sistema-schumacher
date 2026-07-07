@@ -37,6 +37,7 @@ type Store interface {
 	GetSession(ctx context.Context, id string) (Session, error)
 	ListMessages(ctx context.Context, sessionID string, filter ListMessagesFilter) ([]Message, error)
 	ListStructuredInterpreterShadowMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error)
+	ListOpenAIInterpreterAssistMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error)
 }
 
 type Repository struct {
@@ -2455,6 +2456,14 @@ func (r *Repository) ListMessages(ctx context.Context, sessionID string, filter 
 }
 
 func (r *Repository) ListStructuredInterpreterShadowMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error) {
+	return r.listReportMessagesWithPayloadKey(ctx, filter, structuredInterpreterShadowKey)
+}
+
+func (r *Repository) ListOpenAIInterpreterAssistMessages(ctx context.Context, filter StructuredInterpreterShadowReportFilter) ([]Message, error) {
+	return r.listReportMessagesWithPayloadKey(ctx, filter, openAIInterpreterAssistMetadataKey)
+}
+
+func (r *Repository) listReportMessagesWithPayloadKey(ctx context.Context, filter StructuredInterpreterShadowReportFilter, payloadKey string) ([]Message, error) {
 	filter = normalizeStructuredInterpreterShadowReportFilter(filter)
 	if filter.SessionID == "" {
 		return nil, ErrShadowReportSessionRequired
@@ -2479,10 +2488,13 @@ func (r *Repository) ListStructuredInterpreterShadowMessages(ctx context.Context
 			created_at
 		from chat_messages
 		where session_id = $1::uuid
-			and (coalesce(normalized_payload, '{}'::jsonb) ? $2 or coalesce(payload, '{}'::jsonb) ? $2)
+			and (
+				coalesce(normalized_payload, '{}'::jsonb) ? $2
+				or coalesce(payload, '{}'::jsonb) ? $2
+			)
 		order by created_at desc
 		limit $3 offset $4
-	`, filter.SessionID, structuredInterpreterShadowKey, filter.Limit, filter.Offset)
+	`, filter.SessionID, payloadKey, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}
