@@ -461,9 +461,15 @@ func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {
 		return realizeResponseTemplate(decision.TemplateName)
 
 	default:
-		reply, ok := realizeResponseTemplate(decision.TemplateName)
-		if !ok {
-			return "", false
+		reply := ""
+		ok := false
+		if decision.TemplateName == TemplateHumanSupportInfo && decision.Source == administrativeNotesSupportDecisionSource {
+			reply, ok = administrativeNotesSupportReply, true
+		} else {
+			reply, ok = realizeResponseTemplate(decision.TemplateName)
+			if !ok {
+				return "", false
+			}
 		}
 		return appendOutOfTurnPendingPromptReminder(reply, decision), true
 	}

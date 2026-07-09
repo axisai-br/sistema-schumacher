@@ -90,6 +90,9 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		return IntentDecision{Intent: IntentUnknown, Source: "deterministic"}
 	}
 	activePrompt := InferActivePromptContext(history, state)
+	if looksLikeAdministrativeNotesSupportQuestion(body) && !looksLikePassengerDocumentText(body, Session{}) {
+		return buildAdministrativeNotesSupportIntentDecision()
+	}
 	if _, ok := inferUnsupportedCargoQuery(body); ok {
 		return IntentDecision{Intent: IntentUnsupportedCargo, Source: "deterministic", TemplateName: TemplateUnsupportedCargo, Action: "template"}
 	}

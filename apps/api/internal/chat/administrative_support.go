@@ -2,7 +2,10 @@ package chat
 
 import "strings"
 
-const administrativeNotesSupportReply = "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
+const (
+	administrativeNotesSupportDecisionSource = "deterministic_administrative_notes_support"
+	administrativeNotesSupportReply          = "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
+)
 
 func looksLikeAdministrativeNotesSupportQuestion(text string) bool {
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
@@ -45,15 +48,19 @@ func shouldRouteAdministrativeNotesSupportTurn(phase ConversationPhase, history 
 	return activePrompt.Kind == ActivePromptPassengerDocuments
 }
 
-func buildAdministrativeNotesSupportDraftRun() RunAgentResult {
-	decision := IntentDecision{
+func buildAdministrativeNotesSupportIntentDecision() IntentDecision {
+	return IntentDecision{
 		Intent:       IntentHumanSupportInfoQuestion,
-		Source:       "deterministic_administrative_notes_support",
+		Source:       administrativeNotesSupportDecisionSource,
 		TemplateName: TemplateHumanSupportInfo,
 		Action:       "template",
 		TemplateData: map[string]interface{}{
 			"topic": "administrative_notes_finance",
 		},
 	}
+}
+
+func buildAdministrativeNotesSupportDraftRun() RunAgentResult {
+	decision := buildAdministrativeNotesSupportIntentDecision()
 	return buildTemplateDraftRunFromDecision(decision, administrativeNotesSupportReply)
 }
