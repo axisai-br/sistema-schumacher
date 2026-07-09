@@ -442,6 +442,151 @@ func TestReprocessOpenAIInterpreterShadowAndAssistReuseSingleProviderCall(t *tes
 	}
 }
 
+func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *testing.T) {
+	observedAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	proposal := assistTestInterpretation(StructuredIntentSelectAvailabilityOption)
+	proposal.Booking.SelectedOptionIndex = 2
+	proposal.Booking.SelectedOptionIndexKnown = true
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation:     proposal,
+			ProviderResponseID: "resp_assist_select_option",
+		},
+	}
+	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(availability),
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			},
+		},
+		ReceivedAt: observedAt,
+	}}
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "2")
+	activePrompt := InferActivePromptContext(history, state)
+
+	assist := RunOpenAIInterpreterRuntimeAssist(context.Background(), OpenAIInterpreterAssistInput{
+		Enabled:           true,
+		OpenAIInterpreter: openAI,
+		StructuredInput: StructuredInterpreterInput{
+			CurrentTurn: "2",
+			History:     history,
+			State:       state,
+			ObservedAt:  observedAt,
+		},
+		ActivePrompt:        activePrompt,
+		LocalInterpretation: unknownStructuredInterpretation("test", 0),
+		IdempotencyKey:      "assist-select-option",
+	})
+	if assist.Status != OpenAIInterpreterAssistAccepted {
+		t.Fatalf("expected accepted assist selection, got %+v", assist)
+	}
+	reply, ok := realizeIntentResponseTemplate(assist.IntentDecision)
+	if !ok || strings.TrimSpace(reply) != askPassengerCountReply {
+		t.Fatalf("expected passenger count template, ok=%t reply=%q decision=%+v", ok, reply, assist.IntentDecision)
+	}
+	run := buildTemplateDraftRunFromDecision(assist.IntentDecision, reply)
+	if got := asInt(run.RequestPayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected assist template builder not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.RequestPayload)
+	}
+	run = attachSelectedAvailabilityResultToTemplateRun(run, currentAvailabilitySelectionPromptAvailabilityContext(history), assist.IntentDecision)
+	if got := asInt(run.RequestPayload["selected_option_index"]); got != 2 {
+		t.Fatalf("expected atomic attach to persist selected_option_index=2, got %d payload=%+v", got, run.RequestPayload)
+	}
+	snapshot := asMap(run.RequestPayload[selectedAvailabilityResultPayloadKey])
+	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+		t.Fatalf("expected selected snapshot trip-2026-07-14, got %q snapshot=%+v", got, snapshot)
+	}
+	if got := asInt(snapshot["selected_option_index"]); got != 2 {
+		t.Fatalf("expected selected snapshot index 2, got %d snapshot=%+v", got, snapshot)
+	}
+
+	payload, normalizedPayload := buildAgentDraftPayload(
+		Session{ID: "session-1", Channel: "WHATSAPP", ContactKey: "5511999999999"},
+		nil,
+		"draft-assist-select-option",
+		"",
+		"",
+		run,
+		agentToolContext{Availability: &availability},
+		draftAutoSendPolicy{Status: draftAutoSendStatusEligible},
+		observedAt,
+	)
+	history = append(history,
+		Message{
+			Direction:         "OUTBOUND",
+			Body:              run.ReplyText,
+			ProcessingStatus:  messageStatusAutomationSent,
+			Payload:           payload,
+			NormalizedPayload: normalizedPayload,
+			ReceivedAt:        observedAt.Add(time.Minute),
+		},
+		Message{
+			Direction:        "INBOUND",
+			Body:             "só pra mim",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       observedAt.Add(2 * time.Minute),
+		},
+	)
+	bookingDraft := collectBookingDraftContext(Session{}, history, "")
+	if bookingDraft.SelectedOptionIndex != 2 ||
+		bookingDraft.TripID != "trip-2026-07-14" ||
+		bookingDraft.BoardStopID != "board-2026-07-14" ||
+		bookingDraft.AlightStopID != "alight-2026-07-14" ||
+		bookingDraft.TripDate != "2026-07-14" ||
+		bookingDraft.PassengerCount != 1 ||
+		!bookingDraft.PassengerCountKnown {
+		t.Fatalf("expected passenger turn to keep assist-selected trip facts, got %+v", bookingDraft)
+	}
+}
+
+func TestOpenAIInterpreterAssistSelectionWithoutAvailabilityFactsIsRejected(t *testing.T) {
+	observedAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	proposal := assistTestInterpretation(StructuredIntentSelectAvailabilityOption)
+	proposal.Booking.SelectedOptionIndex = 2
+	proposal.Booking.SelectedOptionIndexKnown = true
+	openAI := &fakeOpenAIInterpreter{
+		enabled: true,
+		result: OpenAIStructuredInterpreterRunResult{
+			Interpretation:     proposal,
+			ProviderResponseID: "resp_assist_select_option_without_facts",
+		},
+	}
+	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(availability),
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       observedAt,
+	}}
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "2")
+	activePrompt := InferActivePromptContext(history, state)
+
+	assist := RunOpenAIInterpreterRuntimeAssist(context.Background(), OpenAIInterpreterAssistInput{
+		Enabled:           true,
+		OpenAIInterpreter: openAI,
+		StructuredInput: StructuredInterpreterInput{
+			CurrentTurn: "2",
+			History:     history,
+			State:       state,
+			ObservedAt:  observedAt,
+		},
+		ActivePrompt:        activePrompt,
+		LocalInterpretation: unknownStructuredInterpretation("test", 0),
+		IdempotencyKey:      "assist-select-option-without-facts",
+	})
+	if assist.Status != OpenAIInterpreterAssistRejected {
+		t.Fatalf("expected assist selection without availability facts to be rejected, got %+v", assist)
+	}
+	if assist.RejectReason != "availability_selection_missing_current_facts" {
+		t.Fatalf("expected missing facts rejection, got %q decision=%+v", assist.RejectReason, assist)
+	}
+}
+
 func TestReprocessOpenAIInterpreterAssistAvailabilityProposalDoesNotRunTools(t *testing.T) {
 	t.Setenv("CHAT_INTENT_ROUTER_ENABLED", "false")
 	store := newFakeStore()

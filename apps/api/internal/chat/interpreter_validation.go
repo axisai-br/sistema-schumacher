@@ -92,6 +92,9 @@ func validateAvailabilityOptionInterpretation(proposal StructuredInterpretation,
 	if proposal.Intent != StructuredIntentSelectAvailabilityOption {
 		return rejectInterpretation("intent_not_allowed_by_active_prompt", TemplateContextFallbackAvailabilityOption)
 	}
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return rejectInterpretation("selected_option_index_required", TemplateContextFallbackAvailabilityOption)
+	}
 	promptContext := currentAvailabilitySelectionPromptContext(history)
 	optionCount := promptContext.OptionCount
 	if optionCount <= 0 {

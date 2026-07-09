@@ -8643,6 +8643,9 @@ type fakeStore struct {
 	shadowReportErr      error
 	shadowReportCalls    int
 	shadowReportFilter   StructuredInterpreterShadowReportFilter
+	assistReportErr      error
+	assistReportCalls    int
+	assistReportFilter   StructuredInterpreterShadowReportFilter
 }
 
 type fakeProfileEnsurer struct {

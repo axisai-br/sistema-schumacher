@@ -265,6 +265,284 @@ Próxima ação recomendada:
 solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy.
 ```
 
+Hotfix local concluído em 2026-07-07; pendente review/commit/deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-07 — out-of-turn info durante seleção de opção
+Entrada real: lista de disponibilidade com "Qual opção você prefere?" → "ai o pagamento eu faço logo ou só no dia mesmo?"
+Problema corrigido localmente: PAYMENT_OPTIONS_INFO durante TRIP_SELECTION não preservava o prompt pendente da seleção de opção.
+Esperado: PAYMENT_OPTIONS_INFO + "Para continuar: Qual opção você prefere?", sem selecionar opção automaticamente.
+
+Causa corrigida:
+ActivePromptAvailabilityOptionChoice não era elegível para out_of_turn_info.
+pending_prompt_template não era preenchido com CONTEXT_FALLBACK_AVAILABILITY_OPTION para seleção de disponibilidade.
+O realizer reaproveitava o fallback contextual longo como lembrete; para out-of-turn durante seleção de opção agora usa o lembrete curto "Qual opção você prefere?".
+
+Decisão tomada:
+Perguntas informativas puras durante seleção de opção preservam o prompt pendente.
+Respostas claras ao active prompt continuam vencendo: "essa msm, paga agora?" e "13/07, paga agora?" selecionam a opção atual quando há facts atuais e correspondência única.
+Data pura após lista continua seguindo o comportamento anterior de seleção de data/busca, sem virar seleção automática de opção.
+Guardrails continuam vencendo: cancelamento, handoff humano e carga não suportada não viram PAYMENT_OPTIONS_INFO.
+Review P1/P2 corrigidos localmente:
+Mensagens negadas como "não quero essa, paga agora?", "não é essa msm", "essa não" e "não quero 13/07, paga agora?" não selecionam opção nem avançam para ASK_PASSENGER_COUNT.
+O draft informativo out-of-turn com lembrete de seleção preserva `tool_context.availability_search` somente do source confiável do prompt ativo, permitindo que o próximo "essa msm" ou "13/07" selecione a opção.
+Facts de BOT_AUTO_REPLY sem draft source confiável continuam bloqueados pelo lookup confiável existente.
+
+Segundo review P1/P2 corrigido localmente:
+O branch determinístico/template não copia mais facts antigos de disponibilidade quando o prompt/reminder atual não tem `tool_context` confiável; sem source confiável, o próximo "essa msm" ou "13/07" cai no fallback de facts atuais ausentes e não avança para ASK_PASSENGER_COUNT.
+A seleção por data em mensagens mistas ou após lembrete compara "13/07" contra as opções visíveis renderizadas do prompt atual, após filtro de viagens passadas e limite de 5 opções, em vez de iterar pelos `results` brutos do payload ou por availability antiga do histórico.
+
+Review P1 final corrigido localmente:
+Quando há linhas ocultas/passadas antes da opção renderizada, `SelectedOptionIndex` continua sendo o índice visível do cliente e o `tool_context.availability_search.results` usado no draft/estado é filtrado e reindexado para a mesma lista visível.
+Assim, "13/07, paga agora?" com payload bruto `[passada_oculta, 13/07_visivel]` avança para ASK_PASSENGER_COUNT apontando canonical_state e booking draft para `trip-2026-07-13`, sem vincular ao item passado oculto.
+
+Review P2 adicional corrigido localmente:
+Quando a seleção por data escolhe uma opção única dentro de uma lista visível com múltiplas opções, o draft `ASK_PASSENGER_COUNT` agora persiste `selected_option_index` e o snapshot mínimo `selected_availability_result` no payload/normalized payload.
+`findLatestSelectedOptionIndex` prioriza o índice persistido em mensagens outbound confiáveis antes de inferir número do texto, ignora `selected_option_index` de `LAP_CHILD_ASSIGNMENT_ANSWER` e não trata resposta numérica ao prompt de passageiros como nova seleção de viagem.
+`collectBookingDraftContext` lê `selected_availability_result` antes do merge de `tool_context.availability_search`, de modo que `trip_id`, `board_stop_id`, `alight_stop_id`, preço, data e horário da opção selecionada vencem a lista visível quando ambos existem.
+Drafts de continuação de reserva também preservam `selected_option_index` e `selected_availability_result`, para o booking draft manter a mesma viagem nos turnos seguintes.
+
+Review P2 restante corrigido localmente:
+`mergeSelectedAvailabilitySnapshotIntoBookingDraft` agora trata o snapshot selecionado de forma atômica: se uma seleção mais nova já preencheu `TripID`, snapshots antigos com outro `trip_id` são ignorados por completo e não podem sobrescrever `SelectedOptionIndex`.
+Snapshots do mesmo `trip_id` compatível com `board_stop_id`/`alight_stop_id` só podem preencher `SelectedOptionIndex` quando ele ainda estiver ausente, preservando o índice da seleção mais recente.
+
+Review P2 final de atomicidade corrigido localmente:
+`collectBookingDraftContext` agora identifica a seleção vigente persistida mais recente como unidade lógica. Se a seleção mais nova tem apenas `selected_option_index`, snapshots/facts antigos de outra mensagem não podem materializar `trip_id`, stops, data ou preço por compatibilidade vazia.
+Quando a seleção metadata-only traz `tool_context.availability_search` na mesma mensagem, o booking draft pode materializar a rota pela opção selecionada dessa mesma fonte; sem snapshot/facts da mesma fonte, mantém estado incompleto seguro em vez de combinar índice novo com snapshot antigo.
+`applyIntentDecisionToCanonicalState` substitui a rota do `canonical_state` a partir da opção selecionada atual, usando o availability context filtrado/reindexado já anexado ao turno. Nova seleção não preserva `TripID`, stops, data, horário, preço ou `SelectedOptionIndex` da rota antiga.
+
+Review P2 final adicional do builder compartilhado corrigido localmente:
+`buildTemplateDraftRunFromDecision` não persiste mais `selected_option_index` genericamente para `IntentSelectAvailabilityOption`.
+`attachSelectedAvailabilityResultToTemplateRun` passou a persistir `selected_option_index` e `selected_availability_result` juntos em `RequestPayload` e `ResponsePayload`, somente quando existe snapshot confiável da opção selecionada.
+Os caminhos determinísticos/template e o branch `openai_interpreter_assist` aceito anexam o availability context atual confiável antes de salvar o draft de `ASK_PASSENGER_COUNT`, preservando índice e snapshot de forma atômica.
+Propostas OpenAI assist de seleção sem facts atuais confiáveis são rejeitadas por `availability_selection_missing_current_facts`, sem criar draft metadata-only.
+Drafts de continuação de reserva só repropagam `selected_option_index` quando o booking draft também tem `selected_availability_result` materializável; contexto incompleto com índice sem `trip_id` não gera novo payload metadata-only.
+
+Review P2 restante de metadata-only corrigido localmente em 2026-07-08:
+`availabilitySelectionEvidence` agora diferencia ausência de seleção, seleção materializada válida e seleção metadata-only inválida que bloqueia evidências antigas.
+`messagePersistedAvailabilitySelectedOptionIndex` só retorna `selected_option_index` persistido quando a mesma mensagem tem `selected_availability_result` válido ou `tool_context.availability_search` confiável onde o índice resolve uma opção válida.
+`collectBookingDraftContext` não inicializa `SelectedOptionIndex` nem cai em `findLatestSelectedOptionIndex` quando a seleção persistida mais recente é metadata-only inválida; snapshots/facts antigos continuam bloqueados e não materializam rota antiga.
+`availabilityDraftHasSelectedTrip` não considera `selected_option_index` isolado como viagem escolhida; exige `TripID` materializado no booking draft.
+
+Review P1/P2 restante de seleção bookável corrigido localmente em 2026-07-08:
+`availabilitySelectionEvidence` passou a usar status explícitos `none`, `blocked_metadata_only`, `incomplete` e `bookable`.
+Seleção bookável agora exige `selected_option_index > 0` e facts completos na mesma fonte confiável: `trip_id`, `board_stop_id` e `alight_stop_id`.
+`findLatestSelectedOptionIndex` só retorna seleção persistida quando o status é `bookable`; seleção metadata-only ou incompleta bloqueia evidências antigas e não cai em inferência textual antiga.
+`collectBookingDraftContext` não materializa snapshot/facts antigos quando a seleção persistida mais recente é metadata-only ou incompleta.
+`availabilityDraftHasSelectedTrip` exige facts completos de viagem selecionada, não apenas `TripID`.
+`resolveBookingCreateSelection` bloqueia fallback automático `len(options)==1` quando há blocker metadata-only/incomplete mais recente, e também rejeita item selecionado sem `trip_id`, `board_stop_id` e `alight_stop_id`.
+
+Review P1/P2 final de índice explícito e índice nu corrigido localmente em 2026-07-08:
+`resolveBookingCreateSelection` agora identifica quando as opções vêm de `findLatestAvailabilityContext(history)` e bloqueia qualquer uso dessa availability histórica se a evidência de seleção mais recente for `blocked_metadata_only` ou `incomplete`; isso cobre tanto fallback de opção única quanto `opcao 1` explícita.
+`availabilityDraftHasSelectedTrip` não retorna `true` por `currentTurn` numérico/ordinal isolado; quando há índice no turno atual, ele resolve a opção contra a lista confiável mais recente e exige `trip_id`, `board_stop_id` e `alight_stop_id`, retornando `false` para índice fora do range, blocker ou facts incompletos.
+
+Review P2 restantes de escopo temporal do blocker e negação contextual corrigidos localmente em 2026-07-08:
+`resolveBookingCreateSelection` agora usa `findLatestAvailabilityContextWithSource` para saber o índice histórico da availability usada e só aplica blocker metadata-only/incomplete quando `selection.SourceHistoryIndex >= availabilitySourceHistoryIndex`.
+Blocker antigo não bloqueia availability completa mais nova, e `currentAvailability` confiável do turno atual continua imune a blocker antigo.
+`looksLikeNegatedAvailabilitySelection` cobre "não pode ser essa/esta", "não fico/vou com essa/esta", data negada como "não quero 13/07" e sufixo "13/07 não".
+`looksLikeContextualAvailabilitySelection`, `parseAvailabilityDateSelectionInput` e `parseAvailabilitySearchInput` aplicam a negação antes de seleção contextual/data, impedindo que "não pode ser essa" seja aceito por substring "pode ser essa" e que "13/07 não" vire availability_search.
+Durante prompt de seleção de opção, negação sem pergunta lateral cai no fallback contextual seguro; negação com pergunta lateral de pagamento pode responder `PAYMENT_OPTIONS_INFO`, sem `selected_option_index` e sem `ASK_PASSENGER_COUNT`.
+
+Review P1/P2 posterior corrigido localmente em 2026-07-08:
+P1: `resolveBookingCreateSelection` agora rejeita imediatamente texto atual com negação de seleção de disponibilidade, antes de `extractSelectedOptionIndex`, `findLatestSelectedOptionIndex` e fallback de opção única. Assim, mensagens com dados de passageiro como "não quero opção 1\nquero reservar\nNome | CPF | ..." não montam `BookingCreateInput`.
+P2: `availabilitySelectionEvidence.blocksHistoryIndex(historyIndex)` centraliza a regra temporal do blocker. `shouldMergeSelectedAvailabilitySnapshotForBookingDraft`, `shouldMergeAvailabilityPayloadForBookingDraft`, `resolveBookingCreateSelection` e `availabilityDraftHasSelectedTrip` usam a comparação por source quando a availability/snapshot tem `historyIndex`.
+Blocker metadata-only/incomplete antigo não bloqueia `availability_search` completa mais nova no booking draft nem em `availabilityDraftHasSelectedTrip`; blocker mais novo continua bloqueando facts antigos.
+Auditoria de `blocksOlderEvidence`: usos com source disponível foram movidos para `blocksHistoryIndex`; o uso restante em `findLatestSelectedOptionIndex` não recebe uma availability específica e só impede reaproveitamento de índice textual/persistido antigo.
+
+Review P1 restante de negação "não serve" corrigido localmente em 2026-07-08:
+`looksLikeNegatedAvailabilitySelection` agora usa alvos específicos de disponibilidade (`hasAvailabilityOptionReference`, `hasAvailabilityDateReference`, `hasAvailabilityDeicticReference` e `hasAvailabilitySelectionTarget`), sem `containsASCIIDigit` como alvo genérico.
+O detector cobre rejeições combinadas com opção/data/dia/dêitico, incluindo "opção 1 não serve", "13/07 não serve", "essa opção não serve", "esse dia não dá", "não rola", "não funciona", "não fica bom", "fica ruim" e "não consigo".
+`ValidateStructuredInterpretation` rejeita proposta de `SELECT_AVAILABILITY_OPTION` quando o texto atual é uma negação de seleção, mesmo se houver índice explícito.
+Controles afirmativos como "não tem problema, pode ser essa" e "não precisa pagar agora, pode ser essa" continuam selecionando quando há opção única com facts atuais.
+
+Review P1/P2 final pós-/review corrigido localmente em 2026-07-08:
+`looksLikeNegatedAvailabilitySelection` passou a exigir ligação direta entre alvo de disponibilidade e frase de rejeição, via padrões direcionais alvo→rejeição e rejeição→alvo. Assim, "não dá pra pagar agora, pode ser essa" não é mais tratado como rejeição da opção, enquanto "opção 1 não serve", "13/07 não serve", "não quero 13/07" e "essa não" continuam bloqueados.
+Bare option-number rejection ficou limitado a 1-5 e somente em contexto claro de rejeição, cobrindo "1 não serve", "1 não dá", "1 não rola", "1 não funciona", "1 fica ruim", "1 não", "não serve 1" e "não quero 1", sem voltar a detector genérico de dígitos.
+`availabilitySelectionEvidence` ganhou status `rejected_by_user`; uma mensagem INBOUND negando opção/data após availability list bloqueia essa availability histórica para `booking_create` futuro. Availability nova posterior à rejeição continua válida pela comparação temporal de `blocksHistoryIndex`.
+
+Review P1 adicional de reminder pós-rejeição corrigido localmente em 2026-07-08:
+`buildOutOfTurnInfoDecision` marca `out_of_turn_rejected_availability_selection=true` quando o turno atual responde ao prompt de opção com rejeição de disponibilidade e pergunta informativa lateral.
+`attachPendingAvailabilityContextForOutOfTurnInfo` preserva o lembrete textual, mas não copia `tool_context.availability_search` para o draft informativo quando esse flag está presente.
+Assim, "não quero essa, paga agora?", "não quero opção 1, paga agora?", "1 não serve, paga agora?", "13/07 não serve, paga agora?" e "essa não dá, paga agora?" continuam podendo responder PAYMENT_OPTIONS_INFO, mas não ressuscitam facts da availability rejeitada para `booking_create` posterior.
+
+Regressões cobertas:
+PAYMENT_OPTIONS_INFO, DOCUMENT_REQUIREMENTS_INFO, CHILD_POLICY_INFO, BAGGAGE_INFO, BOARDING_INFO e HUMAN_SUPPORT_INFO durante "Qual opção você prefere?" anexam "Para continuar: Qual opção você prefere?".
+"paga agora?" com múltiplas opções não seleciona opção 1.
+"ai o pagamento eu faço logo ou só no dia mesmo?" em fluxo real de Reprocess não chama LLM, availability_search, payment_status ou outras tools e permanece AUTO_SEND_ELIGIBLE.
+"essa msm, paga agora?" e "13/07, paga agora?" avançam para ASK_PASSENGER_COUNT quando a lista atual tem facts atuais correspondentes.
+Após AVAILABILITY_LIST → "paga agora?" → PAYMENT_OPTIONS_INFO + lembrete, "essa msm" e "13/07" avançam para ASK_PASSENGER_COUNT usando facts preservados.
+Se existe uma lista antiga com facts e o prompt atual não tem `tool_context`, "paga agora?" não propaga facts antigos para o lembrete e o próximo "essa msm" não seleciona opção invisível/stale.
+Quando o payload tem results ocultos/passados antes da opção visível, "13/07, paga agora?" e "13/07" após o lembrete selecionam o índice visível 1.
+Quando "13/07" aparece apenas em opção não renderizada ou aparece em mais de uma opção visível, o roteador não seleciona automaticamente.
+Após lembrete sem facts atuais confiáveis, "13/07" não chama availability_search para recuperar contexto; cai no fallback seguro de seleção de opção.
+Quando o payload bruto contém item passado antes da opção visível, o draft de ASK_PASSENGER_COUNT carrega facts filtrados com 1 result visível e o canonical_state usa `trip-2026-07-13`, não o item oculto.
+Quando a lista tem duas opções visíveis e "14/07, paga agora?" escolhe a opção 2 sem número explícito, o próximo turno de passageiros mantém `trip-2026-07-14` e `selected_option_index=2`.
+Resposta numérica posterior ao prompt de passageiros não sobrescreve a opção de viagem persistida.
+Após AVAILABILITY_LIST com duas opções → "paga agora?" → lembrete → "14/07" → "só pra mim", a seleção mantém `trip-2026-07-14`, `selected_option_index=2` e o snapshot selecionado, sem chamar availability_search novamente.
+`collectBookingDraftContext` prefere `selected_availability_result` de outbound confiável mesmo quando o `tool_context` do mesmo draft não resolveria sozinho a opção selecionada.
+Com duas seleções persistidas no histórico, a seleção mais nova mantém `TripID`, stops, data, preço e `selected_option_index`; snapshot antigo não pode deixar viagem nova com índice velho.
+Seleção metadata-only mais recente bloqueia `selected_availability_result` antigo incompatível e não permanece como `SelectedOptionIndex` válido no booking draft.
+Seleção metadata-only com `availability_search` da mesma mensagem materializa a opção 2 da própria fonte e ignora snapshot antigo.
+Quando já havia rota antiga selecionada e o cliente escolhe `14/07` em uma lista nova, o `canonical_state.Route` passa a apontar para `trip-2026-07-14`, `board-2026-07-14`, `alight-2026-07-14`, `trip_date=2026-07-14`, `departure_time=14:00` e `selected_option_index=2`.
+Builder puro de template com `IntentSelectAvailabilityOption` não grava `selected_option_index` sozinho, e o attach com availability context nulo também não cria índice metadata-only.
+Attach atômico grava `selected_option_index` + `selected_availability_result` nos payloads de request/response.
+OpenAI assist/template com availability context confiável persiste índice + snapshot selecionado, e o próximo turno "só pra mim" mantém `trip-2026-07-14`, stops e `selected_option_index=2`.
+OpenAI assist/template sem facts atuais confiáveis é rejeitado antes de gerar draft de seleção.
+Draft de continuação de reserva com `SelectedOptionIndex=2`, mas sem `trip_id`, não persiste `selected_option_index` nem snapshot vazio.
+`findLatestSelectedOptionIndex` ignora outbound confiável com `selected_option_index` sem snapshot/facts da mesma mensagem, mas continua aceitando índice com `selected_availability_result` ou `availability_search` materializado.
+`availabilityDraftHasSelectedTrip` não trata metadata-only como viagem escolhida.
+Resposta numérica ao prompt de passageiros continua sem virar seleção de viagem.
+`findLatestSelectedOptionIndex` rejeita availability facts da mesma mensagem quando a opção selecionada tem `trip_id` sem `board_stop_id`/`alight_stop_id`.
+`availabilityDraftHasSelectedTrip` rejeita `selected_availability_result` incompleto e aceita snapshot completo.
+`parseBookingCreateInput` continua permitindo fallback de opção única quando não há blocker e a opção única tem facts completos.
+`parseBookingCreateInput` bloqueia fallback stale de opção única quando existe seleção metadata-only ou incompleta mais recente.
+`parseBookingCreateInput` continua aceitando `opcao 1` explícita sem blocker quando a opção histórica confiável tem facts completos.
+`parseBookingCreateInput` bloqueia `opcao 1` explícita contra availability antiga quando há seleção metadata-only ou incompleta mais recente.
+`availabilityDraftHasSelectedTrip` rejeita `currentTurn` "1" quando a opção da lista tem `trip_id` sem stops, e aceita "1" somente quando a opção tem trip, embarque e desembarque completos.
+`parseBookingCreateInput` aceita `opcao 1` contra availability completa mais nova mesmo quando existe blocker metadata-only/incomplete antigo no histórico, usando a viagem nova.
+`parseBookingCreateInput` continua bloqueando availability antiga quando o blocker metadata-only/incomplete é mais recente.
+`parseBookingCreateInput` usa `currentAvailability` explícita confiável mesmo quando há blocker antigo no histórico.
+"não pode ser essa", "não pode ser esta", "não é essa msm", "essa não" e "13/07 não" não selecionam opção, não avançam para `ASK_PASSENGER_COUNT` e caem no fallback seguro de seleção.
+"não pode ser essa, paga agora?" e "não quero 13/07, paga agora?" não selecionam opção e podem responder o informativo de pagamento sem `selected_option_index`.
+"pode ser essa" e "13/07, paga agora?" continuam selecionando quando há match único visível e facts atuais completos.
+`parseBookingCreateInput` rejeita "não quero opção 1\nquero reservar\nNome | CPF | ...", "não quero 13/07\nquero reservar\nNome | CPF | ..." e "opção 1 não\nquero reservar\nNome | CPF | ...".
+`parseBookingCreateInput` rejeita "opção 1 não serve\nquero reservar\nNome | CPF | ...", "1 não serve\nquero reservar\nNome | CPF | ...", "1 não dá\nquero reservar\nNome | CPF | ...", "não serve 1\nquero reservar\nNome | CPF | ...", "13/07 não serve\nquero reservar\nNome | CPF | ...", "essa opção não serve\nquero reservar\nNome | CPF | ..." e "esse dia não dá\nquero reservar\nNome | CPF | ...".
+Availability antiga seguida de INBOUND "opção 1 não serve" ou "1 não serve" bloqueia `booking_create` posterior com "quero reservar\nNome | CPF | ..."; availability nova posterior à rejeição permite `opção 1` e usa a viagem nova.
+`routeDeterministicIntent` não seleciona opção para "opção 1 não serve", "1 não serve", "1 não dá", "não serve 1", "13/07 não serve", "essa opção não serve" e "esse dia não dá".
+Out-of-turn informativo misto com rejeição, como "não quero essa, paga agora?", mantém "Para continuar: Qual opção você prefere?", mas não anexa `tool_context.availability_search` nem persiste `selected_option_index`; `booking_create` posterior não reaproveita a availability rejeitada.
+Out-of-turn informativo puro "paga agora?" continua anexando availability context confiável, e o próximo "essa msm" ou "13/07" ainda seleciona a opção atual.
+Availability nova posterior a um reminder informativo rejeitado continua permitida e `booking_create` usa a viagem nova.
+`parseAvailabilityDateSelectionInput` e `parseAvailabilitySearchInput` não interpretam "13/07 não serve" nem "1 não serve" como seleção/data busca durante seleção de disponibilidade.
+Mensagem mista "não quero 13/07, quero 14/07" segue fallback seguro e não auto-seleciona a segunda data.
+`ValidateStructuredInterpretation` rejeita proposta de seleção para "opção 1 não serve", "1 não serve" e "não serve 1".
+"não tem problema, pode ser essa", "não precisa pagar agora, pode ser essa" e "não dá pra pagar agora, pode ser essa" continuam selecionando a opção única quando há facts atuais.
+`collectBookingDraftContext` permite merge de availability completa mais nova depois de blocker antigo e continua bloqueando availability antiga quando o blocker é mais novo.
+`availabilityDraftHasSelectedTrip` aceita "1" contra availability completa mais nova depois de blocker antigo e continua rejeitando "1" contra availability antiga quando o blocker é mais novo.
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/active_prompt_fallback.go
+apps/api/internal/chat/agent.go
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/out_of_turn_info.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/interpreter_validation.go
+apps/api/internal/chat/interpreter_test.go
+apps/api/internal/chat/interpreter_validation_test.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/response_realizer_test.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+apps/api/internal/chat/tool_router_test.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/incremental_flow_test.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'TestIntentRouterOutOfTurnInfoPreservesAvailabilityOptionPrompt|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect|TestIntentRouterGuardrailsWinOverOutOfTurnInfoDuringAvailabilitySelection|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool|TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount|TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback'
+go test -count=1 ./internal/chat -run 'Test.*OutOfTurn.*Availability|Test.*OutOfTurn.*TripSelection|Test.*Availability.*Option|Test.*Payment.*Info|Test.*ActivePrompt|Test.*AutoSend|Test.*Guardrail'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp|TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage'
+go test -count=1 ./internal/chat -run 'TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder|TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp|TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage|TestIntentRouterBotAutoReplyWithoutDraftSourceDoesNotAuthorizeAvailabilitySelection|TestIntentRouterSelectsEssaMsmFromBotAutoReplyDeliveryMirrorSourceDraft'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat -run 'Test.*OutOfTurn.*Availability|Test.*OutOfTurn.*TripSelection|Test.*Availability.*Option|Test.*AvailabilitySelection.*Reminder|Test.*Payment.*Info|Test.*ActivePrompt|Test.*AutoSend|Test.*Guardrail|Test.*Delivery.*Mirror|Test.*BotAutoReply|Test.*Stale.*Facts|Test.*Visible.*Options'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp|TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage|TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates|TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp|TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage|TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat -run 'TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder|TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates'
+go test -count=1 ./internal/chat -run 'TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions|TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestIntentRouterPrioritizesAvailabilityDateSelectionOverUnsupportedFollowUp|TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage|TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection|TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply|TestCollectBookingDraftContextPrefersSelectedAvailabilitySnapshot|TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn|TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPassengerCountTurn|TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestCollectBookingDraftContextKeepsLatestSelectedAvailabilitySnapshotIndex|TestCollectBookingDraftContextPrefersSelectedAvailabilitySnapshot|TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection|TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestCollectBookingDraftContextDoesNotCombineMetadataOnlySelectionWithOldSnapshot|TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySelection|TestAvailabilitySelectionReplacesExistingCanonicalRoute'
+go test -count=1 ./internal/chat -run 'Test.*Selected.*Availability|Test.*SelectedOption.*Persist|Test.*BookingDraft.*Snapshot|Test.*MetadataOnly.*Selection|Test.*Canonical.*Route.*Selection|TestAvailabilitySelectionReplacesExistingCanonicalRoute|TestCollectBookingDraftContextDoesNotCombineMetadataOnlySelectionWithOldSnapshot|TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySelection|Test.*PassengerCount.*Selected.*Trip|Test.*Availability.*Option.*After.*OutOfTurn|Test.*Date.*Visible'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestBuildBookingContinuationDraftRunDoesNotPersistMetadataOnlySelectedOptionIndex|TestBuildTemplateDraftRunFromDecisionDoesNotPersistMetadataOnlyAvailabilitySelection|TestAttachSelectedAvailabilityResultToTemplateRunPersistsIndexAndSnapshotAtomically|TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach|TestOpenAIInterpreterAssistSelectionWithoutAvailabilityFactsIsRejected|TestCollectBookingDraftContextDoesNotCombineMetadataOnlySelectionWithOldSnapshot|TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySelection|TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn|TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPassengerCountTurn|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'Test.*MetadataOnly.*Selection|Test.*Materialized.*Selection|Test.*SelectedOption.*Persist|Test.*SelectedAvailability.*Snapshot|Test.*SelectedTrip|Test.*BookingDraft.*Snapshot|Test.*AvailabilityDraftHasSelectedTrip|Test.*PassengerCount.*Selected.*Trip|TestFindLatestSelectedOptionIndex'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'Test.*MetadataOnly.*Selection|Test.*Incomplete.*Selection|Test.*Complete.*SelectedTrip|Test.*SelectedTrip|TestFindLatestSelectedOptionIndex|TestParseBookingCreateInput.*SingleOption|TestParseBookingCreateInput.*SelectionBlocksStale'
+go test -count=1 ./internal/chat -run 'Test.*Selected.*Availability|Test.*SelectedOption.*Persist|Test.*BookingDraft.*Snapshot|Test.*MetadataOnly.*Selection|Test.*Canonical.*Route.*Selection|Test.*AvailabilityDraftHasSelectedTrip|Test.*PassengerCount.*Selected.*Trip|TestFindLatestSelectedOptionIndex|TestParseBookingCreateInput'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'Test.*Explicit.*Index.*Block|Test.*SelectionBlocks.*Explicit|Test.*MetadataOnly.*Selection|Test.*Incomplete.*Selection|Test.*AvailabilityDraftHasSelectedTrip|Test.*BookingCreate.*Selection|Test.*SingleOption.*Fallback|TestParseBookingCreateInput'
+go test -count=1 ./internal/chat -run 'Test.*Selected.*Availability|Test.*SelectedOption.*Persist|Test.*BookingDraft.*Snapshot|Test.*MetadataOnly.*Selection|Test.*Canonical.*Route.*Selection|Test.*AvailabilityDraftHasSelectedTrip|Test.*PassengerCount.*Selected.*Trip|TestFindLatestSelectedOptionIndex|TestParseBookingCreateInput'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestParseBookingCreateInput.*SelectionBlocker|TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability|TestParseBookingCreateInputCurrentAvailabilityIgnoresOldSelectionBlocker|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion|TestInterpretStructuredTurnActivePromptNegatedContextualAvailabilityDoesNotSelect|TestValidateStructuredInterpretationRejectsNegatedAvailabilityOptionReply|TestValidateStructuredInterpretationAcceptsCurrentSingleAvailabilityOptionContextualReply'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestParseBookingCreateInputRejectsNegatedAvailabilitySelection|TestCollectBookingDraftContextAllowsFreshAvailabilityAfterOldSelectionBlocker|TestCollectBookingDraftContextBlocksOldAvailabilityWhenSelectionBlockerIsNewer|TestAvailabilityDraftHasSelectedTripAllowsFreshAvailabilityAfterOldSelectionBlocker|TestAvailabilityDraftHasSelectedTripBlocksOldAvailabilityWhenSelectionBlockerIsNewer|TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability|TestParseBookingCreateInput.*SelectionBlocker|TestAvailabilityDraftHasSelectedTrip'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+go test -count=1 ./internal/chat -run 'TestLooksLikeNegatedAvailabilitySelectionTargetsAndRejections|TestParseBookingCreateInputRejectsNegatedAvailabilitySelection|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo|TestParseAvailabilityInputsRejectNegatedListedDate|TestValidateStructuredInterpretationRejectsNegatedAvailabilityOptionReply'
+go test -count=1 ./internal/chat -run 'Test.*Bare.*Negated|Test.*Prior.*Negated|Test.*PaymentTiming.*Selection|Test.*Negated.*Availability|Test.*Negated.*BookingCreate|Test.*Structured.*Negated|TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply|TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionReply|TestParseAvailabilityInputsRejectNegatedListedDate|TestValidateStructuredInterpretationRejectsNegatedAvailabilityOptionReply|TestValidateStructuredInterpretationAcceptsPaymentTimingNegationWithAffirmativeOption'
+go test -count=1 ./internal/chat -run 'TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityContext|TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder|TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends|TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply|TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionReply'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+Review posterior encontrou P1 em booking_create com seleção negada no texto atual, P2 em merge de booking draft com blocker antigo e P1 restante em negações "não serve/não dá" ligadas a opção/data. Novo review posterior encontrou P1-A para rejeição por número nu, P1-B para rejeição INBOUND anterior não invalidando availability histórica e P2 para falso positivo "não dá pra pagar agora, pode ser essa". Review seguinte encontrou P1 em reminder informativo que reanexava availability rejeitada após turno misto de rejeição + pagamento. Foram corrigidos localmente. O ajuste ficou restrito ao roteador determinístico/out-of-turn, realizer de template, preservação de availability context confiável por source do prompt ativo, metadados do draft/booking context, substituição da rota selecionada no canonical_state, branch template aceito pelo runtime assist, gate de availability draft com viagem bookável, bloqueio de fallback stale de opção única, bloqueio de índice explícito contra availability histórica bloqueada, escopo temporal de blocker em `booking_create`/booking draft, negação contextual antes de seleção/data/booking_create, blocker `rejected_by_user` por INBOUND negado, não reanexar availability context rejeitado em reminders informativos, validação estruturada de seleção e testes. Não marcar review limpo até o próximo `/review` passar.
+
+Necessidade de teste em produção/homologação:
+validar lista de disponibilidade com uma opção e "ai o pagamento eu faço logo ou só no dia mesmo?" retornando PAYMENT_OPTIONS_INFO + "Para continuar: Qual opção você prefere?" com auto-send.
+validar "paga agora?" com múltiplas opções sem seleção automática.
+validar "essa msm, paga agora?" e "13/07, paga agora?" avançando para pergunta de passageiros somente com facts atuais correspondentes.
+validar sequência completa AVAILABILITY_LIST → "paga agora?" → lembrete → "essa msm"/"13/07".
+validar que prompt atual sem tool_context não herda facts de lista antiga e não permite seleção invisível/stale.
+validar que "13/07" após lembrete sem facts atuais confiáveis não dispara nova busca de disponibilidade.
+validar que payload com item passado oculto antes de item visível mantém canonical_state/booking draft apontando para a opção visível selecionada.
+validar lista com múltiplas datas visíveis: "14/07, paga agora?" → ASK_PASSENGER_COUNT → "só eu" mantendo a viagem de 14/07, sem trocar pela opção 1.
+validar lista com múltiplas datas visíveis após lembrete: "paga agora?" → "14/07" → "só pra mim" mantendo a viagem de 14/07 e sem nova availability_search.
+validar nova seleção depois de rota antiga já selecionada: lista nova com 13/07 e 14/07 → "14/07, paga agora?" deve substituir canonical_state/booking draft para a viagem de 14/07.
+validar lista antiga → blocker metadata-only/incomplete → lista nova completa → "opção 1 + passageiro/CPF" criando reserva para a lista nova, não para a antiga.
+validar "não pode ser essa", "não pode ser essa, paga agora?", "não quero 13/07, paga agora?", "13/07 não", "opção 1 não serve", "13/07 não serve", "essa opção não serve" e "esse dia não dá" durante seleção de opção sem `ASK_PASSENGER_COUNT` e sem `selected_option_index`.
+validar "não quero essa, paga agora?" durante seleção de opção retornando PAYMENT_OPTIONS_INFO + lembrete textual sem carregar `tool_context.availability_search`; no turno seguinte, "quero reservar Nome | CPF" não deve usar a opção rejeitada.
+se `CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED` for habilitado, validar que uma seleção aceita pelo assist com facts atuais salva `selected_option_index` e `selected_availability_result` juntos, e que o turno seguinte de passageiros mantém a viagem selecionada.
+
+Não houve alteração em:
+OpenAI runtime assist
+OpenAI shadow/schema/runner
+vector base
+embeddings
+File Search
+planner
+banco/migrations
+infra
+n8n
+booking_create tool/execução crítica
+payment_create
+booking_cancel
+document_extract
+payment_status
+Service.Reprocess fora da preservação de availability context no branch determinístico/template já existente
+
+Próxima ação recomendada:
+solicitar novo /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy.
+```
+
 3.6F/vector/File Search/planner continuam não iniciados.
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.

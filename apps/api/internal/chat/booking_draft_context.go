@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const selectedAvailabilityResultPayloadKey = "selected_availability_result"
+
 type BookingNextAction string
 
 const (
@@ -48,6 +50,47 @@ type BookingDraftContext struct {
 	AskedPaymentPreference       bool
 }
 
+type availabilitySelectionStatus string
+
+const (
+	availabilitySelectionNone                availabilitySelectionStatus = "none"
+	availabilitySelectionBlockedMetadataOnly availabilitySelectionStatus = "blocked_metadata_only"
+	availabilitySelectionIncomplete          availabilitySelectionStatus = "incomplete"
+	availabilitySelectionRejected            availabilitySelectionStatus = "rejected_by_user"
+	availabilitySelectionBookable            availabilitySelectionStatus = "bookable"
+)
+
+type availabilitySelectionEvidence struct {
+	Status              availabilitySelectionStatus
+	SourceHistoryIndex  int
+	SelectedOptionIndex int
+	TripID              string
+	BoardStopID         string
+	AlightStopID        string
+	TripDate            string
+	DepartureTime       string
+	Price               float64
+	Currency            string
+}
+
+func (e availabilitySelectionEvidence) found() bool {
+	return e.Status != "" && e.Status != availabilitySelectionNone
+}
+
+func (e availabilitySelectionEvidence) bookable() bool {
+	return e.Status == availabilitySelectionBookable
+}
+
+func (e availabilitySelectionEvidence) blocksOlderEvidence() bool {
+	return e.Status == availabilitySelectionBlockedMetadataOnly ||
+		e.Status == availabilitySelectionIncomplete ||
+		e.Status == availabilitySelectionRejected
+}
+
+func (e availabilitySelectionEvidence) blocksHistoryIndex(historyIndex int) bool {
+	return e.blocksOlderEvidence() && historyIndex >= 0 && e.SourceHistoryIndex >= historyIndex
+}
+
 func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
 	return c.HasAvailabilityShown ||
 		c.RequestedPassengerDocuments ||
@@ -57,8 +100,16 @@ func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
 }
 
 func collectBookingDraftContext(session Session, history []Message, currentTurn string) BookingDraftContext {
+	selectionEvidence := latestAvailabilitySelectionEvidence(history)
+	selectedOptionIndex := 0
+	if selectionEvidence.bookable() {
+		selectedOptionIndex = selectionEvidence.SelectedOptionIndex
+	}
+	if !selectionEvidence.found() {
+		selectedOptionIndex = findLatestSelectedOptionIndex(history)
+	}
 	context := BookingDraftContext{
-		SelectedOptionIndex:         findLatestSelectedOptionIndex(history),
+		SelectedOptionIndex:         selectedOptionIndex,
 		PassengerCountContextActive: lastBotAskedPassengerCount(history),
 	}
 
@@ -102,10 +153,19 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 			context = mergePassengerClarificationSlotsIntoBookingDraft(context, slots)
 		}
 
+		if snapshot := selectedAvailabilityResultFromMessage(message); len(snapshot) > 0 {
+			context.HasAvailabilityShown = true
+			if shouldMergeSelectedAvailabilitySnapshotForBookingDraft(selectionEvidence, i, context, snapshot) {
+				mergeSelectedAvailabilitySnapshotIntoBookingDraft(&context, snapshot)
+			}
+		}
+
 		for _, toolContext := range messageToolContexts(message) {
 			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil && shouldMergeAvailabilityFactsFromMessage(message) {
 				context.HasAvailabilityShown = true
-				mergeAvailabilityPayloadIntoBookingDraft(&context, availability)
+				if shouldMergeAvailabilityPayloadForBookingDraft(selectionEvidence, i, context, availability) {
+					mergeAvailabilityPayloadIntoBookingDraft(&context, availability)
+				}
 			}
 			if booking := asMap(toolContext[toolNameBookingCreate]); booking != nil {
 				context.BookingCreated = true
@@ -174,6 +234,200 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		!context.LapChildAssignmentKnown
 
 	return context
+}
+
+func latestAvailabilitySelectionEvidence(history []Message) availabilitySelectionEvidence {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			folded := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
+			if looksLikeNegatedAvailabilitySelection(folded) && hasPriorAvailabilityContextBefore(history, i) {
+				return availabilitySelectionEvidence{
+					Status:             availabilitySelectionRejected,
+					SourceHistoryIndex: i,
+				}
+			}
+		}
+
+		evidence := messageAvailabilitySelectionEvidence(message)
+		if evidence.found() {
+			evidence.SourceHistoryIndex = i
+			return evidence
+		}
+	}
+	return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+}
+
+func messageAvailabilitySelectionEvidence(message Message) availabilitySelectionEvidence {
+	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+		!shouldMergeAvailabilityFactsFromMessage(message) {
+		return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+	}
+
+	metadataOnlyIndex := 0
+	incompleteIndex := 0
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if len(payload) == 0 {
+			continue
+		}
+		if strings.EqualFold(payloadMetadataString(payload, "intent"), string(IntentLapChildAssignmentAnswer)) {
+			continue
+		}
+		index := payloadSelectedOptionIndex(payload)
+		if index <= 0 {
+			continue
+		}
+		status, selected := messageAvailabilitySelectionStatusForIndex(message, index)
+		if status == availabilitySelectionBookable {
+			return availabilitySelectionEvidenceFromSelected(status, index, selected)
+		}
+		if status == availabilitySelectionIncomplete && incompleteIndex <= 0 {
+			incompleteIndex = index
+		}
+		if metadataOnlyIndex <= 0 {
+			metadataOnlyIndex = index
+		}
+	}
+	if incompleteIndex > 0 {
+		return availabilitySelectionEvidence{
+			Status:              availabilitySelectionIncomplete,
+			SelectedOptionIndex: incompleteIndex,
+		}
+	}
+	if metadataOnlyIndex > 0 {
+		return availabilitySelectionEvidence{
+			Status:              availabilitySelectionBlockedMetadataOnly,
+			SelectedOptionIndex: metadataOnlyIndex,
+		}
+	}
+	return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+}
+
+func messageAvailabilitySelectionStatusForIndex(message Message, index int) (availabilitySelectionStatus, map[string]interface{}) {
+	if index <= 0 {
+		return availabilitySelectionNone, nil
+	}
+	hasSelectionFacts := false
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if len(payload) == 0 {
+			continue
+		}
+		snapshot := selectedAvailabilityResultFromPayload(payload)
+		if len(snapshot) == 0 {
+			continue
+		}
+		hasSelectionFacts = true
+		if selectedAvailabilitySnapshotMaterializesIndex(snapshot, index) {
+			return availabilitySelectionBookable, snapshot
+		}
+	}
+	for _, toolContext := range messageToolContexts(message) {
+		availability := asMap(toolContext[toolNameAvailabilitySearch])
+		if len(availability) == 0 {
+			continue
+		}
+		selected, ok := selectedAvailabilityPayloadItem(availability, index)
+		if !ok {
+			hasSelectionFacts = true
+			continue
+		}
+		hasSelectionFacts = true
+		if selectedAvailabilitySnapshotMaterializesIndex(selected, index) {
+			return availabilitySelectionBookable, selected
+		}
+	}
+	if hasSelectionFacts {
+		return availabilitySelectionIncomplete, nil
+	}
+	return availabilitySelectionBlockedMetadataOnly, nil
+}
+
+func availabilitySelectionEvidenceFromSelected(status availabilitySelectionStatus, index int, selected map[string]interface{}) availabilitySelectionEvidence {
+	return availabilitySelectionEvidence{
+		Status:              status,
+		SelectedOptionIndex: index,
+		TripID:              strings.TrimSpace(asString(selected["trip_id"])),
+		BoardStopID:         strings.TrimSpace(asString(selected["board_stop_id"])),
+		AlightStopID:        strings.TrimSpace(asString(selected["alight_stop_id"])),
+		TripDate:            strings.TrimSpace(asString(selected["trip_date"])),
+		DepartureTime:       strings.TrimSpace(asString(selected["origin_depart_time"])),
+		Price:               asFloat64(selected["price"]),
+		Currency:            strings.TrimSpace(asString(selected["currency"])),
+	}
+}
+
+func hasCompleteSelectedTripFacts(tripID, boardStopID, alightStopID string) bool {
+	return strings.TrimSpace(tripID) != "" &&
+		strings.TrimSpace(boardStopID) != "" &&
+		strings.TrimSpace(alightStopID) != ""
+}
+
+func selectedAvailabilitySnapshotMaterializesIndex(snapshot map[string]interface{}, index int) bool {
+	if len(snapshot) == 0 || index <= 0 {
+		return false
+	}
+	snapshotIndex := asInt(snapshot["selected_option_index"])
+	if snapshotIndex > 0 && snapshotIndex != index {
+		return false
+	}
+	return hasCompleteSelectedTripFacts(
+		asString(snapshot["trip_id"]),
+		asString(snapshot["board_stop_id"]),
+		asString(snapshot["alight_stop_id"]),
+	)
+}
+
+func selectedAvailabilityPayloadItem(payload map[string]interface{}, index int) (map[string]interface{}, bool) {
+	if len(payload) == 0 || index <= 0 {
+		return nil, false
+	}
+	results := asInterfaceSliceMaps(payload["results"])
+	selectedIndex := index - 1
+	if selectedIndex < 0 || selectedIndex >= len(results) {
+		return nil, false
+	}
+	return results[selectedIndex], true
+}
+
+func shouldMergeSelectedAvailabilitySnapshotForBookingDraft(selection availabilitySelectionEvidence, historyIndex int, context BookingDraftContext, snapshot map[string]interface{}) bool {
+	if !selection.found() {
+		return true
+	}
+	if !selection.bookable() {
+		return !selection.blocksHistoryIndex(historyIndex)
+	}
+	if historyIndex == selection.SourceHistoryIndex {
+		return true
+	}
+	if strings.TrimSpace(context.TripID) == "" {
+		return false
+	}
+	return selectedAvailabilitySnapshotMatchesBookingDraft(context, snapshot)
+}
+
+func shouldMergeAvailabilityPayloadForBookingDraft(selection availabilitySelectionEvidence, historyIndex int, context BookingDraftContext, payload map[string]interface{}) bool {
+	if !selection.found() {
+		return true
+	}
+	if !selection.bookable() {
+		return !selection.blocksHistoryIndex(historyIndex)
+	}
+	if historyIndex == selection.SourceHistoryIndex {
+		return true
+	}
+	return availabilityPayloadSelectionMatchesBookingDraft(context, payload)
+}
+
+func availabilityPayloadSelectionMatchesBookingDraft(context BookingDraftContext, payload map[string]interface{}) bool {
+	if strings.TrimSpace(context.TripID) == "" || context.SelectedOptionIndex <= 0 {
+		return false
+	}
+	results := asInterfaceSliceMaps(payload["results"])
+	selectedIndex := context.SelectedOptionIndex - 1
+	if selectedIndex < 0 || selectedIndex >= len(results) {
+		return false
+	}
+	return selectedAvailabilitySnapshotMatchesBookingDraft(context, results[selectedIndex])
 }
 
 func isShortYesReply(text string) bool {
@@ -457,27 +711,35 @@ func buildAskLapChildAssignmentReply(context BookingDraftContext) string {
 func buildBookingContinuationDraftRun(reply string, action BookingNextAction, context BookingDraftContext) RunAgentResult {
 	reply = strings.TrimSpace(reply)
 	templateName := bookingContinuationTemplateName(action, context)
+	requestPayload := map[string]interface{}{
+		"mode":                        "TEMPLATE_FIRST_REPLY",
+		"intent":                      string(IntentPassengerCountReply),
+		"action":                      string(action),
+		"template_name":               string(templateName),
+		"passenger_count":             context.PassengerCount,
+		"child_under_5_count":         context.ChildUnder5Count,
+		"passenger_count_known":       context.PassengerCountKnown,
+		"lap_child_assignment_known":  context.LapChildAssignmentKnown,
+		"lap_child_passenger_indexes": context.LapChildPassengerIndexes,
+		"needs_lap_child_assignment":  context.NeedsLapChildAssignment,
+	}
+	responsePayload := map[string]interface{}{
+		"reply_text":    reply,
+		"template_name": string(templateName),
+		"intent":        string(IntentPassengerCountReply),
+		"action":        string(action),
+	}
+	if snapshot := selectedAvailabilityResultPayloadFromBookingDraft(context); len(snapshot) > 0 {
+		requestPayload["selected_option_index"] = context.SelectedOptionIndex
+		responsePayload["selected_option_index"] = context.SelectedOptionIndex
+		requestPayload[selectedAvailabilityResultPayloadKey] = cloneMap(snapshot)
+		responsePayload[selectedAvailabilityResultPayloadKey] = cloneMap(snapshot)
+	}
 	return RunAgentResult{
-		ReplyText: reply,
-		Model:     "template_realizer",
-		RequestPayload: map[string]interface{}{
-			"mode":                        "TEMPLATE_FIRST_REPLY",
-			"intent":                      string(IntentPassengerCountReply),
-			"action":                      string(action),
-			"template_name":               string(templateName),
-			"passenger_count":             context.PassengerCount,
-			"child_under_5_count":         context.ChildUnder5Count,
-			"passenger_count_known":       context.PassengerCountKnown,
-			"lap_child_assignment_known":  context.LapChildAssignmentKnown,
-			"lap_child_passenger_indexes": context.LapChildPassengerIndexes,
-			"needs_lap_child_assignment":  context.NeedsLapChildAssignment,
-		},
-		ResponsePayload: map[string]interface{}{
-			"reply_text":    reply,
-			"template_name": string(templateName),
-			"intent":        string(IntentPassengerCountReply),
-			"action":        string(action),
-		},
+		ReplyText:       reply,
+		Model:           "template_realizer",
+		RequestPayload:  requestPayload,
+		ResponsePayload: responsePayload,
 	}
 }
 
@@ -825,6 +1087,35 @@ func messageToolContexts(message Message) []map[string]interface{} {
 	return contexts
 }
 
+func selectedAvailabilityResultFromMessage(message Message) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+		!shouldMergeAvailabilityFactsFromMessage(message) {
+		return nil
+	}
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if len(payload) == 0 {
+			continue
+		}
+		if snapshot := selectedAvailabilityResultFromPayload(payload); len(snapshot) > 0 {
+			return snapshot
+		}
+	}
+	return nil
+}
+
+func selectedAvailabilityResultFromPayload(payload map[string]interface{}) map[string]interface{} {
+	if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); len(snapshot) > 0 {
+		return snapshot
+	}
+	for _, key := range []string{"request_payload", "response_payload"} {
+		nested := asMap(payload[key])
+		if snapshot := asMap(nested[selectedAvailabilityResultPayloadKey]); len(snapshot) > 0 {
+			return snapshot
+		}
+	}
+	return nil
+}
+
 func mergeAvailabilityPayloadIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
 	if context == nil {
 		return
@@ -880,6 +1171,149 @@ func mergeAvailabilityPayloadIntoBookingDraft(context *BookingDraftContext, payl
 	}
 	if context.Currency == "" {
 		context.Currency = strings.TrimSpace(asString(item["currency"]))
+	}
+}
+
+func mergeSelectedAvailabilitySnapshotIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
+	if context == nil || len(payload) == 0 {
+		return
+	}
+	acceptsSnapshotSelection := strings.TrimSpace(context.TripID) == ""
+	if !selectedAvailabilitySnapshotMatchesBookingDraft(*context, payload) {
+		return
+	}
+	if index := asInt(payload["selected_option_index"]); index > 0 && (acceptsSnapshotSelection || context.SelectedOptionIndex <= 0) {
+		context.SelectedOptionIndex = index
+	}
+	if origin := firstNonEmpty(
+		strings.TrimSpace(asString(payload["origin"])),
+		strings.TrimSpace(asString(payload["origin_display_name"])),
+	); origin != "" && context.Origin == "" {
+		context.Origin = origin
+	}
+	if destination := firstNonEmpty(
+		strings.TrimSpace(asString(payload["destination"])),
+		strings.TrimSpace(asString(payload["destination_display_name"])),
+	); destination != "" && context.Destination == "" {
+		context.Destination = destination
+	}
+	if tripID := strings.TrimSpace(asString(payload["trip_id"])); tripID != "" && context.TripID == "" {
+		context.TripID = tripID
+	}
+	if boardStopID := strings.TrimSpace(asString(payload["board_stop_id"])); boardStopID != "" && context.BoardStopID == "" {
+		context.BoardStopID = boardStopID
+	}
+	if alightStopID := strings.TrimSpace(asString(payload["alight_stop_id"])); alightStopID != "" && context.AlightStopID == "" {
+		context.AlightStopID = alightStopID
+	}
+	if tripDate := strings.TrimSpace(asString(payload["trip_date"])); tripDate != "" && context.TripDate == "" {
+		context.TripDate = tripDate
+	}
+	if departureTime := strings.TrimSpace(asString(payload["origin_depart_time"])); departureTime != "" && context.DepartureTime == "" {
+		context.DepartureTime = departureTime
+	}
+	if context.Price == 0 {
+		context.Price = asFloat64(payload["price"])
+	}
+	if currency := strings.TrimSpace(asString(payload["currency"])); currency != "" && context.Currency == "" {
+		context.Currency = currency
+	}
+}
+
+func selectedAvailabilitySnapshotMatchesBookingDraft(context BookingDraftContext, payload map[string]interface{}) bool {
+	currentTripID := strings.TrimSpace(context.TripID)
+	if currentTripID == "" {
+		return true
+	}
+	snapshotTripID := strings.TrimSpace(asString(payload["trip_id"]))
+	if snapshotTripID == "" || snapshotTripID != currentTripID {
+		return false
+	}
+	return selectedAvailabilitySnapshotIDMatches(context.BoardStopID, payload["board_stop_id"]) &&
+		selectedAvailabilitySnapshotIDMatches(context.AlightStopID, payload["alight_stop_id"])
+}
+
+func selectedAvailabilitySnapshotIDMatches(current string, snapshot interface{}) bool {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return true
+	}
+	snapshotValue := strings.TrimSpace(asString(snapshot))
+	return snapshotValue == "" || snapshotValue == current
+}
+
+func attachSelectedAvailabilityResultToTemplateRun(run RunAgentResult, availability *AvailabilitySearchResult, decision IntentDecision) RunAgentResult {
+	if decision.Intent != IntentSelectAvailabilityOption ||
+		decision.SelectedOptionIndex <= 0 ||
+		decision.TemplateName != TemplateAskPassengerCount {
+		return run
+	}
+	snapshot := selectedAvailabilityResultPayloadFromAvailability(availability, decision.SelectedOptionIndex)
+	if len(snapshot) == 0 {
+		return run
+	}
+	if run.RequestPayload == nil {
+		run.RequestPayload = map[string]interface{}{}
+	}
+	if run.ResponsePayload == nil {
+		run.ResponsePayload = map[string]interface{}{}
+	}
+	run.RequestPayload["selected_option_index"] = decision.SelectedOptionIndex
+	run.ResponsePayload["selected_option_index"] = decision.SelectedOptionIndex
+	run.RequestPayload[selectedAvailabilityResultPayloadKey] = cloneMap(snapshot)
+	run.ResponsePayload[selectedAvailabilityResultPayloadKey] = cloneMap(snapshot)
+	return run
+}
+
+func selectedAvailabilityResultPayloadFromAvailability(availability *AvailabilitySearchResult, selectedOptionIndex int) map[string]interface{} {
+	if availability == nil || selectedOptionIndex <= 0 || selectedOptionIndex > len(availability.Results) {
+		return nil
+	}
+	return selectedAvailabilityResultPayloadFromItem(availability.Results[selectedOptionIndex-1], selectedOptionIndex, availability.Filter)
+}
+
+func selectedAvailabilityResultPayloadFromBookingDraft(context BookingDraftContext) map[string]interface{} {
+	if context.SelectedOptionIndex <= 0 || strings.TrimSpace(context.TripID) == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"selected_option_index":    context.SelectedOptionIndex,
+		"trip_id":                  strings.TrimSpace(context.TripID),
+		"board_stop_id":            strings.TrimSpace(context.BoardStopID),
+		"alight_stop_id":           strings.TrimSpace(context.AlightStopID),
+		"origin":                   strings.TrimSpace(context.Origin),
+		"destination":              strings.TrimSpace(context.Destination),
+		"origin_display_name":      strings.TrimSpace(context.Origin),
+		"destination_display_name": strings.TrimSpace(context.Destination),
+		"origin_depart_time":       strings.TrimSpace(context.DepartureTime),
+		"trip_date":                strings.TrimSpace(context.TripDate),
+		"price":                    context.Price,
+		"currency":                 strings.TrimSpace(context.Currency),
+	}
+}
+
+func selectedAvailabilityResultPayloadFromItem(item AvailabilitySearchItem, selectedOptionIndex int, filter AvailabilitySearchInput) map[string]interface{} {
+	return map[string]interface{}{
+		"selected_option_index":    selectedOptionIndex,
+		"segment_id":               strings.TrimSpace(item.SegmentID),
+		"trip_id":                  strings.TrimSpace(item.TripID),
+		"route_id":                 strings.TrimSpace(item.RouteID),
+		"board_stop_id":            strings.TrimSpace(item.BoardStopID),
+		"alight_stop_id":           strings.TrimSpace(item.AlightStopID),
+		"origin_stop_id":           strings.TrimSpace(item.OriginStopID),
+		"destination_stop_id":      strings.TrimSpace(item.DestinationStopID),
+		"origin":                   strings.TrimSpace(filter.Origin),
+		"destination":              strings.TrimSpace(filter.Destination),
+		"package_name":             firstNonEmpty(strings.TrimSpace(item.PackageName), strings.TrimSpace(filter.PackageName)),
+		"origin_display_name":      strings.TrimSpace(item.OriginDisplayName),
+		"destination_display_name": strings.TrimSpace(item.DestinationDisplayName),
+		"origin_depart_time":       strings.TrimSpace(item.OriginDepartTime),
+		"trip_date":                strings.TrimSpace(item.TripDate),
+		"seats_available":          item.SeatsAvailable,
+		"price":                    item.Price,
+		"currency":                 strings.TrimSpace(item.Currency),
+		"status":                   strings.TrimSpace(item.Status),
+		"trip_status":              strings.TrimSpace(item.TripStatus),
 	}
 }
 

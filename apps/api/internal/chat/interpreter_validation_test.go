@@ -118,6 +118,34 @@ func TestValidateStructuredInterpretationAcceptsCurrentSingleAvailabilityOptionC
 	assertInterpretationAccepted(t, got)
 }
 
+func TestValidateStructuredInterpretationRejectsNegatedAvailabilityOptionReply(t *testing.T) {
+	proposal := validationAvailabilityOptionProposal(1)
+
+	for _, text := range []string{"não pode ser essa", "opção 1 não serve", "1 não serve", "não serve 1"} {
+		t.Run(text, func(t *testing.T) {
+			got := ValidateStructuredInterpretation(InterpretationValidationInput{
+				Proposal:    proposal,
+				CurrentTurn: text,
+				History:     validationAvailabilityHistory(validationAvailabilityResult(1), true),
+				State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+			})
+
+			assertInterpretationRejected(t, got, "selected_option_index_required", TemplateContextFallbackAvailabilityOption)
+		})
+	}
+}
+
+func TestValidateStructuredInterpretationAcceptsPaymentTimingNegationWithAffirmativeOption(t *testing.T) {
+	got := ValidateStructuredInterpretation(InterpretationValidationInput{
+		Proposal:    validationAvailabilityOptionProposal(1),
+		CurrentTurn: "não dá pra pagar agora, pode ser essa",
+		History:     validationAvailabilityHistory(validationAvailabilityResult(1), true),
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+	})
+
+	assertInterpretationAccepted(t, got)
+}
+
 func TestValidateStructuredInterpretationAcceptsBotAutoReplyDeliveryMirrorSourceDraft(t *testing.T) {
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)

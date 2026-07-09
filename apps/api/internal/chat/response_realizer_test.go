@@ -254,6 +254,83 @@ func TestResponseRealizerRequiresToolFactForSelection(t *testing.T) {
 	}
 }
 
+func TestBuildTemplateDraftRunFromDecisionDoesNotPersistMetadataOnlyAvailabilitySelection(t *testing.T) {
+	decision := IntentDecision{
+		Intent:              IntentSelectAvailabilityOption,
+		Action:              "template",
+		TemplateName:        TemplateAskPassengerCount,
+		SelectedOptionIndex: 2,
+	}
+	run := buildTemplateDraftRunFromDecision(decision, askPassengerCountReply)
+
+	if got := asInt(run.RequestPayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected builder not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.RequestPayload)
+	}
+	if got := asInt(run.ResponsePayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected builder not to persist metadata-only selected_option_index in response, got %d payload=%+v", got, run.ResponsePayload)
+	}
+	if len(asMap(run.RequestPayload[selectedAvailabilityResultPayloadKey])) != 0 ||
+		len(asMap(run.ResponsePayload[selectedAvailabilityResultPayloadKey])) != 0 {
+		t.Fatalf("expected builder not to persist selected availability snapshot, request=%+v response=%+v", run.RequestPayload, run.ResponsePayload)
+	}
+
+	run = attachSelectedAvailabilityResultToTemplateRun(run, nil, decision)
+	if got := asInt(run.RequestPayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected attach without availability context not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.RequestPayload)
+	}
+}
+
+func TestAttachSelectedAvailabilityResultToTemplateRunPersistsIndexAndSnapshotAtomically(t *testing.T) {
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 2},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-2026-07-13",
+				BoardStopID:            "board-2026-07-13",
+				AlightStopID:           "alight-2026-07-13",
+				OriginDisplayName:      "Videira/SC",
+				DestinationDisplayName: "Santa Ines/MA",
+				OriginDepartTime:       "13:00",
+				TripDate:               "2026-07-13",
+				Price:                  950,
+				Currency:               "BRL",
+			},
+			{
+				TripID:                 "trip-2026-07-14",
+				BoardStopID:            "board-2026-07-14",
+				AlightStopID:           "alight-2026-07-14",
+				OriginDisplayName:      "Videira/SC",
+				DestinationDisplayName: "Santa Ines/MA",
+				OriginDepartTime:       "14:00",
+				TripDate:               "2026-07-14",
+				Price:                  980,
+				Currency:               "BRL",
+			},
+		},
+	}
+	decision := IntentDecision{
+		Intent:              IntentSelectAvailabilityOption,
+		Action:              "template",
+		TemplateName:        TemplateAskPassengerCount,
+		SelectedOptionIndex: 2,
+	}
+	run := buildTemplateDraftRunFromDecision(decision, askPassengerCountReply)
+	run = attachSelectedAvailabilityResultToTemplateRun(run, &availability, decision)
+
+	for _, payload := range []map[string]interface{}{run.RequestPayload, run.ResponsePayload} {
+		if got := asInt(payload["selected_option_index"]); got != 2 {
+			t.Fatalf("expected top-level selected_option_index=2, got %d payload=%+v", got, payload)
+		}
+		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
+		if got := asInt(snapshot["selected_option_index"]); got != 2 {
+			t.Fatalf("expected snapshot selected_option_index=2, got %d snapshot=%+v", got, snapshot)
+		}
+		if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+			t.Fatalf("expected snapshot trip-2026-07-14, got %q snapshot=%+v", got, snapshot)
+		}
+	}
+}
+
 func TestResponseRealizerOperationalTemplatesRequireToolFacts(t *testing.T) {
 	if canRealizeWithoutLLM(IntentDecision{Intent: IntentAvailabilitySearch, TemplateName: TemplateNoAvailability}, discoveryState()) {
 		t.Fatal("expected no availability template to require tool facts")
