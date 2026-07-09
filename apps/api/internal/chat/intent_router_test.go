@@ -33,6 +33,47 @@ func TestIntentRouterDeterministicCases(t *testing.T) {
 	}
 }
 
+func TestRouteDeterministicIntentAdministrativeNotesSupport(t *testing.T) {
+	state := discoveryState()
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	for _, text := range []string{
+		"queria verificar com você com relação à baixa das notas",
+		"nota fiscal",
+		"faturamento",
+		"financeiro",
+		"emissão de nota",
+		"comprovante fiscal",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(nil, text, state, now)
+			if got.Intent != IntentHumanSupportInfoQuestion {
+				t.Fatalf("expected human support info intent, got %+v", got)
+			}
+			if got.Source != administrativeNotesSupportDecisionSource ||
+				got.TemplateName != TemplateHumanSupportInfo ||
+				got.Action != "template" {
+				t.Fatalf("expected administrative support template decision, got %+v", got)
+			}
+			reply, ok := realizeIntentResponseTemplate(got)
+			if !ok {
+				t.Fatal("expected administrative support decision to be realizable")
+			}
+			folded := strings.Join(strings.Fields(foldChatText(reply)), " ")
+			if !strings.Contains(folded, "notas ou financeiro") ||
+				strings.Contains(folded, "numero da nota") ||
+				strings.Contains(folded, "periodo") ||
+				strings.Contains(folded, "comprovante") {
+				t.Fatalf("unexpected administrative support reply: %q", reply)
+			}
+		})
+	}
+
+	got := routeDeterministicIntent(nil, "João Silva CPF 00000000000", state, now)
+	if got.Source == administrativeNotesSupportDecisionSource {
+		t.Fatalf("passenger document text must not route as administrative support: %+v", got)
+	}
+}
+
 func assertContextualFallbackDecision(t *testing.T, got IntentDecision, templateName ResponseTemplateName) {
 	t.Helper()
 	if got.Intent != IntentUnknown {

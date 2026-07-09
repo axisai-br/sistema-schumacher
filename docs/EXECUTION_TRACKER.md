@@ -546,13 +546,14 @@ solicitar novo /review antes de commit; depois, se aprovado, preparar commit do 
 Hotfix local concluído em 2026-07-09; pendente review/commit/deploy/validação em produção/homologação:
 
 ```text
-Hotfix H-2026-07-09 — administrative notes/support during booking pending
-Entrada real: "queria verificar com você com relação à baixa das notas" durante BOOKING_PENDING/ASK_PASSENGER_DOCUMENTS
-Problema corrigido localmente: pergunta administrativa/financeira sobre notas deixava o fluxo determinístico de booking/documents responder como continuação de passageiro.
-Esperado: HUMAN_SUPPORT_INFO com suporte da Schumacher Tur, sem ASK_PASSENGER_DOCUMENTS e sem frase "Recebi os dados do passageiro".
+Hotfix H-2026-07-09 — administrative notes/support routing
+Entrada real: depois de "oi", "queria verificar com você com relação à baixa das notas" caía no legacy runner; durante BOOKING_PENDING/ASK_PASSENGER_DOCUMENTS também podia cair em continuação de reserva/documentos.
+Problema corrigido localmente: pergunta administrativa/financeira sobre notas agora é roteada deterministicamente para suporte em sessão limpa/DISCOVERY e em fases protegidas de booking/documents.
+Esperado: HUMAN_SUPPORT_INFO com suporte da Schumacher Tur, sem legacy/free-form runner, sem ASK_PASSENGER_DOCUMENTS e sem frase "Recebi os dados do passageiro".
 
 Decisão tomada:
 Criado helper determinístico `looksLikeAdministrativeNotesSupportQuestion`.
+`intent_router` retorna `deterministic_administrative_notes_support` com action=template e template_name=HUMAN_SUPPORT_INFO antes de UNKNOWN/fallback para sessão limpa/DISCOVERY.
 Durante BOOKING_PENDING, PASSENGER_COLLECTION, prompt de documentos ou confirmação/prosseguimento de documentos, turnos textuais sobre "baixa das notas", "notas", "nota fiscal", "faturamento", "financeiro", "emissão de nota" e "comprovante fiscal" roteiam para suporte quando não parecem documento real de passageiro.
 O draft usa template fechado HUMAN_SUPPORT_INFO com resposta específica: "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
 Texto real de passageiro com CPF continua no fluxo documental.
@@ -560,7 +561,8 @@ Respostas como "já mandei acima" continuam no fallback documental existente.
 Turnos com mídia/documento/foto continuam priorizando document_extract.
 
 Garantias cobertas:
-Não chama booking_create, payment_create, payment_status ou document_extract para texto puro administrativo.
+Não chama legacy/free-form runner em sessão limpa para texto administrativo puro.
+Não chama booking_create, payment_create, payment_status, document_extract ou availability_search para texto puro administrativo.
 Não usa action=ask_passenger_documents nem template_name=ASK_PASSENGER_DOCUMENTS no caso administrativo.
 Não persiste selected_option_index nem selected_availability_result no draft administrativo.
 Não apaga nem materializa booking draft existente.
@@ -568,20 +570,25 @@ Não apaga nem materializa booking draft existente.
 Arquivos alterados nesta correção:
 apps/api/internal/chat/administrative_support.go
 apps/api/internal/chat/administrative_support_test.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/response_realizer.go
 apps/api/internal/chat/service.go
 apps/api/internal/chat/handler_test.go
 docs/EXECUTION_TRACKER.md
 
 Testes executados:
+go test -count=1 ./internal/chat -run 'TestRouteDeterministicIntentAdministrativeNotesSupport|TestLooksLikeAdministrativeNotesSupportQuestion|TestShouldRouteAdministrativeNotesSupportTurnProtectedPhases|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate|TestReprocessAdministrativeNotesMediaDuringPassengerDocumentsRunsDocumentExtract|TestIntentRouterPaymentPreferencePromptStillAnswersPaymentInfoQuestions|TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect'
 go test -count=1 ./internal/chat -run 'TestLooksLikeAdministrativeNotesSupportQuestion|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate'
 go test -count=1 ./internal/chat
 go test -count=1 ./...
 git diff --check
 
 Resultado do review:
-Revisão local do diff sem achados P1/P2. Solicitar /review antes de commit.
+Pendente novo /review após ajuste adicional de sessão limpa/DISCOVERY.
 
 Necessidade de teste em produção/homologação:
+validar sessão limpa após "oi" → "queria verificar com você com relação à baixa das notas" retornando suporte/humano, com log intent_router_decision e sem runner_run_start.
 validar BOOKING_PENDING/ASK_PASSENGER_DOCUMENTS → "queria verificar com você com relação à baixa das notas" retornando suporte/humano, sem ASK_PASSENGER_DOCUMENTS e sem tools críticas.
 validar "nota fiscal", "notas", "faturamento", "financeiro", "emissão de nota" e "comprovante fiscal" durante coleta de documentos.
 validar que "João Silva CPF 00000000000" continua fluxo documental normal e que foto/documento continua document_extract.
@@ -2437,15 +2444,15 @@ document_extract
 
 ---
 
-## H-011 — Pergunta administrativa sobre notas durante booking pending
+## H-011 — Pergunta administrativa sobre notas durante booking pending/sessão limpa
 
 **Status:** Corrigido localmente em 2026-07-09; pendente review, deploy e validação em produção/homologação.
 
-**Sintoma:** durante `BOOKING_PENDING`/`ASK_PASSENGER_DOCUMENTS`, texto como "queria verificar com você com relação à baixa das notas" era tratado como continuação de documentos/reserva e podia gerar `ASK_PASSENGER_DOCUMENTS`.
+**Sintoma:** em sessão limpa após "oi", texto como "queria verificar com você com relação à baixa das notas" caía no legacy runner e podia pedir número de nota/período/comprovante; durante `BOOKING_PENDING`/`ASK_PASSENGER_DOCUMENTS`, o mesmo texto podia ser tratado como continuação de documentos/reserva e gerar `ASK_PASSENGER_DOCUMENTS`.
 
-**Correção aplicada:** gate determinístico para assuntos administrativos/financeiros de notas durante coleta/pendência de documentos, roteando texto puro para `HUMAN_SUPPORT_INFO` sem tools críticas e sem payload de seleção de disponibilidade. Documento textual real e mídia continuam no fluxo documental.
+**Correção aplicada:** gate determinístico para assuntos administrativos/financeiros de notas no `intent_router` e durante coleta/pendência de documentos, roteando texto puro para `HUMAN_SUPPORT_INFO` sem legacy runner, sem tools críticas e sem payload de seleção de disponibilidade. Documento textual real, pagamento informativo e mídia continuam nos fluxos existentes.
 
-**Testes executados:** `go test -count=1 ./internal/chat -run 'TestLooksLikeAdministrativeNotesSupportQuestion|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
+**Testes executados:** `go test -count=1 ./internal/chat -run 'TestRouteDeterministicIntentAdministrativeNotesSupport|TestLooksLikeAdministrativeNotesSupportQuestion|TestShouldRouteAdministrativeNotesSupportTurnProtectedPhases|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate|TestReprocessAdministrativeNotesMediaDuringPassengerDocumentsRunsDocumentExtract|TestIntentRouterPaymentPreferencePromptStillAnswersPaymentInfoQuestions|TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
 
 ---
 

@@ -1157,6 +1157,79 @@ func TestReprocessAdministrativeNotesDuringPassengerDocumentsRoutesSupport(t *te
 	}
 }
 
+func TestReprocessAdministrativeNotesInCleanSessionRoutesSupportWithoutRunner(t *testing.T) {
+	store := newFakeStore()
+	logger := &fakeChatLogger{}
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: "Claro. Pode me informar os números das notas?", Model: "gpt-test"},
+	}
+	availability := &fakeAvailabilitySearcher{enabled: true}
+	creator := &fakeBookingCreator{enabled: true}
+	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+	paymentCreator := &fakePaymentCreator{enabled: true}
+	svc := NewService(
+		store,
+		config.Config{ChatDebounceWindowMS: 1500},
+		logger,
+		runner,
+		availability,
+		creator,
+		paymentSearcher,
+		paymentCreator,
+	)
+	session, hello := store.seedSessionWithMessage("5549988709370", "oi")
+	if _, err := store.UpdateMessage(context.Background(), UpdateMessageInput{
+		MessageID:        hello.ID,
+		ProcessingStatus: "PROCESSED",
+	}); err != nil {
+		t.Fatalf("mark hello processed: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-admin-notes-clean",
+			IdempotencyKey:    "idem-admin-notes-clean",
+			Body:              "queria verificar com você com relação à baixa das notas",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest clean-session administrative notes turn: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess clean-session administrative notes turn: %v", err)
+	}
+
+	assertAdministrativeNotesSupportDraft(t, reprocessed)
+	if runner.calls != 0 {
+		t.Fatalf("expected no free-form runner call, got %d", runner.calls)
+	}
+	if availability.calls != 0 {
+		t.Fatalf("expected no availability_search call, got %d", availability.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected no booking_create call, got %d", creator.calls)
+	}
+	if paymentSearcher.calls != 0 {
+		t.Fatalf("expected no payment_status call, got %d", paymentSearcher.calls)
+	}
+	if paymentCreator.calls != 0 {
+		t.Fatalf("expected no payment_create call, got %d", paymentCreator.calls)
+	}
+	if len(reprocessed.ToolCalls) != 0 || len(store.toolCallOrder) != 0 {
+		t.Fatalf("expected no tool calls, got result=%+v stored=%+v", reprocessed.ToolCalls, store.toolCallOrder)
+	}
+	if !logger.contains("event=intent_router_decision") ||
+		!logger.contains("intent_source="+administrativeNotesSupportDecisionSource) ||
+		!logger.contains("template_name="+string(TemplateHumanSupportInfo)) {
+		t.Fatalf("expected administrative intent_router_decision log, got %+v", logger.entries)
+	}
+}
+
 func TestReprocessAdministrativeNotesDuringBookingPendingRoutesSupport(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
@@ -9071,6 +9144,23 @@ type fakePaymentCreator struct {
 	err       error
 	errs      []error
 	lastInput PaymentCreateInput
+}
+
+type fakeChatLogger struct {
+	entries []string
+}
+
+func (f *fakeChatLogger) Printf(format string, v ...interface{}) {
+	f.entries = append(f.entries, fmt.Sprintf(format, v...))
+}
+
+func (f *fakeChatLogger) contains(substr string) bool {
+	for _, entry := range f.entries {
+		if strings.Contains(entry, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeBookingCanceler struct {
