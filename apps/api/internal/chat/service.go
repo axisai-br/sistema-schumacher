@@ -967,6 +967,17 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			}
 		}
 	}
+	if !deterministicBookingHandled &&
+		!documentHandled &&
+		shouldRouteAdministrativeNotesSupportTurn(canonicalState.Phase, history, currentTurn, persisted.Session, documentCollectionMediaTurn) {
+		run := buildAdministrativeNotesSupportDraftRun()
+		deterministicBookingRun = &run
+		deterministicBookingHandled = true
+		memory["administrative_notes_support_context"] = "true"
+		rolloutMetadata.DecisionSource = "deterministic"
+		rolloutMetadata.DecisionValid = boolPtr(true)
+		rolloutMetadata.CanonicalPhaseAfter = canonicalState.Phase
+	}
 	if intentRouterEnabled() && templateRealizerEnabled() &&
 		!unsupportedCargoHandled &&
 		!deterministicBookingHandled &&

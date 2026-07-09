@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1091,6 +1092,278 @@ func TestReprocessConfirmsTextPassengerDocumentBeforeGenericRunner(t *testing.T)
 	}
 	if got := readDraftAutoSendStatus(*reprocessed.Draft); got != draftAutoSendStatusEligible {
 		t.Fatalf("expected text document confirmation to be auto-send eligible, got %s", got)
+	}
+}
+
+func TestReprocessAdministrativeNotesDuringPassengerDocumentsRoutesSupport(t *testing.T) {
+	cases := []string{
+		"queria verificar com você com relação à baixa das notas",
+		"nota fiscal",
+		"notas",
+		"baixa das notas",
+		"faturamento",
+		"financeiro",
+		"emissão de nota",
+		"comprovante fiscal",
+	}
+	for i, body := range cases {
+		t.Run(body, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{
+				enabled: true,
+				result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+			}
+			creator := &fakeBookingCreator{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			paymentCreator := &fakePaymentCreator{enabled: true}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator, paymentSearcher, paymentCreator)
+			session := seedDocumentCollectionBookingHistory(t, store, fmt.Sprintf("55499887093%02d", i))
+
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction:         "INBOUND",
+					ProviderMessageID: fmt.Sprintf("msg-admin-notes-%d", i),
+					IdempotencyKey:    fmt.Sprintf("idem-admin-notes-%d", i),
+					Body:              body,
+				},
+			})
+			if err != nil {
+				t.Fatalf("ingest administrative notes turn: %v", err)
+			}
+
+			reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess administrative notes turn: %v", err)
+			}
+
+			assertAdministrativeNotesSupportDraft(t, reprocessed)
+			if runner.calls != 0 {
+				t.Fatalf("expected no runner/document_extract call, got %d", runner.calls)
+			}
+			if creator.calls != 0 {
+				t.Fatalf("expected no booking_create call, got %d", creator.calls)
+			}
+			if paymentSearcher.calls != 0 {
+				t.Fatalf("expected no payment_status call, got %d", paymentSearcher.calls)
+			}
+			if paymentCreator.calls != 0 {
+				t.Fatalf("expected no payment_create call, got %d", paymentCreator.calls)
+			}
+			if len(reprocessed.ToolCalls) != 0 || len(store.toolCallOrder) != 0 {
+				t.Fatalf("expected no tool calls, got result=%+v stored=%+v", reprocessed.ToolCalls, store.toolCallOrder)
+			}
+		})
+	}
+}
+
+func TestReprocessAdministrativeNotesDuringBookingPendingRoutesSupport(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedBookingPendingPhase(t, store)
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-admin-notes-booking-pending",
+			IdempotencyKey:    "idem-admin-notes-booking-pending",
+			Body:              "queria verificar a nota fiscal",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest booking-pending administrative notes turn: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess booking-pending administrative notes turn: %v", err)
+	}
+
+	assertAdministrativeNotesSupportDraft(t, reprocessed)
+	if runner.calls != 0 {
+		t.Fatalf("expected no runner/document_extract call, got %d", runner.calls)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("expected no booking_create call, got %d", creator.calls)
+	}
+	if len(reprocessed.ToolCalls) != 0 || len(store.toolCallOrder) != 0 {
+		t.Fatalf("expected no tool calls, got result=%+v stored=%+v", reprocessed.ToolCalls, store.toolCallOrder)
+	}
+}
+
+func TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709360")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-invalid-text-doc-admin-gate",
+			IdempotencyKey:    "idem-invalid-text-doc-admin-gate",
+			Body:              "João Silva CPF 00000000000",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest invalid passenger document text: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess invalid passenger document text: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected text document flow before generic runner, got %d calls", runner.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatal("expected passenger document draft")
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected ask documents template, got %q payload=%+v body=%q", got, reprocessed.Draft.NormalizedPayload, reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["action"])); got != "ask_valid_passenger_cpf" {
+		t.Fatalf("expected invalid CPF document action, got %q payload=%+v body=%q", got, reprocessed.Draft.NormalizedPayload, reprocessed.Draft.Body)
+	}
+	if strings.Contains(reprocessed.Draft.Body, "notas ou financeiro") ||
+		strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])) == string(TemplateHumanSupportInfo) {
+		t.Fatalf("did not expect administrative support reply for passenger document text: payload=%+v body=%q", reprocessed.Draft.NormalizedPayload, reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709361")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-already-sent-admin-gate",
+			IdempotencyKey:    "idem-already-sent-admin-gate",
+			Body:              "já mandei acima",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest already-sent document reply: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess already-sent document reply: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected already-sent fallback before generic runner, got %d calls", runner.calls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatal("expected passenger document fallback draft")
+	}
+	body := strings.Join(strings.Fields(foldChatText(reprocessed.Draft.Body)), " ")
+	if !strings.Contains(body, "nao consegui identificar os dados do passageiro") {
+		t.Fatalf("expected already-sent document fallback, got %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected ask documents template, got %q payload=%+v body=%q", got, reprocessed.Draft.NormalizedPayload, reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessAdministrativeNotesMediaDuringPassengerDocumentsRunsDocumentExtract(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{
+		enabled: true,
+		result: RunAgentResult{
+			ReplyText:          `{"mode":"EXTRACTED","passengers":[{"name":"Claudecir Schumacher","document_type":"CPF","document":"529.982.247-25","confidence":0.93}]}`,
+			Model:              "gpt-vision-test",
+			ProviderResponseID: "resp-document-admin-notes-media",
+		},
+	}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709362")
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			Kind:              "IMAGE",
+			ProviderMessageID: "msg-admin-notes-image-doc",
+			IdempotencyKey:    "idem-admin-notes-image-doc",
+			Body:              "nota fiscal",
+			NormalizedPayload: map[string]interface{}{
+				"image_data_url":  "data:image/jpeg;base64,/9j/2Q==",
+				"image_mime_type": "image/jpeg",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest administrative notes media turn: %v", err)
+	}
+
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess administrative notes media turn: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected document_extract runner call for media, got %d", runner.calls)
+	}
+	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
+		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatal("expected document extraction draft")
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateHumanSupportInfo) {
+		t.Fatalf("media document turn must not become administrative support: payload=%+v body=%q", reprocessed.Draft.NormalizedPayload, reprocessed.Draft.Body)
+	}
+	if !strings.Contains(reprocessed.Draft.Body, "Claudecir Schumacher | CPF | 529.***.***-25") {
+		t.Fatalf("expected extracted document confirmation, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func assertAdministrativeNotesSupportDraft(t *testing.T, out ReprocessResult) {
+	t.Helper()
+	if out.Draft == nil {
+		t.Fatal("expected administrative support draft")
+	}
+	if !strings.Contains(out.Draft.Body, "notas ou financeiro") ||
+		!strings.Contains(out.Draft.Body, "suporte da Schumacher Tur") ||
+		strings.Contains(out.Draft.Body, "Recebi os dados do passageiro") {
+		t.Fatalf("unexpected administrative support body: %q", out.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateHumanSupportInfo) {
+		t.Fatalf("expected human support info template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentHumanSupportInfoQuestion) {
+		t.Fatalf("expected human support info intent, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["action"])); got == string(BookingNextAskPassengerDocuments) {
+		t.Fatalf("did not expect ask passenger documents action, got payload=%+v body=%q", out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	if _, ok := out.Draft.Payload["selected_option_index"]; ok {
+		t.Fatalf("did not expect selected_option_index in request payload: %+v", out.Draft.Payload)
+	}
+	if _, ok := out.Draft.NormalizedPayload["selected_option_index"]; ok {
+		t.Fatalf("did not expect selected_option_index in response payload: %+v", out.Draft.NormalizedPayload)
+	}
+	if _, ok := out.Draft.Payload[selectedAvailabilityResultPayloadKey]; ok {
+		t.Fatalf("did not expect selected availability in request payload: %+v", out.Draft.Payload)
+	}
+	if _, ok := out.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey]; ok {
+		t.Fatalf("did not expect selected availability in response payload: %+v", out.Draft.NormalizedPayload)
 	}
 }
 
