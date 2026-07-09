@@ -109,6 +109,22 @@ func TestInterpretStructuredTurnActivePromptSingleAvailabilityOptionContextualSe
 	}
 }
 
+func TestInterpretStructuredTurnActivePromptNegatedContextualAvailabilityDoesNotSelect(t *testing.T) {
+	got := InterpretStructuredTurn(StructuredInterpreterInput{
+		CurrentTurn: "não pode ser essa",
+		History:     availabilityDateSelectionAfterRouteQuestionHistory(t),
+		State:       CanonicalConversationState{Phase: ConversationPhaseRouteSelection},
+		ObservedAt:  time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
+	})
+
+	if got.Intent == StructuredIntentSelectAvailabilityOption {
+		t.Fatalf("negated availability reply must not select option: %+v", got)
+	}
+	if got.Booking.SelectedOptionIndexKnown {
+		t.Fatalf("negated availability reply must not set selected option: %+v", got.Booking)
+	}
+}
+
 func TestInterpretStructuredTurnSelectsFromBotAutoReplyDeliveryMirrorSourceDraft(t *testing.T) {
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	history := availabilityDeliveryMirrorHistory(now, availabilityDateSelectionTestResult(), true)

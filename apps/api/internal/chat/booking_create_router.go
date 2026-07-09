@@ -806,6 +806,21 @@ func previousAssistantAskedLapChildAssignment(history []Message, beforeIndex int
 	return false
 }
 
+func previousAssistantAskedPassengerCount(history []Message, beforeIndex int) bool {
+	for i := beforeIndex - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+			continue
+		}
+		body := strings.TrimSpace(message.Body)
+		if body == "" {
+			continue
+		}
+		return looksLikePassengerCountQuestion(body)
+	}
+	return false
+}
+
 func assistantAskedLapChildAssignment(text string) bool {
 	body := strings.Join(strings.Fields(foldChatText(text)), " ")
 	if body == "" {
@@ -1025,17 +1040,32 @@ func looksLikeCreateBookingIntent(text string) bool {
 }
 
 func resolveBookingCreateSelection(text string, history []Message, currentAvailability *AvailabilitySearchResult) (int, AvailabilitySearchItem, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return 0, AvailabilitySearchItem{}, false
+	}
+
+	selection := latestAvailabilitySelectionEvidence(history)
 	options := []AvailabilitySearchItem{}
+	usingHistoricalAvailability := false
+	availabilitySourceHistoryIndex := -1
 	if currentAvailability != nil && len(currentAvailability.Results) > 0 {
 		options = append(options, currentAvailability.Results...)
-	} else if previous := findLatestAvailabilityContext(history); previous != nil {
+	} else if previous, sourceHistoryIndex, ok := findLatestAvailabilityContextWithSource(history); ok {
+		usingHistoricalAvailability = true
+		availabilitySourceHistoryIndex = sourceHistoryIndex
 		options = append(options, previous.Results...)
 	}
 	if len(options) == 0 {
 		return 0, AvailabilitySearchItem{}, false
 	}
+	if usingHistoricalAvailability &&
+		selection.blocksHistoryIndex(availabilitySourceHistoryIndex) {
+		return 0, AvailabilitySearchItem{}, false
+	}
 
-	index := extractSelectedOptionIndex(text)
+	explicitIndex := extractSelectedOptionIndex(text)
+	index := explicitIndex
 	if index <= 0 {
 		index = findLatestSelectedOptionIndex(history)
 	}
@@ -1043,12 +1073,23 @@ func resolveBookingCreateSelection(text string, history []Message, currentAvaila
 		if index > len(options) {
 			return 0, AvailabilitySearchItem{}, false
 		}
-		return index, options[index-1], true
+		selected := options[index-1]
+		if !hasCompleteAvailabilitySearchItemFacts(selected) {
+			return 0, AvailabilitySearchItem{}, false
+		}
+		return index, selected, true
 	}
 	if len(options) == 1 {
+		if !hasCompleteAvailabilitySearchItemFacts(options[0]) {
+			return 0, AvailabilitySearchItem{}, false
+		}
 		return 1, options[0], true
 	}
 	return 0, AvailabilitySearchItem{}, false
+}
+
+func hasCompleteAvailabilitySearchItemFacts(item AvailabilitySearchItem) bool {
+	return hasCompleteSelectedTripFacts(item.TripID, item.BoardStopID, item.AlightStopID)
 }
 
 func extractSelectedOptionIndex(text string) int {
@@ -2217,11 +2258,20 @@ func looksLikeBareCPF(text string) bool {
 }
 
 func findLatestSelectedOptionIndex(history []Message) int {
+	selection := latestAvailabilitySelectionEvidence(history)
+	if selection.bookable() {
+		return selection.SelectedOptionIndex
+	}
+	if selection.blocksOlderEvidence() {
+		return 0
+	}
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
-		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
-			previousAssistantAskedLapChildAssignment(history, i) {
-			continue
+		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			if previousAssistantAskedLapChildAssignment(history, i) ||
+				previousAssistantAskedPassengerCount(history, i) {
+				continue
+			}
 		}
 		body := strings.TrimSpace(messageTurnText(history[i]))
 		if body == "" {
@@ -2232,6 +2282,40 @@ func findLatestSelectedOptionIndex(history []Message) int {
 		}
 	}
 	return 0
+}
+
+func messagePersistedAvailabilitySelectedOptionIndex(message Message) int {
+	evidence := messageAvailabilitySelectionEvidence(message)
+	if evidence.bookable() {
+		return evidence.SelectedOptionIndex
+	}
+	return 0
+}
+
+func payloadSelectedOptionIndex(payload map[string]interface{}) int {
+	if index := asInt(payload["selected_option_index"]); index > 0 {
+		return index
+	}
+	for _, key := range []string{"request_payload", "response_payload"} {
+		nested := asMap(payload[key])
+		if index := asInt(nested["selected_option_index"]); index > 0 {
+			return index
+		}
+	}
+	return 0
+}
+
+func payloadMetadataString(payload map[string]interface{}, key string) string {
+	if value := strings.TrimSpace(asString(payload[key])); value != "" {
+		return value
+	}
+	for _, nestedKey := range []string{"request_payload", "response_payload"} {
+		nested := asMap(payload[nestedKey])
+		if value := strings.TrimSpace(asString(nested[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func findLatestPassengerDetailsText(history []Message, session Session) string {
@@ -2755,7 +2839,27 @@ func buildBookingCreateIdempotencyKey(session Session, input BookingCreateInput)
 }
 
 func findLatestAvailabilityContext(history []Message) *AvailabilitySearchResult {
-	for i := len(history) - 1; i >= 0; i-- {
+	result, _, ok := findLatestAvailabilityContextWithSource(history)
+	if !ok {
+		return nil
+	}
+	return result
+}
+
+func findLatestAvailabilityContextWithSource(history []Message) (*AvailabilitySearchResult, int, bool) {
+	return findLatestAvailabilityContextWithSourceBefore(history, len(history))
+}
+
+func hasPriorAvailabilityContextBefore(history []Message, beforeIndex int) bool {
+	_, _, ok := findLatestAvailabilityContextWithSourceBefore(history, beforeIndex)
+	return ok
+}
+
+func findLatestAvailabilityContextWithSourceBefore(history []Message, beforeIndex int) (*AvailabilitySearchResult, int, bool) {
+	if beforeIndex > len(history) {
+		beforeIndex = len(history)
+	}
+	for i := beforeIndex - 1; i >= 0; i-- {
 		message := history[i]
 		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
 			!shouldMergeAvailabilityFactsFromMessage(message) {
@@ -2768,11 +2872,11 @@ func findLatestAvailabilityContext(history []Message) *AvailabilitySearchResult 
 			}
 			result := parseAvailabilityContextPayload(payload)
 			if len(result.Results) > 0 {
-				return &result
+				return &result, i, true
 			}
 		}
 	}
-	return nil
+	return nil, -1, false
 }
 
 func parseAvailabilityContextPayload(payload map[string]interface{}) AvailabilitySearchResult {

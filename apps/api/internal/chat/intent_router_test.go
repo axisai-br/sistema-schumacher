@@ -92,12 +92,37 @@ func TestIntentRouterUsesActivePromptForAvailabilityOptionEssaMesmo(t *testing.T
 	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
 	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
 
-	for _, text := range []string{"essa mesmo", "essa mesma", "essa msm", "esse msm", "esta msm", "isso msm", "isso mesmo", "sim", "certo", "pode ser"} {
+	for _, text := range []string{"essa mesmo", "essa mesma", "essa msm", "esse msm", "esta msm", "isso msm", "isso mesmo", "sim", "certo", "pode ser", "não tem problema, pode ser essa", "não precisa pagar agora, pode ser essa", "não dá pra pagar agora, pode ser essa"} {
 		t.Run(text, func(t *testing.T) {
 			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
 
 			if got.Intent != IntentSelectAvailabilityOption {
 				t.Fatalf("expected availability option selection, got %+v", got)
+			}
+			if got.SelectedOptionIndex != 1 {
+				t.Fatalf("expected selected option index 1, got %+v", got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount {
+				t.Fatalf("expected passenger count template, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterPaymentTimingNegationWithAffirmativeOptionStillSelects(t *testing.T) {
+	history := availabilityDateSelectionAfterRouteQuestionHistory(t)
+	state := CanonicalConversationState{Phase: ConversationPhaseRouteSelection}
+
+	for _, text := range []string{
+		"não dá pra pagar agora, pode ser essa",
+		"não precisa pagar agora, pode ser essa",
+		"não tem problema, pode ser essa",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC))
+
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected payment timing negation with affirmative option to select availability, got %+v", got)
 			}
 			if got.SelectedOptionIndex != 1 {
 				t.Fatalf("expected selected option index 1, got %+v", got)
@@ -557,6 +582,333 @@ func TestIntentRouterOneSidedPaymentQuestionsPreservePassengerCountPrompt(t *tes
 				!strings.Contains(folded, "para continuar") ||
 				!strings.Contains(folded, "passagem e so para voce") {
 				t.Fatalf("expected payment answer with passenger reminder, got %q", reply)
+			}
+		})
+	}
+}
+
+func TestIntentRouterOutOfTurnInfoPreservesAvailabilityOptionPrompt(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptFutureResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	cases := []struct {
+		text     string
+		intent   Intent
+		template ResponseTemplateName
+		wantInfo string
+	}{
+		{
+			text:     "ai o pagamento eu faço logo ou só no dia mesmo?",
+			intent:   IntentPaymentInfoQuestion,
+			template: TemplatePaymentOptionsInfo,
+			wantInfo: "pagamento pode ser realizado",
+		},
+		{
+			text:     "quais documentos precisa?",
+			intent:   IntentDocumentRequirementsInfoQuestion,
+			template: TemplateDocumentRequirementsInfo,
+			wantInfo: "preciso do nome completo",
+		},
+		{
+			text:     "criança de colo tem que informar?",
+			intent:   IntentChildPolicyInfoQuestion,
+			template: TemplateChildPolicyInfo,
+			wantInfo: "crianca de 5 anos ou menos",
+		},
+		{
+			text:     "quantas malas posso levar?",
+			intent:   IntentBaggageInfoQuestion,
+			template: TemplateBaggageInfo,
+			wantInfo: "bagagens comuns",
+		},
+		{
+			text:     "onde é o embarque?",
+			intent:   IntentBoardingInfoQuestion,
+			template: TemplateBoardingInfo,
+			wantInfo: "local e o horario de embarque",
+		},
+		{
+			text:     "qual telefone do suporte?",
+			intent:   IntentHumanSupportInfoQuestion,
+			template: TemplateHumanSupportInfo,
+			wantInfo: "suporte",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, tc.text, state, now)
+			if got.Intent != tc.intent ||
+				got.TemplateName != tc.template ||
+				got.Action != "template" ||
+				got.Source != "deterministic_out_of_turn_info" {
+				t.Fatalf("expected out-of-turn template %s/%s, got %+v", tc.intent, tc.template, got)
+			}
+			if got.SelectedOptionIndex != 0 {
+				t.Fatalf("out-of-turn info must not select availability option, got %+v", got)
+			}
+			if pending := ResponseTemplateName(asString(got.TemplateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackAvailabilityOption {
+				t.Fatalf("expected pending availability option prompt, got %+v", got.TemplateData)
+			}
+
+			reply, ok := realizeIntentResponseTemplate(got)
+			if !ok {
+				t.Fatalf("expected reply to render for %+v", got)
+			}
+			folded := foldChatText(reply)
+			if !strings.Contains(folded, tc.wantInfo) ||
+				!strings.Contains(folded, "para continuar") ||
+				!strings.Contains(folded, "qual opcao voce prefere") {
+				t.Fatalf("expected info reply with availability prompt reminder, got %q", reply)
+			}
+		})
+	}
+}
+
+func TestIntentRouterAvailabilityOptionAnswerWinsOverOutOfTurnPaymentQuestion(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptFutureResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	for _, text := range []string{
+		"essa msm, paga agora?",
+		"13/07, paga agora?",
+	} {
+		t.Run(text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, text, state, now)
+			if got.Intent != IntentSelectAvailabilityOption {
+				t.Fatalf("expected active prompt answer to select availability option, got %+v", got)
+			}
+			if got.SelectedOptionIndex != 1 {
+				t.Fatalf("expected selected option index 1, got %+v", got)
+			}
+			if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+				t.Fatalf("expected passenger count template, got %+v", got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo || got.Source == "deterministic_out_of_turn_info" {
+				t.Fatalf("active prompt answer must win over out-of-turn payment info, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptHiddenPastPrefixResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "13/07, paga agora?", state, now)
+
+	if got.Intent != IntentSelectAvailabilityOption {
+		t.Fatalf("expected date answer to select visible availability option, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 1 {
+		t.Fatalf("expected visible selected option index 1, got %+v", got)
+	}
+	if got.TemplateName != TemplateAskPassengerCount || got.Action != "template" {
+		t.Fatalf("expected passenger count template, got %+v", got)
+	}
+}
+
+func TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name   string
+		result AvailabilitySearchResult
+		text   string
+	}{
+		{
+			name:   "hidden sixth date",
+			result: availabilityOptionPromptHiddenSixthDateResult(),
+			text:   "13/07, paga agora?",
+		},
+		{
+			name:   "duplicate visible date",
+			result: availabilityOptionPromptDuplicateVisibleDateResult(),
+			text:   "13/07, paga agora?",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := availabilityOptionPromptHistory(now, tc.result)
+			state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+			got := routeDeterministicIntent(history, tc.text, state, now)
+			if got.Intent == IntentSelectAvailabilityOption ||
+				got.SelectedOptionIndex != 0 ||
+				got.TemplateName == TemplateAskPassengerCount {
+				t.Fatalf("hidden or ambiguous date must not select availability option, got %+v", got)
+			}
+			if got.Intent != IntentPaymentInfoQuestion ||
+				got.TemplateName != TemplatePaymentOptionsInfo ||
+				got.Source != "deterministic_out_of_turn_info" {
+				t.Fatalf("expected mixed payment question to stay informational, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestIntentRouterNegatedAvailabilityOptionRepliesDoNotSelect(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptFutureResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	cases := []struct {
+		text                 string
+		wantOutOfTurnPayment bool
+	}{
+		{text: "não pode ser essa"},
+		{text: "não pode ser esta"},
+		{text: "não pode ser essa, paga agora?", wantOutOfTurnPayment: true},
+		{text: "não quero essa, paga agora?", wantOutOfTurnPayment: true},
+		{text: "não quero opção 1, paga agora?", wantOutOfTurnPayment: true},
+		{text: "1 não serve, paga agora?", wantOutOfTurnPayment: true},
+		{text: "13/07 não serve, paga agora?", wantOutOfTurnPayment: true},
+		{text: "essa não dá, paga agora?", wantOutOfTurnPayment: true},
+		{text: "não é essa msm"},
+		{text: "não fico com essa"},
+		{text: "não vou com esta"},
+		{text: "essa não"},
+		{text: "13/07 não"},
+		{text: "opção 1 não serve"},
+		{text: "1 não serve"},
+		{text: "1 não dá"},
+		{text: "não serve 1"},
+		{text: "13/07 não serve"},
+		{text: "essa opção não serve"},
+		{text: "esse dia não dá"},
+		{text: "não quero 13/07, quero 14/07"},
+		{text: "não quero 13/07, paga agora?", wantOutOfTurnPayment: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, tc.text, state, now)
+			if got.Intent == IntentSelectAvailabilityOption ||
+				got.SelectedOptionIndex != 0 ||
+				got.TemplateName == TemplateAskPassengerCount {
+				t.Fatalf("negated availability option reply must not select or advance, got %+v", got)
+			}
+			if tc.wantOutOfTurnPayment {
+				if got.Intent != IntentPaymentInfoQuestion ||
+					got.TemplateName != TemplatePaymentOptionsInfo ||
+					got.Source != "deterministic_out_of_turn_info" {
+					t.Fatalf("expected negated mixed payment question to answer info without selecting, got %+v", got)
+				}
+				if !templateDataBool(got.TemplateData, outOfTurnRejectedAvailabilityDataKey) {
+					t.Fatalf("expected rejected availability flag in template data, got %+v", got.TemplateData)
+				}
+				return
+			}
+			assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+		})
+	}
+}
+
+func TestLooksLikeNegatedAvailabilitySelectionTargetsAndRejections(t *testing.T) {
+	rejects := []string{
+		"essa não",
+		"esta não funciona",
+		"esse não rola",
+		"isso não serve",
+		"opção 1 não serve",
+		"opcao 1 nao funciona",
+		"não fico com essa",
+		"não vou com esta",
+		"1 não serve",
+		"1 não dá",
+		"1 não rola",
+		"1 não funciona",
+		"1 fica ruim",
+		"1 não",
+		"não serve 1",
+		"não quero 1",
+		"primeira não rola",
+		"segunda fica ruim",
+		"terceira não consigo",
+		"13/07 não dá",
+		"13-07 não fica bom",
+		"dia 13 não pode ser",
+		"não é essa data",
+		"não quero esse horário",
+		"não quero 13/07, quero 14/07",
+	}
+	for _, text := range rejects {
+		t.Run(text, func(t *testing.T) {
+			folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+			if !looksLikeNegatedAvailabilitySelection(folded) {
+				t.Fatalf("expected %q to be treated as negated availability selection", text)
+			}
+		})
+	}
+
+	allows := []string{
+		"não tem problema, pode ser essa",
+		"não precisa pagar agora, pode ser essa",
+		"não dá pra pagar agora, pode ser essa",
+		"84960815086 não serve",
+		"quero reservar 1 passageiro",
+		"quero reservar Joao Vitor Messias | CPF | 84960815086",
+	}
+	for _, text := range allows {
+		t.Run(text, func(t *testing.T) {
+			folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+			if looksLikeNegatedAvailabilitySelection(folded) {
+				t.Fatalf("expected %q not to be treated as negated availability selection", text)
+			}
+		})
+	}
+}
+
+func TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptTwoOptionsFutureResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	got := routeDeterministicIntent(history, "paga agora?", state, now)
+
+	if got.Intent != IntentPaymentInfoQuestion ||
+		got.TemplateName != TemplatePaymentOptionsInfo ||
+		got.Source != "deterministic_out_of_turn_info" {
+		t.Fatalf("expected out-of-turn payment info, got %+v", got)
+	}
+	if got.SelectedOptionIndex != 0 {
+		t.Fatalf("payment question with multiple options must not select option 1, got %+v", got)
+	}
+	reply, ok := realizeIntentResponseTemplate(got)
+	if !ok {
+		t.Fatalf("expected reply to render for %+v", got)
+	}
+	folded := foldChatText(reply)
+	if !strings.Contains(folded, "para continuar") || !strings.Contains(folded, "qual opcao voce prefere") {
+		t.Fatalf("expected availability option reminder, got %q", reply)
+	}
+}
+
+func TestIntentRouterGuardrailsWinOverOutOfTurnInfoDuringAvailabilitySelection(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptFutureResult())
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	cases := []struct {
+		text       string
+		wantIntent Intent
+	}{
+		{text: "quero cancelar, paga agora?", wantIntent: IntentBookingCancel},
+		{text: "quero falar com atendente, paga agora?", wantIntent: IntentHumanSupport},
+		{text: "paga agora? posso levar uma moto?", wantIntent: IntentUnsupportedCargo},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			got := routeDeterministicIntent(history, tc.text, state, now)
+			if got.Intent != tc.wantIntent {
+				t.Fatalf("expected guardrail %s to win, got %+v", tc.wantIntent, got)
+			}
+			if got.TemplateName == TemplatePaymentOptionsInfo || got.Source == "deterministic_out_of_turn_info" {
+				t.Fatalf("guardrail must not become out-of-turn payment info, got %+v", got)
 			}
 		})
 	}
@@ -1787,6 +2139,100 @@ func availabilityDateSelectionTestResult() AvailabilitySearchResult {
 			PackageName:            packageToSantaCatarina,
 		}},
 	}
+}
+
+func availabilityOptionPromptHistory(now time.Time, result AvailabilitySearchResult) []Message {
+	return []Message{{
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(result),
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+			},
+		},
+	}}
+}
+
+func availabilityOptionPromptFutureResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Videira/SC",
+			Destination: "Santa Ines/MA",
+			PackageName: packageToMaranhao,
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{{
+			TripID:                 "trip-2026-07-13",
+			BoardStopID:            "board-2026-07-13",
+			AlightStopID:           "alight-2026-07-13",
+			OriginDisplayName:      "Videira/SC",
+			DestinationDisplayName: "Santa Ines/MA",
+			OriginDepartTime:       "13:00",
+			TripDate:               "2026-07-13",
+			SeatsAvailable:         5,
+			Price:                  950,
+			Currency:               "BRL",
+			Status:                 "ACTIVE",
+			TripStatus:             "SCHEDULED",
+			PackageName:            packageToMaranhao,
+		}},
+	}
+}
+
+func availabilityOptionPromptTwoOptionsFutureResult() AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	second := result.Results[0]
+	second.TripID = "trip-2026-07-14"
+	second.BoardStopID = "board-2026-07-14"
+	second.AlightStopID = "alight-2026-07-14"
+	second.OriginDepartTime = "14:00"
+	second.TripDate = "2026-07-14"
+	result.Results = []AvailabilitySearchItem{result.Results[0], second}
+	return result
+}
+
+func availabilityOptionPromptHiddenPastPrefixResult() AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	hiddenPast := result.Results[0]
+	hiddenPast.TripID = "trip-2026-07-06"
+	hiddenPast.BoardStopID = "board-2026-07-06"
+	hiddenPast.AlightStopID = "alight-2026-07-06"
+	hiddenPast.OriginDepartTime = "08:00"
+	hiddenPast.TripDate = "2026-07-06"
+	result.Results = []AvailabilitySearchItem{hiddenPast, result.Results[0]}
+	return result
+}
+
+func availabilityOptionPromptDuplicateVisibleDateResult() AvailabilitySearchResult {
+	result := availabilityOptionPromptTwoOptionsFutureResult()
+	result.Results[1].TripDate = result.Results[0].TripDate
+	return result
+}
+
+func availabilityOptionPromptHiddenSixthDateResult() AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	options := make([]AvailabilitySearchItem, 0, 6)
+	for day := 8; day <= 13; day++ {
+		item := result.Results[0]
+		item.TripID = "trip-2026-07-" + twoDigit(day)
+		item.BoardStopID = "board-2026-07-" + twoDigit(day)
+		item.AlightStopID = "alight-2026-07-" + twoDigit(day)
+		item.OriginDepartTime = twoDigit(day) + ":00"
+		item.TripDate = "2026-07-" + twoDigit(day)
+		options = append(options, item)
+	}
+	result.Results = options
+	return result
+}
+
+func twoDigit(value int) string {
+	if value < 10 {
+		return "0" + strconv.Itoa(value)
+	}
+	return strconv.Itoa(value)
 }
 
 func availabilityDateSelectionFiveOptionsTestResult() AvailabilitySearchResult {

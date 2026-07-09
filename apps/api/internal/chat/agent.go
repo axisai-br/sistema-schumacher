@@ -887,6 +887,8 @@ func agentRunMode(run RunAgentResult) string {
 func copyRunMetadata(target map[string]interface{}, run RunAgentResult) {
 	for _, key := range []string{
 		"intent",
+		"selected_option_index",
+		"selected_availability_result",
 		"template_name",
 		"template_data",
 		"action",

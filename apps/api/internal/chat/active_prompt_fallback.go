@@ -10,10 +10,14 @@ func buildActivePromptLapChildAssignmentFallbackDecision(source string) IntentDe
 }
 
 func buildActivePromptContextualFallbackDecision(ctx ActivePromptContext, body string, folded string, state CanonicalConversationState) (IntentDecision, bool) {
-	_ = folded
-
 	switch ctx.Kind {
 	case ActivePromptAvailabilityOptionChoice:
+		if looksLikeNegatedAvailabilitySelection(folded) {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_active_prompt_fallback_negated_availability_option",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		optionCount := ctx.AvailabilityOptionCount
 		if optionCount > 0 {
 			if index := extractSelectedOptionIndex(body); index > 0 && index <= optionCount {

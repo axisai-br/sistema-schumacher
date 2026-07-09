@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +45,23 @@ type IntentDecision struct {
 	Action              string
 	TemplateData        map[string]interface{}
 }
+
+var (
+	availabilityFoldedDateReferencePattern = regexp.MustCompile(`\b([0-9]{1,2})\s+([0-9]{1,2})(?:\s+[0-9]{2,4})?\b`)
+	availabilityFoldedDayReferencePattern  = regexp.MustCompile(`\bdia\s+([0-9]{1,2})\b`)
+)
+
+const availabilityNegationTargetPattern = `(?:opcao\s*0?[1-5]|primeira|primeiro|segunda|segundo|terceira|terceiro|quarta|quarto|quinta|quinto|[0-9]{1,2}\s+[0-9]{1,2}(?:\s+[0-9]{2,4})?|dia\s+[0-9]{1,2}|essa\s+opcao|esta\s+opcao|essa\s+data|esta\s+data|esse\s+dia|esse\s+horario|essa|esta|esse|isso)`
+
+var (
+	availabilityTargetThenRejectionPattern = regexp.MustCompile(`\b` + availabilityNegationTargetPattern + `\s+(?:nao\s+pode\s+ser|nao\s+fica\s+bom|nao\s+consigo|nao\s+funciona|nao\s+serve|nao\s+rola|nao\s+da|nao\s+e|nao\s+eh|fica\s+ruim)\b`)
+	availabilityRejectionThenTargetPattern = regexp.MustCompile(`\b(?:nao\s+pode\s+ser|nao\s+quero|nao\s+serve|nao\s+da|nao\s+rola|nao\s+funciona|nao\s+consigo|nao\s+e|nao\s+eh|nao\s+fico\s+com|nao\s+vou\s+com)\s+(?:a\s+)?` + availabilityNegationTargetPattern + `\b`)
+	availabilityTargetNoSuffixPattern      = regexp.MustCompile(`\b` + availabilityNegationTargetPattern + `\s+nao\b`)
+	bareOptionNumberRejectAfterPattern     = regexp.MustCompile(`\b0?([1-5])\s+nao\s+(?:pode\s+ser|serve|da|rola|funciona|fica\s+bom|consigo)\b`)
+	bareOptionNumberRejectBeforePattern    = regexp.MustCompile(`\bnao\s+(?:pode\s+ser|serve|da|rola|funciona|quero|consigo|e|eh)\s+(?:a\s+)?0?([1-5])\b`)
+	bareOptionNumberBadPattern             = regexp.MustCompile(`\b0?([1-5])\s+fica\s+ruim\b`)
+	bareOptionNumberNoSuffixPattern        = regexp.MustCompile(`\b0?([1-5])\s+nao\b`)
+)
 
 var reservationStartTemplateIntentPhrases = []string{
 	"como posso fazer para reservar",
@@ -278,6 +297,19 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic_active_prompt_availability_option", true); ok {
 			return decision, true
 		}
+		outOfTurnInfoQuestion := detectOutOfTurnInfoQuestion(body, ctx) != OutOfTurnInfoUnknown
+		continuationReminder := activePromptIsContinuationReminder(ctx)
+		if outOfTurnInfoQuestion || continuationReminder {
+			if decision, ok := routeAvailabilityOptionDateAnswer(history, body, observedAt, "deterministic_active_prompt_availability_option_date"); ok {
+				return decision, true
+			}
+			if continuationReminder && !outOfTurnInfoQuestion && extractTripDate(body, observedAt) != nil {
+				return buildActivePromptContextualFallbackTemplateDecision(
+					"deterministic_availability_option_date_missing_current_facts",
+					TemplateContextFallbackAvailabilityOption,
+				), true
+			}
+		}
 	case ActivePromptAvailabilityDateChoice:
 		if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
 			return IntentDecision{
@@ -324,7 +356,55 @@ func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body st
 	return IntentDecision{}, false
 }
 
+func activePromptIsContinuationReminder(ctx ActivePromptContext) bool {
+	return activePromptContinuationReminderFolded(activePromptFolded(ctx.SourceMessageBody)) != ""
+}
+
+func routeAvailabilityOptionDateAnswer(history []Message, body string, observedAt time.Time, source string) (IntentDecision, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return IntentDecision{}, false
+	}
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+	if promptContext.OptionCount <= 0 || !promptContext.HasCurrentFacts {
+		return IntentDecision{}, false
+	}
+	selectedDate := extractTripDate(body, observedAt)
+	if selectedDate == nil {
+		return IntentDecision{}, false
+	}
+	latest := currentAvailabilitySelectionPromptAvailabilityContextAt(history, observedAt)
+	if latest == nil || len(latest.Results) == 0 {
+		return IntentDecision{}, false
+	}
+
+	selectedIndex := 0
+	for i, item := range latest.Results {
+		itemDate := parseISODatePtr(item.TripDate)
+		if !sameCalendarDate(itemDate, selectedDate) {
+			continue
+		}
+		if selectedIndex > 0 {
+			return IntentDecision{}, false
+		}
+		selectedIndex = i + 1
+	}
+	if selectedIndex <= 0 {
+		return IntentDecision{}, false
+	}
+	return IntentDecision{
+		Intent:              IntentSelectAvailabilityOption,
+		Source:              source,
+		SelectedOptionIndex: selectedIndex,
+		TemplateName:        TemplateAskPassengerCount,
+		Action:              "template",
+	}, true
+}
+
 func routeAvailabilityOptionAnswer(optionCount int, history []Message, body string, folded string, source string, allowConfirmation bool) (IntentDecision, bool) {
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return IntentDecision{}, false
+	}
 	promptContext := currentAvailabilitySelectionPromptContext(history)
 	if promptContext.OptionCount > 0 {
 		optionCount = promptContext.OptionCount
@@ -414,6 +494,10 @@ func currentAvailabilitySelectionPromptContext(history []Message) availabilitySe
 		return availabilitySelectionPromptContext{}
 	}
 
+	return availabilitySelectionPromptContextFromMessage(message)
+}
+
+func availabilitySelectionPromptContextFromMessage(message Message) availabilitySelectionPromptContext {
 	body := messageTurnText(message)
 	renderedCount := availabilityOptionCountFromRenderedPrompt(body)
 	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
@@ -431,6 +515,19 @@ func currentAvailabilitySelectionPromptContext(history []Message) availabilitySe
 		OptionCount:     optionCount,
 		HasCurrentFacts: hasCurrentFacts,
 	}
+}
+
+func currentAvailabilitySelectionPromptAvailabilityContext(history []Message) *AvailabilitySearchResult {
+	return currentAvailabilitySelectionPromptAvailabilityContextAt(history, time.Now())
+}
+
+func currentAvailabilitySelectionPromptAvailabilityContextAt(history []Message, observedAt time.Time) *AvailabilitySearchResult {
+	message, ok := latestReliableAssistantMessage(history)
+	if !ok {
+		return nil
+	}
+
+	return visibleAvailabilityContextFromPromptMessageAt(message, observedAt)
 }
 
 func activePromptAllowsUnsupportedFollowUp(ctx ActivePromptContext) bool {
@@ -538,6 +635,9 @@ func hasCurrentAvailabilitySelectionContext(history []Message) bool {
 }
 
 func looksLikeContextualAvailabilitySelection(folded string) bool {
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return false
+	}
 	switch folded {
 	case "certo",
 		"confirmo",
@@ -567,8 +667,164 @@ func looksLikeContextualAvailabilitySelection(folded string) bool {
 		"sim":
 		return true
 	default:
+		return looksLikeMixedContextualAvailabilitySelection(folded)
+	}
+}
+
+func looksLikeMixedContextualAvailabilitySelection(folded string) bool {
+	if looksLikeNegatedAvailabilitySelection(folded) {
 		return false
 	}
+	return containsFoldedAny(
+		folded,
+		"essa msm",
+		"essa mesmo",
+		"essa mesma",
+		"esse msm",
+		"esta msm",
+		"esta mesmo",
+		"esta mesma",
+		"isso msm",
+		"isso mesmo",
+		"pode ser essa",
+		"pode ser esta",
+		"quero essa",
+		"quero esta",
+		"fico com essa",
+		"fico com esta",
+	)
+}
+
+func looksLikeNegatedAvailabilitySelection(folded string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	if folded == "" {
+		return false
+	}
+
+	return hasAvailabilityTargetThenRejection(folded) ||
+		hasAvailabilityRejectionThenTarget(folded) ||
+		hasAvailabilityRejectionSuffix(folded) ||
+		hasBareAvailabilityOptionNumberRejection(folded)
+}
+
+func hasAvailabilityTargetThenRejection(folded string) bool {
+	return availabilityTargetThenRejectionPattern.MatchString(folded)
+}
+
+func hasAvailabilityRejectionThenTarget(folded string) bool {
+	return availabilityRejectionThenTargetPattern.MatchString(folded)
+}
+
+func hasBareAvailabilityOptionNumberRejection(folded string) bool {
+	return bareOptionNumberRejectAfterPattern.MatchString(folded) ||
+		bareOptionNumberRejectBeforePattern.MatchString(folded) ||
+		bareOptionNumberBadPattern.MatchString(folded) ||
+		bareOptionNumberNoSuffixPattern.MatchString(folded)
+}
+
+func hasAvailabilityRejectionSuffix(folded string) bool {
+	return availabilityTargetNoSuffixPattern.MatchString(folded)
+}
+
+func hasAvailabilitySelectionTarget(folded string) bool {
+	return hasAvailabilityOptionReference(folded) ||
+		hasAvailabilityDateReference(folded) ||
+		hasAvailabilityDeicticReference(folded)
+}
+
+func hasAvailabilityOptionReference(folded string) bool {
+	if optionIndexPattern.MatchString(folded) {
+		return true
+	}
+	return foldedContainsAnyPhrase(
+		folded,
+		"primeira",
+		"primeiro",
+		"segunda",
+		"segundo",
+		"terceira",
+		"terceiro",
+		"quarta",
+		"quarto",
+		"quinta",
+		"quinto",
+	)
+}
+
+func hasAvailabilityDateReference(folded string) bool {
+	for _, match := range availabilityFoldedDateReferencePattern.FindAllStringSubmatch(folded, -1) {
+		if len(match) == 3 && validAvailabilityDayMonth(match[1], match[2]) {
+			return true
+		}
+	}
+	for _, match := range availabilityFoldedDayReferencePattern.FindAllStringSubmatch(folded, -1) {
+		if len(match) == 2 && validAvailabilityDay(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAvailabilityDeicticReference(folded string) bool {
+	return foldedContainsAnyPhrase(
+		folded,
+		"essa",
+		"esta",
+		"esse",
+		"isso",
+		"essa opcao",
+		"esta opcao",
+		"essa data",
+		"esta data",
+		"esse dia",
+		"esse horario",
+	)
+}
+
+func hasAvailabilityRejectionPhrase(folded string) bool {
+	return foldedContainsAnyPhrase(
+		folded,
+		"nao quero",
+		"nao pode ser",
+		"nao e",
+		"nao eh",
+		"nao serve",
+		"nao da",
+		"nao rola",
+		"nao funciona",
+		"nao fica bom",
+		"fica ruim",
+		"nao consigo",
+	)
+}
+
+func validAvailabilityDayMonth(dayText string, monthText string) bool {
+	day, dayErr := strconv.Atoi(dayText)
+	month, monthErr := strconv.Atoi(monthText)
+	return dayErr == nil && monthErr == nil && day >= 1 && day <= 31 && month >= 1 && month <= 12
+}
+
+func validAvailabilityDay(dayText string) bool {
+	day, err := strconv.Atoi(dayText)
+	return err == nil && day >= 1 && day <= 31
+}
+
+func foldedContainsAnyPhrase(folded string, phrases ...string) bool {
+	for _, phrase := range phrases {
+		if foldedContainsPhrase(folded, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func foldedContainsPhrase(folded string, phrase string) bool {
+	folded = strings.Join(strings.Fields(folded), " ")
+	phrase = strings.Join(strings.Fields(phrase), " ")
+	if folded == "" || phrase == "" {
+		return false
+	}
+	return strings.Contains(" "+folded+" ", " "+phrase+" ")
 }
 
 func looksLikePaymentOptionsInfoQuestion(folded string) bool {

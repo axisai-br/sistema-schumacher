@@ -601,6 +601,10 @@ func parseAvailabilitySearchInput(history []Message, text string, observedAt tim
 	if body == "" {
 		return AvailabilitySearchInput{}, false
 	}
+	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return AvailabilitySearchInput{}, false
+	}
 	if input, ok := parseSupportedCityPairAvailabilityInput(body, observedAt); ok {
 		return enrichAvailabilitySearchInput(input), true
 	}
@@ -793,6 +797,10 @@ func parseOriginAnswerAvailabilitySearchInput(history []Message, text string, ob
 }
 
 func parseAvailabilityDateSelectionInput(history []Message, text string, observedAt time.Time) (AvailabilitySearchInput, bool) {
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return AvailabilitySearchInput{}, false
+	}
 	latest := findLatestAvailabilityContext(history)
 	if latest == nil || len(latest.Results) == 0 {
 		return AvailabilitySearchInput{}, false

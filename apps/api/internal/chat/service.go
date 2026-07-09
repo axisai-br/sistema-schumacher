@@ -991,6 +991,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				}
 
 				run := buildTemplateDraftRunFromDecision(decision, reply)
+				toolContext = attachPendingAvailabilityContextForOutOfTurnInfo(toolContext, history, decision)
 				deterministicBookingRun = &run
 				deterministicBookingHandled = true
 				rolloutMetadata.DecisionSource = "deterministic"
@@ -1379,6 +1380,13 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 
 				reply, ok := realizeIntentResponseTemplate(decision)
 				if ok && strings.TrimSpace(reply) != "" {
+					toolContext = attachCurrentAvailabilitySelectionContext(toolContext, history, decision)
+					if toolContext.Availability != nil {
+						toolFacts := map[string]interface{}{
+							toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
+						}
+						mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+					}
 					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
 					agentState["canonical_state"] = canonicalState
 					memory["canonical_state"] = canonicalState
@@ -1391,6 +1399,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 					}
 
 					run := buildTemplateDraftRunFromDecision(decision, reply)
+					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "deterministic"
@@ -1446,6 +1455,13 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			if !deterministicBookingHandled && canRealizeWithoutLLM(decision, canonicalState) {
 				reply, ok := realizeIntentResponseTemplate(decision)
 				if ok {
+					toolContext = attachCurrentAvailabilitySelectionContext(toolContext, history, decision)
+					if toolContext.Availability != nil {
+						toolFacts := map[string]interface{}{
+							toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
+						}
+						mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+					}
 					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
 					agentState["canonical_state"] = canonicalState
 					memory["canonical_state"] = canonicalState
@@ -1456,6 +1472,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 						"template_name":         string(decision.TemplateName),
 					}
 					run := buildTemplateDraftRunFromDecision(decision, reply)
+					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "deterministic"
@@ -1507,6 +1524,13 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			case decision.Action == "template" && canRealizeWithoutLLM(decision, canonicalState):
 				reply, ok := realizeIntentResponseTemplate(decision)
 				if ok && strings.TrimSpace(reply) != "" {
+					toolContext = attachCurrentAvailabilitySelectionContext(toolContext, history, decision)
+					if toolContext.Availability != nil {
+						toolFacts := map[string]interface{}{
+							toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*toolContext.Availability),
+						}
+						mergeToolFactsIntoCanonicalState(&canonicalState, toolFacts)
+					}
 					canonicalState = applyIntentDecisionToCanonicalState(canonicalState, decision)
 					agentState["canonical_state"] = canonicalState
 					memory["canonical_state"] = canonicalState
@@ -1518,6 +1542,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 						"action":                decision.Action,
 					}
 					run := buildTemplateDraftRunFromDecision(decision, reply)
+					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "openai_interpreter_assist"
@@ -2080,6 +2105,104 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	result.Draft = &draft.Message
 	result.Reason = "draft_generated"
 	return s.finishReprocessWithAutoSend(ctx, result, trigger, jobRunID)
+}
+
+func attachPendingAvailabilityContextForOutOfTurnInfo(context agentToolContext, history []Message, decision IntentDecision) agentToolContext {
+	if decision.Source != "deterministic_out_of_turn_info" ||
+		ResponseTemplateName(asString(decision.TemplateData[outOfTurnPendingPromptTemplateDataKey])) != TemplateContextFallbackAvailabilityOption ||
+		context.Availability != nil {
+		return context
+	}
+	if templateDataBool(decision.TemplateData, outOfTurnRejectedAvailabilityDataKey) {
+		return context
+	}
+	if source := availabilityContextFromOutOfTurnActivePromptSource(history, decision); source != nil {
+		context.Availability = source
+	}
+	return context
+}
+
+func attachCurrentAvailabilitySelectionContext(context agentToolContext, history []Message, decision IntentDecision) agentToolContext {
+	if decision.Intent != IntentSelectAvailabilityOption ||
+		decision.SelectedOptionIndex <= 0 ||
+		decision.TemplateName != TemplateAskPassengerCount ||
+		context.Availability != nil {
+		return context
+	}
+	if current := currentAvailabilitySelectionPromptAvailabilityContext(history); current != nil && len(current.Results) > 0 {
+		context.Availability = current
+	}
+	return context
+}
+
+func availabilityContextFromOutOfTurnActivePromptSource(history []Message, decision IntentDecision) *AvailabilitySearchResult {
+	sourceID := strings.TrimSpace(asString(decision.TemplateData[outOfTurnActivePromptSourceIDDataKey]))
+	if sourceID == "" {
+		return nil
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if strings.TrimSpace(message.ID) != sourceID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+			!shouldMergeAvailabilityFactsFromMessage(message) {
+			return nil
+		}
+		return visibleAvailabilityContextFromPromptMessage(message)
+	}
+	return nil
+}
+
+func visibleAvailabilityContextFromPromptMessage(message Message) *AvailabilitySearchResult {
+	return visibleAvailabilityContextFromPromptMessageAt(message, time.Now())
+}
+
+func visibleAvailabilityContextFromPromptMessageAt(message Message, observedAt time.Time) *AvailabilitySearchResult {
+	promptContext := availabilitySelectionPromptContextFromMessage(message)
+	if promptContext.OptionCount <= 0 || !promptContext.HasCurrentFacts {
+		return nil
+	}
+	result := trustedAvailabilityContextFromPromptMessage(message)
+	if result == nil || len(result.Results) == 0 {
+		return nil
+	}
+	options := futureAvailabilityOptions(result.Results, observedAt)
+	if len(options) > 5 {
+		options = options[:5]
+	}
+	if promptContext.OptionCount < len(options) {
+		options = options[:promptContext.OptionCount]
+	}
+	if len(options) == 0 {
+		return nil
+	}
+	visible := *result
+	visible.Results = append([]AvailabilitySearchItem(nil), options...)
+	visible.Filter.Limit = len(visible.Results)
+	return &visible
+}
+
+func trustedAvailabilityContextFromPromptMessage(message Message) *AvailabilitySearchResult {
+	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
+	if currentFactsCount <= 0 {
+		return nil
+	}
+	renderedCount := availabilityOptionCountFromRenderedPrompt(messageTurnText(message))
+	if renderedCount > 0 && renderedCount != currentFactsCount {
+		return nil
+	}
+	for _, toolContext := range messageToolContexts(message) {
+		payload := asMap(toolContext[toolNameAvailabilitySearch])
+		if len(payload) == 0 {
+			continue
+		}
+		result := parseAvailabilityContextPayload(payload)
+		if len(result.Results) > 0 && visibleAvailabilityOptionCount(result) == currentFactsCount {
+			return &result
+		}
+	}
+	return nil
 }
 
 func isBookingRegressionDraftText(text string) bool {

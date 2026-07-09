@@ -20,6 +20,8 @@ const (
 	outOfTurnInfoKindTemplateDataKey      = "out_of_turn_info_kind"
 	outOfTurnPendingPromptTemplateDataKey = "pending_prompt_template"
 	outOfTurnActivePromptTemplateDataKey  = "active_prompt_kind"
+	outOfTurnActivePromptSourceIDDataKey  = "active_prompt_source_message_id"
+	outOfTurnRejectedAvailabilityDataKey  = "out_of_turn_rejected_availability_selection"
 )
 
 func buildOutOfTurnInfoDecision(text string, activePrompt ActivePromptContext) (IntentDecision, bool) {
@@ -37,17 +39,27 @@ func buildOutOfTurnInfoDecision(text string, activePrompt ActivePromptContext) (
 		return IntentDecision{}, false
 	}
 
+	templateData := map[string]interface{}{
+		outOfTurnTemplateDataKey:              true,
+		outOfTurnInfoKindTemplateDataKey:      string(kind),
+		outOfTurnPendingPromptTemplateDataKey: string(pendingTemplate),
+		outOfTurnActivePromptTemplateDataKey:  string(activePrompt.Kind),
+	}
+	if sourceID := strings.TrimSpace(activePrompt.SourceMessageID); sourceID != "" {
+		templateData[outOfTurnActivePromptSourceIDDataKey] = sourceID
+	}
+	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
+	if activePrompt.Kind == ActivePromptAvailabilityOptionChoice &&
+		looksLikeNegatedAvailabilitySelection(folded) {
+		templateData[outOfTurnRejectedAvailabilityDataKey] = true
+	}
+
 	return IntentDecision{
 		Intent:       outOfTurnInfoIntent(kind),
 		Source:       "deterministic_out_of_turn_info",
 		TemplateName: templateName,
 		Action:       "template",
-		TemplateData: map[string]interface{}{
-			outOfTurnTemplateDataKey:              true,
-			outOfTurnInfoKindTemplateDataKey:      string(kind),
-			outOfTurnPendingPromptTemplateDataKey: string(pendingTemplate),
-			outOfTurnActivePromptTemplateDataKey:  string(activePrompt.Kind),
-		},
+		TemplateData: templateData,
 	}, true
 }
 
@@ -91,7 +103,8 @@ func detectOutOfTurnInfoQuestion(text string, activePrompt ActivePromptContext) 
 
 func outOfTurnInfoActivePromptEligible(kind ActivePromptKind) bool {
 	switch kind {
-	case ActivePromptPassengerCount,
+	case ActivePromptAvailabilityOptionChoice,
+		ActivePromptPassengerCount,
 		ActivePromptLapChildQuestion,
 		ActivePromptPassengerDocuments,
 		ActivePromptDocumentConfirmation,
@@ -147,6 +160,8 @@ func outOfTurnInfoIntent(kind OutOfTurnInfoKind) Intent {
 
 func outOfTurnPendingPromptTemplate(kind ActivePromptKind) ResponseTemplateName {
 	switch kind {
+	case ActivePromptAvailabilityOptionChoice:
+		return TemplateContextFallbackAvailabilityOption
 	case ActivePromptPassengerCount:
 		return TemplateContextFallbackPassengerCount
 	case ActivePromptLapChildQuestion:

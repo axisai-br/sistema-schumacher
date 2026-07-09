@@ -521,12 +521,1075 @@ func TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply(t *testing.
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute)},
 		{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Pereira", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-2 * time.Minute)},
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Pereira",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentLapChildAssignmentAnswer),
+				"selected_option_index": 2,
+			},
+			NormalizedPayload: map[string]interface{}{
+				"intent":                string(IntentLapChildAssignmentAnswer),
+				"selected_option_index": 2,
+			},
+		},
 		{Direction: "INBOUND", Body: "2", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
 	if got := findLatestSelectedOptionIndex(history); got != 1 {
 		t.Fatalf("expected trip selection 1 to be preserved, got %d", got)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{Direction: "OUTBOUND", Body: "Achei duas opcoes para Santa Ines/MA. Qual opcao voce prefere?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "INBOUND", Body: "14/07, paga agora?", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index": 2,
+					"trip_id":               "trip-2026-07-14",
+					"board_stop_id":         "board-2026-07-14",
+					"alight_stop_id":        "alight-2026-07-14",
+					"trip_date":             "2026-07-14",
+				},
+			},
+			NormalizedPayload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index": 2,
+					"trip_id":               "trip-2026-07-14",
+					"board_stop_id":         "board-2026-07-14",
+					"alight_stop_id":        "alight-2026-07-14",
+					"trip_date":             "2026-07-14",
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "1", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 2 {
+		t.Fatalf("expected persisted trip selection 2 to beat passenger count reply, got %d", got)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexIgnoresMetadataOnlyAvailabilitySelection(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+			NormalizedPayload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+		},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 0 {
+		t.Fatalf("expected metadata-only selected_option_index to be ignored, got %d", got)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexUsesSameMessageAvailabilityFacts(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Results: []AvailabilitySearchItem{
+							{TripID: "trip-2026-07-13", BoardStopID: "board-2026-07-13", AlightStopID: "alight-2026-07-13"},
+							{TripID: "trip-2026-07-14", BoardStopID: "board-2026-07-14", AlightStopID: "alight-2026-07-14"},
+						},
+					}),
+				},
+			},
+		},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 2 {
+		t.Fatalf("expected same-message availability facts to materialize selected_option_index=2, got %d", got)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexRejectsIncompleteSameMessageAvailabilityFacts(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Results: []AvailabilitySearchItem{
+							{TripID: "trip-2026-07-13", BoardStopID: "board-2026-07-13", AlightStopID: "alight-2026-07-13"},
+							{TripID: "trip-2026-07-14"},
+						},
+					}),
+				},
+			},
+		},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 0 {
+		t.Fatalf("expected incomplete same-message availability facts not to materialize selection, got %d", got)
+	}
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.SelectedOptionIndex != 0 ||
+		context.TripID != "" ||
+		context.BoardStopID != "" ||
+		context.AlightStopID != "" {
+		t.Fatalf("expected incomplete same-message availability facts not to populate booking draft, got %+v", context)
+	}
+}
+
+func TestFindLatestSelectedOptionIndexIgnoresPassengerCountReplyWithoutPersistedSelection(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+		},
+		{
+			Direction:        "INBOUND",
+			Body:             "1",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-1 * time.Minute),
+		},
+	}
+
+	if got := findLatestSelectedOptionIndex(history); got != 0 {
+		t.Fatalf("expected passenger count reply not to become selected option index, got %d", got)
+	}
+}
+
+func TestCollectBookingDraftContextPrefersSelectedAvailabilitySnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index":    2,
+					"trip_id":                  "trip-selected-2",
+					"board_stop_id":            "board-selected-2",
+					"alight_stop_id":           "alight-selected-2",
+					"origin":                   "Videira/SC",
+					"destination":              "Santa Ines/MA",
+					"origin_display_name":      "Videira/SC",
+					"destination_display_name": "Santa Ines/MA",
+					"origin_depart_time":       "14:00",
+					"trip_date":                "2026-07-14",
+					"price":                    950,
+					"currency":                 "BRL",
+				},
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 1},
+						Results: []AvailabilitySearchItem{{
+							TripID:                 "trip-visible-1",
+							BoardStopID:            "board-visible-1",
+							AlightStopID:           "alight-visible-1",
+							OriginDisplayName:      "Videira/SC",
+							DestinationDisplayName: "Santa Ines/MA",
+							OriginDepartTime:       "13:00",
+							TripDate:               "2026-07-13",
+							Price:                  900,
+							Currency:               "BRL",
+						}},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.SelectedOptionIndex != 2 {
+		t.Fatalf("expected selected option index 2, got %+v", context)
+	}
+	if context.TripID != "trip-selected-2" ||
+		context.BoardStopID != "board-selected-2" ||
+		context.AlightStopID != "alight-selected-2" ||
+		context.TripDate != "2026-07-14" {
+		t.Fatalf("expected booking draft to prefer selected availability snapshot, got %+v", context)
+	}
+	if context.PassengerCount != 1 || !context.PassengerCountKnown {
+		t.Fatalf("expected passenger reply to still be collected, got %+v", context)
+	}
+}
+
+func TestCollectBookingDraftContextKeepsLatestSelectedAvailabilitySnapshotIndex(t *testing.T) {
+	now := time.Now().UTC()
+	selectedSnapshot := func(index int, tripID, boardStopID, alightStopID, tripDate, departureTime string, price float64) map[string]interface{} {
+		return map[string]interface{}{
+			"selected_option_index":    index,
+			"trip_id":                  tripID,
+			"board_stop_id":            boardStopID,
+			"alight_stop_id":           alightStopID,
+			"origin":                   "Videira/SC",
+			"destination":              "Santa Ines/MA",
+			"origin_display_name":      "Videira/SC",
+			"destination_display_name": "Santa Ines/MA",
+			"origin_depart_time":       departureTime,
+			"trip_date":                tripDate,
+			"price":                    price,
+			"currency":                 "BRL",
+		}
+	}
+
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-4 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 1,
+				selectedAvailabilityResultPayloadKey: selectedSnapshot(
+					1,
+					"trip-2026-07-13",
+					"board-2026-07-13",
+					"alight-2026-07-13",
+					"2026-07-13",
+					"13:00",
+					950,
+				),
+			},
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: selectedSnapshot(
+					2,
+					"trip-2026-07-14",
+					"board-2026-07-14",
+					"alight-2026-07-14",
+					"2026-07-14",
+					"14:00",
+					980,
+				),
+			},
+		},
+		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.SelectedOptionIndex != 2 {
+		t.Fatalf("expected latest selected option index 2, got %+v", context)
+	}
+	if context.TripID != "trip-2026-07-14" ||
+		context.BoardStopID != "board-2026-07-14" ||
+		context.AlightStopID != "alight-2026-07-14" ||
+		context.TripDate != "2026-07-14" ||
+		context.DepartureTime != "14:00" ||
+		context.Price != 980 {
+		t.Fatalf("expected latest selected trip snapshot to stay intact, got %+v", context)
+	}
+	if context.PassengerCount != 1 || !context.PassengerCountKnown {
+		t.Fatalf("expected passenger reply to still be collected, got %+v", context)
+	}
+}
+
+func TestCollectBookingDraftContextDoesNotCombineMetadataOnlySelectionWithOldSnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-4 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 1,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index":    1,
+					"trip_id":                  "trip-2026-07-13",
+					"board_stop_id":            "board-2026-07-13",
+					"alight_stop_id":           "alight-2026-07-13",
+					"origin":                   "Videira/SC",
+					"destination":              "Santa Ines/MA",
+					"origin_display_name":      "Videira/SC",
+					"destination_display_name": "Santa Ines/MA",
+					"origin_depart_time":       "13:00",
+					"trip_date":                "2026-07-13",
+					"price":                    950,
+					"currency":                 "BRL",
+				},
+			},
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+		},
+		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.SelectedOptionIndex != 0 {
+		t.Fatalf("expected metadata-only selected_option_index not to remain a valid selection, got %+v", context)
+	}
+	if context.TripID != "" ||
+		context.BoardStopID != "" ||
+		context.AlightStopID != "" ||
+		context.TripDate != "" {
+		t.Fatalf("expected old snapshot not to materialize route for metadata-only selection, got %+v", context)
+	}
+	if context.PassengerCount != 1 || !context.PassengerCountKnown {
+		t.Fatalf("expected passenger reply to still be collected, got %+v", context)
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripIgnoresMetadataOnlySelection(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+			NormalizedPayload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+		},
+	}
+
+	if availabilityDraftHasSelectedTrip(Session{}, history, "") {
+		t.Fatalf("expected metadata-only selected_option_index not to count as selected trip")
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripRequiresCompleteSelectedTripFacts(t *testing.T) {
+	now := time.Now().UTC()
+	incompleteHistory := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index": 2,
+					"trip_id":               "trip-2026-07-14",
+				},
+			},
+		},
+	}
+	if availabilityDraftHasSelectedTrip(Session{}, incompleteHistory, "") {
+		t.Fatalf("expected trip_id without board/alight stops not to count as selected trip")
+	}
+
+	completeHistory := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index": 2,
+					"trip_id":               "trip-2026-07-14",
+					"board_stop_id":         "board-2026-07-14",
+					"alight_stop_id":        "alight-2026-07-14",
+				},
+			},
+		},
+	}
+	if !availabilityDraftHasSelectedTrip(Session{}, completeHistory, "") {
+		t.Fatalf("expected complete selected availability snapshot to count as selected trip")
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripRejectsBareOptionWithIncompleteAvailabilityFacts(t *testing.T) {
+	now := time.Now().UTC()
+	history := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+		Price:                  950,
+		Currency:               "BRL",
+	})
+
+	if availabilityDraftHasSelectedTrip(Session{}, history, "1") {
+		t.Fatalf("expected bare option index with incomplete facts not to count as selected trip")
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripAcceptsBareOptionWithCompleteAvailabilityFacts(t *testing.T) {
+	now := time.Now().UTC()
+	history := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+		Price:                  950,
+		Currency:               "BRL",
+	})
+
+	if !availabilityDraftHasSelectedTrip(Session{}, history, "1") {
+		t.Fatalf("expected bare option index with complete facts to count as selected trip")
+	}
+}
+
+func TestCollectBookingDraftContextAllowsFreshAvailabilityAfterOldSelectionBlocker(t *testing.T) {
+	now := time.Now().UTC()
+	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+	})[0]
+	blocker := metadataOnlyAvailabilitySelectionMessage(now.Add(-2*time.Minute), 2)
+	freshAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-14",
+		BoardStopID:            "board-2026-07-14",
+		AlightStopID:           "alight-2026-07-14",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "14:00",
+		TripDate:               "2026-07-14",
+	})[0]
+	history := []Message{oldAvailability, blocker, freshAvailability}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.TripID != "trip-2026-07-14" ||
+		context.BoardStopID != "board-2026-07-14" ||
+		context.AlightStopID != "alight-2026-07-14" {
+		t.Fatalf("expected fresh availability after old blocker to populate booking draft, got %+v", context)
+	}
+}
+
+func TestCollectBookingDraftContextBlocksOldAvailabilityWhenSelectionBlockerIsNewer(t *testing.T) {
+	now := time.Now().UTC()
+	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+	})[0]
+	blocker := metadataOnlyAvailabilitySelectionMessage(now.Add(-1*time.Minute), 2)
+	history := []Message{oldAvailability, blocker}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.TripID != "" ||
+		context.BoardStopID != "" ||
+		context.AlightStopID != "" {
+		t.Fatalf("expected newer blocker to prevent stale availability facts, got %+v", context)
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripAllowsFreshAvailabilityAfterOldSelectionBlocker(t *testing.T) {
+	now := time.Now().UTC()
+	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+	})[0]
+	blocker := metadataOnlyAvailabilitySelectionMessage(now.Add(-2*time.Minute), 2)
+	freshAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-14",
+		BoardStopID:            "board-2026-07-14",
+		AlightStopID:           "alight-2026-07-14",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "14:00",
+		TripDate:               "2026-07-14",
+	})[0]
+	history := []Message{oldAvailability, blocker, freshAvailability}
+
+	if !availabilityDraftHasSelectedTrip(Session{}, history, "1") {
+		t.Fatalf("expected current index to resolve against fresh availability after old blocker")
+	}
+}
+
+func TestAvailabilityDraftHasSelectedTripBlocksOldAvailabilityWhenSelectionBlockerIsNewer(t *testing.T) {
+	now := time.Now().UTC()
+	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+	})[0]
+	blocker := metadataOnlyAvailabilitySelectionMessage(now.Add(-1*time.Minute), 2)
+	history := []Message{oldAvailability, blocker}
+
+	if availabilityDraftHasSelectedTrip(Session{}, history, "1") {
+		t.Fatalf("expected newer blocker to prevent current index from resolving against stale availability")
+	}
+}
+
+func TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySelection(t *testing.T) {
+	now := time.Now().UTC()
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-4 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 1,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index":    1,
+					"trip_id":                  "trip-2026-07-13",
+					"board_stop_id":            "board-2026-07-13",
+					"alight_stop_id":           "alight-2026-07-13",
+					"origin":                   "Videira/SC",
+					"destination":              "Santa Ines/MA",
+					"origin_display_name":      "Videira/SC",
+					"destination_display_name": "Santa Ines/MA",
+					"origin_depart_time":       "13:00",
+					"trip_date":                "2026-07-13",
+					"price":                    950,
+					"currency":                 "BRL",
+				},
+			},
+		},
+		{
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 2},
+						Results: []AvailabilitySearchItem{
+							{
+								TripID:                 "trip-2026-07-13",
+								BoardStopID:            "board-2026-07-13",
+								AlightStopID:           "alight-2026-07-13",
+								OriginDisplayName:      "Videira/SC",
+								DestinationDisplayName: "Santa Ines/MA",
+								OriginDepartTime:       "13:00",
+								TripDate:               "2026-07-13",
+								Price:                  950,
+								Currency:               "BRL",
+							},
+							{
+								TripID:                 "trip-2026-07-14",
+								BoardStopID:            "board-2026-07-14",
+								AlightStopID:           "alight-2026-07-14",
+								OriginDisplayName:      "Videira/SC",
+								DestinationDisplayName: "Santa Ines/MA",
+								OriginDepartTime:       "14:00",
+								TripDate:               "2026-07-14",
+								Price:                  980,
+								Currency:               "BRL",
+							},
+						},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
+	}
+
+	context := collectBookingDraftContext(Session{}, history, "")
+	if context.SelectedOptionIndex != 2 ||
+		context.TripID != "trip-2026-07-14" ||
+		context.BoardStopID != "board-2026-07-14" ||
+		context.AlightStopID != "alight-2026-07-14" ||
+		context.TripDate != "2026-07-14" {
+		t.Fatalf("expected metadata-only selection to use availability from the same message, got %+v", context)
+	}
+}
+
+func TestParseBookingCreateInputSingleOptionFallbackWorksWithoutSelectionBlocker(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := singleOptionBookingCreateAvailabilityHistory(now)
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil)
+	if !ok {
+		t.Fatalf("expected single-option fallback without blocker to build booking input")
+	}
+	if input.SelectedOptionIndex != 1 ||
+		input.TripID != "trip-2026-07-13" ||
+		input.BoardStopID != "board-2026-07-13" ||
+		input.AlightStopID != "alight-2026-07-13" {
+		t.Fatalf("expected single-option fallback to use the visible trip, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputExplicitIndexWorksWithoutSelectionBlocker(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := singleOptionBookingCreateAvailabilityHistory(now)
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil)
+	if !ok {
+		t.Fatalf("expected explicit index without blocker to build booking input")
+	}
+	if input.SelectedOptionIndex != 1 ||
+		input.TripID != "trip-2026-07-13" ||
+		input.BoardStopID != "board-2026-07-13" ||
+		input.AlightStopID != "alight-2026-07-13" {
+		t.Fatalf("expected explicit index to use the visible trip, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputRejectsNegatedAvailabilitySelection(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := singleOptionBookingCreateAvailabilityHistory(now)
+
+	for _, text := range []string{
+		"não quero opção 1\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"não quero 13/07\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"opção 1 não\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"opção 1 não serve\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"1 não serve\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"1 não dá\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"não serve 1\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"13/07 não serve\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"essa opção não serve\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		"esse dia não dá\nquero reservar\nJoao Vitor Messias | CPF | 84960815086",
+	} {
+		t.Run(text, func(t *testing.T) {
+			if input, ok := parseBookingCreateInput(session, history, text, nil); ok {
+				t.Fatalf("expected negated availability selection not to build booking input, got %+v", input)
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+
+	for _, text := range []string{"opção 1 não serve", "1 não serve"} {
+		t.Run(text, func(t *testing.T) {
+			history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
+				Direction:  "INBOUND",
+				Body:       text,
+				ReceivedAt: now.Add(-1 * time.Minute),
+			})
+
+			input, ok := parseBookingCreateInput(session, history, "quero reservar\nJoao Vitor Messias | CPF | 84960815086", nil)
+			if ok {
+				t.Fatalf("expected prior negated availability reply to block stale single-option fallback, got %+v", input)
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionReply(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+	})[0]
+	rejection := Message{
+		Direction:  "INBOUND",
+		Body:       "opção 1 não serve",
+		ReceivedAt: now.Add(-2 * time.Minute),
+	}
+	freshAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-14",
+		BoardStopID:            "board-2026-07-14",
+		AlightStopID:           "alight-2026-07-14",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "14:00",
+		TripDate:               "2026-07-14",
+	})[0]
+	history := []Message{oldAvailability, rejection, freshAvailability}
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil)
+	if !ok {
+		t.Fatalf("expected fresh availability after prior rejection to build booking input")
+	}
+	if input.SelectedOptionIndex != 1 ||
+		input.TripID != "trip-2026-07-14" ||
+		input.BoardStopID != "board-2026-07-14" ||
+		input.AlightStopID != "alight-2026-07-14" {
+		t.Fatalf("expected fresh availability trip after rejection, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputMetadataOnlySelectionBlocksStaleSingleOptionFallback(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": 2,
+		},
+	})
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil); ok {
+		t.Fatalf("expected metadata-only selection blocker to prevent stale single-option fallback, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputMetadataOnlySelectionBlocksExplicitStaleAvailabilityIndex(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": 2,
+		},
+	})
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
+		t.Fatalf("expected metadata-only selection blocker to prevent explicit stale availability index, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputIncompleteSelectionBlocksStaleSingleOptionFallback(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": 2,
+			selectedAvailabilityResultPayloadKey: map[string]interface{}{
+				"selected_option_index": 2,
+				"trip_id":               "trip-2026-07-14",
+			},
+		},
+	})
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil); ok {
+		t.Fatalf("expected incomplete selection blocker to prevent stale single-option fallback, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputIncompleteSelectionBlocksExplicitStaleAvailabilityIndex(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": 2,
+			selectedAvailabilityResultPayloadKey: map[string]interface{}{
+				"selected_option_index": 2,
+				"trip_id":               "trip-2026-07-14",
+			},
+		},
+	})
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
+		t.Fatalf("expected incomplete selection blocker to prevent explicit stale availability index, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	oldItem := bookingCreateSelectionAvailabilityResult("trip-2026-07-13", "board-2026-07-13", "alight-2026-07-13").Results[0]
+	freshItem := bookingCreateSelectionAvailabilityResult("trip-2026-07-14", "board-2026-07-14", "alight-2026-07-14").Results[0]
+
+	for _, tc := range []struct {
+		name    string
+		payload map[string]interface{}
+	}{
+		{
+			name: "metadata_only",
+			payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+			},
+		},
+		{
+			name: "incomplete",
+			payload: map[string]interface{}{
+				"intent":                string(IntentSelectAvailabilityOption),
+				"template_name":         string(TemplateAskPassengerCount),
+				"selected_option_index": 2,
+				selectedAvailabilityResultPayloadKey: map[string]interface{}{
+					"selected_option_index": 2,
+					"trip_id":               "trip-2026-07-14",
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldAvailability := singleAvailabilitySearchHistory(now, oldItem)[0]
+			oldAvailability.ReceivedAt = now.Add(-3 * time.Minute)
+			blocker := Message{
+				Direction:        "OUTBOUND",
+				Body:             askPassengerCountReply,
+				ProcessingStatus: messageStatusAutomationSent,
+				ReceivedAt:       now.Add(-2 * time.Minute),
+				Payload:          tc.payload,
+			}
+			freshAvailability := singleAvailabilitySearchHistory(now, freshItem)[0]
+			freshAvailability.ReceivedAt = now.Add(-1 * time.Minute)
+			history := []Message{oldAvailability, blocker, freshAvailability}
+
+			input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil)
+			if !ok {
+				t.Fatalf("expected fresh availability after old blocker to build booking input")
+			}
+			if input.SelectedOptionIndex != 1 ||
+				input.TripID != "trip-2026-07-14" ||
+				input.BoardStopID != "board-2026-07-14" ||
+				input.AlightStopID != "alight-2026-07-14" {
+				t.Fatalf("expected fresh availability trip to win over old blocker, got %+v", input)
+			}
+		})
+	}
+}
+
+func TestParseBookingCreateInputCurrentAvailabilityIgnoresOldSelectionBlocker(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := []Message{{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now.Add(-2 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": 2,
+		},
+	}}
+	currentAvailability := bookingCreateSelectionAvailabilityResult("trip-current", "board-current", "alight-current")
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", &currentAvailability)
+	if !ok {
+		t.Fatalf("expected current availability to build booking input despite old blocker")
+	}
+	if input.SelectedOptionIndex != 1 ||
+		input.TripID != "trip-current" ||
+		input.BoardStopID != "board-current" ||
+		input.AlightStopID != "alight-current" {
+		t.Fatalf("expected current availability to win over old blocker, got %+v", input)
+	}
+}
+
+func singleOptionBookingCreateAvailabilityHistory(now time.Time) []Message {
+	return singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+		TripID:                 "trip-2026-07-13",
+		BoardStopID:            "board-2026-07-13",
+		AlightStopID:           "alight-2026-07-13",
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		OriginDepartTime:       "13:00",
+		TripDate:               "2026-07-13",
+		Price:                  950,
+		Currency:               "BRL",
+	})
+}
+
+func singleAvailabilitySearchHistory(now time.Time, item AvailabilitySearchItem) []Message {
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Achei uma opcao para Santa Ines/MA. Qual opcao voce prefere?",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter:  AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 1},
+						Results: []AvailabilitySearchItem{item},
+					}),
+				},
+			},
+		},
+	}
+}
+
+func metadataOnlyAvailabilitySelectionMessage(receivedAt time.Time, index int) Message {
+	return Message{
+		Direction:        "OUTBOUND",
+		Body:             askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       receivedAt,
+		Payload: map[string]interface{}{
+			"intent":                string(IntentSelectAvailabilityOption),
+			"template_name":         string(TemplateAskPassengerCount),
+			"selected_option_index": index,
+		},
+	}
+}
+
+func TestBuildBookingContinuationDraftRunDoesNotPersistMetadataOnlySelectedOptionIndex(t *testing.T) {
+	run := buildBookingContinuationDraftRun("Ainda preciso dos dados.", BookingNextAskPassengerClarification, BookingDraftContext{
+		SelectedOptionIndex:   2,
+		PassengerCount:        1,
+		PassengerCountKnown:   true,
+		ChildUnder5CountKnown: false,
+	})
+
+	if got := asInt(run.RequestPayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected request payload not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.RequestPayload)
+	}
+	if got := asInt(run.ResponsePayload["selected_option_index"]); got != 0 {
+		t.Fatalf("expected response payload not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.ResponsePayload)
+	}
+	if len(asMap(run.RequestPayload[selectedAvailabilityResultPayloadKey])) != 0 ||
+		len(asMap(run.ResponsePayload[selectedAvailabilityResultPayloadKey])) != 0 {
+		t.Fatalf("expected no selected availability snapshot without trip facts, request=%+v response=%+v", run.RequestPayload, run.ResponsePayload)
 	}
 }
 

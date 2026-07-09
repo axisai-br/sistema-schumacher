@@ -340,6 +340,27 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 	}
 }
 
+func TestParseAvailabilityInputsRejectNegatedListedDate(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityOptionPromptHistory(now, availabilityOptionPromptFutureResult())
+
+	if input, ok := parseAvailabilityDateSelectionInput(history, "13/07 não serve", now); ok {
+		t.Fatalf("expected negated date not to become date selection, got %+v", input)
+	}
+	if input, ok := parseAvailabilityDateSelectionInput(history, "1 não serve", now); ok {
+		t.Fatalf("expected bare negated option not to become date selection, got %+v", input)
+	}
+	if input, ok := parseAvailabilitySearchInput(history, "13/07 não serve", now); ok {
+		t.Fatalf("expected negated date not to start availability search, got %+v", input)
+	}
+	if input, ok := parseAvailabilitySearchInput(history, "1 não serve", now); ok {
+		t.Fatalf("expected bare negated option not to start availability search, got %+v", input)
+	}
+	if input, ok := parseAvailabilitySearchInput(history, "não quero 13/07, quero 14/07", now); ok {
+		t.Fatalf("expected mixed negated date not to auto-select second date, got %+v", input)
+	}
+}
+
 func TestParseAvailabilitySearchInputSupportedCityPairWithDate(t *testing.T) {
 	input, ok := parseAvailabilitySearchInput(nil, "Fraiburgo para monção 18/05", time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
 	if !ok {

@@ -400,15 +400,7 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 		results := asInterfaceSliceMaps(availability["results"])
 		index := decision.SelectedOptionIndex - 1
 		if index >= 0 && index < len(results) {
-			selected := results[index]
-			state.Route.Origin = firstNonEmpty(state.Route.Origin, strings.TrimSpace(asString(selected["origin_display_name"])))
-			state.Route.Destination = firstNonEmpty(state.Route.Destination, strings.TrimSpace(asString(selected["destination_display_name"])))
-			state.Route.TripDate = firstNonEmpty(state.Route.TripDate, strings.TrimSpace(asString(selected["trip_date"])))
-			state.Route.DepartureTime = firstNonEmpty(state.Route.DepartureTime, strings.TrimSpace(asString(selected["origin_depart_time"])))
-			state.Route.TripID = firstNonEmpty(state.Route.TripID, strings.TrimSpace(asString(selected["trip_id"])))
-			state.Route.BoardStopID = firstNonEmpty(state.Route.BoardStopID, strings.TrimSpace(asString(selected["board_stop_id"])))
-			state.Route.AlightStopID = firstNonEmpty(state.Route.AlightStopID, strings.TrimSpace(asString(selected["alight_stop_id"])))
-			state.Route.PackageName = firstNonEmpty(state.Route.PackageName, strings.TrimSpace(asString(selected["package_name"])))
+			replaceCanonicalRouteFromSelectedAvailability(&state, results[index], decision.SelectedOptionIndex)
 		}
 		state.Phase = ConversationPhasePassengerCollection
 		state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
@@ -417,6 +409,35 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 		state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 	}
 	return state
+}
+
+func replaceCanonicalRouteFromSelectedAvailability(state *CanonicalConversationState, selected map[string]interface{}, selectedOptionIndex int) {
+	if state == nil || selectedOptionIndex <= 0 || len(selected) == 0 {
+		return
+	}
+	state.Route.SelectedOptionIndex = selectedOptionIndex
+	if origin := firstNonEmpty(
+		strings.TrimSpace(asString(selected["origin_display_name"])),
+		strings.TrimSpace(asString(selected["origin"])),
+	); origin != "" {
+		state.Route.Origin = origin
+	}
+	if destination := firstNonEmpty(
+		strings.TrimSpace(asString(selected["destination_display_name"])),
+		strings.TrimSpace(asString(selected["destination"])),
+	); destination != "" {
+		state.Route.Destination = destination
+	}
+	if packageName := strings.TrimSpace(asString(selected["package_name"])); packageName != "" {
+		state.Route.PackageName = packageName
+	}
+	state.Route.TripDate = strings.TrimSpace(asString(selected["trip_date"]))
+	state.Route.DepartureTime = strings.TrimSpace(asString(selected["origin_depart_time"]))
+	state.Route.TripID = strings.TrimSpace(asString(selected["trip_id"]))
+	state.Route.BoardStopID = strings.TrimSpace(asString(selected["board_stop_id"]))
+	state.Route.AlightStopID = strings.TrimSpace(asString(selected["alight_stop_id"]))
+	state.Route.Price = asFloat64(selected["price"])
+	state.Route.Currency = strings.TrimSpace(asString(selected["currency"]))
 }
 
 func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {
@@ -458,11 +479,18 @@ func appendOutOfTurnPendingPromptReminder(reply string, decision IntentDecision)
 	if pendingTemplate == "" {
 		return reply
 	}
-	pendingReply, ok := realizeResponseTemplate(pendingTemplate)
+	pendingReply, ok := outOfTurnPendingPromptReminderText(pendingTemplate)
 	if !ok || strings.TrimSpace(pendingReply) == "" {
 		return reply
 	}
 	return reply + "\n\nPara continuar: " + trimTrailingSentencePunctuation(pendingReply)
+}
+
+func outOfTurnPendingPromptReminderText(templateName ResponseTemplateName) (string, bool) {
+	if templateName == TemplateContextFallbackAvailabilityOption {
+		return "Qual opcao voce prefere?", true
+	}
+	return realizeResponseTemplate(templateName)
 }
 
 func templateDataBool(data map[string]interface{}, key string) bool {

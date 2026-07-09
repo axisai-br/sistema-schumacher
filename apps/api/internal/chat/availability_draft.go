@@ -664,11 +664,29 @@ func availabilityDraftCanStartFromText(update AvailabilityDraft, text string) bo
 }
 
 func availabilityDraftHasSelectedTrip(session Session, history []Message, currentTurn string) bool {
-	if extractSelectedOptionIndex(currentTurn) > 0 && hasPreviousAvailabilityList(history) {
-		return true
+	if index := extractSelectedOptionIndex(currentTurn); index > 0 {
+		availability, sourceHistoryIndex, ok := findLatestAvailabilityContextWithSource(history)
+		if !ok || index > len(availability.Results) {
+			return false
+		}
+		if latestAvailabilitySelectionEvidence(history).blocksHistoryIndex(sourceHistoryIndex) {
+			return false
+		}
+		return hasCompleteAvailabilitySearchItemFacts(availability.Results[index-1])
 	}
 	draft := collectBookingDraftContext(session, history, currentTurn)
-	return draft.SelectedOptionIndex > 0 || strings.TrimSpace(draft.TripID) != ""
+	return hasCompleteSelectedTripFacts(draft.TripID, draft.BoardStopID, draft.AlightStopID)
+}
+
+func availabilityDraftOptionHasCompleteTripFacts(history []Message, index int) bool {
+	if index <= 0 {
+		return false
+	}
+	availability := findLatestAvailabilityContext(history)
+	if availability == nil || index > len(availability.Results) {
+		return false
+	}
+	return hasCompleteAvailabilitySearchItemFacts(availability.Results[index-1])
 }
 
 func buildAvailabilityDraftMissingSlotsRun(draft AvailabilityDraft) RunAgentResult {

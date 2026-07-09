@@ -30,15 +30,17 @@ type CanonicalConversationState struct {
 }
 
 type CanonicalRouteState struct {
-	Origin              string `json:"origin,omitempty"`
-	Destination         string `json:"destination,omitempty"`
-	PackageName         string `json:"package_name,omitempty"`
-	TripDate            string `json:"trip_date,omitempty"`
-	DepartureTime       string `json:"departure_time,omitempty"`
-	SelectedOptionIndex int    `json:"selected_option_index,omitempty"`
-	TripID              string `json:"trip_id,omitempty"`
-	BoardStopID         string `json:"board_stop_id,omitempty"`
-	AlightStopID        string `json:"alight_stop_id,omitempty"`
+	Origin              string  `json:"origin,omitempty"`
+	Destination         string  `json:"destination,omitempty"`
+	PackageName         string  `json:"package_name,omitempty"`
+	TripDate            string  `json:"trip_date,omitempty"`
+	DepartureTime       string  `json:"departure_time,omitempty"`
+	Price               float64 `json:"price,omitempty"`
+	Currency            string  `json:"currency,omitempty"`
+	SelectedOptionIndex int     `json:"selected_option_index,omitempty"`
+	TripID              string  `json:"trip_id,omitempty"`
+	BoardStopID         string  `json:"board_stop_id,omitempty"`
+	AlightStopID        string  `json:"alight_stop_id,omitempty"`
 }
 
 type CanonicalPassengerState struct {
@@ -77,6 +79,8 @@ func deriveCanonicalConversationState(session Session, history []Message, curren
 	state.Route.AlightStopID = draft.AlightStopID
 	state.Route.TripDate = draft.TripDate
 	state.Route.DepartureTime = draft.DepartureTime
+	state.Route.Price = draft.Price
+	state.Route.Currency = draft.Currency
 	state.Passengers.ExpectedCount = draft.PassengerCount
 	state.Passengers.ChildUnder5Count = draft.ChildUnder5Count
 	state.Passengers.DocumentsCollected = draft.HasPassengerDetails
