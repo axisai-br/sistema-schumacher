@@ -543,6 +543,68 @@ Próxima ação recomendada:
 solicitar novo /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy.
 ```
 
+Hotfix local concluído em 2026-07-09; pendente review/commit/deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-09 — administrative notes/support during booking pending
+Entrada real: "queria verificar com você com relação à baixa das notas" durante BOOKING_PENDING/ASK_PASSENGER_DOCUMENTS
+Problema corrigido localmente: pergunta administrativa/financeira sobre notas deixava o fluxo determinístico de booking/documents responder como continuação de passageiro.
+Esperado: HUMAN_SUPPORT_INFO com suporte da Schumacher Tur, sem ASK_PASSENGER_DOCUMENTS e sem frase "Recebi os dados do passageiro".
+
+Decisão tomada:
+Criado helper determinístico `looksLikeAdministrativeNotesSupportQuestion`.
+Durante BOOKING_PENDING, PASSENGER_COLLECTION, prompt de documentos ou confirmação/prosseguimento de documentos, turnos textuais sobre "baixa das notas", "notas", "nota fiscal", "faturamento", "financeiro", "emissão de nota" e "comprovante fiscal" roteiam para suporte quando não parecem documento real de passageiro.
+O draft usa template fechado HUMAN_SUPPORT_INFO com resposta específica: "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
+Texto real de passageiro com CPF continua no fluxo documental.
+Respostas como "já mandei acima" continuam no fallback documental existente.
+Turnos com mídia/documento/foto continuam priorizando document_extract.
+
+Garantias cobertas:
+Não chama booking_create, payment_create, payment_status ou document_extract para texto puro administrativo.
+Não usa action=ask_passenger_documents nem template_name=ASK_PASSENGER_DOCUMENTS no caso administrativo.
+Não persiste selected_option_index nem selected_availability_result no draft administrativo.
+Não apaga nem materializa booking draft existente.
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/administrative_support.go
+apps/api/internal/chat/administrative_support_test.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/handler_test.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'TestLooksLikeAdministrativeNotesSupportQuestion|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+Revisão local do diff sem achados P1/P2. Solicitar /review antes de commit.
+
+Necessidade de teste em produção/homologação:
+validar BOOKING_PENDING/ASK_PASSENGER_DOCUMENTS → "queria verificar com você com relação à baixa das notas" retornando suporte/humano, sem ASK_PASSENGER_DOCUMENTS e sem tools críticas.
+validar "nota fiscal", "notas", "faturamento", "financeiro", "emissão de nota" e "comprovante fiscal" durante coleta de documentos.
+validar que "João Silva CPF 00000000000" continua fluxo documental normal e que foto/documento continua document_extract.
+
+Não houve alteração em:
+OpenAI schema/prompt/runner
+OpenAI runtime assist
+vector base
+File Search
+planner
+banco/migrations
+infra
+n8n
+booking_create tool/execução crítica
+payment_create
+payment_status
+document_extract
+selected availability persistence fora do novo draft administrativo
+
+Próxima ação recomendada:
+solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy controlado.
+```
+
 3.6F/vector/File Search/planner continuam não iniciados.
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
@@ -2372,6 +2434,18 @@ document_extract
 **Correção aplicada:** contador determinístico de opções numeradas renderizadas na última mensagem de disponibilidade; seleção contextual de opção única exige `tool_context.availability_search` atual na mesma mensagem/lista; count atual usa apenas opções visíveis futuras e respeita o cap renderizado de 5; rendered count sem facts atuais cai em fallback seguro também no interpretador estruturado; facts mais recentes passam a vencer em `deriveCanonicalConversationState`.
 
 **Testes executados:** `go test -count=1 ./internal/chat -run 'TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts|TestIntentRouterDoesNotSelectEssaMsmFromRenderedSingleAvailabilityOptionWithStaleFacts|TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurrentFacts|TestIntentRouterDoesNotSelectEssaMsmFromRenderedMultipleAvailabilityOptions|TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback|TestInterpretStructuredTurnDoesNotSelectRenderedSingleAvailabilityOptionWithStaleFacts|TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount|TestDeriveCanonicalConversationStateKeepsLatestAvailabilityFacts|TestInferActivePromptContextReadsAvailabilityOptionCountFromRenderedPrompt'`; `go test -count=1 ./internal/chat -run 'Test.*Availability.*Option|Test.*ActivePrompt|Test.*Essa.*Msm|Test.*Stale.*Facts|Test.*InterpreterCase|Test.*Payment.*Info|Test.*AutoSend'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
+
+---
+
+## H-011 — Pergunta administrativa sobre notas durante booking pending
+
+**Status:** Corrigido localmente em 2026-07-09; pendente review, deploy e validação em produção/homologação.
+
+**Sintoma:** durante `BOOKING_PENDING`/`ASK_PASSENGER_DOCUMENTS`, texto como "queria verificar com você com relação à baixa das notas" era tratado como continuação de documentos/reserva e podia gerar `ASK_PASSENGER_DOCUMENTS`.
+
+**Correção aplicada:** gate determinístico para assuntos administrativos/financeiros de notas durante coleta/pendência de documentos, roteando texto puro para `HUMAN_SUPPORT_INFO` sem tools críticas e sem payload de seleção de disponibilidade. Documento textual real e mídia continuam no fluxo documental.
+
+**Testes executados:** `go test -count=1 ./internal/chat -run 'TestLooksLikeAdministrativeNotesSupportQuestion|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
 
 ---
 
