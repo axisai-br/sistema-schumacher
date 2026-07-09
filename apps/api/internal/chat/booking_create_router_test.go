@@ -1283,6 +1283,91 @@ func TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply(t
 	}
 }
 
+func TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	history := append(availabilityOptionPromptHistory(now, availabilityOptionPromptFiveOptionsFutureResult()), Message{
+		Direction:  "INBOUND",
+		Body:       "não quero opção 1",
+		ReceivedAt: now.Add(-30 * time.Second),
+	})
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar opção 2\nJoao Vitor Messias | CPF | 84960815086", nil)
+	if !ok {
+		t.Fatalf("expected option 2 booking input after rejecting option 1")
+	}
+	if input.SelectedOptionIndex != 2 ||
+		input.TripID != "trip-2026-07-14" ||
+		input.BoardStopID != "board-2026-07-14" ||
+		input.AlightStopID != "alight-2026-07-14" {
+		t.Fatalf("expected option 2 trip after rejecting option 1, got %+v", input)
+	}
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
+		t.Fatalf("expected rejected option 1 to be blocked, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputRejectedHiddenVisibleSelectionUsesVisibleContext(t *testing.T) {
+	now := time.Date(2099, 7, 12, 12, 0, 0, 0, time.UTC)
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+
+	cases := []struct {
+		name                           string
+		rejection                      string
+		appendInformationalToolContext bool
+	}{
+		{name: "option index", rejection: "não quero opção 1"},
+		{name: "trip date", rejection: "não quero 13/07"},
+		{name: "informational reattached raw context", rejection: "não quero opção 1", appendInformationalToolContext: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := append(bookingCreateHiddenRawPrefixAvailabilityHistory(now), Message{
+				Direction:  "INBOUND",
+				Body:       tc.rejection,
+				ReceivedAt: now.Add(30 * time.Second),
+			})
+			if tc.appendInformationalToolContext {
+				history = append(history, Message{
+					Direction:        "OUTBOUND",
+					Body:             "Pode pagar no Pix ou no cartão. Qual opção você prefere para seguir?",
+					ProcessingStatus: messageStatusAutomationSent,
+					ReceivedAt:       now.Add(time.Minute),
+					Payload: map[string]interface{}{
+						"tool_context": map[string]interface{}{
+							toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(bookingCreateHiddenRawPrefixAvailabilityResult()),
+						},
+					},
+				})
+			}
+
+			if input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
+				t.Fatalf("expected rejected visible option 1 to be blocked, got %+v", input)
+			}
+
+			input, ok := parseBookingCreateInput(session, history, "quero reservar opção 2\nJoao Vitor Messias | CPF | 84960815086", nil)
+			if !ok {
+				t.Fatalf("expected visible option 2 booking input after rejecting visible option 1")
+			}
+			if input.SelectedOptionIndex != 2 ||
+				input.TripID != "trip-visible-2026-07-14" ||
+				input.BoardStopID != "board-visible-2026-07-14" ||
+				input.AlightStopID != "alight-visible-2026-07-14" {
+				t.Fatalf("expected visible option 2 trip, not raw result 2, got %+v", input)
+			}
+		})
+	}
+}
+
 func TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionReply(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
@@ -1523,6 +1608,64 @@ func TestParseBookingCreateInputCurrentAvailabilityIgnoresOldSelectionBlocker(t 
 		input.BoardStopID != "board-current" ||
 		input.AlightStopID != "alight-current" {
 		t.Fatalf("expected current availability to win over old blocker, got %+v", input)
+	}
+}
+
+func bookingCreateHiddenRawPrefixAvailabilityHistory(now time.Time) []Message {
+	raw := bookingCreateHiddenRawPrefixAvailabilityResult()
+	rendered := raw
+	rendered.Results = append([]AvailabilitySearchItem(nil), raw.Results[1:]...)
+	return []Message{{
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(rendered),
+		ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:       now,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(raw),
+			},
+		},
+	}}
+}
+
+func bookingCreateHiddenRawPrefixAvailabilityResult() AvailabilitySearchResult {
+	base := AvailabilitySearchItem{
+		OriginDisplayName:      "Videira/SC",
+		DestinationDisplayName: "Santa Ines/MA",
+		SeatsAvailable:         5,
+		Price:                  950,
+		Currency:               "BRL",
+		Status:                 "ACTIVE",
+		TripStatus:             "SCHEDULED",
+		PackageName:            packageToMaranhao,
+	}
+	hidden := base
+	hidden.TripID = "trip-hidden-2026-07-11"
+	hidden.BoardStopID = "board-hidden-2026-07-11"
+	hidden.AlightStopID = "alight-hidden-2026-07-11"
+	hidden.OriginDepartTime = "11:00"
+	hidden.TripDate = "2099-07-11"
+	visibleRejected := base
+	visibleRejected.TripID = "trip-visible-2026-07-13"
+	visibleRejected.BoardStopID = "board-visible-2026-07-13"
+	visibleRejected.AlightStopID = "alight-visible-2026-07-13"
+	visibleRejected.OriginDepartTime = "13:00"
+	visibleRejected.TripDate = "2099-07-13"
+	visibleAllowed := base
+	visibleAllowed.TripID = "trip-visible-2026-07-14"
+	visibleAllowed.BoardStopID = "board-visible-2026-07-14"
+	visibleAllowed.AlightStopID = "alight-visible-2026-07-14"
+	visibleAllowed.OriginDepartTime = "14:00"
+	visibleAllowed.TripDate = "2099-07-14"
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Videira/SC",
+			Destination: "Santa Ines/MA",
+			PackageName: packageToMaranhao,
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{hidden, visibleRejected, visibleAllowed},
 	}
 }
 

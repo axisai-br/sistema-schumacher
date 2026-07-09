@@ -904,6 +904,156 @@ func TestLooksLikeNegatedAvailabilitySelectionTargetsAndRejections(t *testing.T)
 	}
 }
 
+func TestParseAvailabilityRejectionEvidenceSpecificTargets(t *testing.T) {
+	cases := []struct {
+		text        string
+		wantIndexes []int
+		wantDates   []string
+		wantWhole   bool
+	}{
+		{text: "não quero opção 1", wantIndexes: []int{1}},
+		{text: "não quero essa 1", wantIndexes: []int{1}},
+		{text: "opção 1 não serve", wantIndexes: []int{1}},
+		{text: "1 não serve", wantIndexes: []int{1}},
+		{text: "não serve 1", wantIndexes: []int{1}},
+		{text: "13/07 não serve", wantDates: []string{"13/07"}},
+		{text: "13/05 não serve", wantDates: []string{"13/05"}},
+		{text: "não quero essa", wantWhole: true},
+		{text: "essa não", wantWhole: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			folded := strings.Join(strings.Fields(foldChatText(tc.text)), " ")
+			got := parseAvailabilityRejectionEvidence(folded)
+			if !got.Found {
+				t.Fatalf("expected rejection evidence for %q", tc.text)
+			}
+			if !sameIntSlice(got.OptionIndexes, tc.wantIndexes) {
+				t.Fatalf("expected indexes %+v, got %+v for %q", tc.wantIndexes, got.OptionIndexes, tc.text)
+			}
+			if !sameStringSlice(got.TripDates, tc.wantDates) {
+				t.Fatalf("expected dates %+v, got %+v for %q", tc.wantDates, got.TripDates, tc.text)
+			}
+			if got.WholeContext != tc.wantWhole {
+				t.Fatalf("expected whole_context=%v, got %+v for %q", tc.wantWhole, got, tc.text)
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := append(availabilityOptionPromptHistory(now, availabilityOptionPromptFiveOptionsFutureResult()), Message{
+		Direction:  "INBOUND",
+		Body:       "opção 1 não serve",
+		ReceivedAt: now.Add(-30 * time.Second),
+	})
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	selected := routeDeterministicIntent(history, "2", state, now)
+	if selected.Intent != IntentSelectAvailabilityOption ||
+		selected.SelectedOptionIndex != 2 ||
+		selected.TemplateName != TemplateAskPassengerCount {
+		t.Fatalf("expected option 2 to remain selectable after rejecting option 1, got %+v", selected)
+	}
+
+	rejected := routeDeterministicIntent(history, "1", state, now)
+	if rejected.Intent == IntentSelectAvailabilityOption ||
+		rejected.SelectedOptionIndex != 0 ||
+		rejected.TemplateName == TemplateAskPassengerCount {
+		t.Fatalf("expected rejected option 1 not to select, got %+v", rejected)
+	}
+	assertContextualFallbackDecision(t, rejected, TemplateContextFallbackAvailabilityOption)
+}
+
+func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPaymentBlocksMatchingNumericOption(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	history := availabilityRejectedDateOutOfTurnPaymentHistory(t, now)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+
+	rejected := routeDeterministicIntent(history, "1", state, now)
+	if rejected.Intent == IntentSelectAvailabilityOption ||
+		rejected.SelectedOptionIndex != 0 ||
+		rejected.TemplateName == TemplateAskPassengerCount {
+		t.Fatalf("expected rejected date option 1 not to select, got %+v", rejected)
+	}
+	assertContextualFallbackDecision(t, rejected, TemplateContextFallbackAvailabilityOption)
+
+	selected := routeDeterministicIntent(history, "2", state, now)
+	if selected.Intent != IntentSelectAvailabilityOption ||
+		selected.SelectedOptionIndex != 2 ||
+		selected.TemplateName != TemplateAskPassengerCount {
+		t.Fatalf("expected option 2 to remain selectable after rejecting 13/07, got %+v", selected)
+	}
+}
+
+func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time) []Message {
+	t.Helper()
+
+	availability := availabilityOptionPromptFiveOptionsFutureResult()
+	history := availabilityOptionPromptHistory(now, availability)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+	activePrompt := InferActivePromptContext(history, state)
+	decision, ok := buildOutOfTurnInfoDecision("não quero 13/07, paga agora?", activePrompt)
+	if !ok {
+		t.Fatal("expected rejected date payment question to build out-of-turn decision")
+	}
+	reply, ok := realizeIntentResponseTemplate(decision)
+	if !ok {
+		t.Fatalf("expected rejected date payment question to render, got %+v", decision)
+	}
+	templateData := cloneMap(decision.TemplateData)
+	if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{"13/07"}) {
+		t.Fatalf("expected rejected trip date metadata [13/07], got %+v data=%+v", got, templateData)
+	}
+
+	return append(history,
+		Message{
+			Direction:  "INBOUND",
+			Body:       "não quero 13/07, paga agora?",
+			ReceivedAt: now.Add(-30 * time.Second),
+		},
+		Message{
+			Direction:        "OUTBOUND",
+			Body:             reply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-20 * time.Second),
+			Payload: map[string]interface{}{
+				"template_name": string(TemplatePaymentOptionsInfo),
+				"intent":        string(IntentPaymentInfoQuestion),
+				"template_data": templateData,
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+				},
+			},
+		},
+	)
+}
+
+func sameIntSlice(left []int, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStringSlice(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	history := availabilityOptionPromptHistory(now, availabilityOptionPromptTwoOptionsFutureResult())
@@ -2232,6 +2382,23 @@ func availabilityOptionPromptTwoOptionsFutureResult() AvailabilitySearchResult {
 	second.OriginDepartTime = "14:00"
 	second.TripDate = "2026-07-14"
 	result.Results = []AvailabilitySearchItem{result.Results[0], second}
+	return result
+}
+
+func availabilityOptionPromptFiveOptionsFutureResult() AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	options := make([]AvailabilitySearchItem, 0, 5)
+	for day := 13; day <= 17; day++ {
+		item := result.Results[0]
+		suffix := "2026-07-" + twoDigit(day)
+		item.TripID = "trip-" + suffix
+		item.BoardStopID = "board-" + suffix
+		item.AlightStopID = "alight-" + suffix
+		item.OriginDepartTime = twoDigit(day) + ":00"
+		item.TripDate = suffix
+		options = append(options, item)
+	}
+	result.Results = options
 	return result
 }
 

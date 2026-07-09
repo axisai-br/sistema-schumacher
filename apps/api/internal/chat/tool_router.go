@@ -801,12 +801,15 @@ func parseAvailabilityDateSelectionInput(history []Message, text string, observe
 	if looksLikeNegatedAvailabilitySelection(folded) {
 		return AvailabilitySearchInput{}, false
 	}
-	latest := findLatestAvailabilityContext(history)
-	if latest == nil || len(latest.Results) == 0 {
+	latest, sourceHistoryIndex, ok := findLatestAvailabilityContextWithSource(history)
+	if !ok || len(latest.Results) == 0 {
 		return AvailabilitySearchInput{}, false
 	}
 	selected, ok := resolveAvailabilityDateSelection(latest.Results, text, observedAt)
 	if !ok {
+		return AvailabilitySearchInput{}, false
+	}
+	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(sourceHistoryIndex, 0, selected.TripDate) {
 		return AvailabilitySearchInput{}, false
 	}
 

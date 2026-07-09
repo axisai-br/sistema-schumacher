@@ -61,6 +61,7 @@ var (
 	bareOptionNumberRejectBeforePattern    = regexp.MustCompile(`\bnao\s+(?:pode\s+ser|serve|da|rola|funciona|quero|consigo|e|eh)\s+(?:a\s+)?0?([1-5])\b`)
 	bareOptionNumberBadPattern             = regexp.MustCompile(`\b0?([1-5])\s+fica\s+ruim\b`)
 	bareOptionNumberNoSuffixPattern        = regexp.MustCompile(`\b0?([1-5])\s+nao\b`)
+	deicticOptionNumberPattern             = regexp.MustCompile(`\b(?:essa|esta|esse|isso)\s+0?([1-5])\b`)
 )
 
 var reservationStartTemplateIntentPhrases = []string{
@@ -395,6 +396,13 @@ func routeAvailabilityOptionDateAnswer(history []Message, body string, observedA
 	if selectedIndex <= 0 {
 		return IntentDecision{}, false
 	}
+	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(
+		promptContext.SourceHistoryIndex,
+		selectedIndex,
+		latest.Results[selectedIndex-1].TripDate,
+	) {
+		return IntentDecision{}, false
+	}
 	return IntentDecision{
 		Intent:              IntentSelectAvailabilityOption,
 		Source:              source,
@@ -428,6 +436,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 				TemplateContextFallbackAvailabilityOption,
 			), true
 		}
+		if availabilityPromptSelectionRejected(history, promptContext, index) {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_rejected",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              source,
@@ -440,6 +454,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 		if !promptContext.HasCurrentFacts {
 			return buildActivePromptContextualFallbackTemplateDecision(
 				"deterministic_availability_option_missing_current_facts",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
+		if availabilityPromptSelectionRejected(history, promptContext, 1) {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_rejected",
 				TemplateContextFallbackAvailabilityOption,
 			), true
 		}
@@ -458,6 +478,12 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 				TemplateContextFallbackAvailabilityOption,
 			), true
 		}
+		if availabilityPromptSelectionRejected(history, promptContext, 1) {
+			return buildActivePromptContextualFallbackTemplateDecision(
+				"deterministic_availability_option_rejected",
+				TemplateContextFallbackAvailabilityOption,
+			), true
+		}
 		return IntentDecision{
 			Intent:              IntentSelectAvailabilityOption,
 			Source:              "deterministic_trip_confirmation_recovery",
@@ -470,9 +496,30 @@ func routeAvailabilityOptionAnswer(optionCount int, history []Message, body stri
 	return IntentDecision{}, false
 }
 
+func availabilityPromptSelectionRejected(history []Message, promptContext availabilitySelectionPromptContext, index int) bool {
+	if index <= 0 {
+		return false
+	}
+
+	tripDate := ""
+	if current := currentAvailabilitySelectionPromptAvailabilityContext(history); current != nil {
+		selectedIndex := index - 1
+		if selectedIndex >= 0 && selectedIndex < len(current.Results) {
+			tripDate = current.Results[selectedIndex].TripDate
+		}
+	}
+
+	return latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(
+		promptContext.SourceHistoryIndex,
+		index,
+		tripDate,
+	)
+}
+
 type availabilitySelectionPromptContext struct {
-	OptionCount     int
-	HasCurrentFacts bool
+	OptionCount        int
+	HasCurrentFacts    bool
+	SourceHistoryIndex int
 }
 
 func looksLikeAmbiguousAvailabilityOptionReply(body string, folded string) bool {
@@ -492,12 +539,14 @@ func currentAvailabilitySelectionOptionCount(history []Message) int {
 }
 
 func currentAvailabilitySelectionPromptContext(history []Message) availabilitySelectionPromptContext {
-	message, ok := latestReliableAssistantMessage(history)
+	message, sourceHistoryIndex, ok := latestReliableAssistantMessageWithIndex(history)
 	if !ok {
 		return availabilitySelectionPromptContext{}
 	}
 
-	return availabilitySelectionPromptContextFromMessage(message)
+	context := availabilitySelectionPromptContextFromMessage(message)
+	context.SourceHistoryIndex = sourceHistoryIndex
+	return context
 }
 
 func availabilitySelectionPromptContextFromMessage(message Message) availabilitySelectionPromptContext {
@@ -515,8 +564,9 @@ func availabilitySelectionPromptContextFromMessage(message Message) availability
 	}
 	hasCurrentFacts := currentFactsCount > 0 && (renderedCount <= 0 || renderedCount == currentFactsCount)
 	return availabilitySelectionPromptContext{
-		OptionCount:     optionCount,
-		HasCurrentFacts: hasCurrentFacts,
+		OptionCount:        optionCount,
+		HasCurrentFacts:    hasCurrentFacts,
+		SourceHistoryIndex: -1,
 	}
 }
 
@@ -699,15 +749,154 @@ func looksLikeMixedContextualAvailabilitySelection(folded string) bool {
 }
 
 func looksLikeNegatedAvailabilitySelection(folded string) bool {
+	return parseAvailabilityRejectionEvidence(folded).Found
+}
+
+type availabilityRejectionEvidence struct {
+	Found         bool
+	WholeContext  bool
+	OptionIndexes []int
+	TripDates     []string
+}
+
+func (e availabilityRejectionEvidence) hasSpecificTarget() bool {
+	return len(e.OptionIndexes) > 0 || len(e.TripDates) > 0
+}
+
+func parseAvailabilityRejectionEvidence(folded string) availabilityRejectionEvidence {
 	folded = strings.Join(strings.Fields(folded), " ")
 	if folded == "" {
-		return false
+		return availabilityRejectionEvidence{}
 	}
 
-	return hasAvailabilityTargetThenRejection(folded) ||
+	found := hasAvailabilityTargetThenRejection(folded) ||
 		hasAvailabilityRejectionThenTarget(folded) ||
 		hasAvailabilityRejectionSuffix(folded) ||
 		hasBareAvailabilityOptionNumberRejection(folded)
+	if !found {
+		return availabilityRejectionEvidence{}
+	}
+
+	evidence := availabilityRejectionEvidence{
+		Found:         true,
+		OptionIndexes: availabilityRejectedOptionIndexes(folded),
+		TripDates:     availabilityRejectedTripDates(folded),
+	}
+	if !evidence.hasSpecificTarget() {
+		evidence.WholeContext = true
+	}
+	return evidence
+}
+
+func availabilityRejectedOptionIndexes(folded string) []int {
+	indexes := []int{}
+	for _, match := range optionIndexPattern.FindAllStringSubmatch(folded, -1) {
+		if len(match) == 2 {
+			indexes = appendUniqueAvailabilityOptionIndex(indexes, availabilityOptionIndexFromText(match[1]))
+		}
+	}
+	for _, item := range []struct {
+		phrase string
+		index  int
+	}{
+		{"primeira", 1},
+		{"primeiro", 1},
+		{"segunda", 2},
+		{"segundo", 2},
+		{"terceira", 3},
+		{"terceiro", 3},
+		{"quarta", 4},
+		{"quarto", 4},
+		{"quinta", 5},
+		{"quinto", 5},
+	} {
+		if foldedContainsPhrase(folded, item.phrase) {
+			indexes = appendUniqueAvailabilityOptionIndex(indexes, item.index)
+		}
+	}
+	for _, pattern := range []*regexp.Regexp{
+		bareOptionNumberRejectAfterPattern,
+		bareOptionNumberRejectBeforePattern,
+		bareOptionNumberBadPattern,
+		bareOptionNumberNoSuffixPattern,
+		deicticOptionNumberPattern,
+	} {
+		for _, match := range pattern.FindAllStringSubmatchIndex(folded, -1) {
+			if len(match) >= 4 && match[2] >= 0 && match[3] >= 0 {
+				if availabilityCaptureInsideFoldedDate(folded, match[2], match[3]) {
+					continue
+				}
+				indexes = appendUniqueAvailabilityOptionIndex(indexes, availabilityOptionIndexFromText(folded[match[2]:match[3]]))
+			}
+		}
+	}
+	return indexes
+}
+
+func availabilityCaptureInsideFoldedDate(folded string, captureStart int, captureEnd int) bool {
+	for _, dateRange := range availabilityFoldedDateReferencePattern.FindAllStringIndex(folded, -1) {
+		if len(dateRange) == 2 && captureStart >= dateRange[0] && captureEnd <= dateRange[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func availabilityOptionIndexFromText(text string) int {
+	index, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		return 0
+	}
+	return index
+}
+
+func appendUniqueAvailabilityOptionIndex(indexes []int, index int) []int {
+	if index < 1 || index > 5 {
+		return indexes
+	}
+	for _, existing := range indexes {
+		if existing == index {
+			return indexes
+		}
+	}
+	return append(indexes, index)
+}
+
+func availabilityRejectedTripDates(folded string) []string {
+	dates := []string{}
+	for _, match := range availabilityFoldedDateReferencePattern.FindAllStringSubmatch(folded, -1) {
+		if len(match) != 3 || !validAvailabilityDayMonth(match[1], match[2]) {
+			continue
+		}
+		dates = appendUniqueAvailabilityTripDate(dates, canonicalAvailabilityDayMonth(match[1], match[2]))
+	}
+	return dates
+}
+
+func appendUniqueAvailabilityTripDate(dates []string, date string) []string {
+	date = strings.TrimSpace(date)
+	if date == "" {
+		return dates
+	}
+	for _, existing := range dates {
+		if existing == date {
+			return dates
+		}
+	}
+	return append(dates, date)
+}
+
+func canonicalAvailabilityDayMonth(dayText string, monthText string) string {
+	day, _ := strconv.Atoi(dayText)
+	month, _ := strconv.Atoi(monthText)
+	return twoDigitDatePart(day) + "/" + twoDigitDatePart(month)
+}
+
+func twoDigitDatePart(value int) string {
+	if value < 10 {
+		return "0" + strconv.Itoa(value)
+	}
+	return strconv.Itoa(value)
 }
 
 func hasAvailabilityTargetThenRejection(folded string) bool {

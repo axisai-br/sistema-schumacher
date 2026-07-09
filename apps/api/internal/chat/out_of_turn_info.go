@@ -22,6 +22,9 @@ const (
 	outOfTurnActivePromptTemplateDataKey  = "active_prompt_kind"
 	outOfTurnActivePromptSourceIDDataKey  = "active_prompt_source_message_id"
 	outOfTurnRejectedAvailabilityDataKey  = "out_of_turn_rejected_availability_selection"
+	outOfTurnRejectedOptionIndexesDataKey = "rejected_option_indexes"
+	outOfTurnRejectedTripDatesDataKey     = "rejected_trip_dates"
+	outOfTurnRejectedWholeContextDataKey  = "rejected_whole_context"
 )
 
 func buildOutOfTurnInfoDecision(text string, activePrompt ActivePromptContext) (IntentDecision, bool) {
@@ -49,9 +52,20 @@ func buildOutOfTurnInfoDecision(text string, activePrompt ActivePromptContext) (
 		templateData[outOfTurnActivePromptSourceIDDataKey] = sourceID
 	}
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
-	if activePrompt.Kind == ActivePromptAvailabilityOptionChoice &&
-		looksLikeNegatedAvailabilitySelection(folded) {
-		templateData[outOfTurnRejectedAvailabilityDataKey] = true
+	if activePrompt.Kind == ActivePromptAvailabilityOptionChoice {
+		rejection := parseAvailabilityRejectionEvidence(folded)
+		if rejection.Found {
+			templateData[outOfTurnRejectedAvailabilityDataKey] = true
+			if len(rejection.OptionIndexes) > 0 {
+				templateData[outOfTurnRejectedOptionIndexesDataKey] = append([]int(nil), rejection.OptionIndexes...)
+			}
+			if len(rejection.TripDates) > 0 {
+				templateData[outOfTurnRejectedTripDatesDataKey] = append([]string(nil), rejection.TripDates...)
+			}
+			if rejection.WholeContext || !rejection.hasSpecificTarget() || activePrompt.AvailabilityOptionCount <= 1 {
+				templateData[outOfTurnRejectedWholeContextDataKey] = true
+			}
+		}
 	}
 
 	return IntentDecision{
