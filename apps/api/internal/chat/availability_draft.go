@@ -669,7 +669,9 @@ func availabilityDraftHasSelectedTrip(session Session, history []Message, curren
 		if !ok || index > len(availability.Results) {
 			return false
 		}
-		if latestAvailabilitySelectionEvidence(history).blocksHistoryIndex(sourceHistoryIndex) {
+		selection := latestAvailabilitySelectionEvidence(history)
+		if selection.blocksHistoryIndex(sourceHistoryIndex) ||
+			selection.rejectsAvailabilityOptionForHistory(sourceHistoryIndex, index, availability.Results[index-1].TripDate) {
 			return false
 		}
 		return hasCompleteAvailabilitySearchItemFacts(availability.Results[index-1])

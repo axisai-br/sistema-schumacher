@@ -57,6 +57,11 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 }
 
 func latestReliableAssistantMessage(history []Message) (Message, bool) {
+	message, _, ok := latestReliableAssistantMessageWithIndex(history)
+	return message, ok
+}
+
+func latestReliableAssistantMessageWithIndex(history []Message) (Message, int, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
 		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
@@ -69,20 +74,25 @@ func latestReliableAssistantMessage(history []Message) (Message, bool) {
 			continue
 		}
 		if isBotAutoReplyMessage(message) {
-			if source, ok := resolveBotAutoReplyPromptSourceMessage(history, i, message); ok {
-				return source, true
+			if source, sourceIndex, ok := resolveBotAutoReplyPromptSourceMessageWithIndex(history, i, message); ok {
+				return source, sourceIndex, true
 			}
-			return withoutPromptToolContext(message), true
+			return withoutPromptToolContext(message), i, true
 		}
-		return message, true
+		return message, i, true
 	}
-	return Message{}, false
+	return Message{}, -1, false
 }
 
 func resolveBotAutoReplyPromptSourceMessage(history []Message, mirrorIndex int, mirror Message) (Message, bool) {
+	message, _, ok := resolveBotAutoReplyPromptSourceMessageWithIndex(history, mirrorIndex, mirror)
+	return message, ok
+}
+
+func resolveBotAutoReplyPromptSourceMessageWithIndex(history []Message, mirrorIndex int, mirror Message) (Message, int, bool) {
 	draftID := botAutoReplyDraftMessageID(mirror)
 	if draftID == "" {
-		return Message{}, false
+		return Message{}, -1, false
 	}
 	mirrorBody := messageTurnText(mirror)
 	for i := mirrorIndex - 1; i >= 0; i-- {
@@ -91,20 +101,20 @@ func resolveBotAutoReplyPromptSourceMessage(history []Message, mirrorIndex int, 
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(candidate.Direction), "OUTBOUND") {
-			return Message{}, false
+			return Message{}, -1, false
 		}
 		if strings.TrimSpace(messageTurnText(candidate)) == "" {
-			return Message{}, false
+			return Message{}, -1, false
 		}
 		if isBotAutoReplyMessage(candidate) || !isReliableActivePromptOutbound(candidate) {
-			return Message{}, false
+			return Message{}, -1, false
 		}
 		if !equivalentAssistantPromptBody(messageTurnText(candidate), mirrorBody) {
-			return Message{}, false
+			return Message{}, -1, false
 		}
-		return candidate, true
+		return candidate, i, true
 	}
-	return Message{}, false
+	return Message{}, -1, false
 }
 
 func botAutoReplyDraftMessageID(message Message) string {

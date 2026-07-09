@@ -2124,10 +2124,14 @@ func attachPendingAvailabilityContextForOutOfTurnInfo(context agentToolContext, 
 		context.Availability != nil {
 		return context
 	}
-	if templateDataBool(decision.TemplateData, outOfTurnRejectedAvailabilityDataKey) {
+	rejection := availabilityRejectionEvidenceFromTemplateData(decision.TemplateData)
+	if rejection.Found && rejection.WholeContext {
 		return context
 	}
 	if source := availabilityContextFromOutOfTurnActivePromptSource(history, decision); source != nil {
+		if rejection.Found && (!rejection.hasSpecificTarget() || len(source.Results) <= 1) {
+			return context
+		}
 		context.Availability = source
 	}
 	return context

@@ -555,7 +555,7 @@ Decisão tomada:
 Criado helper determinístico `looksLikeAdministrativeNotesSupportQuestion`.
 `intent_router` retorna `deterministic_administrative_notes_support` com action=template e template_name=HUMAN_SUPPORT_INFO antes de UNKNOWN/fallback para sessão limpa/DISCOVERY.
 Durante BOOKING_PENDING, PASSENGER_COLLECTION, prompt de documentos ou confirmação/prosseguimento de documentos, turnos textuais sobre "baixa das notas", "notas", "nota fiscal", "faturamento", "financeiro", "emissão de nota" e "comprovante fiscal" roteiam para suporte quando não parecem documento real de passageiro.
-O draft usa template fechado HUMAN_SUPPORT_INFO com resposta específica: "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
+O draft usa template fechado HUMAN_SUPPORT_INFO com resposta específica atualizada para telefone do suporte.
 Texto real de passageiro com CPF continua no fluxo documental.
 Respostas como "já mandei acima" continuam no fallback documental existente.
 Turnos com mídia/documento/foto continuam priorizando document_extract.
@@ -607,6 +607,90 @@ payment_create
 payment_status
 document_extract
 selected availability persistence fora do novo draft administrativo
+
+Próxima ação recomendada:
+solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy controlado.
+```
+
+Hotfix local concluído em 2026-07-09; pendente review/commit/deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-09B — suporte com telefone e rejeição específica de opção
+Sintomas encontrados no smoke:
+1. HUMAN_SUPPORT_INFO administrativo para "baixa das notas" respondia sem telefone e dizia "vou te encaminhar", sem handoff real.
+2. Após lista com múltiplas opções, "não quero essa 1, paga agora?" respondia PAYMENT_OPTIONS_INFO, mas a seleção posterior "2" caía em CONTEXT_FALLBACK_AVAILABILITY_OPTION porque a rejeição da opção 1 invalidava a lista inteira.
+
+Problema corrigido localmente:
+Resposta administrativa de notas/financeiro agora inclui "+55 49 9886-2222" e não promete encaminhamento.
+Rejeição de disponibilidade agora carrega evidência estruturada: rejected_option_indexes, rejected_trip_dates e rejected_whole_context.
+Rejeição específica em lista múltipla bloqueia só a opção/data rejeitada, preservando a lista para seleção posterior de outra opção.
+Rejeição ambígua ou lista única continua bloqueando o contexto inteiro e não reanexa availability rejeitada.
+booking_create bloqueia opção/data rejeitada e permite opção não rejeitada da mesma lista.
+Follow-up P1 do review: booking_create agora resolve seleção histórica contra a lista visível/confiável do prompt, não contra results raw, evitando divergência quando há linhas raw ocultas/passadas antes das opções renderizadas.
+
+Decisão tomada:
+Mantido looksLikeNegatedAvailabilitySelection como wrapper booleano sobre parseAvailabilityRejectionEvidence.
+O draft informativo out-of-turn persiste a rejeição específica em template_data e só reanexa tool_context.availability_search quando a lista tem múltiplas opções e a rejeição é específica.
+latestAvailabilitySelectionEvidence diferencia rejected_whole_context de rejected_specific_options por índice/data.
+Seleção posterior compara a rejeição com o source histórico da availability para não bloquear lista nova.
+Datas rejeitadas são normalizadas como dd/mm; o parser evita interpretar mês 01-05 como número de opção.
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/administrative_support.go
+apps/api/internal/chat/administrative_support_test.go
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/out_of_turn_info.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'TestAdministrativeNotesSupportReplyIncludesPhone|TestParseAvailabilityRejectionEvidenceSpecificTargets|TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment|TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment|TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption|TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityContext|TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder|TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply'
+go test -count=1 ./internal/chat -run 'TestParseBookingCreateInputRejectedHiddenVisibleSelectionUsesVisibleContext|Test.*BookingCreate.*Rejected|Test.*Hidden.*Visible|Test.*Specific.*Rejected.*Option|Test.*Rejected.*Date'
+go test -count=1 ./internal/chat -run 'TestParseBookingCreateInputRejectedHiddenVisibleSelectionUsesVisibleContext|TestParseBookingCreateInputSingleOptionFallbackWorksWithoutSelectionBlocker|TestParseBookingCreateInputExplicitIndexWorksWithoutSelectionBlocker|TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionReply|TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability|TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHistory|TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityContext'
+go test -count=1 ./internal/chat -run 'Test.*Administrative.*Support.*Phone|Test.*Specific.*Rejected.*Option|Test.*Rejected.*Option.*Payment|Test.*Availability.*Selection.*After.*Rejection|Test.*BookingCreate.*Rejected|Test.*Negated.*Availability|Test.*SelectionBlocker|Test.*AvailabilityDraftHasSelectedTrip|TestValidateStructuredInterpretationRejectsNegatedAvailabilityOptionReply|TestParseAvailabilityInputsRejectNegatedListedDate'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+Review P1 corrigido:
+seleção numérica agora passa a TripDate visível/confiável da opção escolhida para rejectsAvailabilityOptionForHistory; assim, rejeição por data como "não quero 13/07" bloqueia "1" quando a opção 1 é 13/07, sem bloquear opções de outras datas.
+
+Review P1 follow-up corrigido:
+booking_create agora usa o contexto visível/confiável da mensagem de availability antes de comparar rejeições e antes de retornar a seleção. Quando results raw têm item oculto/passado antes da lista renderizada, "opção 2" resolve para a opção visível 2, não para o raw result 2. Mensagens informativas posteriores que reanexam payload multiopção sem lista numerada são ignoradas para seleção histórica; fallback sem lista continua permitido apenas quando há exatamente uma opção visível.
+
+Necessidade de teste em produção/homologação:
+validar "baixa das notas", "nota fiscal" e "faturamento" retornando HUMAN_SUPPORT_INFO com +55 49 9886-2222.
+validar lista com 5 opções → "não quero essa 1, paga agora?" → PAYMENT_OPTIONS_INFO + "Qual opção você prefere?" sem selected_option_index; depois "2" selecionando a opção 2 e perguntando quantidade de passageiros.
+validar o mesmo fluxo com "1" depois da rejeição, sem selecionar a opção 1.
+validar lista com 5 opções → "não quero 13/07, paga agora?" → PAYMENT_OPTIONS_INFO; depois "1" bloqueado se a opção 1 é 13/07 e "2" selecionando se a opção 2 tem outra data.
+validar availability com item raw oculto/passado antes das opções visíveis: após rejeitar a opção visível 1/13/07, booking_create com "opção 1" bloqueia e "opção 2" usa a viagem visível 2.
+validar "opção 1 não serve" → "2" selecionando a opção 2.
+validar lista única → "não quero essa, paga agora?" sem reanexar availability e sem permitir booking_create posterior com a trip rejeitada.
+validar "paga agora?" puro após lista múltipla preservando contexto e permitindo seleção posterior.
+
+Não houve alteração em:
+OpenAI schema/prompt/runner
+OpenAI runtime assist
+vector base
+File Search
+planner
+banco/migrations
+infra
+n8n
+booking_create tool/execução crítica
+payment_create
+payment_status
+document_extract
+booking_cancel
 
 Próxima ação recomendada:
 solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy controlado.

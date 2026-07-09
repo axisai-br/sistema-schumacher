@@ -1,6 +1,33 @@
 package chat
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestAdministrativeNotesSupportReplyIncludesPhone(t *testing.T) {
+	decision := routeDeterministicIntent(nil, "baixa das notas", CanonicalConversationState{}, time.Now())
+	if decision.TemplateName != TemplateHumanSupportInfo ||
+		decision.Intent != IntentHumanSupportInfoQuestion {
+		t.Fatalf("expected administrative notes to route to human support info, got %+v", decision)
+	}
+	reply, ok := realizeIntentResponseTemplate(decision)
+	if !ok {
+		t.Fatalf("expected administrative support reply for %+v", decision)
+	}
+	if !containsAll(reply, "notas ou financeiro", "+55 49 9886-2222") {
+		t.Fatalf("expected administrative support reply with phone, got %q", reply)
+	}
+	for _, forbidden := range []string{
+		"vou te encaminhar",
+		"me informar os números",
+		"enviar comprovantes",
+	} {
+		if containsAll(reply, forbidden) {
+			t.Fatalf("administrative support reply must not contain %q: %q", forbidden, reply)
+		}
+	}
+}
 
 func TestLooksLikeAdministrativeNotesSupportQuestion(t *testing.T) {
 	for _, text := range []string{

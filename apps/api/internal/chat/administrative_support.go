@@ -4,7 +4,7 @@ import "strings"
 
 const (
 	administrativeNotesSupportDecisionSource = "deterministic_administrative_notes_support"
-	administrativeNotesSupportReply          = "Para assuntos sobre notas ou financeiro, vou te encaminhar para o suporte da Schumacher Tur."
+	administrativeNotesSupportReply          = "Para assuntos sobre notas ou financeiro, fale com o suporte da Schumacher Tur: +55 49 9886-2222."
 )
 
 func looksLikeAdministrativeNotesSupportQuestion(text string) bool {

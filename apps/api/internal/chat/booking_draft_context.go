@@ -61,16 +61,19 @@ const (
 )
 
 type availabilitySelectionEvidence struct {
-	Status              availabilitySelectionStatus
-	SourceHistoryIndex  int
-	SelectedOptionIndex int
-	TripID              string
-	BoardStopID         string
-	AlightStopID        string
-	TripDate            string
-	DepartureTime       string
-	Price               float64
-	Currency            string
+	Status                availabilitySelectionStatus
+	SourceHistoryIndex    int
+	SelectedOptionIndex   int
+	RejectedOptionIndexes []int
+	RejectedTripDates     []string
+	RejectedWholeContext  bool
+	TripID                string
+	BoardStopID           string
+	AlightStopID          string
+	TripDate              string
+	DepartureTime         string
+	Price                 float64
+	Currency              string
 }
 
 func (e availabilitySelectionEvidence) found() bool {
@@ -84,11 +87,49 @@ func (e availabilitySelectionEvidence) bookable() bool {
 func (e availabilitySelectionEvidence) blocksOlderEvidence() bool {
 	return e.Status == availabilitySelectionBlockedMetadataOnly ||
 		e.Status == availabilitySelectionIncomplete ||
-		e.Status == availabilitySelectionRejected
+		(e.Status == availabilitySelectionRejected && e.RejectedWholeContext)
 }
 
 func (e availabilitySelectionEvidence) blocksHistoryIndex(historyIndex int) bool {
 	return e.blocksOlderEvidence() && historyIndex >= 0 && e.SourceHistoryIndex >= historyIndex
+}
+
+func (e availabilitySelectionEvidence) rejectsAvailabilityOptionForHistory(historyIndex int, index int, tripDate string) bool {
+	if e.Status != availabilitySelectionRejected || historyIndex < 0 || e.SourceHistoryIndex < historyIndex {
+		return false
+	}
+	if e.RejectedWholeContext {
+		return true
+	}
+	if e.rejectsOptionIndex(index) {
+		return true
+	}
+	return e.rejectsTripDate(tripDate)
+}
+
+func (e availabilitySelectionEvidence) rejectsOptionIndex(index int) bool {
+	if index <= 0 {
+		return false
+	}
+	for _, rejected := range e.RejectedOptionIndexes {
+		if rejected == index {
+			return true
+		}
+	}
+	return false
+}
+
+func (e availabilitySelectionEvidence) rejectsTripDate(tripDate string) bool {
+	date := canonicalRejectedTripDate(tripDate)
+	if date == "" {
+		return false
+	}
+	for _, rejected := range e.RejectedTripDates {
+		if canonicalRejectedTripDate(rejected) == date {
+			return true
+		}
+	}
+	return false
 }
 
 func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
@@ -241,10 +282,14 @@ func latestAvailabilitySelectionEvidence(history []Message) availabilitySelectio
 		message := history[i]
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
 			folded := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
-			if looksLikeNegatedAvailabilitySelection(folded) && hasPriorAvailabilityContextBefore(history, i) {
+			rejection := parseAvailabilityRejectionEvidence(folded)
+			if rejection.Found && hasPriorAvailabilityContextBefore(history, i) {
 				return availabilitySelectionEvidence{
-					Status:             availabilitySelectionRejected,
-					SourceHistoryIndex: i,
+					Status:                availabilitySelectionRejected,
+					SourceHistoryIndex:    i,
+					RejectedOptionIndexes: append([]int(nil), rejection.OptionIndexes...),
+					RejectedTripDates:     append([]string(nil), rejection.TripDates...),
+					RejectedWholeContext:  rejection.WholeContext,
 				}
 			}
 		}
@@ -259,6 +304,14 @@ func latestAvailabilitySelectionEvidence(history []Message) availabilitySelectio
 }
 
 func messageAvailabilitySelectionEvidence(message Message) availabilitySelectionEvidence {
+	if rejection := availabilityRejectionEvidenceFromMessageMetadata(message); rejection.Found {
+		return availabilitySelectionEvidence{
+			Status:                availabilitySelectionRejected,
+			RejectedOptionIndexes: append([]int(nil), rejection.OptionIndexes...),
+			RejectedTripDates:     append([]string(nil), rejection.TripDates...),
+			RejectedWholeContext:  rejection.WholeContext,
+		}
+	}
 	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
 		!shouldMergeAvailabilityFactsFromMessage(message) {
 		return availabilitySelectionEvidence{Status: availabilitySelectionNone}
@@ -301,6 +354,76 @@ func messageAvailabilitySelectionEvidence(message Message) availabilitySelection
 		}
 	}
 	return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+}
+
+func availabilityRejectionEvidenceFromMessageMetadata(message Message) availabilityRejectionEvidence {
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if len(payload) == 0 {
+			continue
+		}
+		if rejection := availabilityRejectionEvidenceFromTemplateData(asMap(payload["template_data"])); rejection.Found {
+			return rejection
+		}
+	}
+	return availabilityRejectionEvidence{}
+}
+
+func availabilityRejectionEvidenceFromTemplateData(data map[string]interface{}) availabilityRejectionEvidence {
+	if !templateDataBool(data, outOfTurnRejectedAvailabilityDataKey) {
+		return availabilityRejectionEvidence{}
+	}
+	rejection := availabilityRejectionEvidence{
+		Found:         true,
+		WholeContext:  templateDataBool(data, outOfTurnRejectedWholeContextDataKey),
+		OptionIndexes: availabilityRejectedOptionIndexesFromMetadata(data[outOfTurnRejectedOptionIndexesDataKey]),
+		TripDates:     availabilityRejectedTripDatesFromMetadata(data[outOfTurnRejectedTripDatesDataKey]),
+	}
+	if !rejection.WholeContext && !rejection.hasSpecificTarget() {
+		rejection.WholeContext = true
+	}
+	return rejection
+}
+
+func availabilityRejectedOptionIndexesFromMetadata(value interface{}) []int {
+	switch typed := value.(type) {
+	case []int:
+		return append([]int(nil), typed...)
+	case []interface{}:
+		indexes := make([]int, 0, len(typed))
+		for _, raw := range typed {
+			indexes = appendUniqueAvailabilityOptionIndex(indexes, asInt(raw))
+		}
+		return indexes
+	default:
+		return nil
+	}
+}
+
+func availabilityRejectedTripDatesFromMetadata(value interface{}) []string {
+	dates := []string{}
+	for _, raw := range asStringSlice(value) {
+		if date := canonicalRejectedTripDate(raw); date != "" {
+			dates = appendUniqueAvailabilityTripDate(dates, date)
+		}
+	}
+	return dates
+}
+
+func canonicalRejectedTripDate(tripDate string) string {
+	tripDate = strings.TrimSpace(tripDate)
+	if tripDate == "" {
+		return ""
+	}
+	if parsed := parseISODatePtr(tripDate); parsed != nil {
+		return parsed.Format("02/01")
+	}
+	folded := strings.Join(strings.Fields(foldChatText(tripDate)), " ")
+	for _, match := range availabilityFoldedDateReferencePattern.FindAllStringSubmatch(folded, -1) {
+		if len(match) == 3 && validAvailabilityDayMonth(match[1], match[2]) {
+			return canonicalAvailabilityDayMonth(match[1], match[2])
+		}
+	}
+	return ""
 }
 
 func messageAvailabilitySelectionStatusForIndex(message Message, index int) (availabilitySelectionStatus, map[string]interface{}) {
@@ -393,6 +516,9 @@ func shouldMergeSelectedAvailabilitySnapshotForBookingDraft(selection availabili
 	if !selection.found() {
 		return true
 	}
+	if selection.rejectsSelectedAvailabilitySnapshotForHistory(historyIndex, snapshot) {
+		return false
+	}
 	if !selection.bookable() {
 		return !selection.blocksHistoryIndex(historyIndex)
 	}
@@ -409,6 +535,9 @@ func shouldMergeAvailabilityPayloadForBookingDraft(selection availabilitySelecti
 	if !selection.found() {
 		return true
 	}
+	if selection.rejectsAvailabilityPayloadForBookingDraft(historyIndex, context, payload) {
+		return false
+	}
 	if !selection.bookable() {
 		return !selection.blocksHistoryIndex(historyIndex)
 	}
@@ -416,6 +545,36 @@ func shouldMergeAvailabilityPayloadForBookingDraft(selection availabilitySelecti
 		return true
 	}
 	return availabilityPayloadSelectionMatchesBookingDraft(context, payload)
+}
+
+func (e availabilitySelectionEvidence) rejectsSelectedAvailabilitySnapshotForHistory(historyIndex int, snapshot map[string]interface{}) bool {
+	if len(snapshot) == 0 {
+		return false
+	}
+	return e.rejectsAvailabilityOptionForHistory(
+		historyIndex,
+		asInt(snapshot["selected_option_index"]),
+		asString(snapshot["trip_date"]),
+	)
+}
+
+func (e availabilitySelectionEvidence) rejectsAvailabilityPayloadForBookingDraft(historyIndex int, context BookingDraftContext, payload map[string]interface{}) bool {
+	results := asInterfaceSliceMaps(payload["results"])
+	if len(results) == 0 {
+		return false
+	}
+	selectedIndex := context.SelectedOptionIndex
+	if selectedIndex <= 0 && len(results) == 1 {
+		selectedIndex = 1
+	}
+	if selectedIndex <= 0 || selectedIndex > len(results) {
+		return false
+	}
+	return e.rejectsAvailabilityOptionForHistory(
+		historyIndex,
+		selectedIndex,
+		asString(results[selectedIndex-1]["trip_date"]),
+	)
 }
 
 func availabilityPayloadSelectionMatchesBookingDraft(context BookingDraftContext, payload map[string]interface{}) bool {

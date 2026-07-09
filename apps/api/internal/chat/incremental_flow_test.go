@@ -1670,6 +1670,189 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 	}
 }
 
+func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *testing.T) {
+	for _, reply := range []string{"2", "1"} {
+		t.Run(reply, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
+
+			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel:        "WHATSAPP",
+				ContactKey:     "5511999999999",
+				CustomerPhone:  "5511999999999",
+				CustomerName:   "Joao Vitor Messias",
+				LastMessageAt:  &now,
+				LastOutboundAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			availability := availabilityOptionPromptFiveOptionsFutureResult()
+			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+				SessionID:        session.ID,
+				IdempotencyKey:   "draft-specific-rejected-availability-out-of-turn-" + reply,
+				Body:             buildAvailabilityListReply(availability),
+				SenderName:       "SHABAS",
+				ProcessingStatus: messageStatusAutomationSent,
+				Payload: map[string]interface{}{
+					"tool_context": map[string]interface{}{
+						toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+					},
+				},
+				RecordedAt: now.Add(-1 * time.Minute),
+			}); err != nil {
+				t.Fatalf("seed availability draft: %v", err)
+			}
+
+			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "specific-rejected-out-of-turn-payment-"+reply, "não quero essa 1, paga agora?")
+			if first.Draft == nil {
+				t.Fatal("expected payment info draft")
+			}
+			if got := strings.TrimSpace(asString(first.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
+				t.Fatalf("expected payment info template, got %q payload=%+v", got, first.Draft.NormalizedPayload)
+			}
+			if index := payloadSelectedOptionIndex(first.Draft.NormalizedPayload); index != 0 {
+				t.Fatalf("payment reminder must not select option, got %d payload=%+v", index, first.Draft.NormalizedPayload)
+			}
+			if availabilityContext := asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch]); len(availabilityContext) == 0 {
+				t.Fatalf("specific rejected option in multi-option list must preserve availability context, got %+v", first.Draft.Payload)
+			}
+			templateData := asMap(first.Draft.NormalizedPayload["template_data"])
+			if !templateDataBool(templateData, outOfTurnRejectedAvailabilityDataKey) ||
+				templateDataBool(templateData, outOfTurnRejectedWholeContextDataKey) {
+				t.Fatalf("expected specific rejected availability metadata, got %+v", templateData)
+			}
+			if got := availabilityRejectedOptionIndexesFromMetadata(templateData[outOfTurnRejectedOptionIndexesDataKey]); !sameIntSlice(got, []int{1}) {
+				t.Fatalf("expected rejected option indexes [1], got %+v metadata=%+v", got, templateData)
+			}
+
+			markSessionMessagesAutomationSent(t, store, session.ID)
+			second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "selection-after-specific-rejection-"+reply, reply)
+			if second.Draft == nil {
+				t.Fatal("expected second draft")
+			}
+			intentDecision := asMap(second.Memory["intent_decision"])
+			if reply == "2" {
+				if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
+					t.Fatalf("expected passenger count prompt after option 2, got %q", got)
+				}
+				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskPassengerCount, got, second.Draft.NormalizedPayload)
+				}
+				if got := asInt(intentDecision["selected_option_index"]); got != 2 {
+					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
+				}
+				snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
+				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
+				}
+				return
+			}
+			if second.Draft.NormalizedPayload["template_name"] == string(TemplateAskPassengerCount) ||
+				asInt(intentDecision["selected_option_index"]) != 0 {
+				t.Fatalf("rejected option 1 must not select, draft=%+v memory=%+v", second.Draft.NormalizedPayload, intentDecision)
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testing.T) {
+	for _, reply := range []string{"2", "1"} {
+		t.Run(reply, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
+
+			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel:        "WHATSAPP",
+				ContactKey:     "5511999999999",
+				CustomerPhone:  "5511999999999",
+				CustomerName:   "Joao Vitor Messias",
+				LastMessageAt:  &now,
+				LastOutboundAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			availability := availabilityOptionPromptFiveOptionsFutureResult()
+			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+				SessionID:        session.ID,
+				IdempotencyKey:   "draft-specific-rejected-date-out-of-turn-" + reply,
+				Body:             buildAvailabilityListReply(availability),
+				SenderName:       "SHABAS",
+				ProcessingStatus: messageStatusAutomationSent,
+				Payload: map[string]interface{}{
+					"tool_context": map[string]interface{}{
+						toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+					},
+				},
+				RecordedAt: now.Add(-1 * time.Minute),
+			}); err != nil {
+				t.Fatalf("seed availability draft: %v", err)
+			}
+
+			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "specific-rejected-date-out-of-turn-payment-"+reply, "não quero 13/07, paga agora?")
+			if first.Draft == nil {
+				t.Fatal("expected payment info draft")
+			}
+			if got := strings.TrimSpace(asString(first.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
+				t.Fatalf("expected payment info template, got %q payload=%+v", got, first.Draft.NormalizedPayload)
+			}
+			if index := payloadSelectedOptionIndex(first.Draft.NormalizedPayload); index != 0 {
+				t.Fatalf("payment reminder must not select option, got %d payload=%+v", index, first.Draft.NormalizedPayload)
+			}
+			if availabilityContext := asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch]); len(availabilityContext) == 0 {
+				t.Fatalf("specific rejected date in multi-option list must preserve availability context, got %+v", first.Draft.Payload)
+			}
+			templateData := asMap(first.Draft.NormalizedPayload["template_data"])
+			if !templateDataBool(templateData, outOfTurnRejectedAvailabilityDataKey) ||
+				templateDataBool(templateData, outOfTurnRejectedWholeContextDataKey) {
+				t.Fatalf("expected specific rejected date metadata, got %+v", templateData)
+			}
+			if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{"13/07"}) {
+				t.Fatalf("expected rejected trip date [13/07], got %+v metadata=%+v", got, templateData)
+			}
+
+			markSessionMessagesAutomationSent(t, store, session.ID)
+			second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "selection-after-specific-date-rejection-"+reply, reply)
+			if second.Draft == nil {
+				t.Fatal("expected second draft")
+			}
+			intentDecision := asMap(second.Memory["intent_decision"])
+			if reply == "2" {
+				if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
+					t.Fatalf("expected passenger count prompt after option 2, got %q", got)
+				}
+				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskPassengerCount, got, second.Draft.NormalizedPayload)
+				}
+				if got := asInt(intentDecision["selected_option_index"]); got != 2 {
+					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
+				}
+				snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
+				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
+				}
+				return
+			}
+			if second.Draft.NormalizedPayload["template_name"] == string(TemplateAskPassengerCount) ||
+				asInt(intentDecision["selected_option_index"]) != 0 {
+				t.Fatalf("rejected date option 1 must not select, draft=%+v memory=%+v", second.Draft.NormalizedPayload, intentDecision)
+			}
+			if snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+				t.Fatalf("rejected date option 1 must not persist selected availability, got %+v", snapshot)
+			}
+		})
+	}
+}
+
 func TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts(t *testing.T) {
 	for _, reply := range []string{"essa msm", "13/07"} {
 		t.Run(reply, func(t *testing.T) {

@@ -1051,7 +1051,7 @@ func resolveBookingCreateSelection(text string, history []Message, currentAvaila
 	availabilitySourceHistoryIndex := -1
 	if currentAvailability != nil && len(currentAvailability.Results) > 0 {
 		options = append(options, currentAvailability.Results...)
-	} else if previous, sourceHistoryIndex, ok := findLatestAvailabilityContextWithSource(history); ok {
+	} else if previous, sourceHistoryIndex, ok := latestVisibleAvailabilitySelectionContextWithSource(history); ok {
 		usingHistoricalAvailability = true
 		availabilitySourceHistoryIndex = sourceHistoryIndex
 		options = append(options, previous.Results...)
@@ -1074,12 +1074,20 @@ func resolveBookingCreateSelection(text string, history []Message, currentAvaila
 			return 0, AvailabilitySearchItem{}, false
 		}
 		selected := options[index-1]
+		if usingHistoricalAvailability &&
+			selection.rejectsAvailabilityOptionForHistory(availabilitySourceHistoryIndex, index, selected.TripDate) {
+			return 0, AvailabilitySearchItem{}, false
+		}
 		if !hasCompleteAvailabilitySearchItemFacts(selected) {
 			return 0, AvailabilitySearchItem{}, false
 		}
 		return index, selected, true
 	}
 	if len(options) == 1 {
+		if usingHistoricalAvailability &&
+			selection.rejectsAvailabilityOptionForHistory(availabilitySourceHistoryIndex, 1, options[0].TripDate) {
+			return 0, AvailabilitySearchItem{}, false
+		}
 		if !hasCompleteAvailabilitySearchItemFacts(options[0]) {
 			return 0, AvailabilitySearchItem{}, false
 		}
@@ -2267,13 +2275,17 @@ func findLatestSelectedOptionIndex(history []Message) int {
 	}
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
+		body := strings.TrimSpace(messageTurnText(history[i]))
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
 			if previousAssistantAskedLapChildAssignment(history, i) ||
 				previousAssistantAskedPassengerCount(history, i) {
 				continue
 			}
+			folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+			if looksLikeNegatedAvailabilitySelection(folded) {
+				continue
+			}
 		}
-		body := strings.TrimSpace(messageTurnText(history[i]))
 		if body == "" {
 			continue
 		}
@@ -2848,6 +2860,56 @@ func findLatestAvailabilityContext(history []Message) *AvailabilitySearchResult 
 
 func findLatestAvailabilityContextWithSource(history []Message) (*AvailabilitySearchResult, int, bool) {
 	return findLatestAvailabilityContextWithSourceBefore(history, len(history))
+}
+
+func latestVisibleAvailabilitySelectionContextWithSource(history []Message) (*AvailabilitySearchResult, int, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+			!shouldMergeAvailabilityFactsFromMessage(message) {
+			continue
+		}
+		visible := visibleAvailabilitySelectionContextFromHistoryMessage(message)
+		if visible != nil && len(visible.Results) > 0 {
+			return visible, i, true
+		}
+	}
+	return nil, -1, false
+}
+
+func visibleAvailabilitySelectionContextFromHistoryMessage(message Message) *AvailabilitySearchResult {
+	observedAt := message.ReceivedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	renderedCount := availabilityOptionCountFromRenderedPrompt(messageTurnText(message))
+	for _, toolContext := range messageToolContexts(message) {
+		payload := asMap(toolContext[toolNameAvailabilitySearch])
+		if len(payload) == 0 {
+			continue
+		}
+		result := parseAvailabilityContextPayload(payload)
+		options := futureAvailabilityOptions(result.Results, observedAt)
+		if len(options) > 5 {
+			options = options[:5]
+		}
+		if renderedCount > 0 {
+			if renderedCount > len(options) {
+				continue
+			}
+			options = options[:renderedCount]
+		} else if len(options) != 1 {
+			continue
+		}
+		if len(options) == 0 {
+			continue
+		}
+		visible := result
+		visible.Results = append([]AvailabilitySearchItem(nil), options...)
+		visible.Filter.Limit = len(visible.Results)
+		return &visible
+	}
+	return nil
 }
 
 func hasPriorAvailabilityContextBefore(history []Message, beforeIndex int) bool {
