@@ -50,7 +50,7 @@ const (
 )
 
 const (
-	askPassengerCountReply        = "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"
+	askPassengerCountReply        = "Perfeito. A passagem e so para voce ou vai mais alguem junto? "
 	askChildUnder5Reply           = "Tem crianca de 5 anos ou menos viajando?"
 	askReservationRouteSCReply    = "Para fazer a reserva, primeiro preciso saber o trecho da viagem. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
 	askPaymentChoiceReply         = "Perfeito. Voce prefere pagar o valor integral ou apenas o sinal de R$ 250 por passageiro pagante?"
