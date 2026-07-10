@@ -176,7 +176,7 @@ func interpreterCaseHistory(item InterpreterCase, observedAt time.Time) []Messag
 		)}
 	case ActivePromptPassengerCount:
 		return []Message{interpreterCaseOutboundPrompt(
-			"A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?",
+			"A passagem e so para voce ou vai mais alguem junto? ",
 			receivedAt,
 			nil,
 		)}
