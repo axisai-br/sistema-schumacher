@@ -696,6 +696,131 @@ Próxima ação recomendada:
 solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy controlado.
 ```
 
+Hotfix local concluído em 2026-07-10; pendente review/commit/deploy/validação em produção/homologação:
+
+```text
+Hotfix H-2026-07-10 — criança até 5 anos após resposta solo
+Evidência real:
+session_id aa985f60-3561-4e7b-9b03-47845ae96228
+"só pra mim" → "Tem crianca de 5 anos ou menos viajando?" → "sim"
+Draft incorreto anterior: passenger_count=1, child_under_5_count=1 e ASK_PASSENGER_DOCUMENTS esperando só 1 documento; após documento do adulto, avançava para ASK_LAP_CHILD_ASSIGNMENT com apenas 1 pessoa.
+
+Problema corrigido localmente:
+Quando a resposta solo ("só pra mim", "só eu", "apenas eu" e equivalentes já parseados) é seguida por "sim" para a pergunta separada de criança até 5 anos, o booking draft passa a distinguir passageiro pagante de documentos/viajantes esperados.
+P2 do review corrigido localmente: confirmações naturais já parseadas, como "sim, meu filho de 4 anos", "sim, uma criança", "tem uma criança de 4 anos" e "vai uma criança", também adicionam o viajante/documento esperado quando respondem à pergunta separada após a resposta solo.
+P1 do review corrigido localmente: documentos enviados em mensagens separadas não substituem mais os passageiros já coletados; adulto → criança, criança → adulto e texto → document_extract preservam a lista acumulada sem contar reenvio duplicado.
+P1 residual do review corrigido localmente: no turno posterior ao snapshot combinado, `collectBookingDraftContext` não deixa mais o progresso textual antigo impedir o reaproveitamento do `tool_context.document_extract` com os 2 passageiros; a sequência adulto por texto → criança por imagem permanece com 2 passageiros durante atribuição, confirmação e `booking_create`.
+P1 posterior corrigido localmente: nenhuma mensagem OUTBOUND é usada como progresso documental textual. Confirmações sem snapshot contendo CPF mascarado + RG/CNH completo, pedidos de documento e listagens de lap-child assignment não reduzem mais `PassengerDetailsCount`; dados vêm apenas de INBOUND real ou payload estruturado.
+P2 posterior corrigido localmente: `mergeBookingPassengerDetails(older, newer)` passou a aplicar precedência cronológica. Campos não vazios da fonte mais recente vencem, campos vazios preservam o valor anterior, `IsLapChild` permanece verdadeiro e os demais passageiros/ordem são mantidos.
+O fluxo mantém passenger_count=1, child_under_5_count=1 e calcula expected_document_count=2.
+ASK_PASSENGER_DOCUMENTS pede documentos de adulto + criança.
+Com só 1 documento coletado, o fluxo continua em ASK_PASSENGER_DOCUMENTS e não pergunta qual passageiro é a criança.
+ASK_LAP_CHILD_ASSIGNMENT só aparece quando há pelo menos 2 documentos/pessoas para escolher.
+booking_create fica bloqueado enquanto faltar o documento da criança.
+Resposta combinada como "para mim e meu filho de 4 anos" continua esperando 2 documentos e child_under_5_count=1, sem virar 3.
+Resposta "só pra mim" + "não" continua pedindo documento de 1 passageiro.
+payment_create continua cobrando apenas passageiros não marcados como criança de até 5 anos.
+
+Decisão tomada:
+Criado campo interno expected_document_count no BookingDraftContext.
+Criado flag child_under_5_adds_traveler apenas quando há resposta solo antes de uma pergunta separada de criança.
+O reconhecimento dessa confirmação aceita tanto o "sim" curto quanto `ChildUnder5CountKnown=true` com contagem positiva já extraída por `parsePassengerClarificationSlots`; a soma continua condicionada à pergunta separada e à resposta solo anterior.
+Comparações de documentos coletados, confirmação de documentos, tratamento pós-document_extract em Service.Reprocess e gates de booking_create usam expected_document_count.
+O branch de Service.Reprocess após document_extract só pergunta lap child assignment quando a extração trouxe documentos suficientes; caso contrário emite ASK_PASSENGER_DOCUMENTS contextual.
+No branch pós-document_extract, passageiros anteriores e atuais são combinados em ordem determinística e deduplicados por todas as identidades documentais normalizadas disponíveis (CPF, RG, CNH e certidão), sem deduplicação por nome.
+Quando o mesmo documento reaparece, os campos não vazios da fonte cronologicamente mais recente substituem os anteriores; campos ausentes não apagam dados já conhecidos. O snapshot document_extract persistido no draft carrega a lista combinada para o próximo turno.
+Todo corpo OUTBOUND é excluído de `findLatestPassengerDocumentProgress` e também da busca de parciais anteriores. O fallback legado que parseava confirmações formatadas sem snapshot foi removido; `parseBookingCreateInput` usa `PassengerDetails` reconstruído de INBOUND/payload estruturado quando não há passageiros no turno de confirmação.
+Na reconstrução dos turnos seguintes, o índice da fonte textual e do `document_extract` define a ordem `older → newer`: texto antigo é combinado antes do snapshot novo, enquanto texto INBOUND posterior vence snapshot antigo. Correções explícitas são aplicadas por último e a lista é deduplicada novamente.
+Normalizado askPassengerCountReply removendo espaço final invisível para alinhar constante com drafts salvos com trim.
+
+Arquivos alterados neste P2:
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/booking_create_router_test.go
+docs/EXECUTION_TRACKER.md
+
+Arquivos alterados neste P1:
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/service.go
+docs/EXECUTION_TRACKER.md
+
+Arquivos alterados neste P1 residual:
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/handler_test.go
+docs/EXECUTION_TRACKER.md
+
+Arquivos alterados neste P1/P2 posterior:
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/handler_test.go
+docs/EXECUTION_TRACKER.md
+
+Arquivos alterados nesta correção:
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/payment_create_tool_test.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/service.go
+docs/EXECUTION_TRACKER.md
+
+Testes executados:
+go test -count=1 ./internal/chat -run 'Test.*Sequential.*Document|Test.*Document.*Merge|Test.*Document.*Duplicate|Test.*SoloChild|Test.*Lap.*Child|Test.*BookingCreate'
+go test -count=1 ./internal/chat -run 'Test.*Passenger.*Child|Test.*Document.*Missing|Test.*DocumentExtract|Test.*BookingDraft|Test.*BookingCreate'
+go test -count=1 ./internal/chat -run 'Test.*PassengerSlotFlowSoEuThen.*Child|Test.*VerboseChild|Test.*CombinedMeAndChild|Test.*Lap.*Child|Test.*Document.*Missing|Test.*BookingCreate'
+go test -count=1 ./internal/chat -run 'Test.*Passenger.*Child|Test.*Lap.*Child|Test.*Document.*Missing|Test.*BookingDraft|Test.*BookingCreate'
+go test -count=1 ./internal/chat -run 'TestPaymentCreateToolChargesDepositOnlyForPayingPassengerWhenLapChildExists|Test.*PassengerSlotFlowSoEuThenSim|TestParseBookingCreate.*SoloChild|TestPassengerSlotCombinedMeAndChild'
+go test -count=1 ./internal/chat -run 'Test.*Sequential.*Text.*Document|Test.*Combined.*Snapshot|Test.*Document.*Progress|Test.*Document.*Merge|Test.*Lap.*Child'
+go test -count=1 ./internal/chat -run 'Test.*Passenger.*Child|Test.*DocumentExtract|Test.*BookingDraft|Test.*BookingCreate'
+go test -count=1 ./internal/chat -run 'Test.*Outbound.*Document|Test.*Confirmation.*Progress|Test.*Latest.*Wins|Test.*Correction.*Passenger|Test.*Document.*Merge'
+go test -count=1 ./internal/chat -run 'Test.*Sequential.*Document|Test.*Combined.*Snapshot|Test.*Lap.*Child|Test.*BookingCreate'
+go test -count=1 ./internal/chat
+go test -count=1 ./...
+git diff --check
+
+Resultado do review:
+O review posterior ao P2 encontrou P1 na perda de passageiros durante envios documentais sequenciais. Após a primeira correção, novo review encontrou P1 residual na reconstrução do turno seguinte. O review seguinte encontrou P1 em confirmação OUTBOUND sem snapshot reduzindo o estado e P2 em campos antigos vencendo uma extração mais recente. Os achados P1/P2 foram corrigidos localmente com isolamento total de OUTBOUND, fonte estruturada explícita para confirmação e merge cronológico latest-wins; pendente novo /review antes de commit.
+
+Necessidade de teste em produção/homologação:
+validar sessão real equivalente: opção 1 → "só pra mim" → pergunta criança → "sim" gerando ASK_PASSENGER_DOCUMENTS com expected_document_count=2.
+validar as variantes "sim, meu filho de 4 anos", "sim, uma criança", "tem uma criança de 4 anos" e "vai uma criança" no mesmo fluxo, mantendo passenger_count=1 e expected_document_count=2.
+validar envio de apenas documento do adulto mantendo ASK_PASSENGER_DOCUMENTS e pedindo documento da criança, sem ASK_LAP_CHILD_ASSIGNMENT.
+validar envio de adulto + criança perguntando qual é a criança quando não houver inferência automática.
+validar adulto por texto seguido de criança por imagem e adulto por imagem seguido de criança por imagem, avançando para ASK_LAP_CHILD_ASSIGNMENT com os 2 passageiros preservados.
+validar que, no turno seguinte ao ASK_LAP_CHILD_ASSIGNMENT, o contexto ainda contém os 2 passageiros e não regressa para ASK_PASSENGER_DOCUMENTS; após responder "2", confirmar os 2 documentos e liberar booking_create somente depois do "sim".
+validar confirmação OUTBOUND sem snapshot com adulto/CPF mascarado + criança/RG ou CNH completo sem reduzir `PassengerDetailsCount` e sem parsear o corpo do bot.
+validar reenvio do mesmo documento com nome, data de nascimento ou naturalidade corrigidos persistindo os valores mais recentes, sem remover o outro passageiro nem alterar a ordem.
+validar criança por imagem seguida de adulto por imagem, preservando a atribuição por idade, confirmando os 2 documentos e liberando booking_create somente após "sim".
+validar reenvio do mesmo documento mantendo PassengerDetailsCount=1 e continuando a pedir o documento faltante.
+validar "só pra mim" → "não" pedindo só 1 documento.
+validar "para mim e meu filho de 4 anos" pedindo 2 documentos, sem expected_document_count=3.
+validar booking_create bloqueado com child_under_5_count=1 e apenas 1 documento.
+validar cobrança de sinal/integral apenas para passageiro pagante após reserva com criança marcada.
+
+Não houve alteração em:
+OpenAI schema/prompt/runner
+OpenAI runtime assist
+vector base
+File Search
+planner
+banco/migrations
+infra
+n8n
+payment_create router/tool
+payment_status
+booking_cancel
+booking_create tool de execução
+
+Próxima ação recomendada:
+solicitar /review antes de commit; depois, se aprovado, preparar commit do hotfix e validar em produção/homologação após deploy controlado.
+```
+
 3.6F/vector/File Search/planner continuam não iniciados.
   
 Etapas 3.6A, 3.6B e 3.6C executadas localmente em 2026-06-29; P2 do review da 3.6C corrigido localmente em 2026-06-30 antes de qualquer uso no fluxo real.
@@ -2537,6 +2662,30 @@ document_extract
 **Correção aplicada:** gate determinístico para assuntos administrativos/financeiros de notas no `intent_router` e durante coleta/pendência de documentos, roteando texto puro para `HUMAN_SUPPORT_INFO` sem legacy runner, sem tools críticas e sem payload de seleção de disponibilidade. Documento textual real, pagamento informativo e mídia continuam nos fluxos existentes.
 
 **Testes executados:** `go test -count=1 ./internal/chat -run 'TestRouteDeterministicIntentAdministrativeNotesSupport|TestLooksLikeAdministrativeNotesSupportQuestion|TestShouldRouteAdministrativeNotesSupportTurnProtectedPhases|TestReprocessAdministrativeNotes|TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate|TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate|TestReprocessAdministrativeNotesMediaDuringPassengerDocumentsRunsDocumentExtract|TestIntentRouterPaymentPreferencePromptStillAnswersPaymentInfoQuestions|TestIntentRouterOutOfTurnPaymentDuringMultipleAvailabilityOptionsDoesNotSelect'`; `go test -count=1 ./internal/chat`; `go test -count=1 ./...`; `git diff --check`.
+
+---
+
+## H-012 — Criança até 5 anos após resposta solo
+
+**Status:** Corrigido localmente em 2026-07-13; pendente novo review, commit, deploy e validação em produção/homologação.
+
+**Sintoma:** após `"só pra mim"` e resposta posterior `"sim"` para criança até 5 anos, o draft reconhecia `child_under_5_count=1`, mas continuava esperando só 1 documento e podia avançar para `ASK_LAP_CHILD_ASSIGNMENT` com apenas o adulto coletado. Reviews sucessivos encontraram variações verbosas não cobertas, perda em documentos sequenciais, bloqueio do snapshot combinado por texto antigo, confirmação OUTBOUND sem snapshot reduzindo `PassengerDetailsCount`, precedência incorreta onde campos antigos venciam uma extração mais recente, promoção indevida de `PassengerDetailsCount` sobre uma quantidade declarada conhecida, reconstrução de `booking_create` a partir de extract antigo após correção INBOUND, duplicação do passageiro quando uma reextração trocava RG por CNH sem identidade documental compartilhada, inflação de uma declaração combinada de 2 passageiros para 3 por causa do snapshot reconstruído e rejeição do fluxo válido imagem → texto porque o último `document_extract` isolado ainda continha somente 1 passageiro. Reviews posteriores encontraram bypass do parser geral por lista paralela no body, partial já resolvido bloqueando indefinidamente, promoção indevida do `AvailabilitySearchInput.Qty` técnico para quantidade declarada, descarte de partial histórico de outra pessoa, correção textual antiga vencendo `document_extract` mais novo e `Service.Reprocess` emitindo `CONFIRM_DOCUMENT` quando havia dois passageiros marcados como lap child para apenas um esperado. O review seguinte encontrou o P2 final: o `OR` conservador de `IsLapChild` também era usado entre extracts, impedindo que uma data de nascimento adulta mais recente removesse um marcador infantil obsoleto do mesmo passageiro. O review posterior reproduziu outro P2 de proveniência: em troca RG → CNH sem identidade documental comum, o fallback por nome único também aplicava a precedência etária e alterava `IsLapChild` apenas pela coincidência nominal. O P2 restante aparecia depois do merge correto: o estado combinado era salvo novamente como `document_extract`, perdia a proveniência nominal e, no replay, a idade e os documentos acumulados faziam `bookingPassengersFromDocumentExtract` reinterpretar `IsLapChild`, alterando a readiness sem nova evidência do cliente.
+
+**Correção aplicada:** `BookingDraftContext` passou a calcular `expected_document_count=2` somente quando a criança é adicionada por resposta afirmativa à pergunta separada; a confirmação aceita `"sim"` curto ou contagem positiva já extraída por `parsePassengerClarificationSlots`, desde que exista resposta solo anterior. Documentos sequenciais são combinados/deduplicados e persistidos como snapshot. A reconstrução documental agora usa uma única timeline da janela ativa, com índice cronológico e eventos de INBOUND real, `document_extract`, correção e `currentTurn`; OUTBOUND formatado nunca vira evidência textual. Cada evento é aplicado em sua posição, com merge older → newer, de modo que correção antiga não vence snapshot novo e correção posterior vence snapshot anterior. Todos os partials INBOUND da janela são acumulados, deduplicados por identidade documental normalizada mantendo a ocorrência mais recente e removidos somente quando um passageiro completo final resolve a mesma identidade; partial de outra pessoa continua bloqueando. `AvailabilitySearchInput.Qty` deixou de promover `PassengerCountKnown`: quantidade conhecida vem somente de declaração explícita do cliente ou de reserva já criada. `PassengerCountKnown=true` torna `PassengerCount` autoritativo: detalhes reconstruídos não alteram a declaração, excesso vira divergência explícita de quantidade e não é apresentado como documento faltante; quando a quantidade segue desconhecida, a contagem documental não autoriza `booking_create`. A função única `evaluateCanonicalBookingCreateReadiness` usa exclusivamente `context.PassengerDetails`, classifica a quantidade como `UNKNOWN`, `MISSING`, `EXACT` ou `EXCESS`, valida partials, completude documental e quantidade exata de lap children. `parseBookingCreateInput`, `parseBookingCreateFromDocumentConfirmation`, `decideNextBookingStep` e o branch pós-merge de `Service.Reprocess` consomem a mesma avaliação; `CONFIRM_DOCUMENT` só é produzido quando `readiness.Ready=true`. Na reextração atual, uma troca de identificador só substitui um slot quando a quantidade esperada já está preenchida e há correspondência nominal anterior unívoca; com slot disponível ou identidade ambígua, o passageiro é anexado e a divergência permanece bloqueada. O merge genérico continua sem deduplicação por nome e preserva `IsLapChild` com `OR` para texto/correções. O merge específico de `document_extract` agora preserva a proveniência do slot: somente match por identidade documental normalizada permite que evidência etária explícita e válida mais recente substitua `IsLapChild`, inclusive por `false`; sem data válida, o marcador antigo é preservado. Fallback apenas por nome pode atualizar os demais campos e trocar o documento principal, mas restaura exatamente o `IsLapChild` anterior. Sem match documental ou nominal, o passageiro novo é anexado e eventual excesso continua bloqueado. Respostas combinadas como `"para mim e meu filho de 4 anos"` continuam esperando 2 documentos, sem virar 3. Documento parcial não confirmável volta a pedir objetivamente nome e CPF, RG ou CNH completo. Pagamento continua cobrando apenas passageiros não marcados como criança.
+
+Para fechar a proveniência no replay, `document_extract` voltou a representar somente a evidência bruta da imagem atual. O estado acumulado é persistido separadamente em `tool_context.booking_passenger_snapshot`, versão 1, tanto em `Payload` quanto em `NormalizedPayload`, com `expected_document_count`, passageiros finais e fonte lap-child por passageiro: `NONE`, `DOCUMENT_IDENTITY_AGE`, `NAME_FALLBACK_PRESERVED` ou `EXPLICIT_ASSIGNMENT`. A timeline ganhou o evento `canonical_snapshot`, carrega `BookingCreatePassengerInput` diretamente sem recalcular idade e, quando a mesma mensagem contém snapshot + extract, usa somente o snapshot como estado final. Payloads antigos sem snapshot continuam no fluxo legado de `document_extract`. Nova evidência pelo mesmo documento e data válida pode substituir a classificação etária, inclusive depois de fallback nominal; novo fallback nominal preserva o marcador restaurado; atribuição explícita por índice é persistida como autoritativa para todos os passageiros classificados. Drafts textuais de documentos, atribuição e confirmação também repropagam o snapshot, evitando depender indefinidamente da mensagem de assignment anterior.
+
+**Arquivos alterados:** `apps/api/internal/chat/agent.go`, `apps/api/internal/chat/booking_create_router.go`, `apps/api/internal/chat/booking_create_router_test.go`, `apps/api/internal/chat/booking_draft_context.go`, `apps/api/internal/chat/booking_draft_context_test.go`, `apps/api/internal/chat/document_extract.go`, `apps/api/internal/chat/service.go`, `apps/api/internal/chat/tool_router.go`, `apps/api/internal/chat/handler_test.go`, `apps/api/internal/chat/incremental_flow_test.go`, `apps/api/internal/chat/response_realizer.go`, `apps/api/internal/chat/payment_create_tool_test.go` e `docs/EXECUTION_TRACKER.md`.
+
+**Testes executados:** `go test -count=1 ./internal/chat -run 'Test.*Passenger.*Snapshot|Test.*Replay.*LapChild|Test.*NameFallback.*Replay|Test.*DocumentIdentity.*Replay'` passou, cobrindo RG adulto → CNH infantil por nome após dois replays, RG criança → CNH adulta por nome, CPF igual criança ↔ adulto, atualização futura por CNH igual, atribuição explícita, isolamento entre dois passageiros, compatibilidade legada e snapshot + extract na mesma mensagem sem evento duplo. `go test -count=1 ./internal/chat -run 'Test.*Latest.*LapChild|Test.*Canonical.*Evidence|Test.*Sequential.*Document|Test.*BookingCreate'` passou. A bateria adicional `go test -count=1 ./internal/chat -run 'TestPassengerSnapshot|TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreate|TestReprocessLapChildNameFallback'` passou, incluindo persistência idêntica em payload/normalized payload e `document_extract` bruto separado no `Service.Reprocess`. As baterias anteriores `go test -count=1 ./internal/chat -run 'Test.*LapChild.*Document.*Match|Test.*LapChild.*Name.*Fallback|Test.*Identifier.*Changes|Test.*Latest.*LapChild'`, `go test -count=1 ./internal/chat -run 'Test.*Canonical.*Evidence|Test.*Sequential.*Document|Test.*LapChild.*Mismatch|Test.*BookingCreate'`, `go test -count=1 ./internal/chat -run 'Test.*LapChild.*Age|Test.*Explicit.*Age|Test.*Adult.*Extract|Test.*Latest.*LapChild'`, `go test -count=1 ./internal/chat -run 'Test.*Unknown.*Availability.*Qty|Test.*Historical.*Partial|Test.*Correction.*Chronology|Test.*LapChild.*Mismatch|Test.*Canonical.*Evidence'` e `go test -count=1 ./internal/chat -run 'Test.*Canonical.*Booking|Test.*Sequential.*Document|Test.*Passenger.*Child|Test.*BookingCreate|Test.*Document.*Confirmation'` também passaram. `go test -count=1 ./internal/chat` e `go test -count=1 ./...` continuam falhando somente nos mesmos nove testes de disponibilidade com datas fixas já reproduzidos no `HEAD`: `TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment`, `TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment`, `TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts`, `TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn`, `TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPassengerCountTurn`, `TestAvailabilitySelectionReplacesExistingCanonicalRoute`, `TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder`, `TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPaymentBlocksMatchingNumericOption` e `TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach`. Os demais pacotes do `./...` passaram. `git diff --check` passou.
+
+**Resultado do review:** o review mais recente confirmou os testes focados e a concordância entre readiness, decisão e Service, mas encontrou P2 porque a precedência etária também era aplicada após fallback nominal sem identidade documental comum. Depois da correção do merge, o P2 restante de persistência/replay foi corrigido com snapshot canônico versionado e separação da evidência bruta. A revisão local do novo diff verificou persistência nos dois payloads, precedência documental futura, autoridade do assignment, isolamento por passageiro, compatibilidade legada e ausência de evento duplo; sem novo achado P1/P2 local. Ainda solicitar novo `/review` antes de commit.
+
+**Necessidade de teste em produção/homologação:** sim. Validar, sem deploy nesta execução, disponibilidade com `qty=1` sem resposta de quantidade permanecendo em esclarecimento mesmo após um documento completo; partial da pessoa A seguido de documento completo da pessoa B permanecendo bloqueado; correção CPF antiga seguida de CNH novo exibindo CNH e CNH antigo seguido de correção CPF exibindo CPF; snapshot antigo marcado como criança seguido de extract do mesmo documento com nascimento adulto removendo o marcador, sem pedir atribuição quando nenhuma criança foi declarada; troca RG → CNH por nome único atualizando o documento sem alterar `IsLapChild` na ausência de identidade documental comum e permanecendo estável nos turnos seguintes; repetir RG adulto → CNH infantil e RG criança → CNH adulta por nome após confirmação/assignment para provar replay múltiplo; confirmar que nova foto futura do mesmo CNH permite idade explícita mais recente vencer; confirmar assignment por índice após persistência; validar um lap child esperado com dois marcados ou nenhum marcador válido pedindo atribuição em vez de confirmar; além dos cenários anteriores de excesso, imagem → texto, troca explícita de identificador e igualdade entre a lista confirmada e o input final de `booking_create`.
+
+**Observação fora do escopo:** a suíte de disponibilidade contém cenários dependentes de datas fixas que passaram a representar viagens passadas ou o dia corrente em 2026-07-13. O ajuste desses fixtures deve ser tratado separadamente; nenhuma regra de disponibilidade foi alterada no H-012.
+
+**Próxima ação recomendada:** executar novo `/review`; se não houver P1/P2, preparar commit, deploy controlado e homologação dos cenários documentais acima.
 
 ---
 

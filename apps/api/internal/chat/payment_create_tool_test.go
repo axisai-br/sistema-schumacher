@@ -98,6 +98,62 @@ func TestPaymentCreateToolCreatesIntegralPixFromRemainder(t *testing.T) {
 	}
 }
 
+func TestPaymentCreateToolChargesDepositOnlyForPayingPassengerWhenLapChildExists(t *testing.T) {
+	paymentSvc := &fakePaymentCreatePaymentsService{
+		payment: payments.Payment{
+			ID:        "pay-lap-child",
+			BookingID: "BK-LAPCHILD",
+			Status:    "PENDING",
+			CreatedAt: time.Now().UTC(),
+		},
+		raw: json.RawMessage(`{"charges":[{"last_transaction":{"qr_code":"000201LAPCHILD","qr_code_url":"https://provider/pix"}}]}`),
+	}
+	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
+		result: bookings.BookingDetails{
+			Booking: bookings.Booking{
+				ID:              "BK-LAPCHILD",
+				Status:          "PENDING",
+				ReservationCode: "LAP12345",
+				TotalAmount:     950,
+				RemainderAmount: 950,
+			},
+			Passengers: []bookings.BookingPassenger{
+				{
+					Name:         "Joao Vitor Messias",
+					Document:     "84960815086",
+					DocumentType: "CPF",
+					CPF:          "84960815086",
+					Phone:        "48999999999",
+				},
+				{
+					Name:         "Crianca Messias",
+					Document:     testBirthCertificateNumber,
+					DocumentType: "CERTIDAO_NASCIMENTO",
+					IsLapChild:   true,
+				},
+			},
+		},
+	}, paymentSvc)
+
+	result, err := tool.Create(context.Background(), PaymentCreateInput{
+		BookingID:       "BK-LAPCHILD",
+		ReservationCode: "LAP12345",
+		PaymentType:     "sinal",
+	})
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if result.Mode != "pix_sent" {
+		t.Fatalf("expected pix_sent mode, got %s", result.Mode)
+	}
+	if result.AmountDue != 250 {
+		t.Fatalf("expected deposit for one paying passenger, got %.2f", result.AmountDue)
+	}
+	if paymentSvc.lastInput.Amount != 250 {
+		t.Fatalf("expected payment amount for one paying passenger, got %.2f", paymentSvc.lastInput.Amount)
+	}
+}
+
 func TestPaymentCreateToolRejectsInvalidCPFWithElevenDigits(t *testing.T) {
 	tool := NewPaymentCreateTool(&fakePaymentCreateBookingsService{
 		result: bookings.BookingDetails{

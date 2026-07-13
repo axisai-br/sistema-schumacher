@@ -30,9 +30,11 @@ type BookingDraftContext struct {
 	Price                        float64
 	Currency                     string
 	PassengerCount               int
+	ExpectedDocumentCount        int
 	ChildUnder5Count             int
 	PassengerCountKnown          bool
 	ChildUnder5CountKnown        bool
+	ChildUnder5AddsTraveler      bool
 	LapChildAssignmentKnown      bool
 	LapChildPassengerIndexes     []int
 	NeedsLapChildAssignment      bool
@@ -40,6 +42,7 @@ type BookingDraftContext struct {
 	PassengerDetailsCount        int
 	PassengerDetailsText         string
 	PassengerDetails             []BookingCreatePassengerInput
+	PassengerSnapshot            bookingPassengerSnapshot
 	PartialPassengerDetails      []BookingPassengerDocumentPartial
 	PartialPassengerDetailsCount int
 	HasAvailabilityShown         bool
@@ -218,18 +221,19 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		}
 	}
 
-	passengerProgress := findLatestPassengerDocumentProgress(history, session)
-	passengerDetailsText := passengerProgress.SourceText
-	passengers := passengerProgress.Passengers
-	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
-	if len(passengers) == 0 {
-		if extract := findLatestDocumentExtractContext(history); extract != nil && (strings.EqualFold(strings.TrimSpace(extract.Mode), "EXTRACTED") || hasCorrection) {
-			passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
-		}
+	context.ChildUnder5AddsTraveler = childUnder5AnswerAddsStandaloneTraveler(history, currentTurn, context)
+	expectedForReconstruction := 0
+	if context.PassengerCountKnown && context.PassengerCount > 0 {
+		expectedForReconstruction = expectedPassengerDocumentCount(context)
 	}
-	if hasCorrection {
-		passengers = applyPassengerDocumentCorrection(passengers, correction)
-	}
+	evidence := reconstructPassengerDocumentEvidence(
+		passengerDocumentEvidenceTimeline(history, currentTurn, session, context.TripDate),
+		expectedForReconstruction,
+	)
+	passengerDetailsText := evidence.SourceText
+	passengers := evidence.Passengers
+	unresolvedPartials := evidence.Partials
+	context.PassengerSnapshot = evidence.Snapshot
 	if len(passengers) > 0 {
 		context.HasPassengerDetails = true
 		context.PassengerDetailsCount = len(passengers)
@@ -237,31 +241,38 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		context.PassengerDetails = passengers
 		context.LapChildPassengerIndexes = lapChildIndexesFromPassengers(passengers)
 		if len(context.LapChildPassengerIndexes) > 0 {
-			context.LapChildAssignmentKnown = true
 			if !context.ChildUnder5CountKnown {
 				context.ChildUnder5Count = len(context.LapChildPassengerIndexes)
 				context.ChildUnder5CountKnown = true
 			}
+			context.LapChildAssignmentKnown = len(context.LapChildPassengerIndexes) == context.ChildUnder5Count
 		}
 	}
-	if len(passengerProgress.Partials) > 0 {
-		context.PartialPassengerDetails = passengerProgress.Partials
-		context.PartialPassengerDetailsCount = len(passengerProgress.Partials)
+	if len(unresolvedPartials) > 0 {
+		context.PartialPassengerDetails = unresolvedPartials
+		context.PartialPassengerDetailsCount = len(unresolvedPartials)
 		if context.PassengerDetailsText == "" {
 			context.PassengerDetailsText = passengerDetailsText
 		}
 	}
-	if context.PassengerDetailsCount > 0 &&
-		context.PassengerDetailsCount > context.PassengerCount &&
-		context.ChildUnder5Count > 0 {
-		context.PassengerCount = context.PassengerDetailsCount
-		context.PassengerCountKnown = true
+	context.ExpectedDocumentCount = expectedPassengerDocumentCount(context)
+	var explicitLapChildIndexes []int
+	hasExplicitLapChildAssignment := false
+	if !context.LapChildAssignmentKnown {
+		explicitLapChildIndexes, hasExplicitLapChildAssignment = explicitLapChildAssignmentIndexes(
+			history,
+			currentTurn,
+			passengers,
+			context.ChildUnder5Count,
+		)
 	}
-	if context.PassengerCount == 0 && context.RequestedPassengerDocuments {
-		context.PassengerCount = inferExpectedPassengerCount(history, currentTurn, passengerDetailsText)
-		context.PassengerCountKnown = context.PassengerCount > 0
-	}
-	if context.ChildUnder5Count > 0 && len(passengers) > 0 && !context.LapChildAssignmentKnown {
+	if hasExplicitLapChildAssignment {
+		context.LapChildPassengerIndexes = explicitLapChildIndexes
+		context.LapChildAssignmentKnown = true
+	} else if context.ChildUnder5Count > 0 &&
+		context.ExpectedDocumentCount > 0 &&
+		len(passengers) == context.ExpectedDocumentCount &&
+		!context.LapChildAssignmentKnown {
 		if indexes, ok := inferLapChildAssignmentIndexes(history, currentTurn, passengers, context.ChildUnder5Count); ok {
 			context.LapChildPassengerIndexes = indexes
 			context.LapChildAssignmentKnown = true
@@ -270,8 +281,22 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 	if context.LapChildAssignmentKnown && len(context.LapChildPassengerIndexes) > 0 && len(context.PassengerDetails) > 0 {
 		applyLapChildPassengerIndexes(context.PassengerDetails, context.LapChildPassengerIndexes)
 	}
+	context.PassengerSnapshot = alignBookingPassengerSnapshot(
+		context.PassengerSnapshot,
+		context.PassengerDetails,
+		context.ExpectedDocumentCount,
+	)
+	if hasExplicitLapChildAssignment {
+		context.PassengerSnapshot = markBookingPassengerSnapshotExplicitAssignment(
+			context.PassengerSnapshot,
+			context.PassengerDetails,
+			context.ExpectedDocumentCount,
+		)
+	}
 	context.NeedsLapChildAssignment = context.ChildUnder5Count > 0 &&
 		context.HasPassengerDetails &&
+		context.ExpectedDocumentCount > 0 &&
+		context.PassengerDetailsCount == context.ExpectedDocumentCount &&
 		!context.LapChildAssignmentKnown
 
 	return context
@@ -691,7 +716,156 @@ func mergePassengerClarificationSlotsIntoBookingDraft(context BookingDraftContex
 	return context
 }
 
+func expectedPassengerDocumentCount(context BookingDraftContext) int {
+	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
+		return context.PassengerDetailsCount
+	}
+	expected := context.PassengerCount
+	if context.ChildUnder5AddsTraveler && context.ChildUnder5Count > 0 {
+		expected += context.ChildUnder5Count
+	}
+	return expected
+}
+
+func evaluateCanonicalBookingCreateReadiness(context BookingDraftContext) canonicalBookingCreateReadiness {
+	passengers := append([]BookingCreatePassengerInput(nil), context.PassengerDetails...)
+	if len(context.LapChildPassengerIndexes) > 0 {
+		applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
+	}
+
+	readiness := canonicalBookingCreateReadiness{
+		Passengers:                 passengers,
+		QuantityStatus:             bookingCreateQuantityUnknown,
+		UnresolvedPartials:         unresolvedPassengerDocumentPartialsForPassengers(context.PartialPassengerDetails, passengers),
+		DocumentsComplete:          len(passengers) > 0,
+		LapChildAssignmentComplete: true,
+		Reason:                     "passenger_count_unknown",
+	}
+	if context.PassengerCountKnown && context.PassengerCount > 0 {
+		readiness.Expected = expectedPassengerDocumentCount(context)
+		if readiness.Expected > 0 {
+			switch {
+			case len(passengers) < readiness.Expected:
+				readiness.QuantityStatus = bookingCreateQuantityMissing
+				readiness.Reason = "passenger_documents_missing"
+			case len(passengers) > readiness.Expected:
+				readiness.QuantityStatus = bookingCreateQuantityExcess
+				readiness.Reason = "passenger_documents_excess"
+			default:
+				readiness.QuantityStatus = bookingCreateQuantityExact
+				readiness.Reason = "passenger_documents_ready"
+			}
+		}
+	}
+
+	for _, passenger := range passengers {
+		if !bookingDraftPassengerDocumentComplete(passenger) {
+			readiness.DocumentsComplete = false
+			break
+		}
+	}
+	childCount := context.ChildUnder5Count
+	if count := countLapChildPassengers(passengers); count > 0 && !context.ChildUnder5CountKnown {
+		childCount = count
+	}
+	if context.ChildUnder5CountKnown || childCount > 0 {
+		readiness.LapChildAssignmentComplete = hasExpectedLapChildCount(passengers, childCount)
+	}
+
+	switch {
+	case readiness.QuantityStatus != bookingCreateQuantityExact:
+	case len(readiness.UnresolvedPartials) > 0:
+		readiness.Reason = "passenger_document_partial_unresolved"
+	case !readiness.DocumentsComplete:
+		readiness.Reason = "passenger_document_incomplete"
+	case !readiness.LapChildAssignmentComplete:
+		readiness.Reason = "lap_child_assignment_missing"
+	default:
+		readiness.Ready = true
+		readiness.Reason = "ready"
+	}
+	return readiness
+}
+
+func passengerDocumentCountMismatch(context BookingDraftContext) bool {
+	expected := expectedPassengerDocumentCount(context)
+	return expected > 0 &&
+		context.PassengerDetailsCount > 0 &&
+		context.PassengerDetailsCount != expected
+}
+
+func passengerDocumentCountExceedsExpected(context BookingDraftContext) bool {
+	expected := expectedPassengerDocumentCount(context)
+	return expected > 0 && context.PassengerDetailsCount > expected
+}
+
+func childUnder5AnswerAddsStandaloneTraveler(history []Message, currentTurn string, context BookingDraftContext) bool {
+	if !context.PassengerCountKnown ||
+		context.PassengerCount != 1 ||
+		!context.ChildUnder5CountKnown ||
+		context.ChildUnder5Count <= 0 {
+		return false
+	}
+	if childUnder5ReplyConfirmsChild(currentTurn) &&
+		lastAssistantAskedChildUnder5(history) &&
+		!lastAssistantAskedPassengerAndChildCombined(history) {
+		return hasSoloPassengerReplyBeforeHistoryIndex(history, len(history))
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			continue
+		}
+		if !childUnder5ReplyConfirmsChild(messageTurnText(message)) {
+			continue
+		}
+		if !previousAssistantAskedChildUnder5(history, i) ||
+			previousAssistantAskedPassengerAndChildCombined(history, i) {
+			continue
+		}
+		return hasSoloPassengerReplyBeforeHistoryIndex(history, i)
+	}
+	return false
+}
+
+func childUnder5ReplyConfirmsChild(text string) bool {
+	if isShortYesReply(text) {
+		return true
+	}
+	slots := parsePassengerClarificationSlots(text)
+	return slots.ChildUnder5CountKnown && slots.ChildUnder5Count > 0
+}
+
+func hasSoloPassengerReplyBeforeHistoryIndex(history []Message, beforeIndex int) bool {
+	if beforeIndex > len(history) {
+		beforeIndex = len(history)
+	}
+	for i := beforeIndex - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			continue
+		}
+		body := strings.TrimSpace(messageTurnText(message))
+		if body == "" {
+			continue
+		}
+		folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+		if isSoloPassengerReply(folded) {
+			return true
+		}
+		slots := parsePassengerClarificationSlots(body)
+		if slots.PassengerCountKnown {
+			return false
+		}
+	}
+	return false
+}
+
 func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
+	return bookingNextActionFromCanonicalReadiness(context, evaluateCanonicalBookingCreateReadiness(context))
+}
+
+func bookingNextActionFromCanonicalReadiness(context BookingDraftContext, readiness canonicalBookingCreateReadiness) BookingNextAction {
 	if context.BookingCreated {
 		return BookingNextAskBookingPaymentPreference
 	}
@@ -710,26 +884,36 @@ func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 		strings.TrimSpace(context.TripDate) == "" {
 		return BookingNextAwaitTripSelection
 	}
-	if !context.HasPassengerDetails {
+	switch readiness.QuantityStatus {
+	case bookingCreateQuantityUnknown:
+		return BookingNextAskPassengerClarification
+	case bookingCreateQuantityMissing:
+		return BookingNextAskPassengerDocuments
+	case bookingCreateQuantityExcess:
+		return BookingNextAskPassengerClarification
+	}
+	if len(readiness.UnresolvedPartials) > 0 || !readiness.DocumentsComplete {
 		return BookingNextAskPassengerDocuments
 	}
-	if context.PartialPassengerDetailsCount > 0 {
-		return BookingNextAskPassengerDocuments
-	}
-	if context.PassengerCount > 0 &&
-		context.PassengerDetailsCount > 0 &&
-		context.PassengerDetailsCount != context.PassengerCount {
-		return BookingNextAskPassengerDocuments
-	}
-	if context.NeedsLapChildAssignment {
+	if !readiness.LapChildAssignmentComplete {
 		return BookingNextAskLapChildAssignment
 	}
-	return BookingNextCallCreate
+	if readiness.Ready {
+		return BookingNextCallCreate
+	}
+	return BookingNextAskPassengerDocuments
 }
 
 func buildBookingContinuationReply(context BookingDraftContext, action BookingNextAction) string {
 	switch action {
 	case BookingNextAskPassengerClarification:
+		if passengerDocumentCountExceedsExpected(context) {
+			return fmt.Sprintf(
+				"Voce informou %d passageiros, mas recebi documentos de %d pessoas. Confirme quantos passageiros vao viajar.",
+				expectedPassengerDocumentCount(context),
+				context.PassengerDetailsCount,
+			)
+		}
 		if context.PassengerCountKnown && context.PassengerCount > 0 && !context.ChildUnder5CountKnown {
 			return "Tem crianca de 5 anos ou menos viajando?"
 		}
@@ -740,7 +924,7 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 		if reply := buildPassengerDocumentProgressReply(context); reply != "" {
 			return reply
 		}
-		return buildAskDocumentsReply(context.PassengerCount, context.PassengerDetailsCount)
+		return buildAskPassengerDocumentsReply(context)
 	case BookingNextAskLapChildAssignment:
 		return buildAskLapChildAssignmentReply(context)
 	case BookingNextAskBookingPaymentPreference:
@@ -748,6 +932,23 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 	default:
 		return ""
 	}
+}
+
+func buildAskPassengerDocumentsReply(context BookingDraftContext) string {
+	expected := expectedPassengerDocumentCount(context)
+	if expected <= 0 {
+		expected = context.PassengerCount
+	}
+	if context.ChildUnder5AddsTraveler &&
+		context.ChildUnder5Count > 0 &&
+		context.PassengerDetailsCount > 0 &&
+		context.PassengerDetailsCount < expected {
+		if countLapChildPassengers(context.PassengerDetails) >= context.ChildUnder5Count {
+			return "Recebi o documento da crianca de ate 5 anos. Ainda falta o documento do passageiro pagante. Pode enviar o nome completo e CPF, RG ou CNH completo?"
+		}
+		return "Recebi o documento do passageiro pagante. Ainda falta o documento da crianca de ate 5 anos. Pode enviar o nome completo e CPF, RG ou certidao de nascimento da crianca?"
+	}
+	return buildAskDocumentsReply(expected, context.PassengerDetailsCount)
 }
 
 func buildPassengerDocumentProgressReply(context BookingDraftContext) string {
@@ -791,6 +992,17 @@ func buildPassengerDocumentProgressReply(context BookingDraftContext) string {
 }
 
 func buildBookingCreateMissingDataReply(context BookingDraftContext) string {
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if readiness.QuantityStatus == bookingCreateQuantityExact && !readiness.DocumentsComplete {
+		completeDocuments := 0
+		for _, passenger := range readiness.Passengers {
+			if bookingDraftPassengerDocumentComplete(passenger) {
+				completeDocuments++
+			}
+		}
+		return buildAskDocumentsReply(readiness.Expected, completeDocuments)
+	}
+
 	missing := missingBookingCreateDataLabels(context)
 	if len(missing) == 0 {
 		return "Recebi os dados do passageiro, mas ainda falta confirmar se eles conferem para criar a reserva."
@@ -833,7 +1045,9 @@ func missingBookingCreateDataLabels(context BookingDraftContext) []string {
 		} else {
 			missing = append(missing, "nome completo e documento dos passageiros")
 		}
-	} else if context.PassengerCount > 0 && context.PassengerDetailsCount != context.PassengerCount {
+	} else if passengerDocumentCountExceedsExpected(context) {
+		missing = append(missing, "confirmacao da quantidade de passageiros, pois ha documentos excedentes")
+	} else if expected := expectedPassengerDocumentCount(context); expected > 0 && context.PassengerDetailsCount != expected {
 		if context.PartialPassengerDetailsCount > 0 {
 			missing = append(missing, "nome completo dos passageiros com documento ja informado")
 		} else {
@@ -851,8 +1065,8 @@ func buildAskLapChildAssignmentReply(context BookingDraftContext) string {
 	if len(passengers) == 0 {
 		passengers = extractBookingCreatePassengers(context.PassengerDetailsText, Session{})
 	}
-	if len(passengers) == 0 {
-		return "Recebi os dados dos passageiros. Qual deles e a crianca de ate 5 anos?"
+	if len(passengers) < 2 {
+		return buildAskPassengerDocumentsReply(context)
 	}
 
 	var builder strings.Builder
@@ -876,17 +1090,21 @@ func buildBookingContinuationDraftRun(reply string, action BookingNextAction, co
 		"action":                      string(action),
 		"template_name":               string(templateName),
 		"passenger_count":             context.PassengerCount,
+		"expected_document_count":     expectedPassengerDocumentCount(context),
 		"child_under_5_count":         context.ChildUnder5Count,
 		"passenger_count_known":       context.PassengerCountKnown,
+		"child_under_5_count_known":   context.ChildUnder5CountKnown,
+		"child_under_5_adds_traveler": context.ChildUnder5AddsTraveler,
 		"lap_child_assignment_known":  context.LapChildAssignmentKnown,
 		"lap_child_passenger_indexes": context.LapChildPassengerIndexes,
 		"needs_lap_child_assignment":  context.NeedsLapChildAssignment,
 	}
 	responsePayload := map[string]interface{}{
-		"reply_text":    reply,
-		"template_name": string(templateName),
-		"intent":        string(IntentPassengerCountReply),
-		"action":        string(action),
+		"reply_text":              reply,
+		"template_name":           string(templateName),
+		"intent":                  string(IntentPassengerCountReply),
+		"action":                  string(action),
+		"expected_document_count": expectedPassengerDocumentCount(context),
 	}
 	if snapshot := selectedAvailabilityResultPayloadFromBookingDraft(context); len(snapshot) > 0 {
 		requestPayload["selected_option_index"] = context.SelectedOptionIndex
@@ -940,24 +1158,7 @@ func canDraftPassengerDocumentConfirmation(context BookingDraftContext, action B
 	if action != BookingNextCallCreate {
 		return false
 	}
-	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
-		return false
-	}
-	if !context.HasPassengerDetails || context.PassengerDetailsCount != context.PassengerCount {
-		return false
-	}
-	if context.PartialPassengerDetailsCount > 0 || context.NeedsLapChildAssignment {
-		return false
-	}
-	if context.ChildUnder5Count > 0 && !context.LapChildAssignmentKnown {
-		return false
-	}
-	for _, passenger := range context.PassengerDetails {
-		if !bookingDraftPassengerDocumentComplete(passenger) {
-			return false
-		}
-	}
-	return true
+	return evaluateCanonicalBookingCreateReadiness(context).Ready
 }
 
 func bookingDraftPassengerDocumentComplete(passenger BookingCreatePassengerInput) bool {
@@ -1009,6 +1210,21 @@ func shouldAskPassengerNameAfterCPF(session Session, currentTurn string, context
 		return false
 	}
 	return len(extractBookingCreatePassengers(currentTurn, session)) == 0
+}
+
+func shouldPersistBookingPassengerSnapshotForRun(run RunAgentResult) bool {
+	action := firstNonEmpty(
+		strings.TrimSpace(asString(run.RequestPayload["action"])),
+		strings.TrimSpace(asString(run.ResponsePayload["action"])),
+	)
+	switch action {
+	case string(BookingNextAskPassengerDocuments),
+		string(BookingNextAskLapChildAssignment),
+		"confirm_passenger_documents":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildInvalidPassengerCPFDraftRun(context BookingDraftContext) RunAgentResult {
@@ -1102,7 +1318,7 @@ func buildPassengerDocumentConfirmationDraftRun(context BookingDraftContext) Run
 }
 
 func documentExtractResultFromBookingDraft(context BookingDraftContext) DocumentExtractResult {
-	expected := context.PassengerCount
+	expected := expectedPassengerDocumentCount(context)
 	if expected <= 0 {
 		expected = len(context.PassengerDetails)
 	}
@@ -1204,7 +1420,7 @@ func lastAssistantAskedPassengerDocumentRequest(history []Message) bool {
 }
 
 func buildPassengerDocumentsAlreadySentNotRecognizedReply(context BookingDraftContext) string {
-	expected := context.PassengerCount
+	expected := expectedPassengerDocumentCount(context)
 	if expected <= 0 {
 		expected = 1
 	}

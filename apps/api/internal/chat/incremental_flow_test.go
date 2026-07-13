@@ -1656,6 +1656,7 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 			freshAvailability.SessionID = session.ID
 			freshAvailability.ReceivedAt = now.Add(1 * time.Minute)
 			history = append(history, freshAvailability)
+			history = appendExplicitSoloPassengerDeclaration(history, now.Add(2*time.Minute))
 
 			input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil)
 			if !ok {

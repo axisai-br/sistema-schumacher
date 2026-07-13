@@ -32,15 +32,16 @@ var (
 )
 
 const (
-	toolNameAvailabilitySearch = "availability_search"
-	toolNamePricingQuote       = "pricing_quote"
-	toolNameBookingLookup      = "booking_lookup"
-	toolNameBookingCreate      = "booking_create"
-	toolNameBookingCancel      = "booking_cancel"
-	toolNameRescheduleLookup   = "reschedule_lookup"
-	toolNamePaymentStatus      = "payment_status"
-	toolNamePaymentCreate      = "payment_create"
-	toolNameDocumentExtract    = "document_extract"
+	toolNameAvailabilitySearch       = "availability_search"
+	toolNamePricingQuote             = "pricing_quote"
+	toolNameBookingLookup            = "booking_lookup"
+	toolNameBookingCreate            = "booking_create"
+	toolNameBookingCancel            = "booking_cancel"
+	toolNameRescheduleLookup         = "reschedule_lookup"
+	toolNamePaymentStatus            = "payment_status"
+	toolNamePaymentCreate            = "payment_create"
+	toolNameDocumentExtract          = "document_extract"
+	toolNameBookingPassengerSnapshot = "booking_passenger_snapshot"
 )
 
 var supportedStopIDs = map[string]string{
@@ -104,16 +105,17 @@ var routeIDByPackageName = map[string]string{
 }
 
 type agentToolContext struct {
-	Calls           []ToolCall
-	Availability    *AvailabilitySearchResult
-	Pricing         *PricingQuoteResult
-	Booking         *BookingLookupResult
-	BookingCreate   *BookingCreateResult
-	BookingCancel   *BookingCancelResult
-	Reschedule      *RescheduleAssistResult
-	Payments        *PaymentStatusResult
-	PaymentCreate   *PaymentCreateResult
-	DocumentExtract *DocumentExtractResult
+	Calls                    []ToolCall
+	Availability             *AvailabilitySearchResult
+	Pricing                  *PricingQuoteResult
+	Booking                  *BookingLookupResult
+	BookingCreate            *BookingCreateResult
+	BookingCancel            *BookingCancelResult
+	Reschedule               *RescheduleAssistResult
+	Payments                 *PaymentStatusResult
+	PaymentCreate            *PaymentCreateResult
+	DocumentExtract          *DocumentExtractResult
+	BookingPassengerSnapshot *bookingPassengerSnapshot
 }
 
 type inferredRouteContext struct {

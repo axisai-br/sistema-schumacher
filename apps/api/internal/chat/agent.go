@@ -824,7 +824,7 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 	if len(autoSend.Reasons) > 0 {
 		payload["auto_send_reasons"] = autoSend.Reasons
 	}
-	if tools.Availability != nil || tools.Pricing != nil || tools.Booking != nil || tools.BookingCreate != nil || tools.Payments != nil || tools.PaymentCreate != nil || tools.BookingCancel != nil || tools.DocumentExtract != nil {
+	if tools.Availability != nil || tools.Pricing != nil || tools.Booking != nil || tools.BookingCreate != nil || tools.Payments != nil || tools.PaymentCreate != nil || tools.BookingCancel != nil || tools.DocumentExtract != nil || tools.BookingPassengerSnapshot != nil {
 		toolContext := map[string]interface{}{}
 		if tools.Availability != nil {
 			toolContext[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*tools.Availability)
@@ -850,6 +850,9 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 		if tools.DocumentExtract != nil {
 			toolContext[toolNameDocumentExtract] = buildDocumentExtractResponsePayload(*tools.DocumentExtract)
 		}
+		if tools.BookingPassengerSnapshot != nil {
+			toolContext[toolNameBookingPassengerSnapshot] = buildBookingPassengerSnapshotPayload(*tools.BookingPassengerSnapshot)
+		}
 		payload["tool_context"] = toolContext
 	}
 	normalized := map[string]interface{}{
@@ -873,6 +876,11 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 	}
 	if len(autoSend.Reasons) > 0 {
 		normalized["auto_send_reasons"] = autoSend.Reasons
+	}
+	if tools.BookingPassengerSnapshot != nil {
+		normalized["tool_context"] = map[string]interface{}{
+			toolNameBookingPassengerSnapshot: buildBookingPassengerSnapshotPayload(*tools.BookingPassengerSnapshot),
+		}
 	}
 	return payload, normalized
 }
