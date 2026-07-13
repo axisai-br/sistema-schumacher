@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"schumacher-tur/api/internal/bookings"
 	"schumacher-tur/api/internal/payments"
 	"strings"
@@ -118,6 +119,71 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 
 	if input, ok := parseBookingCreateInput(session, history, "isso", nil); ok {
 		t.Fatalf("expected booking create to be blocked until lap child assignment, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputBlocksSoloChildUntilChildDocumentCollected(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := soloChildBookingHistory(now)
+	history = append(history,
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
+	)
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar\nJoao Vitor Messias 84960815086", nil); ok {
+		t.Fatalf("expected booking_create to wait for child document, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateBlocksVerboseSoloChildWithMissingChildDocument(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := soloChildBookingHistoryWithReply(now, "sim, meu filho de 4 anos")
+	history = append(history,
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
+	)
+
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar\nJoao Vitor Messias 84960815086", nil); ok {
+		t.Fatalf("expected booking_create to wait for verbose child document, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationBlocksSoloChildWithOneDocument(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := soloChildBookingHistory(now)
+	history = append(history,
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
+		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-60 * time.Second)},
+		Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Joao Vitor Messias | CPF | 849.***.***-86", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-30 * time.Second)},
+	)
+
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("expected booking_create confirmation to wait for child document, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationSoloChildAfterAssignment(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	history := soloChildBookingHistory(now)
+	history = append(history,
+		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Recebi os dados dos 2 passageiros. Qual deles e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-90 * time.Second)},
+		Message{Direction: "INBOUND", Body: "2", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-60 * time.Second)},
+		Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem? Posso prosseguir e criar a reserva?\n1. Joao Vitor Messias | CPF | 849.***.***-86\n2. Ivoneide Messias | CPF | 048.***.***-82 | crianca de ate 5 anos", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now.Add(-30 * time.Second)},
+	)
+
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected booking_create after child assignment")
+	}
+	if input.Qty != 2 || len(input.Passengers) != 2 {
+		t.Fatalf("expected two travelers in booking input, got %+v", input)
+	}
+	if input.Passengers[0].IsLapChild || !input.Passengers[1].IsLapChild {
+		t.Fatalf("expected second passenger marked as lap child, got %+v", input.Passengers)
 	}
 }
 
@@ -1295,6 +1361,7 @@ func TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption(t *testi
 		Body:       "não quero opção 1",
 		ReceivedAt: now.Add(-30 * time.Second),
 	})
+	history = appendExplicitSoloPassengerDeclaration(history, now)
 
 	input, ok := parseBookingCreateInput(session, history, "quero reservar opção 2\nJoao Vitor Messias | CPF | 84960815086", nil)
 	if !ok {
@@ -1349,6 +1416,7 @@ func TestParseBookingCreateInputRejectedHiddenVisibleSelectionUsesVisibleContext
 					},
 				})
 			}
+			history = appendExplicitSoloPassengerDeclaration(history, now.Add(2*time.Minute))
 
 			if input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
 				t.Fatalf("expected rejected visible option 1 to be blocked, got %+v", input)
@@ -1398,7 +1466,7 @@ func TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionRe
 		OriginDepartTime:       "14:00",
 		TripDate:               "2026-07-14",
 	})[0]
-	history := []Message{oldAvailability, rejection, freshAvailability}
+	history := appendExplicitSoloPassengerDeclaration([]Message{oldAvailability, rejection, freshAvailability}, now)
 
 	input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil)
 	if !ok {
@@ -1563,7 +1631,7 @@ func TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability(t *te
 			}
 			freshAvailability := singleAvailabilitySearchHistory(now, freshItem)[0]
 			freshAvailability.ReceivedAt = now.Add(-1 * time.Minute)
-			history := []Message{oldAvailability, blocker, freshAvailability}
+			history := appendExplicitSoloPassengerDeclaration([]Message{oldAvailability, blocker, freshAvailability}, now)
 
 			input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil)
 			if !ok {
@@ -1597,6 +1665,7 @@ func TestParseBookingCreateInputCurrentAvailabilityIgnoresOldSelectionBlocker(t 
 			"selected_option_index": 2,
 		},
 	}}
+	history = appendExplicitSoloPassengerDeclaration(history, now.Add(-time.Minute))
 	currentAvailability := bookingCreateSelectionAvailabilityResult("trip-current", "board-current", "alight-current")
 
 	input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", &currentAvailability)
@@ -1670,7 +1739,7 @@ func bookingCreateHiddenRawPrefixAvailabilityResult() AvailabilitySearchResult {
 }
 
 func singleOptionBookingCreateAvailabilityHistory(now time.Time) []Message {
-	return singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
+	history := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
 		TripID:                 "trip-2026-07-13",
 		BoardStopID:            "board-2026-07-13",
 		AlightStopID:           "alight-2026-07-13",
@@ -1680,6 +1749,16 @@ func singleOptionBookingCreateAvailabilityHistory(now time.Time) []Message {
 		TripDate:               "2026-07-13",
 		Price:                  950,
 		Currency:               "BRL",
+	})
+	return append(history, Message{Direction: "INBOUND", Body: "so pra mim, sem crianca", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)})
+}
+
+func appendExplicitSoloPassengerDeclaration(history []Message, receivedAt time.Time) []Message {
+	return append(history, Message{
+		Direction:        "INBOUND",
+		Body:             "so pra mim, sem crianca",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       receivedAt,
 	})
 }
 
@@ -1736,7 +1815,7 @@ func TestBuildBookingContinuationDraftRunDoesNotPersistMetadataOnlySelectedOptio
 	}
 }
 
-func TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHistory(t *testing.T) {
+func TestParseBookingCreateInputUsesStructuredPassengerConfirmationOnHistory(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
 		ContactKey:    "5549988709047",
@@ -1779,21 +1858,36 @@ func TestParseBookingCreateInputUsesAssistantExtractedPassengerConfirmationOnHis
 			ReceivedAt:       now.Add(-3 * time.Minute),
 		},
 		{
+			Direction:        "INBOUND",
+			Body:             "so pra mim, sem crianca",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-150 * time.Second),
+		},
+		{
 			Direction:        "OUTBOUND",
 			Body:             "Consegui identificar estes dados. Eles conferem?\n- Passageiro 1: Joao Vitor Messias | CPF | 84960815086",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
+						Mode:                   "EXTRACTED",
+						ExpectedPassengerCount: 1,
+						Passengers: []DocumentExtractPassenger{{
+							Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "84960815086", CPF: "84960815086", Confidence: 1,
+						}},
+					}),
+				},
+			},
 		},
 	}
 
 	input, ok := parseBookingCreateInput(session, history, "isso", nil)
 	if !ok {
-		assistantBody := history[len(history)-1].Body
 		t.Fatalf(
-			"expected booking create input from assistant extraction history: selected_option=%d availability=%v assistant_passengers=%+v passenger_text=%q passengers=%+v qty=%d",
+			"expected booking create input from structured extraction history: selected_option=%d availability=%v passenger_text=%q passengers=%+v qty=%d",
 			findLatestSelectedOptionIndex(history),
 			findLatestAvailabilityContext(history) != nil,
-			extractBookingCreatePassengers(assistantBody, session),
 			findLatestPassengerDetailsText(history, session),
 			extractBookingCreatePassengers(findLatestPassengerDetailsText(history, session), session),
 			extractPassengerQuantity(findLatestPassengerDetailsText(history, session)),
@@ -2304,6 +2398,7 @@ func TestDocumentConfirmationPreservesAdditionalIdentityFields(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ID: "session-doc-extra", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Maria"}
 	history := documentConfirmationBookingHistory(now, "EXTRACTED", true)
+	history[2].Body = "uma pessoa, com uma crianca de 4 anos"
 	history[len(history)-1].Payload = map[string]interface{}{
 		"tool_context": map[string]interface{}{
 			toolNameDocumentExtract: buildDocumentExtractResponsePayload(DocumentExtractResult{
@@ -2560,6 +2655,344 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 	}
 }
 
+func TestParseBookingCreateFromDocumentConfirmationRejectsDetailsAboveKnownPassengerCount(t *testing.T) {
+	session := Session{ID: "session-known-count-mismatch", ContactKey: "5549988709201", CustomerPhone: "5549988709201", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+			{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", Confidence: 0.98},
+		},
+	})
+
+	context := collectBookingDraftContext(session, history, "sim")
+	if context.PassengerCount != 1 || context.ExpectedDocumentCount != 1 || context.PassengerDetailsCount != 2 {
+		t.Fatalf("expected known count mismatch to remain visible, got %+v", context)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("known count mismatch must not authorize booking_create, got %+v", input)
+	}
+}
+
+func TestCanonicalBookingCreateContextExcessBlocksBodyPassengerBypass(t *testing.T) {
+	session := Session{ID: "session-canonical-body-bypass", ContactKey: "5549988709208", CustomerPhone: "5549988709208", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+			{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", Confidence: 0.98},
+		},
+	})
+	body := "quero reservar\nJoao Vitor Messias CPF 52998224725"
+	availability := canonicalBookingCreateTestAvailability(1)
+	if _, _, ok := resolveBookingCreateSelection(body, history, &availability); !ok {
+		t.Fatalf("test must have a valid trip selection before exercising canonical readiness")
+	}
+
+	context := collectBookingDraftContext(session, history, body)
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if context.PassengerCount != 1 || len(readiness.Passengers) != 2 || readiness.QuantityStatus != bookingCreateQuantityExcess || readiness.Ready {
+		t.Fatalf("expected canonical excess for known count 1 and merged context 2, context=%+v readiness=%+v", context, readiness)
+	}
+	if input, ok := parseBookingCreateInput(session, history, body, &availability); ok {
+		t.Fatalf("body passenger list must not bypass canonical context excess, got %+v", input)
+	}
+}
+
+func TestUnknownAvailabilityQtyDoesNotBecomePassengerCountDeclaration(t *testing.T) {
+	session := Session{ID: "session-unknown-availability-qty", ContactKey: "5549988709220", CustomerPhone: "5549988709220", CustomerName: "Joao"}
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	extract := DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", CPF: "52998224725", Confidence: 0.98},
+		},
+	}
+	toolContext := map[string]interface{}{toolNameDocumentExtract: buildDocumentExtractResponsePayload(extract)}
+	history = append(history, Message{
+		Direction:         "OUTBOUND",
+		Body:              buildConfirmExtractedDocumentReply(extract),
+		ProcessingStatus:  messageStatusAutomationDraft,
+		ReceivedAt:        now,
+		Payload:           map[string]interface{}{"tool_context": toolContext},
+		NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
+	})
+
+	context := collectBookingDraftContext(session, history, "sim")
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if context.PassengerCountKnown || context.PassengerCount != 0 || readiness.QuantityStatus != bookingCreateQuantityUnknown || readiness.Ready {
+		t.Fatalf("availability qty=1 must not become an explicit passenger declaration, context=%+v readiness=%+v", context, readiness)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("document confirmation must stay blocked while passenger quantity is unknown, got %+v", input)
+	}
+	availability := canonicalBookingCreateTestAvailability(1)
+	body := "quero reservar\nJoao Vitor Messias CPF 52998224725"
+	if input, ok := parseBookingCreateInput(session, history, body, &availability); ok {
+		t.Fatalf("current availability qty=1 must not authorize booking_create, got %+v", input)
+	}
+}
+
+func TestCanonicalBookingCreateReadinessClassifiesQuantity(t *testing.T) {
+	passenger1 := BookingCreatePassengerInput{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", CPF: "52998224725"}
+	passenger2 := BookingCreatePassengerInput{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", RG: "1234567"}
+	tests := []struct {
+		name       string
+		context    BookingDraftContext
+		wantStatus bookingCreateQuantityStatus
+		wantReady  bool
+	}{
+		{name: "unknown", context: BookingDraftContext{PassengerDetails: []BookingCreatePassengerInput{passenger1}}, wantStatus: bookingCreateQuantityUnknown},
+		{name: "missing", context: BookingDraftContext{PassengerCount: 2, PassengerCountKnown: true, PassengerDetails: []BookingCreatePassengerInput{passenger1}}, wantStatus: bookingCreateQuantityMissing},
+		{name: "exact", context: BookingDraftContext{PassengerCount: 1, PassengerCountKnown: true, PassengerDetails: []BookingCreatePassengerInput{passenger1}}, wantStatus: bookingCreateQuantityExact, wantReady: true},
+		{name: "excess", context: BookingDraftContext{PassengerCount: 1, PassengerCountKnown: true, PassengerDetails: []BookingCreatePassengerInput{passenger1, passenger2}}, wantStatus: bookingCreateQuantityExcess},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			readiness := evaluateCanonicalBookingCreateReadiness(tc.context)
+			if readiness.QuantityStatus != tc.wantStatus || readiness.Ready != tc.wantReady {
+				t.Fatalf("unexpected canonical readiness: got %+v want status=%s ready=%t", readiness, tc.wantStatus, tc.wantReady)
+			}
+		})
+	}
+}
+
+func TestCanonicalBookingCreateResolvedPartialByLaterDocumentExtract(t *testing.T) {
+	session := Session{ID: "session-resolved-partial", ContactKey: "5549988709209", CustomerPhone: "5549988709209", CustomerName: "Ivoneide"}
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	extract := DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Ivoneide Pereira", DocumentType: "CPF", Document: "46643591104", CPF: "46643591104", Confidence: 0.98},
+		},
+	}
+	toolContext := map[string]interface{}{toolNameDocumentExtract: buildDocumentExtractResponsePayload(extract)}
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "so pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "nao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Pode enviar seu nome completo e CPF.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "ivoneide 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-90 * time.Second)},
+		Message{
+			Direction:         "OUTBOUND",
+			Body:              buildConfirmExtractedDocumentReply(extract),
+			ProcessingStatus:  messageStatusAutomationDraft,
+			ReceivedAt:        now.Add(-time.Minute),
+			Payload:           map[string]interface{}{"tool_context": toolContext},
+			NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
+		},
+	)
+
+	context := collectBookingDraftContext(session, history, "sim")
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if context.PartialPassengerDetailsCount != 0 || len(readiness.UnresolvedPartials) != 0 {
+		t.Fatalf("later complete extract must resolve the partial with the same CPF, context=%+v readiness=%+v", context, readiness)
+	}
+	if !readiness.Ready || len(readiness.Passengers) != 1 || readiness.Passengers[0].Name != "Ivoneide Pereira" {
+		t.Fatalf("expected canonical passenger to be ready after partial resolution, got %+v", readiness)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); !ok || len(input.Passengers) != 1 {
+		t.Fatalf("resolved partial must allow confirmed booking_create, ok=%v input=%+v", ok, input)
+	}
+}
+
+func TestCanonicalBookingCreateUnresolvedPartialsKeepOnlyRealIdentities(t *testing.T) {
+	passenger := BookingCreatePassengerInput{
+		Name:         "Joao Vitor Messias",
+		DocumentType: "CPF",
+		Document:     "52998224725",
+		CPF:          "52998224725",
+	}
+	context := BookingDraftContext{
+		PassengerCount:      1,
+		PassengerCountKnown: true,
+		PassengerDetails:    []BookingCreatePassengerInput{passenger},
+		PartialPassengerDetails: []BookingPassengerDocumentPartial{
+			{NameFragment: "ivoneide", DocumentType: "CPF", Document: "46643591104"},
+			{NameFragment: "ivoneide pereira", DocumentType: "CPF", Document: "466.435.911-04"},
+			{NameFragment: "maria", DocumentType: "RG", Document: "1234567"},
+		},
+	}
+
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if readiness.Ready || len(readiness.UnresolvedPartials) != 2 {
+		t.Fatalf("expected two real unresolved identities to remain blocked, got %+v", readiness)
+	}
+	if readiness.UnresolvedPartials[0].NameFragment != "ivoneide pereira" {
+		t.Fatalf("expected latest duplicate partial to win, got %+v", readiness.UnresolvedPartials)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationRejectsMergedIncompletePassenger(t *testing.T) {
+	session := Session{ID: "session-merged-incomplete", ContactKey: "5549988709205", CustomerPhone: "5549988709205", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+			{Name: "Maria Messias", DocumentType: "RG", Confidence: 0.72},
+		},
+	})
+
+	context := collectBookingDraftContext(session, history, "sim")
+	if context.PassengerDetailsCount != 2 || len(context.PassengerDetails) != 2 {
+		t.Fatalf("test must reconstruct the two-passenger merged list, got %+v", context)
+	}
+	if context.PassengerDetails[1].Document != "" {
+		t.Fatalf("test must keep the second passenger incomplete, got %+v", context.PassengerDetails[1])
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("incomplete merged passenger must not authorize booking_create, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationRejectsUnresolvedInboundPartial(t *testing.T) {
+	session := Session{ID: "session-unresolved-partial", ContactKey: "5549988709206", CustomerPhone: "5549988709206", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+		},
+	})
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 52998224725 ivoneide 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?\n1. Joao Vitor Messias | CPF | 529.***.***-25", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now},
+	)
+
+	context := collectBookingDraftContext(session, history, "sim")
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if context.PassengerDetailsCount != 1 || context.PartialPassengerDetailsCount == 0 || len(readiness.UnresolvedPartials) == 0 || readiness.Ready {
+		t.Fatalf("test must retain the complete passenger and unresolved partial, got %+v", context)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("unresolved inbound partial must not authorize booking_create, got %+v", input)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationUsesMergedPassengerCorrection(t *testing.T) {
+	session := Session{ID: "session-merged-passenger-correction", ContactKey: "5549988709202", CustomerPhone: "5549988709202", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+			{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", Confidence: 0.98},
+		},
+	})
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "nome: Maria Nova RG 1234567", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?\n1. Joao Vitor Messias | CPF | 529.***.***-25\n2. Maria Nova | RG | 1234567", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now},
+	)
+
+	context := collectBookingDraftContext(session, history, "sim")
+	if len(context.PassengerDetails) != 2 || context.PassengerDetails[1].Name != "Maria Nova" {
+		t.Fatalf("expected correction in merged booking context, got %+v", context.PassengerDetails)
+	}
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("expected corrected document confirmation to authorize booking_create")
+	}
+	if len(input.Passengers) != 2 || input.Passengers[1].Name != "Maria Nova" || input.Passengers[1].RG != "1234567" {
+		t.Fatalf("booking_create must use merged corrected passenger, got %+v", input.Passengers)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationUsesMergedImageThenTextPassengers(t *testing.T) {
+	session := Session{ID: "session-image-then-text", ContactKey: "5549988709203", CustomerPhone: "5549988709203", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+		},
+	})
+	now := time.Now().UTC()
+	history = append(history,
+		Message{Direction: "INBOUND", Body: "Maria Messias RG 1234567", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Consegui identificar estes dados. Eles conferem?\n1. Joao Vitor Messias | CPF | 529.***.***-25\n2. Maria Messias | RG | 1234567", ProcessingStatus: messageStatusAutomationDraft, ReceivedAt: now},
+	)
+
+	extract := findLatestDocumentExtractContext(history)
+	if extract == nil || len(extract.Passengers) != 1 {
+		t.Fatalf("test must keep the latest isolated extract partial, got %+v", extract)
+	}
+	context := collectBookingDraftContext(session, history, "sim")
+	if context.PassengerDetailsCount != 2 || len(context.PassengerDetails) != 2 {
+		t.Fatalf("expected complete merged image and text passengers, got %+v", context)
+	}
+	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !ok {
+		t.Fatalf("merged confirmation must not be gated by the shorter isolated extract")
+	}
+	if input.Qty != 2 || len(input.Passengers) != 2 || input.Passengers[0].Name != "Joao Vitor Messias" || input.Passengers[1].Name != "Maria Messias" {
+		t.Fatalf("expected booking_create with the confirmed merged list, got %+v", input)
+	}
+}
+
+func TestBookingCreateEntryPointsUseCanonicalReadinessAndPassengers(t *testing.T) {
+	session := Session{ID: "session-entrypoint-readiness", ContactKey: "5549988709210", CustomerPhone: "5549988709210", CustomerName: "Joao"}
+	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 2,
+		Passengers: []DocumentExtractPassenger{
+			{Name: "Joao Vitor Messias", DocumentType: "CPF", Document: "52998224725", Confidence: 0.98},
+			{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", Confidence: 0.98},
+		},
+	})
+	context := collectBookingDraftContext(session, history, "sim")
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if !readiness.Ready || readiness.QuantityStatus != bookingCreateQuantityExact {
+		t.Fatalf("test must start from exact canonical readiness, got %+v", readiness)
+	}
+
+	availability := canonicalBookingCreateTestAvailability(2)
+	fromIntent, intentOK := parseBookingCreateInput(session, history, "quero reservar", &availability)
+	fromConfirmation, confirmationOK := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
+	if !intentOK || !confirmationOK {
+		t.Fatalf("both entry points must accept the same ready context, intent=%t confirmation=%t", intentOK, confirmationOK)
+	}
+	if !reflect.DeepEqual(fromIntent.Passengers, readiness.Passengers) || !reflect.DeepEqual(fromConfirmation.Passengers, readiness.Passengers) {
+		t.Fatalf("entry points must use the exact canonical passenger list, readiness=%+v intent=%+v confirmation=%+v", readiness.Passengers, fromIntent.Passengers, fromConfirmation.Passengers)
+	}
+	if fromIntent.Qty != readiness.Expected || fromConfirmation.Qty != readiness.Expected {
+		t.Fatalf("entry points must use canonical expected count %d, intent=%d confirmation=%d", readiness.Expected, fromIntent.Qty, fromConfirmation.Qty)
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationStillRequiresLapChildAssignment(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{ID: "session-lap-child-unassigned", ContactKey: "5549988709207", CustomerPhone: "5549988709207", CustomerName: "Joao"}
+	history := lapChildBookingHistory(now, "Joao Vitor Messias 52998224725\nMaria Messias RG 1234567")
+
+	context := collectBookingDraftContext(session, history, "sim")
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if context.PassengerDetailsCount != 2 || context.ChildUnder5Count != 1 || context.LapChildAssignmentKnown || readiness.LapChildAssignmentComplete || readiness.Ready {
+		t.Fatalf("test must have two complete passengers with child assignment pending, got %+v", context)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("unassigned lap child must not authorize booking_create, got %+v", input)
+	}
+}
+
+func canonicalBookingCreateTestAvailability(qty int) AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: qty, Limit: 1},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-canonical-1", BoardStopID: "board-canonical-1", AlightStopID: "alight-canonical-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-08-25",
+		}},
+	}
+}
+
 func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
@@ -2616,8 +3049,8 @@ func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(
 	}
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", false)
 
-	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); !ok || input.Qty != 1 {
-		t.Fatalf("expected missing document_extract to use passenger details fallback, got ok=%v input=%+v", ok, input)
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {
+		t.Fatalf("outbound confirmation without structured or inbound passenger data must not create booking, got %+v", input)
 	}
 
 	history = documentConfirmationBookingHistory(time.Now().UTC(), "PARTIAL", true)
@@ -2677,6 +3110,12 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 			ReceivedAt:       now.Add(-4 * time.Minute),
 		},
 		{
+			Direction:        "INBOUND",
+			Body:             "so pra mim, sem crianca",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-210 * time.Second),
+		},
+		{
 			Direction:        "OUTBOUND",
 			Body:             "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.",
 			ProcessingStatus: messageStatusAutomationSent,
@@ -2715,6 +3154,32 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 			ReceivedAt:       now.Add(-2 * time.Minute),
 		})
 	}
+	return history
+}
+
+func knownPassengerCountDocumentConfirmationHistory(t *testing.T, passengerReply string, extract DocumentExtractResult) []Message {
+	t.Helper()
+	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
+	now := time.Now().UTC()
+	toolContext := map[string]interface{}{
+		toolNameDocumentExtract: buildDocumentExtractResponsePayload(extract),
+	}
+	history = append(history,
+		Message{Direction: "INBOUND", Body: passengerReply, ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
+		Message{Direction: "INBOUND", Body: "nao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		Message{Direction: "OUTBOUND", Body: "Pode enviar os nomes completos e os documentos dos passageiros.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		Message{
+			Direction:        "OUTBOUND",
+			Body:             buildConfirmExtractedDocumentReply(extract),
+			ProcessingStatus: messageStatusAutomationDraft,
+			ReceivedAt:       now.Add(-90 * time.Second),
+			Payload:          map[string]interface{}{"tool_context": toolContext},
+			NormalizedPayload: map[string]interface{}{
+				"tool_context": toolContext,
+			},
+		},
+	)
 	return history
 }
 
@@ -2828,6 +3293,37 @@ func lapChildBookingHistory(now time.Time, passengerDetails string) []Message {
 	}
 }
 
+func soloChildBookingHistory(now time.Time) []Message {
+	return soloChildBookingHistoryWithReply(now, "sim")
+}
+
+func soloChildBookingHistoryWithReply(now time.Time, childReply string) []Message {
+	return []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             "Datas para Santa Ines/MA -> Fraiburgo/SC.",
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-7 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+						Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
+						Results: []AvailabilitySearchItem{{
+							TripID: "trip-solo-child-1", BoardStopID: "board-solo-child-1", AlightStopID: "alight-solo-child-1",
+							OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
+						}},
+					}),
+				},
+			},
+		},
+		{Direction: "INBOUND", Body: "opcao 1", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "INBOUND", Body: "so pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
+		{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
+		{Direction: "INBOUND", Body: childReply, ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
+	}
+}
+
 func TestLastBotAskedPassengerCountIgnoresOlderPassengerQuestionAfterDocumentRequest(t *testing.T) {
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Perfeito, a passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
@@ -2926,6 +3422,7 @@ func TestParsePassengerClarificationSlotsSoloAndNoChild(t *testing.T) {
 	}{
 		{text: "A passagem é só pra mim, não tem criança.", wantPassenger: true, wantChild: true},
 		{text: "Só eu, sem criança.", wantPassenger: true, wantChild: true},
+		{text: "Sou eu mesmo, sem criança.", wantPassenger: true, wantChild: true},
 		{text: "Não tem criança.", wantChild: true},
 	}
 

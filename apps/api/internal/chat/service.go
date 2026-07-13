@@ -1041,9 +1041,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			"price":                          bookingDraft.Price,
 			"currency":                       bookingDraft.Currency,
 			"passenger_count":                bookingDraft.PassengerCount,
+			"expected_document_count":        bookingDraft.ExpectedDocumentCount,
 			"passenger_count_known":          bookingDraft.PassengerCountKnown,
 			"child_under_5_count":            bookingDraft.ChildUnder5Count,
 			"child_under_5_count_known":      bookingDraft.ChildUnder5CountKnown,
+			"child_under_5_adds_traveler":    bookingDraft.ChildUnder5AddsTraveler,
 			"lap_child_assignment_known":     bookingDraft.LapChildAssignmentKnown,
 			"lap_child_passenger_indexes":    bookingDraft.LapChildPassengerIndexes,
 			"needs_lap_child_assignment":     bookingDraft.NeedsLapChildAssignment,
@@ -1244,9 +1246,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 				deterministicBookingHandled = true
 				memory["booking_draft_context"] = map[string]interface{}{
 					"passenger_count":             bookingDraft.PassengerCount,
+					"expected_document_count":     bookingDraft.ExpectedDocumentCount,
 					"passenger_count_known":       bookingDraft.PassengerCountKnown,
 					"child_under_5_count":         bookingDraft.ChildUnder5Count,
 					"child_under_5_count_known":   bookingDraft.ChildUnder5CountKnown,
+					"child_under_5_adds_traveler": bookingDraft.ChildUnder5AddsTraveler,
 					"lap_child_assignment_known":  bookingDraft.LapChildAssignmentKnown,
 					"lap_child_passenger_indexes": bookingDraft.LapChildPassengerIndexes,
 					"needs_lap_child_assignment":  bookingDraft.NeedsLapChildAssignment,
@@ -1949,15 +1953,47 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 	} else if documentHandled && toolContext.DocumentExtract != nil {
 		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
 		documentPassengers := bookingPassengersFromDocumentExtract(*toolContext.DocumentExtract, persisted.Session, bookingDraft.TripDate)
-		if strings.EqualFold(strings.TrimSpace(toolContext.DocumentExtract.Mode), "EXTRACTED") &&
-			bookingDraft.ChildUnder5Count > 0 &&
-			len(documentPassengers) > 0 &&
-			countLapChildPassengers(documentPassengers) == 0 {
+		expectedDocuments := expectedPassengerDocumentCount(bookingDraft)
+		if expectedDocuments <= 0 {
+			expectedDocuments = toolContext.DocumentExtract.ExpectedPassengerCount
+		}
+		documentExtracted := strings.EqualFold(strings.TrimSpace(toolContext.DocumentExtract.Mode), "EXTRACTED")
+		if documentExtracted && len(documentPassengers) > 0 {
+			passengerSnapshot := bookingDraft.PassengerSnapshot
+			if len(passengerSnapshot.Passengers) == 0 {
+				passengerSnapshot = newBookingPassengerSnapshot(bookingDraft.PassengerDetails, expectedDocuments)
+			}
+			passengerSnapshot = mergeCurrentDocumentExtractionPassengerSnapshot(passengerSnapshot, documentPassengers, expectedDocuments)
+			documentPassengers = bookingPassengersFromCanonicalSnapshot(passengerSnapshot)
 			bookingDraft.HasPassengerDetails = true
 			bookingDraft.PassengerDetails = documentPassengers
 			bookingDraft.PassengerDetailsCount = len(documentPassengers)
-			bookingDraft.NeedsLapChildAssignment = true
-			run = buildBookingContinuationDraftRun(buildAskLapChildAssignmentReply(bookingDraft), BookingNextAskLapChildAssignment, bookingDraft)
+			bookingDraft.ExpectedDocumentCount = expectedDocuments
+			bookingDraft.PassengerSnapshot = passengerSnapshot
+			bookingDraft.PartialPassengerDetails = unresolvedPassengerDocumentPartialsForPassengers(bookingDraft.PartialPassengerDetails, documentPassengers)
+			bookingDraft.PartialPassengerDetailsCount = len(bookingDraft.PartialPassengerDetails)
+			bookingDraft.LapChildPassengerIndexes = lapChildIndexesFromPassengers(documentPassengers)
+			if len(bookingDraft.LapChildPassengerIndexes) > 0 && !bookingDraft.ChildUnder5CountKnown {
+				bookingDraft.ChildUnder5Count = len(bookingDraft.LapChildPassengerIndexes)
+				bookingDraft.ChildUnder5CountKnown = true
+			}
+			bookingDraft.LapChildAssignmentKnown = bookingDraft.ChildUnder5CountKnown &&
+				hasExpectedLapChildCount(documentPassengers, bookingDraft.ChildUnder5Count)
+			bookingDraft.NeedsLapChildAssignment = bookingDraft.ChildUnder5Count > 0 &&
+				expectedDocuments > 0 &&
+				len(documentPassengers) == expectedDocuments &&
+				!bookingDraft.LapChildAssignmentKnown
+
+			toolContext.BookingPassengerSnapshot = &bookingDraft.PassengerSnapshot
+		}
+		if documentExtracted && len(documentPassengers) > 0 {
+			readiness := evaluateCanonicalBookingCreateReadiness(bookingDraft)
+			action := bookingNextActionFromCanonicalReadiness(bookingDraft, readiness)
+			if readiness.Ready && action == BookingNextCallCreate {
+				run = buildPassengerDocumentConfirmationDraftRun(bookingDraft)
+			} else {
+				run = buildBookingContinuationDraftRun(buildBookingContinuationReply(bookingDraft, action), action, bookingDraft)
+			}
 		} else {
 			userPrompt = buildAgentUserPrompt(persisted.Session, memory, toolContext)
 			run = buildDocumentExtractDraftRun(*toolContext.DocumentExtract)
@@ -2015,6 +2051,13 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 			rolloutMetadata.DecisionSource = "safe_phase_fallback"
 			rolloutMetadata.DecisionValid = boolPtr(true)
 			rolloutMetadata.FallbackReason = "unsafe_or_looping_draft_replaced"
+		}
+	}
+	if toolContext.BookingPassengerSnapshot == nil && shouldPersistBookingPassengerSnapshotForRun(run) {
+		bookingDraft := collectBookingDraftContext(persisted.Session, history, currentTurn)
+		if len(bookingDraft.PassengerSnapshot.Passengers) > 0 {
+			snapshot := bookingDraft.PassengerSnapshot
+			toolContext.BookingPassengerSnapshot = &snapshot
 		}
 	}
 

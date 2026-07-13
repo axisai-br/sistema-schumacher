@@ -613,8 +613,11 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].Kind != "IMAGE" {
 		t.Fatalf("expected one image media item for document extraction, got %+v", runner.lastInput.CurrentTurnMedia)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 066.***.***-03") {
-		t.Fatalf("expected extracted CPF confirmation, got %q", reprocessed.Draft.Body)
+	if !strings.Contains(reprocessed.Draft.Body, "so para voce ou vai mais alguem") {
+		t.Fatalf("expected passenger quantity clarification after extracting the CPF, got %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
+		t.Fatalf("unknown passenger quantity must not emit document confirmation, got %q", reprocessed.Draft.Body)
 	}
 	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
 		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
@@ -685,8 +688,11 @@ func TestReprocessExtractsDocumentImageDataURLBeforeGenericReply(t *testing.T) {
 	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskDocuments) {
 		t.Fatalf("did not expect generic document request template, got %q", got)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Maria Silva | RG | 1234567") {
-		t.Fatalf("expected extracted RG confirmation, got %q", reprocessed.Draft.Body)
+	if !strings.Contains(reprocessed.Draft.Body, "so para voce ou vai mais alguem") {
+		t.Fatalf("expected passenger quantity clarification after extracting the RG, got %q", reprocessed.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
+		t.Fatalf("unknown passenger quantity must not emit document confirmation, got %q", reprocessed.Draft.Body)
 	}
 }
 
@@ -1670,6 +1676,14 @@ func TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreat
 	}
 	if got := strings.TrimSpace(asString(reprocessedAssignment.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
 		t.Fatalf("expected confirm document template after lap child assignment, got %q", got)
+	}
+	assignmentSnapshot := assertDraftBookingPassengerSnapshotPersistence(t, reprocessedAssignment.Draft)
+	if len(assignmentSnapshot.Passengers) != 2 ||
+		assignmentSnapshot.Passengers[0].Passenger.IsLapChild ||
+		!assignmentSnapshot.Passengers[1].Passenger.IsLapChild ||
+		assignmentSnapshot.Passengers[0].LapChildSource != bookingPassengerLapChildSourceExplicitAssignment ||
+		assignmentSnapshot.Passengers[1].LapChildSource != bookingPassengerLapChildSourceExplicitAssignment {
+		t.Fatalf("expected explicit passenger-2 assignment in canonical snapshot, got %+v", assignmentSnapshot)
 	}
 	seedSentOutboundFromDraft(t, store, ingestedAssignment.Session.ID, reprocessedAssignment.Draft)
 	messagesAfterAssignment, err := store.ListMessages(context.Background(), ingestedAssignment.Session.ID, ListMessagesFilter{})
@@ -2671,6 +2685,123 @@ func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t *testing.T, s
 	return session
 }
 
+func seedSequentialSoloChildDocumentBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     contactKey,
+		CustomerPhone:  contactKey,
+		CustomerName:   "Joao",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-sequential-docs-1", BoardStopID: "board-sequential-docs-1", AlightStopID: "alight-sequential-docs-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-06-22", Price: 950, Currency: "BRL",
+		}},
+	})
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-8 * time.Minute),
+		Body:              "Encontrei esta opcao para Santa Ines/MA -> Fraiburgo/SC.",
+		Payload:           map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}},
+		NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}},
+	}); err != nil {
+		t.Fatalf("seed availability: %v", err)
+	}
+
+	messages := []CreateMessageInput{
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute), Body: "primeira opcao"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto?"},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "so pra mim"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: askChildUnder5Reply},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: "sim"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos)."},
+	}
+	for _, message := range messages {
+		if _, err := store.CreateMessage(context.Background(), message); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
+	}
+	return session
+}
+
+func reprocessSequentialDocumentImage(t *testing.T, svc *Service, contactKey string, suffix string) ReprocessResult {
+	t.Helper()
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: contactKey,
+		Message: IngestMessagePayload{
+			Direction: "INBOUND", Kind: "IMAGE", ProviderMessageID: "msg-sequential-document-" + suffix, IdempotencyKey: "idem-sequential-document-" + suffix,
+			NormalizedPayload: map[string]interface{}{"image_url": "https://files.example.test/" + suffix + ".jpg", "image_mime_type": "image/jpeg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest sequential document image: %v", err)
+	}
+	reprocessed, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess sequential document image: %v", err)
+	}
+	if reprocessed.Draft == nil {
+		t.Fatalf("expected sequential document draft")
+	}
+	return reprocessed
+}
+
+func assertSequentialDraftDocumentCount(t *testing.T, draft *Message, expected int) DocumentExtractResult {
+	t.Helper()
+	snapshot := assertDraftBookingPassengerSnapshotPersistence(t, draft)
+	passengers := bookingPassengersFromCanonicalSnapshot(*snapshot)
+	if len(passengers) != expected {
+		t.Fatalf("expected %d canonical passengers, got %+v", expected, passengers)
+	}
+	result := documentExtractResultFromBookingDraft(BookingDraftContext{
+		PassengerDetails:      passengers,
+		PassengerDetailsCount: len(passengers),
+	})
+	result.ExpectedPassengerCount = snapshot.ExpectedDocumentCount
+	return result
+}
+
+func assertDraftBookingPassengerSnapshotPersistence(t *testing.T, draft *Message) *bookingPassengerSnapshot {
+	t.Helper()
+	if draft == nil {
+		t.Fatal("expected draft with canonical passenger snapshot")
+	}
+	var parsed *bookingPassengerSnapshot
+	for label, payload := range map[string]map[string]interface{}{
+		"payload":            draft.Payload,
+		"normalized_payload": draft.NormalizedPayload,
+	} {
+		toolContext := asMap(payload["tool_context"])
+		snapshotPayload := asMap(toolContext[toolNameBookingPassengerSnapshot])
+		snapshot, ok := parseBookingPassengerSnapshotPayload(snapshotPayload)
+		if !ok {
+			t.Fatalf("expected valid booking_passenger_snapshot in %s, got %+v", label, payload)
+		}
+		if parsed == nil {
+			copy := snapshot
+			parsed = &copy
+			continue
+		}
+		if len(parsed.Passengers) != len(snapshot.Passengers) || parsed.ExpectedDocumentCount != snapshot.ExpectedDocumentCount {
+			t.Fatalf("payload snapshots diverged: first=%+v %s=%+v", parsed, label, snapshot)
+		}
+		for index := range parsed.Passengers {
+			if parsed.Passengers[index] != snapshot.Passengers[index] {
+				t.Fatalf("payload passenger snapshot diverged at %d: first=%+v %s=%+v", index, parsed.Passengers[index], label, snapshot.Passengers[index])
+			}
+		}
+	}
+	return parsed
+}
+
 func seedDocumentCorrectionBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
 	t.Helper()
 	session := seedDocumentCollectionBookingHistory(t, store, contactKey)
@@ -2711,9 +2842,17 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 		},
 	}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 2, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-missing-doc", BoardStopID: "board-missing-doc", AlightStopID: "alight-missing-doc",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-08-25", Price: 950, Currency: "BRL",
+		}},
+	})
 	messages := []IngestMessagePayload{
+		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-availability", IdempotencyKey: "idem-missing-availability", Body: "Encontrei uma opcao para Santa Ines/MA -> Fraiburgo/SC.", Payload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}, NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}},
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-1", IdempotencyKey: "idem-missing-out-1", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
-		{Direction: "INBOUND", ProviderMessageID: "msg-missing-in-1", IdempotencyKey: "idem-missing-in-1", Body: "eu e minha filha"},
+		{Direction: "INBOUND", ProviderMessageID: "msg-missing-in-1", IdempotencyKey: "idem-missing-in-1", Body: "eu e minha filha de 4 anos"},
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-2", IdempotencyKey: "idem-missing-out-2", Body: "Pode enviar os nomes completos e os documentos dos dois. Se preferir, pode mandar foto legivel do documento."},
 	}
 	for _, message := range messages {
@@ -2748,11 +2887,609 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 	if reprocessed.Draft == nil {
 		t.Fatalf("expected draft to be generated")
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "Joao Vitor Messias | CPF | 066.***.***-03") {
-		t.Fatalf("expected extracted passenger confirmation, got %q", reprocessed.Draft.Body)
+	extract := findLatestDocumentExtractContext([]Message{*reprocessed.Draft})
+	if extract == nil || len(extract.Passengers) != 1 || extract.Passengers[0].Name != "Joao Vitor Messias" {
+		t.Fatalf("expected the extracted passenger snapshot to be preserved, got %+v", extract)
 	}
 	if !strings.Contains(reprocessed.Draft.Body, "Ainda falta o documento de 1 passageiro") {
 		t.Fatalf("expected only missing passenger document request, got %q", reprocessed.Draft.Body)
+	}
+}
+
+func TestReprocessSequentialTextThenDocumentExtractMergesPassengers(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	creator := &fakeBookingCreator{enabled: true, result: BookingCreateResult{
+		Mode: "created", BookingID: "BK-TEXT-IMAGE", ReservationCode: "TXTIMG12", Status: "PENDING", TotalAmount: 950,
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709101")
+
+	ingestedAdult, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-sequential-text-adult", IdempotencyKey: "idem-sequential-text-adult", Body: "Joao Vitor Messias 52998224725",
+	}})
+	if err != nil {
+		t.Fatalf("ingest adult text document: %v", err)
+	}
+	adultResult, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedAdult.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess adult text document: %v", err)
+	}
+	if adultResult.Draft == nil || !strings.Contains(strings.Join(strings.Fields(foldChatText(adultResult.Draft.Body)), " "), "falta o documento da crianca") {
+		t.Fatalf("expected missing child document after adult text, got %+v", adultResult.Draft)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, adultResult.Draft)
+
+	childResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "text-then-child")
+	if got := strings.TrimSpace(asString(childResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment after second document, got %q body=%q", got, childResult.Draft.Body)
+	}
+	if !strings.Contains(childResult.Draft.Body, "Joao Vitor Messias") || !strings.Contains(childResult.Draft.Body, "Maria Messias") {
+		t.Fatalf("expected both sequential passengers in assignment, got %q", childResult.Draft.Body)
+	}
+	assertSequentialDraftDocumentCount(t, childResult.Draft, 2)
+	seedSentOutboundFromDraft(t, store, session.ID, childResult.Draft)
+
+	history, err := store.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list text then image history: %v", err)
+	}
+	restoredDraft := collectBookingDraftContext(session, history, "")
+	if restoredDraft.PassengerDetailsCount != 2 || len(restoredDraft.PassengerDetails) != 2 {
+		t.Fatalf("expected combined document snapshot to survive reconstruction, got %+v", restoredDraft)
+	}
+	if action := decideNextBookingStep(restoredDraft); action != BookingNextAskLapChildAssignment {
+		t.Fatalf("expected reconstructed context to remain on lap child assignment, action=%s context=%+v", action, restoredDraft)
+	}
+
+	ingestedAssignment, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-text-image-assignment", IdempotencyKey: "idem-text-image-assignment", Body: "2",
+	}})
+	if err != nil {
+		t.Fatalf("ingest text then image lap child assignment: %v", err)
+	}
+	assignmentResult, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedAssignment.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess text then image lap child assignment: %v", err)
+	}
+	if assignmentResult.Draft == nil {
+		t.Fatalf("expected document confirmation after lap child assignment")
+	}
+	if got := strings.TrimSpace(asString(assignmentResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("expected document confirmation after assignment, got %q body=%q", got, assignmentResult.Draft.Body)
+	}
+	if !strings.Contains(assignmentResult.Draft.Body, "Joao Vitor Messias") ||
+		!strings.Contains(assignmentResult.Draft.Body, "Maria Messias") {
+		t.Fatalf("expected confirmation to keep both restored passengers, got %q", assignmentResult.Draft.Body)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("booking_create must remain blocked before confirmation, got %d calls", creator.calls)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, assignmentResult.Draft)
+	history, err = store.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list text then image history after assignment: %v", err)
+	}
+	assignedDraft := collectBookingDraftContext(session, history, "sim")
+	if assignedDraft.PassengerDetailsCount != 2 ||
+		len(assignedDraft.PassengerDetails) != 2 ||
+		!assignedDraft.PassengerDetails[1].IsLapChild ||
+		assignedDraft.PassengerDetails[0].IsLapChild {
+		t.Fatalf("expected reconstructed assignment to preserve both passengers and mark passenger 2 as child, got %+v", assignedDraft)
+	}
+
+	ingestedConfirmation, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-text-image-confirmation", IdempotencyKey: "idem-text-image-confirmation", Body: "sim",
+	}})
+	if err != nil {
+		t.Fatalf("ingest text then image document confirmation: %v", err)
+	}
+	if _, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedConfirmation.Session.ID}); err != nil {
+		t.Fatalf("reprocess text then image document confirmation: %v", err)
+	}
+	if creator.calls != 1 || len(creator.lastInput.Passengers) != 2 {
+		t.Fatalf("expected booking_create once with restored adult and child, calls=%d input=%+v", creator.calls, creator.lastInput)
+	}
+	if !creator.lastInput.Passengers[1].IsLapChild || creator.lastInput.Passengers[0].IsLapChild {
+		t.Fatalf("expected booking_create to preserve passenger 2 as lap child, got %+v", creator.lastInput.Passengers)
+	}
+}
+
+func TestReprocessSequentialDocumentImageThenTextUsesMergedPassengers(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	creator := &fakeBookingCreator{enabled: true, result: BookingCreateResult{
+		Mode: "created", BookingID: "BK-IMAGE-TEXT", ReservationCode: "IMGTXT12", Status: "PENDING", TotalAmount: 950,
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709204")
+
+	adultResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "image-then-text-adult")
+	assertSequentialDraftDocumentCount(t, adultResult.Draft, 1)
+	if !strings.Contains(strings.Join(strings.Fields(foldChatText(adultResult.Draft.Body)), " "), "falta o documento da crianca") {
+		t.Fatalf("expected missing child document after adult image, got %q", adultResult.Draft.Body)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, adultResult.Draft)
+
+	ingestedChild, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-image-text-child", IdempotencyKey: "idem-image-text-child", Body: "Maria Messias RG 1234567",
+	}})
+	if err != nil {
+		t.Fatalf("ingest child text document: %v", err)
+	}
+	childResult, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedChild.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess child text document: %v", err)
+	}
+	if childResult.Draft == nil {
+		t.Fatalf("expected lap child assignment after image and text documents")
+	}
+	if got := strings.TrimSpace(asString(childResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment after image then text, got %q body=%q", got, childResult.Draft.Body)
+	}
+	if !strings.Contains(childResult.Draft.Body, "Joao Vitor Messias") || !strings.Contains(childResult.Draft.Body, "Maria Messias") {
+		t.Fatalf("expected both merged passengers in assignment, got %q", childResult.Draft.Body)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("booking_create must remain blocked before assignment and confirmation, got %d calls", creator.calls)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, childResult.Draft)
+
+	ingestedAssignment, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-image-text-assignment", IdempotencyKey: "idem-image-text-assignment", Body: "2",
+	}})
+	if err != nil {
+		t.Fatalf("ingest image then text lap child assignment: %v", err)
+	}
+	assignmentResult, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedAssignment.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess image then text lap child assignment: %v", err)
+	}
+	if assignmentResult.Draft == nil {
+		t.Fatalf("expected document confirmation after image then text assignment")
+	}
+	if got := strings.TrimSpace(asString(assignmentResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("expected document confirmation after assignment, got %q body=%q", got, assignmentResult.Draft.Body)
+	}
+	if !strings.Contains(assignmentResult.Draft.Body, "Joao Vitor Messias") || !strings.Contains(assignmentResult.Draft.Body, "Maria Messias") {
+		t.Fatalf("expected merged passengers in confirmation, got %q", assignmentResult.Draft.Body)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, assignmentResult.Draft)
+
+	history, err := store.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list image then text history: %v", err)
+	}
+	extract := findLatestDocumentExtractContext(history)
+	if extract == nil || len(extract.Passengers) != 1 {
+		t.Fatalf("expected latest isolated extract to remain at one passenger, got %+v", extract)
+	}
+	bookingDraft := collectBookingDraftContext(session, history, "sim")
+	if bookingDraft.PassengerDetailsCount != 2 || len(bookingDraft.PassengerDetails) != 2 {
+		t.Fatalf("expected complete merged context before confirmation, got %+v", bookingDraft)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); !ok || len(input.Passengers) != 2 {
+		t.Fatalf("expected merged image and text confirmation to authorize two passengers, ok=%v input=%+v", ok, input)
+	}
+
+	ingestedConfirmation, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-image-text-confirmation", IdempotencyKey: "idem-image-text-confirmation", Body: "sim",
+	}})
+	if err != nil {
+		t.Fatalf("ingest image then text confirmation: %v", err)
+	}
+	if _, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedConfirmation.Session.ID}); err != nil {
+		t.Fatalf("reprocess image then text confirmation: %v", err)
+	}
+	if creator.calls != 1 || len(creator.lastInput.Passengers) != 2 {
+		t.Fatalf("expected booking_create once with the merged passengers, calls=%d input=%+v", creator.calls, creator.lastInput)
+	}
+	if creator.lastInput.Passengers[0].IsLapChild || !creator.lastInput.Passengers[1].IsLapChild {
+		t.Fatalf("expected passenger 2 to remain the lap child, got %+v", creator.lastInput.Passengers)
+	}
+}
+
+func TestReprocessSequentialDocumentExtractsMergePassengers(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709102")
+
+	adultResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "adult-first")
+	assertSequentialDraftDocumentCount(t, adultResult.Draft, 1)
+	seedSentOutboundFromDraft(t, store, session.ID, adultResult.Draft)
+	runner.result = RunAgentResult{ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`, Model: "gpt-vision-test"}
+
+	childResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "child-second")
+	if got := strings.TrimSpace(asString(childResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment after two sequential extracts, got %q body=%q", got, childResult.Draft.Body)
+	}
+	assertSequentialDraftDocumentCount(t, childResult.Draft, 2)
+}
+
+func TestReprocessSequentialChildThenAdultDocumentExtractMergesPassengers(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"RG","document":"1234567","birth_date":"2022-03-04","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	creator := &fakeBookingCreator{enabled: true, result: BookingCreateResult{
+		Mode: "created", BookingID: "BK-SEQUENTIAL", ReservationCode: "SEQ12345", Status: "PENDING", TotalAmount: 950,
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709103")
+
+	childResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "child-first")
+	assertSequentialDraftDocumentCount(t, childResult.Draft, 1)
+	if creator.calls != 0 {
+		t.Fatalf("booking_create must remain blocked after only the first document, got %d calls", creator.calls)
+	}
+	seedSentOutboundFromDraft(t, store, session.ID, childResult.Draft)
+	runner.result = RunAgentResult{ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`, Model: "gpt-vision-test"}
+
+	adultResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "adult-second")
+	if got := strings.TrimSpace(asString(adultResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("expected combined document confirmation when child assignment is known, got %q body=%q", got, adultResult.Draft.Body)
+	}
+	if !strings.Contains(adultResult.Draft.Body, "Maria Messias") || !strings.Contains(adultResult.Draft.Body, "Joao Vitor Messias") {
+		t.Fatalf("expected both sequential passengers in confirmation, got %q", adultResult.Draft.Body)
+	}
+	assertSequentialDraftDocumentCount(t, adultResult.Draft, 2)
+	seedSentOutboundFromDraft(t, store, session.ID, adultResult.Draft)
+	history, err := store.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list sequential booking history: %v", err)
+	}
+	bookingDraft := collectBookingDraftContext(session, history, "sim")
+	if action := decideNextBookingStep(bookingDraft); action != BookingNextCallCreate {
+		t.Fatalf("expected sequential merged context ready to create, action=%s context=%+v", action, bookingDraft)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); !ok {
+		t.Fatalf("expected sequential merged documents to authorize booking_create, context=%+v extract=%+v", bookingDraft, findLatestDocumentExtractContext(history))
+	} else if len(input.Passengers) != 2 {
+		t.Fatalf("expected two passengers in sequential booking input, got %+v", input)
+	}
+
+	ingestedConfirmation, err := svc.Ingest(context.Background(), IngestMessageInput{ContactKey: session.ContactKey, Message: IngestMessagePayload{
+		Direction: "INBOUND", ProviderMessageID: "msg-sequential-confirm", IdempotencyKey: "idem-sequential-confirm", Body: "sim",
+	}})
+	if err != nil {
+		t.Fatalf("ingest sequential document confirmation: %v", err)
+	}
+	historyWithConfirmation, err := store.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list sequential booking history with confirmation: %v", err)
+	}
+	bookingDraftWithConfirmation := collectBookingDraftContext(session, historyWithConfirmation, "sim")
+	if action := decideNextBookingStep(bookingDraftWithConfirmation); action != BookingNextCallCreate {
+		t.Fatalf("expected persisted confirmation context ready to create, action=%s context=%+v", action, bookingDraftWithConfirmation)
+	}
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, historyWithConfirmation, "sim"); !ok {
+		t.Fatalf("expected persisted confirmation turn to authorize booking_create, context=%+v extract=%+v", bookingDraftWithConfirmation, findLatestDocumentExtractContext(historyWithConfirmation))
+	} else if len(input.Passengers) != 2 {
+		t.Fatalf("expected two passengers after persisted confirmation turn, got %+v", input)
+	}
+	confirmationResult, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingestedConfirmation.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess sequential document confirmation: %v", err)
+	}
+	if creator.calls != 1 || len(creator.lastInput.Passengers) != 2 {
+		body := ""
+		if confirmationResult.Draft != nil {
+			body = confirmationResult.Draft.Body
+		}
+		t.Fatalf("expected booking_create once with two merged passengers, calls=%d input=%+v draft=%q", creator.calls, creator.lastInput, body)
+	}
+	if !creator.lastInput.Passengers[0].IsLapChild || creator.lastInput.Passengers[1].IsLapChild {
+		t.Fatalf("expected only the first passenger marked as lap child, got %+v", creator.lastInput.Passengers)
+	}
+}
+
+func TestReprocessSequentialDuplicateDocumentDoesNotIncreaseCount(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709104")
+
+	firstResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "duplicate-first")
+	seedSentOutboundFromDraft(t, store, session.ID, firstResult.Draft)
+	secondResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "duplicate-second")
+
+	assertSequentialDraftDocumentCount(t, secondResult.Draft, 1)
+	if got := strings.TrimSpace(asString(secondResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("duplicate document must keep asking for the missing child, got %q body=%q", got, secondResult.Draft.Body)
+	}
+}
+
+func TestReprocessLatestDocumentExtractionWinsOverAccumulatedSnapshot(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Nome Antigo","document_type":"CPF","document":"52998224725","birth_date":"1990-01-01","birth_city":"Cidade Antiga","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709106")
+
+	firstResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "latest-wins-old")
+	assertSequentialDraftDocumentCount(t, firstResult.Draft, 1)
+	seedSentOutboundFromDraft(t, store, session.ID, firstResult.Draft)
+
+	runner.result = RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Nome Corrigido","document_type":"CPF","document":"52998224725","birth_date":"1991-02-02","birth_city":"Cidade Nova","confidence":0.97}]}`,
+		Model:     "gpt-vision-test",
+	}
+	latestResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "latest-wins-new")
+	extract := assertSequentialDraftDocumentCount(t, latestResult.Draft, 1)
+	passenger := extract.Passengers[0]
+	if passenger.Name != "Nome Corrigido" || passenger.BirthDate != "1991-02-02" || passenger.BirthCity != "Cidade Nova" {
+		t.Fatalf("expected current extraction to replace older non-empty fields, got %+v", passenger)
+	}
+	if got := strings.TrimSpace(asString(latestResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("same document must remain one passenger and keep asking for the child, got %q body=%q", got, latestResult.Draft.Body)
+	}
+}
+
+func TestReprocessDocumentReextractReplacesUniquePassengerWhenIdentifierChanges(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709203")
+
+	firstResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "replace-rg")
+	assertSequentialDraftDocumentCount(t, firstResult.Draft, 2)
+	replacementRequest := *firstResult.Draft
+	replacementRequest.Body = "Reenvie o documento da Maria para corrigir os dados, por favor."
+	replacementRequest.Payload = cloneMap(firstResult.Draft.Payload)
+	replacementRequest.NormalizedPayload = cloneMap(firstResult.Draft.NormalizedPayload)
+	replacementRequest.Payload["template_name"] = string(TemplateAskDocuments)
+	replacementRequest.NormalizedPayload["template_name"] = string(TemplateAskDocuments)
+	seedSentOutboundFromDraft(t, store, session.ID, &replacementRequest)
+
+	runner.result = RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CNH","document":"12345678901","confidence":0.97}]}`,
+		Model:     "gpt-vision-test",
+	}
+	latestResult := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "replace-cnh")
+	extract := assertSequentialDraftDocumentCount(t, latestResult.Draft, 2)
+	passenger := extract.Passengers[1]
+	if passenger.Name != "Maria Messias" || passenger.DocumentType != "CNH" || passenger.Document != "12345678901" {
+		t.Fatalf("expected the unique passenger slot to use the latest CNH, got %+v", passenger)
+	}
+	if extract.Passengers[0].Document != "52998224725" {
+		t.Fatalf("expected the other passenger slot to remain unchanged, got %+v", extract.Passengers)
+	}
+	if got := strings.TrimSpace(asString(latestResult.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("document replacement must keep the two-passenger assignment step, got %q body=%q", got, latestResult.Draft.Body)
+	}
+}
+
+func TestReprocessDocumentMergeKeepsTwoPassengersFromSameExtraction(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709105")
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "same-extraction")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("expected lap child assignment for two passengers in one extraction, got %q body=%q", got, result.Draft.Body)
+	}
+	assertSequentialDraftDocumentCount(t, result.Draft, 2)
+}
+
+func TestReprocessLapChildMismatchDoesNotConfirmDocument(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","is_lap_child":true,"confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","is_lap_child":true,"confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedSequentialSoloChildDocumentBookingHistory(t, store, "5549988709222")
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "lap-child-mismatch")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("two marked lap children for one expected must ask assignment, got %q body=%q", got, result.Draft.Body)
+	}
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
+		t.Fatalf("lap-child mismatch must never emit CONFIRM_DOCUMENT, body=%q", result.Draft.Body)
+	}
+	extract := assertSequentialDraftDocumentCount(t, result.Draft, 2)
+	if !extract.Passengers[0].IsLapChild || !extract.Passengers[1].IsLapChild {
+		t.Fatalf("test must preserve both conflicting lap-child marks, got %+v", extract.Passengers)
+	}
+}
+
+func TestReprocessLatestLapChildAgeAdultExtractDoesNotAskAssignment(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CPF","document":"52998224725","cpf":"52998224725","birth_date":"1990-03-12","confidence":0.98}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709224")
+
+	oldExtract := DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{{
+			Name: "Maria Messias", DocumentType: "CPF", Document: "52998224725", CPF: "52998224725",
+			BirthDate: "2022-05-10", IsLapChild: true, Confidence: 0.98,
+		}},
+	}
+	toolContext := map[string]interface{}{toolNameDocumentExtract: buildDocumentExtractResponsePayload(oldExtract)}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:        time.Now().UTC().Add(-time.Minute),
+		Body:              buildConfirmExtractedDocumentReply(oldExtract),
+		Payload:           map[string]interface{}{"tool_context": toolContext},
+		NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
+	}); err != nil {
+		t.Fatalf("seed old lap-child extract: %v", err)
+	}
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "latest-adult-age")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("new adult age must clear the obsolete marker instead of asking assignment, got %q body=%q", got, result.Draft.Body)
+	}
+	extract := assertSequentialDraftDocumentCount(t, result.Draft, 1)
+	if extract.Passengers[0].BirthDate != "1990-03-12" || extract.Passengers[0].IsLapChild {
+		t.Fatalf("combined extract must persist the latest adult age and cleared marker, got %+v", extract.Passengers[0])
+	}
+}
+
+func TestReprocessLapChildNameFallbackPreservesOldMarker(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CNH","document":"12345678901","cnh":"12345678901","birth_date":"1990-03-12","confidence":0.98}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709225")
+
+	oldExtract := DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{{
+			Name: "Maria Messias", DocumentType: "RG", Document: "1234567", RG: "1234567",
+			BirthDate: "2022-05-10", IsLapChild: true, Confidence: 0.98,
+		}},
+	}
+	toolContext := map[string]interface{}{toolNameDocumentExtract: buildDocumentExtractResponsePayload(oldExtract)}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:        time.Now().UTC().Add(-time.Minute),
+		Body:              buildConfirmExtractedDocumentReply(oldExtract),
+		Payload:           map[string]interface{}{"tool_context": toolContext},
+		NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
+	}); err != nil {
+		t.Fatalf("seed old RG lap-child extract: %v", err)
+	}
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "name-fallback-adult-age")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskLapChildAssignment) {
+		t.Fatalf("name-only RG to CNH fallback must preserve the old marker in Service, got %q body=%q", got, result.Draft.Body)
+	}
+	extract := assertSequentialDraftDocumentCount(t, result.Draft, 1)
+	if extract.Passengers[0].DocumentType != "CNH" || extract.Passengers[0].Document != "12345678901" || !extract.Passengers[0].IsLapChild {
+		t.Fatalf("combined Service extract must update the document and preserve the old marker, got %+v", extract.Passengers[0])
+	}
+	snapshot := assertDraftBookingPassengerSnapshotPersistence(t, result.Draft)
+	if snapshot.Passengers[0].LapChildSource != bookingPassengerLapChildSourceNameFallbackPreserved {
+		t.Fatalf("expected persisted nominal fallback provenance, got %+v", snapshot.Passengers[0])
+	}
+	rawExtract := findLatestDocumentExtractContext([]Message{*result.Draft})
+	if rawExtract == nil || len(rawExtract.Passengers) != 1 || rawExtract.Passengers[0].DocumentType != "CNH" || rawExtract.Passengers[0].RG != "" {
+		t.Fatalf("document_extract must remain the raw current CNH evidence, got %+v", rawExtract)
+	}
+}
+
+func TestReprocessLapChildNameFallbackAdultToChildSnapshotReplayPreservesAdult(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CNH","document":"12345678901","cnh":"12345678901","birth_date":"2022-05-10","confidence":0.98}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	session := seedDocumentCollectionBookingHistory(t, store, "5549988709226")
+
+	oldExtract := DocumentExtractResult{
+		Mode:                   "EXTRACTED",
+		ExpectedPassengerCount: 1,
+		Passengers: []DocumentExtractPassenger{{
+			Name: "Maria Messias", DocumentType: "RG", Document: "1234567", RG: "1234567",
+			BirthDate: "1990-03-12", Confidence: 0.98,
+		}},
+	}
+	toolContext := map[string]interface{}{toolNameDocumentExtract: buildDocumentExtractResponsePayload(oldExtract)}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent,
+		ReceivedAt:        time.Now().UTC().Add(-time.Minute),
+		Body:              buildConfirmExtractedDocumentReply(oldExtract),
+		Payload:           map[string]interface{}{"tool_context": toolContext},
+		NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
+	}); err != nil {
+		t.Fatalf("seed old RG adult extract: %v", err)
+	}
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "name-fallback-child-age")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got != string(TemplateConfirmDocument) {
+		t.Fatalf("name-only RG to CNH fallback must preserve adult readiness, got %q body=%q", got, result.Draft.Body)
+	}
+	snapshot := assertDraftBookingPassengerSnapshotPersistence(t, result.Draft)
+	if len(snapshot.Passengers) != 1 || snapshot.Passengers[0].Passenger.IsLapChild || snapshot.Passengers[0].LapChildSource != bookingPassengerLapChildSourceNameFallbackPreserved {
+		t.Fatalf("expected persisted adult nominal fallback snapshot, got %+v", snapshot)
+	}
+	rawExtract := findLatestDocumentExtractContext([]Message{*result.Draft})
+	if rawExtract == nil || len(rawExtract.Passengers) != 1 || rawExtract.Passengers[0].BirthDate != "2022-05-10" {
+		t.Fatalf("document_extract must remain the raw child-age CNH evidence, got %+v", rawExtract)
+	}
+
+	replayMessage := *result.Draft
+	for replay := 1; replay <= 2; replay++ {
+		restored := collectBookingDraftContext(session, []Message{replayMessage}, "")
+		if len(restored.PassengerDetails) != 1 || restored.PassengerDetails[0].IsLapChild {
+			t.Fatalf("replay %d changed adult classification: %+v", replay, restored.PassengerDetails)
+		}
+		replayMessage = bookingPassengerSnapshotReplayMessage(restored.PassengerSnapshot, *rawExtract)
+	}
+}
+
+func TestUnknownAvailabilityQtyServiceDoesNotConfirmDocument(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
+		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
+		Model:     "gpt-vision-test",
+	}}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
+	now := time.Now().UTC()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel: "WHATSAPP", ContactKey: "5549988709223", CustomerPhone: "5549988709223", CustomerName: "Joao", LastMessageAt: &now, LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed unknown-quantity session: %v", err)
+	}
+	availability := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-unknown-qty", BoardStopID: "board-unknown-qty", AlightStopID: "alight-unknown-qty",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-08-25", Price: 950, Currency: "BRL",
+		}},
+	})
+	seed := []CreateMessageInput{
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: "Encontrei esta opcao para Santa Ines/MA -> Fraiburgo/SC.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Payload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availability}}, NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availability}}},
+		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: "Pode enviar seu nome completo e CPF.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-time.Minute)},
+	}
+	for _, message := range seed {
+		if _, err := store.CreateMessage(context.Background(), message); err != nil {
+			t.Fatalf("seed unknown-quantity history: %v", err)
+		}
+	}
+
+	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "unknown-availability-qty")
+	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
+		t.Fatalf("unknown passenger quantity must never emit CONFIRM_DOCUMENT, body=%q", result.Draft.Body)
+	}
+	if !strings.Contains(result.Draft.Body, "so para voce ou vai mais alguem") {
+		t.Fatalf("default availability qty must keep quantity UNKNOWN and ask clarification, body=%q payload=%+v", result.Draft.Body, result.Draft.NormalizedPayload)
 	}
 }
 

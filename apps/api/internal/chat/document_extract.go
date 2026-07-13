@@ -1070,6 +1070,9 @@ func mergeAgentToolContexts(base agentToolContext, extra agentToolContext) agent
 	if extra.DocumentExtract != nil {
 		base.DocumentExtract = extra.DocumentExtract
 	}
+	if extra.BookingPassengerSnapshot != nil {
+		base.BookingPassengerSnapshot = extra.BookingPassengerSnapshot
+	}
 	return base
 }
 

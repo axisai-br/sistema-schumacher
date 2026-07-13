@@ -66,10 +66,75 @@ type BookingPassengerDocumentPartial struct {
 	Document     string
 }
 
+type bookingCreateQuantityStatus string
+
+const (
+	bookingCreateQuantityUnknown bookingCreateQuantityStatus = "UNKNOWN"
+	bookingCreateQuantityMissing bookingCreateQuantityStatus = "MISSING"
+	bookingCreateQuantityExact   bookingCreateQuantityStatus = "EXACT"
+	bookingCreateQuantityExcess  bookingCreateQuantityStatus = "EXCESS"
+)
+
+type canonicalBookingCreateReadiness struct {
+	Passengers                 []BookingCreatePassengerInput
+	Expected                   int
+	QuantityStatus             bookingCreateQuantityStatus
+	UnresolvedPartials         []BookingPassengerDocumentPartial
+	DocumentsComplete          bool
+	LapChildAssignmentComplete bool
+	Ready                      bool
+	Reason                     string
+}
+
 type bookingPassengerDocumentProgress struct {
-	Passengers []BookingCreatePassengerInput
-	Partials   []BookingPassengerDocumentPartial
-	SourceText string
+	Passengers         []BookingCreatePassengerInput
+	Partials           []BookingPassengerDocumentPartial
+	SourceText         string
+	SourceHistoryIndex int
+	Snapshot           bookingPassengerSnapshot
+}
+
+const bookingPassengerSnapshotVersion = 1
+
+type bookingPassengerLapChildSource string
+
+const (
+	bookingPassengerLapChildSourceNone                  bookingPassengerLapChildSource = "NONE"
+	bookingPassengerLapChildSourceExplicitAssignment    bookingPassengerLapChildSource = "EXPLICIT_ASSIGNMENT"
+	bookingPassengerLapChildSourceDocumentIdentityAge   bookingPassengerLapChildSource = "DOCUMENT_IDENTITY_AGE"
+	bookingPassengerLapChildSourceNameFallbackPreserved bookingPassengerLapChildSource = "NAME_FALLBACK_PRESERVED"
+)
+
+type bookingPassengerSnapshot struct {
+	Version               int
+	ExpectedDocumentCount int
+	Passengers            []bookingPassengerSnapshotPassenger
+}
+
+type bookingPassengerSnapshotPassenger struct {
+	Passenger      BookingCreatePassengerInput
+	LapChildSource bookingPassengerLapChildSource
+}
+
+type passengerDocumentEvidenceKind string
+
+const (
+	passengerDocumentEvidenceInbound           passengerDocumentEvidenceKind = "inbound"
+	passengerDocumentEvidenceExtract           passengerDocumentEvidenceKind = "document_extract"
+	passengerDocumentEvidenceCanonicalSnapshot passengerDocumentEvidenceKind = "canonical_snapshot"
+	passengerDocumentEvidenceCorrection        passengerDocumentEvidenceKind = "correction"
+	passengerDocumentEvidenceCurrent           passengerDocumentEvidenceKind = "current_turn"
+)
+
+type passengerDocumentEvidence struct {
+	SourceHistoryIndex int
+	SourceOrder        int
+	Kind               passengerDocumentEvidenceKind
+	Passengers         []BookingCreatePassengerInput
+	Partials           []BookingPassengerDocumentPartial
+	Snapshot           bookingPassengerSnapshot
+	Correction         PassengerDocumentCorrection
+	SourceText         string
 }
 
 type inlinePassengerCPFMatch struct {
@@ -97,24 +162,9 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 		return BookingCreateInput{}, false
 	}
 
-	passengerSource := body
-	passengers := extractBookingCreatePassengers(passengerSource, session)
-	if len(passengers) == 0 && confirmationOnly {
-		passengerSource = findLatestPassengerDetailsText(history, session)
-		passengers = extractBookingCreatePassengers(passengerSource, session)
-	}
-	if len(passengers) == 0 {
-		return BookingCreateInput{}, false
-	}
-
-	qty := inferExpectedPassengerCount(history, body, passengerSource)
-	if qty <= 0 {
-		qty = len(passengers)
-	}
-	if qty != len(passengers) {
-		return BookingCreateInput{}, false
-	}
-	if !validateLapChildStateForBooking(history, body, passengers) {
+	context := collectBookingDraftContext(session, history, body)
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if !readiness.Ready {
 		return BookingCreateInput{}, false
 	}
 
@@ -127,24 +177,13 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 		DestinationDisplayName: strings.TrimSpace(selected.DestinationDisplayName),
 		TripDate:               strings.TrimSpace(selected.TripDate),
 		DepartureTime:          strings.TrimSpace(selected.OriginDepartTime),
-		Qty:                    qty,
-		CustomerName:           firstNonEmpty(strings.TrimSpace(session.CustomerName), strings.TrimSpace(passengers[0].Name)),
+		Qty:                    readiness.Expected,
+		CustomerName:           firstNonEmpty(strings.TrimSpace(session.CustomerName), strings.TrimSpace(readiness.Passengers[0].Name)),
 		CustomerPhone:          strings.TrimSpace(session.CustomerPhone),
-		Passengers:             passengers,
+		Passengers:             readiness.Passengers,
 	}
 	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
 	return input, true
-}
-
-func validateLapChildStateForBooking(history []Message, currentTurn string, passengers []BookingCreatePassengerInput) bool {
-	context := collectBookingDraftContext(Session{}, history, currentTurn)
-	if context.ChildUnder5Count <= 0 {
-		return true
-	}
-	if len(context.LapChildPassengerIndexes) > 0 {
-		applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
-	}
-	return hasExpectedLapChildCount(passengers, context.ChildUnder5Count)
 }
 
 func parseBookingCreateFromDocumentConfirmation(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
@@ -155,25 +194,6 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 	}
 
 	context := collectBookingDraftContext(session, history, currentTurn)
-	if (!context.PassengerCountKnown || context.PassengerCount <= 0) && context.PassengerDetailsCount > 0 {
-		context.PassengerCount = context.PassengerDetailsCount
-		context.PassengerCountKnown = true
-	}
-	extract := findLatestDocumentExtractContext(history)
-	if (!context.PassengerCountKnown || context.PassengerCount <= 0) && extract != nil {
-		expected := extract.ExpectedPassengerCount
-		if expected <= 0 {
-			expected = len(extract.Passengers)
-		}
-		if expected > 0 {
-			context.PassengerCount = expected
-			context.PassengerCountKnown = true
-		}
-	}
-
-	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
-		return BookingCreateInput{}, false
-	}
 
 	if strings.TrimSpace(context.TripID) == "" ||
 		strings.TrimSpace(context.BoardStopID) == "" ||
@@ -184,77 +204,12 @@ func parseBookingCreateFromDocumentConfirmation(session Session, history []Messa
 		return BookingCreateInput{}, false
 	}
 
-	expected := context.PassengerCount
-	var passengers []BookingCreatePassengerInput
-	correction, hasCorrection := findLatestPassengerDocumentCorrection(history, currentTurn)
-
-	if extract != nil {
-		if expected <= 0 {
-			expected = extract.ExpectedPassengerCount
-		}
-		if expected <= 0 {
-			expected = len(extract.Passengers)
-		}
-		if expected <= 0 || len(extract.Passengers) != expected {
-			return BookingCreateInput{}, false
-		}
-
-		passengers = bookingPassengersFromDocumentExtract(*extract, session, context.TripDate)
-		if hasCorrection {
-			passengers = applyPassengerDocumentCorrection(passengers, correction)
-		}
-		if strings.ToUpper(strings.TrimSpace(extract.Mode)) != "EXTRACTED" && !hasCorrection {
-			if !documentConfirmationContext ||
-				strings.ToUpper(strings.TrimSpace(extract.Mode)) != "PARTIAL" ||
-				!documentExtractPartialHasConfirmablePassengerData(*extract, passengers, expected) {
-				return BookingCreateInput{}, false
-			}
-		}
-		for _, passenger := range passengers {
-			if strings.TrimSpace(passenger.Name) == "" ||
-				strings.TrimSpace(passenger.DocumentType) == "" ||
-				strings.TrimSpace(passenger.Document) == "" {
-				return BookingCreateInput{}, false
-			}
-		}
-	} else {
-		passengerSource := context.PassengerDetailsText
-		if passengerSource == "" {
-			passengerSource = findLatestPassengerDetailsText(history, session)
-		}
-		passengers = append([]BookingCreatePassengerInput(nil), context.PassengerDetails...)
-		if len(passengers) == 0 {
-			passengers = extractBookingCreatePassengers(passengerSource, session)
-			if len(passengers) == 0 {
-				return BookingCreateInput{}, false
-			}
-		}
-		if expected <= 0 {
-			expected = inferExpectedPassengerCount(history, currentTurn, passengerSource)
-		}
-		if expected <= 0 {
-			expected = len(passengers)
-		}
-		if hasCorrection {
-			passengers = applyPassengerDocumentCorrection(passengers, correction)
-		}
-	}
-
-	if expected <= 0 || len(passengers) != expected {
-		return BookingCreateInput{}, false
-	}
-	if len(context.LapChildPassengerIndexes) > 0 {
-		applyLapChildPassengerIndexes(passengers, context.LapChildPassengerIndexes)
-	}
-	if count := countLapChildPassengers(passengers); count > 0 && !context.ChildUnder5CountKnown {
-		context.ChildUnder5Count = count
-		context.ChildUnder5CountKnown = true
-	}
-	if context.ChildUnder5Count > 0 && !hasExpectedLapChildCount(passengers, context.ChildUnder5Count) {
+	readiness := evaluateCanonicalBookingCreateReadiness(context)
+	if !readiness.Ready {
 		return BookingCreateInput{}, false
 	}
 
-	input := buildBookingCreateInputFromDraftContext(session, context, passengers, expected)
+	input := buildBookingCreateInputFromDraftContext(session, context, readiness.Passengers, readiness.Expected)
 	input.IdempotencyKey = buildBookingCreateIdempotencyKey(session, input)
 	return input, true
 }
@@ -333,33 +288,6 @@ func bookingPassengersFromDocumentExtract(result DocumentExtractResult, session 
 	return passengers
 }
 
-func documentExtractPartialHasConfirmablePassengerData(result DocumentExtractResult, passengers []BookingCreatePassengerInput, expected int) bool {
-	if !documentExtractPartialHasConfirmableResultData(result, expected) {
-		return false
-	}
-	if expected <= 0 {
-		expected = result.ExpectedPassengerCount
-	}
-	if expected <= 0 {
-		expected = len(result.Passengers)
-	}
-	if expected <= 0 || len(result.Passengers) != expected || len(passengers) != expected {
-		return false
-	}
-	for index, passenger := range passengers {
-		if strings.TrimSpace(passenger.Name) == "" ||
-			strings.TrimSpace(passenger.DocumentType) == "" ||
-			strings.TrimSpace(passenger.Document) == "" {
-			return false
-		}
-		if normalizePassengerDocumentValue(result.Passengers[index].CPF, "CPF") == "" ||
-			normalizePassengerDocumentValue(passenger.CPF, "CPF") == "" {
-			return false
-		}
-	}
-	return true
-}
-
 func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection, bool) {
 	body := strings.TrimSpace(text)
 	if body == "" {
@@ -412,7 +340,7 @@ func parsePassengerDocumentCorrection(text string) (PassengerDocumentCorrection,
 	if len(looseNameCPF) == 3 {
 		correction.Name = normalizePassengerName(looseNameCPF[1])
 	}
-	if correction.Name == "" && !correction.NameConfirmed {
+	if correction.Name == "" && !correction.NameConfirmed && !looksLikePassengerDocumentCorrectionInstruction(body) {
 		correction.Name = extractBookingPassengerName(body, "")
 	}
 
@@ -453,43 +381,18 @@ func extractValidCPF(text string) string {
 }
 
 func findLatestPassengerDocumentCorrection(history []Message, currentTurn string) (PassengerDocumentCorrection, bool) {
-	if correction, ok := parsePassengerDocumentCorrection(currentTurn); ok {
-		return correction, true
-	}
+	correction, _, ok := findLatestPassengerDocumentCorrectionWithSource(history, currentTurn)
+	return correction, ok
+}
 
-	inCorrectionWindow := false
-	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		body := strings.TrimSpace(messageTurnText(message))
-		if body == "" {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
-			folded := strings.Join(strings.Fields(foldChatText(body)), " ")
-			if strings.Contains(folded, "vou usar") ||
-				strings.Contains(folded, "usando o cpf") ||
-				strings.Contains(folded, "posso prosseguir") ||
-				strings.Contains(folded, "eles conferem") ||
-				strings.Contains(folded, "preciso confirmar antes de seguir") {
-				inCorrectionWindow = true
-				continue
-			}
-			if looksLikePassengerDocumentRequest(folded) {
-				break
-			}
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
-			continue
-		}
-		if !inCorrectionWindow {
-			continue
-		}
-		if correction, ok := parsePassengerDocumentCorrection(body); ok {
-			return correction, true
+func findLatestPassengerDocumentCorrectionWithSource(history []Message, currentTurn string) (PassengerDocumentCorrection, int, bool) {
+	events := passengerDocumentEvidenceTimeline(history, currentTurn, Session{}, "")
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == passengerDocumentEvidenceCorrection {
+			return events[i].Correction, events[i].SourceHistoryIndex, true
 		}
 	}
-	return PassengerDocumentCorrection{}, false
+	return PassengerDocumentCorrection{}, -1, false
 }
 
 func applyPassengerDocumentCorrection(passengers []BookingCreatePassengerInput, correction PassengerDocumentCorrection) []BookingCreatePassengerInput {
@@ -752,14 +655,19 @@ func lastAssistantAskedDocumentConfirmation(history []Message) bool {
 		if body == "" {
 			continue
 		}
-		return strings.Contains(body, "consegui identificar estes dados") ||
-			strings.Contains(body, "consegui ler parte do documento") ||
-			strings.Contains(body, "preciso confirmar antes de seguir") ||
-			strings.Contains(body, "eles conferem") ||
-			strings.Contains(body, "dados conferem") ||
-			strings.Contains(body, "confere")
+		return looksLikeAssistantDocumentConfirmationPrompt(body)
 	}
 	return false
+}
+
+func looksLikeAssistantDocumentConfirmationPrompt(text string) bool {
+	body := strings.Join(strings.Fields(foldChatText(text)), " ")
+	return strings.Contains(body, "consegui identificar estes dados") ||
+		strings.Contains(body, "consegui ler parte do documento") ||
+		strings.Contains(body, "preciso confirmar antes de seguir") ||
+		strings.Contains(body, "eles conferem") ||
+		strings.Contains(body, "dados conferem") ||
+		strings.Contains(body, "confere")
 }
 
 func lastAssistantAskedBookingProceedConfirmation(history []Message) bool {
@@ -833,6 +741,11 @@ func assistantAskedLapChildAssignment(text string) bool {
 }
 
 func findLatestDocumentExtractContext(history []Message) *DocumentExtractResult {
+	result, _ := findLatestDocumentExtractContextWithSource(history)
+	return result
+}
+
+func findLatestDocumentExtractContextWithSource(history []Message) (*DocumentExtractResult, int) {
 	for i := len(history) - 1; i >= 0; i-- {
 		for _, toolContext := range messageToolContexts(history[i]) {
 			payload := asMap(toolContext[toolNameDocumentExtract])
@@ -844,11 +757,11 @@ func findLatestDocumentExtractContext(history []Message) *DocumentExtractResult 
 				if documentExtractPartialHasConfirmableResultData(result, result.ExpectedPassengerCount) {
 					result.Mode = "EXTRACTED"
 				}
-				return &result
+				return &result, i
 			}
 		}
 	}
-	return nil
+	return nil, -1
 }
 
 func shouldBlockBookingCreateBecausePaymentFlow(history []Message, currentTurn string) bool {
@@ -2106,6 +2019,9 @@ func isSoloPassengerReply(folded string) bool {
 	if hasAdditionalPassengerCue(folded) {
 		return false
 	}
+	if strings.HasPrefix(strings.TrimSpace(folded), "sou eu mesmo") {
+		return true
+	}
 
 	return soloPassengerReplyPattern.MatchString(folded)
 }
@@ -2335,52 +2251,383 @@ func findLatestPassengerDetailsText(history []Message, session Session) string {
 }
 
 func findLatestPassengerDocumentProgress(history []Message, session Session) bookingPassengerDocumentProgress {
-	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		body := strings.TrimSpace(messageTurnText(message))
-		if body == "" || looksLikeBookingCreateConfirmation(body) {
-			continue
-		}
-		if looksLikePassengerDocumentCorrectionInstruction(body) {
-			continue
-		}
-		progress := extractBookingPassengerDocumentProgress(body, session)
-		if len(progress.Passengers) > 0 || len(progress.Partials) > 0 {
-			return mergePassengerDocumentProgressWithPriorPartial(history[:i], session, progress)
+	events := passengerDocumentEvidenceTimeline(history, "", session, "")
+	inbound := make([]passengerDocumentEvidence, 0, len(events))
+	for _, event := range events {
+		if event.Kind == passengerDocumentEvidenceInbound {
+			inbound = append(inbound, event)
 		}
 	}
-	return bookingPassengerDocumentProgress{}
+	return reconstructPassengerDocumentEvidence(inbound, 0)
 }
 
-func mergePassengerDocumentProgressWithPriorPartial(history []Message, session Session, latest bookingPassengerDocumentProgress) bookingPassengerDocumentProgress {
-	if len(latest.Passengers) == 0 {
-		return latest
+func buildBookingPassengerSnapshotPayload(snapshot bookingPassengerSnapshot) map[string]interface{} {
+	passengers := make([]map[string]interface{}, 0, len(snapshot.Passengers))
+	for _, item := range snapshot.Passengers {
+		passenger := item.Passenger
+		passengers = append(passengers, map[string]interface{}{
+			"passenger": map[string]interface{}{
+				"name":                     passenger.Name,
+				"document":                 passenger.Document,
+				"document_type":            passenger.DocumentType,
+				"cpf":                      passenger.CPF,
+				"rg":                       passenger.RG,
+				"cnh":                      passenger.CNH,
+				"birth_date":               passenger.BirthDate,
+				"birth_certificate_number": passenger.BirthCertificateNumber,
+				"birth_city":               passenger.BirthCity,
+				"phone":                    passenger.Phone,
+				"email":                    passenger.Email,
+				"notes":                    passenger.Notes,
+				"is_lap_child":             passenger.IsLapChild,
+			},
+			"lap_child_source": string(normalizeBookingPassengerLapChildSource(item.LapChildSource)),
+		})
 	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if messageHasBookingCreateContext(history[i]) {
-			break
+	return map[string]interface{}{
+		"version":                 bookingPassengerSnapshotVersion,
+		"expected_document_count": snapshot.ExpectedDocumentCount,
+		"passengers":              passengers,
+	}
+}
+
+func parseBookingPassengerSnapshotPayload(payload map[string]interface{}) (bookingPassengerSnapshot, bool) {
+	if asInt(payload["version"]) != bookingPassengerSnapshotVersion {
+		return bookingPassengerSnapshot{}, false
+	}
+	rawPassengers := asInterfaceSliceMaps(payload["passengers"])
+	if len(rawPassengers) == 0 {
+		return bookingPassengerSnapshot{}, false
+	}
+
+	snapshot := bookingPassengerSnapshot{
+		Version:               bookingPassengerSnapshotVersion,
+		ExpectedDocumentCount: asInt(payload["expected_document_count"]),
+		Passengers:            make([]bookingPassengerSnapshotPassenger, 0, len(rawPassengers)),
+	}
+	for _, raw := range rawPassengers {
+		passengerPayload := asMap(raw["passenger"])
+		if len(passengerPayload) == 0 {
+			return bookingPassengerSnapshot{}, false
 		}
-		body := strings.TrimSpace(messageTurnText(history[i]))
-		if body == "" || looksLikeBookingCreateConfirmation(body) || looksLikePassengerDocumentCorrectionInstruction(body) {
+		snapshot.Passengers = append(snapshot.Passengers, bookingPassengerSnapshotPassenger{
+			Passenger: BookingCreatePassengerInput{
+				Name:                   strings.TrimSpace(asString(passengerPayload["name"])),
+				Document:               strings.TrimSpace(asString(passengerPayload["document"])),
+				DocumentType:           strings.TrimSpace(asString(passengerPayload["document_type"])),
+				CPF:                    strings.TrimSpace(asString(passengerPayload["cpf"])),
+				RG:                     strings.TrimSpace(asString(passengerPayload["rg"])),
+				CNH:                    strings.TrimSpace(asString(passengerPayload["cnh"])),
+				BirthDate:              strings.TrimSpace(asString(passengerPayload["birth_date"])),
+				BirthCertificateNumber: strings.TrimSpace(asString(passengerPayload["birth_certificate_number"])),
+				BirthCity:              strings.TrimSpace(asString(passengerPayload["birth_city"])),
+				Phone:                  strings.TrimSpace(asString(passengerPayload["phone"])),
+				Email:                  strings.TrimSpace(asString(passengerPayload["email"])),
+				Notes:                  strings.TrimSpace(asString(passengerPayload["notes"])),
+				IsLapChild:             readBool(passengerPayload["is_lap_child"]),
+			},
+			LapChildSource: normalizeBookingPassengerLapChildSource(bookingPassengerLapChildSource(asString(raw["lap_child_source"]))),
+		})
+	}
+	if snapshot.ExpectedDocumentCount <= 0 {
+		snapshot.ExpectedDocumentCount = len(snapshot.Passengers)
+	}
+	return snapshot, true
+}
+
+func bookingPassengerSnapshotFromMessage(message Message) *bookingPassengerSnapshot {
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		toolContext := asMap(payload["tool_context"])
+		snapshotPayload := asMap(toolContext[toolNameBookingPassengerSnapshot])
+		if len(snapshotPayload) == 0 {
 			continue
 		}
-		prior := extractBookingPassengerDocumentProgress(body, session)
-		if len(prior.Partials) == 0 {
+		if snapshot, ok := parseBookingPassengerSnapshotPayload(snapshotPayload); ok {
+			return &snapshot
+		}
+	}
+	return nil
+}
+
+func normalizeBookingPassengerLapChildSource(source bookingPassengerLapChildSource) bookingPassengerLapChildSource {
+	switch bookingPassengerLapChildSource(strings.ToUpper(strings.TrimSpace(string(source)))) {
+	case bookingPassengerLapChildSourceExplicitAssignment:
+		return bookingPassengerLapChildSourceExplicitAssignment
+	case bookingPassengerLapChildSourceDocumentIdentityAge:
+		return bookingPassengerLapChildSourceDocumentIdentityAge
+	case bookingPassengerLapChildSourceNameFallbackPreserved:
+		return bookingPassengerLapChildSourceNameFallbackPreserved
+	default:
+		return bookingPassengerLapChildSourceNone
+	}
+}
+
+func inferredBookingPassengerLapChildSource(passenger BookingCreatePassengerInput) bookingPassengerLapChildSource {
+	if _, ok := parseFlexibleDate(passenger.BirthDate); ok {
+		return bookingPassengerLapChildSourceDocumentIdentityAge
+	}
+	return bookingPassengerLapChildSourceNone
+}
+
+func newBookingPassengerSnapshot(passengers []BookingCreatePassengerInput, expected int) bookingPassengerSnapshot {
+	snapshot := bookingPassengerSnapshot{
+		Version:               bookingPassengerSnapshotVersion,
+		ExpectedDocumentCount: expected,
+		Passengers:            make([]bookingPassengerSnapshotPassenger, 0, len(passengers)),
+	}
+	if snapshot.ExpectedDocumentCount <= 0 {
+		snapshot.ExpectedDocumentCount = len(passengers)
+	}
+	for _, passenger := range passengers {
+		snapshot.Passengers = append(snapshot.Passengers, bookingPassengerSnapshotPassenger{
+			Passenger:      passenger,
+			LapChildSource: inferredBookingPassengerLapChildSource(passenger),
+		})
+	}
+	return snapshot
+}
+
+func bookingPassengersFromCanonicalSnapshot(snapshot bookingPassengerSnapshot) []BookingCreatePassengerInput {
+	passengers := make([]BookingCreatePassengerInput, 0, len(snapshot.Passengers))
+	for _, item := range snapshot.Passengers {
+		passengers = append(passengers, item.Passenger)
+	}
+	return passengers
+}
+
+func alignBookingPassengerSnapshot(snapshot bookingPassengerSnapshot, passengers []BookingCreatePassengerInput, expected int) bookingPassengerSnapshot {
+	if expected <= 0 && snapshot.ExpectedDocumentCount > 0 {
+		expected = snapshot.ExpectedDocumentCount
+	}
+	if len(snapshot.Passengers) == 0 {
+		return newBookingPassengerSnapshot(passengers, expected)
+	}
+	previousPassengers := bookingPassengersFromCanonicalSnapshot(snapshot)
+	aligned := newBookingPassengerSnapshot(passengers, expected)
+	for index, passenger := range passengers {
+		matchIndex := bookingPassengerDocumentMatchIndex(previousPassengers, passenger)
+		if matchIndex < 0 {
+			matchIndex = uniqueBookingPassengerNameMatchIndex(previousPassengers, passenger)
+		}
+		if matchIndex >= 0 && matchIndex < len(snapshot.Passengers) {
+			aligned.Passengers[index].LapChildSource = normalizeBookingPassengerLapChildSource(snapshot.Passengers[matchIndex].LapChildSource)
+		}
+	}
+	return aligned
+}
+
+func uniqueBookingPassengerNameMatchIndex(passengers []BookingCreatePassengerInput, candidate BookingCreatePassengerInput) int {
+	candidateName := strings.Join(strings.Fields(foldChatText(candidate.Name)), " ")
+	if candidateName == "" {
+		return -1
+	}
+	matchIndex := -1
+	for index, passenger := range passengers {
+		if strings.Join(strings.Fields(foldChatText(passenger.Name)), " ") != candidateName {
 			continue
 		}
-		if !passengerProgressCompletesPartial(latest, prior.Partials) {
+		if matchIndex >= 0 {
+			return -1
+		}
+		matchIndex = index
+	}
+	return matchIndex
+}
+
+func markBookingPassengerSnapshotExplicitAssignment(snapshot bookingPassengerSnapshot, passengers []BookingCreatePassengerInput, expected int) bookingPassengerSnapshot {
+	snapshot = alignBookingPassengerSnapshot(snapshot, passengers, expected)
+	for index := range snapshot.Passengers {
+		snapshot.Passengers[index].Passenger = passengers[index]
+		snapshot.Passengers[index].LapChildSource = bookingPassengerLapChildSourceExplicitAssignment
+	}
+	return snapshot
+}
+
+func passengerDocumentEvidenceTimeline(history []Message, currentTurn string, session Session, tripDate string) []passengerDocumentEvidence {
+	start := activePassengerDocumentEvidenceWindowStart(history)
+	events := make([]passengerDocumentEvidence, 0, len(history)-start+1)
+	correctionWindow := false
+
+	for i := start; i < len(history); i++ {
+		message := history[i]
+		body := strings.TrimSpace(messageTurnText(message))
+		if snapshot := bookingPassengerSnapshotFromMessage(message); snapshot != nil && len(snapshot.Passengers) > 0 {
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: i,
+				SourceOrder:        0,
+				Kind:               passengerDocumentEvidenceCanonicalSnapshot,
+				Snapshot:           *snapshot,
+			})
+		} else if extract := documentExtractEvidenceFromMessage(message); extract != nil && len(extract.Passengers) > 0 {
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: i,
+				SourceOrder:        0,
+				Kind:               passengerDocumentEvidenceExtract,
+				Passengers:         bookingPassengersFromDocumentExtract(*extract, session, tripDate),
+			})
+		}
+
+		direction := strings.TrimSpace(message.Direction)
+		if strings.EqualFold(direction, "OUTBOUND") {
+			if body == "" {
+				continue
+			}
+			folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+			if opensPassengerDocumentCorrectionWindow(folded) {
+				correctionWindow = true
+			} else if looksLikePassengerDocumentRequest(folded) {
+				correctionWindow = false
+			}
+			continue
+		}
+		if !strings.EqualFold(direction, "INBOUND") || body == "" || looksLikeBookingCreateConfirmation(body) {
 			continue
 		}
 
-		merged := bookingPassengerDocumentProgress{
-			Passengers: mergePassengerDocumentsInPriorOrder(prior, latest),
-			Partials:   unresolvedPassengerDocumentPartials(prior.Partials, latest),
-			SourceText: strings.TrimSpace(strings.TrimSpace(prior.SourceText) + "\n" + strings.TrimSpace(latest.SourceText)),
+		progress := extractBookingPassengerDocumentProgress(body, session)
+		if correction, ok := passengerDocumentCorrectionEvidence(body, correctionWindow); ok {
+			correctionPassengers := progress.Passengers
+			if looksLikePassengerDocumentCorrectionInstruction(body) {
+				correctionPassengers = nil
+			}
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: i,
+				SourceOrder:        1,
+				Kind:               passengerDocumentEvidenceCorrection,
+				Passengers:         correctionPassengers,
+				Partials:           progress.Partials,
+				Correction:         correction,
+				SourceText:         progress.SourceText,
+			})
+			continue
 		}
-		merged.Partials = append(merged.Partials, latest.Partials...)
-		return merged
+		if len(progress.Passengers) > 0 || len(progress.Partials) > 0 {
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: i,
+				SourceOrder:        1,
+				Kind:               passengerDocumentEvidenceInbound,
+				Passengers:         progress.Passengers,
+				Partials:           progress.Partials,
+				SourceText:         progress.SourceText,
+			})
+		}
 	}
-	return latest
+
+	body := strings.TrimSpace(currentTurn)
+	if body != "" && !looksLikeBookingCreateConfirmation(body) {
+		progress := extractBookingPassengerDocumentProgress(body, session)
+		if correction, ok := parsePassengerDocumentCorrection(body); ok {
+			correctionPassengers := progress.Passengers
+			if looksLikePassengerDocumentCorrectionInstruction(body) {
+				correctionPassengers = nil
+			}
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: len(history),
+				SourceOrder:        0,
+				Kind:               passengerDocumentEvidenceCorrection,
+				Passengers:         correctionPassengers,
+				Partials:           progress.Partials,
+				Correction:         correction,
+				SourceText:         progress.SourceText,
+			})
+		} else if len(progress.Passengers) > 0 || len(progress.Partials) > 0 {
+			events = append(events, passengerDocumentEvidence{
+				SourceHistoryIndex: len(history),
+				SourceOrder:        0,
+				Kind:               passengerDocumentEvidenceCurrent,
+				Passengers:         progress.Passengers,
+				Partials:           progress.Partials,
+				SourceText:         progress.SourceText,
+			})
+		}
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].SourceHistoryIndex == events[j].SourceHistoryIndex {
+			return events[i].SourceOrder < events[j].SourceOrder
+		}
+		return events[i].SourceHistoryIndex < events[j].SourceHistoryIndex
+	})
+	return events
+}
+
+func activePassengerDocumentEvidenceWindowStart(history []Message) int {
+	start := 0
+	for i, message := range history {
+		if messageHasBookingCreateContext(message) {
+			start = i + 1
+		}
+	}
+	return start
+}
+
+func documentExtractEvidenceFromMessage(message Message) *DocumentExtractResult {
+	for _, toolContext := range messageToolContexts(message) {
+		payload := asMap(toolContext[toolNameDocumentExtract])
+		if len(payload) == 0 {
+			continue
+		}
+		result := parseDocumentExtractContextPayload(payload)
+		if strings.TrimSpace(result.Mode) != "" {
+			if documentExtractPartialHasConfirmableResultData(result, result.ExpectedPassengerCount) {
+				result.Mode = "EXTRACTED"
+			}
+			return &result
+		}
+	}
+	return nil
+}
+
+func opensPassengerDocumentCorrectionWindow(folded string) bool {
+	return strings.Contains(folded, "vou usar") ||
+		strings.Contains(folded, "usando o cpf") ||
+		strings.Contains(folded, "posso prosseguir") ||
+		strings.Contains(folded, "eles conferem") ||
+		strings.Contains(folded, "preciso confirmar antes de seguir")
+}
+
+func passengerDocumentCorrectionEvidence(body string, correctionWindow bool) (PassengerDocumentCorrection, bool) {
+	explicitCorrection := looksLikePassengerDocumentCorrectionInstruction(body)
+	if !explicitCorrection && !correctionWindow {
+		return PassengerDocumentCorrection{}, false
+	}
+	return parsePassengerDocumentCorrection(body)
+}
+
+func reconstructPassengerDocumentEvidence(events []passengerDocumentEvidence, expected int) bookingPassengerDocumentProgress {
+	progress := bookingPassengerDocumentProgress{SourceHistoryIndex: -1}
+	for _, event := range events {
+		switch event.Kind {
+		case passengerDocumentEvidenceInbound, passengerDocumentEvidenceCurrent:
+			progress.Passengers = mergeBookingPassengerDetails(progress.Passengers, event.Passengers)
+			progress.Snapshot = alignBookingPassengerSnapshot(progress.Snapshot, progress.Passengers, expected)
+			progress.Partials = append(progress.Partials, event.Partials...)
+			progress.SourceText = strings.TrimSpace(strings.TrimSpace(progress.SourceText) + "\n" + strings.TrimSpace(event.SourceText))
+		case passengerDocumentEvidenceExtract:
+			progress.Snapshot = mergeCurrentDocumentExtractionPassengerSnapshot(
+				alignBookingPassengerSnapshot(progress.Snapshot, progress.Passengers, expected),
+				event.Passengers,
+				expected,
+			)
+			progress.Passengers = bookingPassengersFromCanonicalSnapshot(progress.Snapshot)
+		case passengerDocumentEvidenceCanonicalSnapshot:
+			progress.Snapshot = event.Snapshot
+			progress.Passengers = bookingPassengersFromCanonicalSnapshot(event.Snapshot)
+		case passengerDocumentEvidenceCorrection:
+			progress.Passengers = mergeBookingPassengerDetails(progress.Passengers, event.Passengers)
+			progress.Partials = append(progress.Partials, event.Partials...)
+			progress.SourceText = strings.TrimSpace(strings.TrimSpace(progress.SourceText) + "\n" + strings.TrimSpace(event.SourceText))
+			progress.Passengers = applyPassengerDocumentCorrection(progress.Passengers, event.Correction)
+			progress.Passengers = mergeBookingPassengerDetails(nil, progress.Passengers)
+			progress.Snapshot = alignBookingPassengerSnapshot(progress.Snapshot, progress.Passengers, expected)
+		}
+		progress.SourceHistoryIndex = event.SourceHistoryIndex
+	}
+	if len(progress.Passengers) > 0 {
+		progress.Snapshot = alignBookingPassengerSnapshot(progress.Snapshot, progress.Passengers, expected)
+	}
+	progress.Partials = unresolvedPassengerDocumentPartialsForPassengers(progress.Partials, progress.Passengers)
+	return progress
 }
 
 func messageHasBookingCreateContext(message Message) bool {
@@ -2392,83 +2639,42 @@ func messageHasBookingCreateContext(message Message) bool {
 	return false
 }
 
-func passengerProgressCompletesPartial(progress bookingPassengerDocumentProgress, partials []BookingPassengerDocumentPartial) bool {
-	for _, partial := range partials {
-		for _, passenger := range progress.Passengers {
-			if passengerMatchesDocumentPartial(passenger, partial) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func unresolvedPassengerDocumentPartials(partials []BookingPassengerDocumentPartial, progress bookingPassengerDocumentProgress) []BookingPassengerDocumentPartial {
+func unresolvedPassengerDocumentPartialsForPassengers(partials []BookingPassengerDocumentPartial, passengers []BookingCreatePassengerInput) []BookingPassengerDocumentPartial {
 	unresolved := make([]BookingPassengerDocumentPartial, 0, len(partials))
+	indexByDocument := map[string]int{}
 	for _, partial := range partials {
 		resolved := false
-		for _, passenger := range progress.Passengers {
+		for _, passenger := range passengers {
 			if passengerMatchesDocumentPartial(passenger, partial) {
 				resolved = true
 				break
 			}
 		}
 		if !resolved {
+			if key := partialPassengerDocumentKey(partial); key != "" {
+				if index, ok := indexByDocument[key]; ok {
+					unresolved[index] = partial
+					continue
+				}
+				indexByDocument[key] = len(unresolved)
+			}
 			unresolved = append(unresolved, partial)
 		}
 	}
 	return unresolved
 }
 
-func mergePassengerDocumentsInPriorOrder(prior bookingPassengerDocumentProgress, latest bookingPassengerDocumentProgress) []BookingCreatePassengerInput {
-	candidates := append([]BookingCreatePassengerInput{}, prior.Passengers...)
-	candidates = append(candidates, latest.Passengers...)
-	byDocument := map[string]BookingCreatePassengerInput{}
-	for _, passenger := range candidates {
-		if key := bookingPassengerDocumentKey(passenger); key != "" {
-			byDocument[key] = passenger
-		}
-	}
-
-	merged := make([]BookingCreatePassengerInput, 0, len(candidates))
-	seen := map[string]bool{}
-	appendPassenger := func(passenger BookingCreatePassengerInput) {
-		key := bookingPassengerDocumentKey(passenger)
-		if key == "" {
-			key = strings.Join(strings.Fields(foldChatText(passenger.Name)), " ")
-		}
-		if key == "" || seen[key] {
-			return
-		}
-		seen[key] = true
-		merged = append(merged, passenger)
-	}
-
-	for _, match := range inlinePassengerCPFMatches(prior.SourceText) {
-		if passenger, ok := byDocument["CPF:"+match.Document]; ok {
-			appendPassenger(passenger)
-		}
-	}
-	for _, passenger := range prior.Passengers {
-		appendPassenger(passenger)
-	}
-	for _, passenger := range latest.Passengers {
-		appendPassenger(passenger)
-	}
-	return merged
-}
-
 func passengerMatchesDocumentPartial(passenger BookingCreatePassengerInput, partial BookingPassengerDocumentPartial) bool {
 	partialKey := partialPassengerDocumentKey(partial)
-	if partialKey == "" || bookingPassengerDocumentKey(passenger) != partialKey {
+	if partialKey == "" {
 		return false
 	}
-	fragment := strings.Join(strings.Fields(foldChatText(partial.NameFragment)), " ")
-	if fragment == "" {
-		return true
+	for _, passengerKey := range bookingPassengerDocumentKeys(passenger) {
+		if passengerKey == partialKey {
+			return true
+		}
 	}
-	name := strings.Join(strings.Fields(foldChatText(passenger.Name)), " ")
-	return strings.Contains(name, fragment)
+	return false
 }
 
 func partialPassengerDocumentKey(partial BookingPassengerDocumentPartial) string {
@@ -2481,6 +2687,16 @@ func partialPassengerDocumentKey(partial BookingPassengerDocumentPartial) string
 }
 
 func bookingPassengerDocumentKey(passenger BookingCreatePassengerInput) string {
+	keys := bookingPassengerDocumentKeys(passenger)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func bookingPassengerDocumentKeys(passenger BookingCreatePassengerInput) []string {
+	keys := make([]string, 0, 5)
+	seen := map[string]bool{}
 	for _, candidate := range []struct {
 		Type  string
 		Value string
@@ -2494,10 +2710,204 @@ func bookingPassengerDocumentKey(passenger BookingCreatePassengerInput) string {
 		docType := normalizePassengerDocumentType(candidate.Type)
 		document := normalizePassengerDocumentValue(candidate.Value, docType)
 		if docType != "" && document != "" {
-			return docType + ":" + document
+			key := docType + ":" + document
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
+			}
 		}
 	}
-	return ""
+	return keys
+}
+
+func mergeBookingPassengerDetails(older []BookingCreatePassengerInput, newer []BookingCreatePassengerInput) []BookingCreatePassengerInput {
+	merged := make([]BookingCreatePassengerInput, 0, len(older)+len(newer))
+	indexByDocument := map[string]int{}
+
+	appendOrMerge := func(passenger BookingCreatePassengerInput) {
+		keys := bookingPassengerDocumentKeys(passenger)
+		matchIndex := -1
+		for _, key := range keys {
+			if index, ok := indexByDocument[key]; ok {
+				matchIndex = index
+				break
+			}
+		}
+		if matchIndex < 0 {
+			matchIndex = len(merged)
+			merged = append(merged, passenger)
+		} else {
+			merged[matchIndex] = enrichBookingPassengerDetails(merged[matchIndex], passenger)
+			for key, index := range indexByDocument {
+				if index == matchIndex {
+					delete(indexByDocument, key)
+				}
+			}
+		}
+		for _, key := range bookingPassengerDocumentKeys(merged[matchIndex]) {
+			indexByDocument[key] = matchIndex
+		}
+	}
+
+	for _, passenger := range older {
+		appendOrMerge(passenger)
+	}
+	for _, passenger := range newer {
+		appendOrMerge(passenger)
+	}
+	return merged
+}
+
+func mergeCurrentDocumentExtractionPassengerDetails(older []BookingCreatePassengerInput, newer []BookingCreatePassengerInput, expected int) []BookingCreatePassengerInput {
+	snapshot := mergeCurrentDocumentExtractionPassengerSnapshot(
+		newBookingPassengerSnapshot(mergeBookingPassengerDetails(nil, older), expected),
+		newer,
+		expected,
+	)
+	return bookingPassengersFromCanonicalSnapshot(snapshot)
+}
+
+func mergeCurrentDocumentExtractionPassengerSnapshot(older bookingPassengerSnapshot, newer []BookingCreatePassengerInput, expected int) bookingPassengerSnapshot {
+	if expected <= 0 && older.ExpectedDocumentCount > 0 {
+		expected = older.ExpectedDocumentCount
+	}
+	merged := alignBookingPassengerSnapshot(older, bookingPassengersFromCanonicalSnapshot(older), expected)
+	if len(merged.Passengers) == 0 {
+		merged = newBookingPassengerSnapshot(nil, expected)
+	}
+	originalCount := len(merged.Passengers)
+	usedOriginalSlots := map[int]bool{}
+
+	for _, passenger := range newer {
+		currentPassengers := bookingPassengersFromCanonicalSnapshot(merged)
+		matchIndex := bookingPassengerDocumentMatchIndex(currentPassengers, passenger)
+		matchedByDocument := matchIndex >= 0
+		if !matchedByDocument {
+			matchIndex = uniqueCurrentDocumentExtractionReplacementIndex(
+				currentPassengers[:originalCount],
+				passenger,
+				usedOriginalSlots,
+				expected,
+			)
+		}
+		if matchIndex < 0 {
+			merged.Passengers = append(merged.Passengers, bookingPassengerSnapshotPassenger{
+				Passenger:      passenger,
+				LapChildSource: inferredBookingPassengerLapChildSource(passenger),
+			})
+			continue
+		}
+		previous := merged.Passengers[matchIndex]
+		if matchedByDocument {
+			updated := enrichBookingPassengerDetailsFromDocumentExtract(previous.Passenger, passenger)
+			if previous.LapChildSource == bookingPassengerLapChildSourceExplicitAssignment {
+				updated.IsLapChild = previous.Passenger.IsLapChild
+				merged.Passengers[matchIndex] = bookingPassengerSnapshotPassenger{
+					Passenger:      updated,
+					LapChildSource: bookingPassengerLapChildSourceExplicitAssignment,
+				}
+			} else {
+				source := normalizeBookingPassengerLapChildSource(previous.LapChildSource)
+				if _, validBirthDate := parseFlexibleDate(passenger.BirthDate); validBirthDate {
+					source = bookingPassengerLapChildSourceDocumentIdentityAge
+				}
+				merged.Passengers[matchIndex] = bookingPassengerSnapshotPassenger{Passenger: updated, LapChildSource: source}
+			}
+		} else {
+			source := bookingPassengerLapChildSourceNameFallbackPreserved
+			if previous.LapChildSource == bookingPassengerLapChildSourceExplicitAssignment {
+				source = bookingPassengerLapChildSourceExplicitAssignment
+			}
+			merged.Passengers[matchIndex] = bookingPassengerSnapshotPassenger{
+				Passenger:      enrichBookingPassengerDetailsFromNameFallback(previous.Passenger, passenger),
+				LapChildSource: source,
+			}
+		}
+		if matchIndex < originalCount {
+			usedOriginalSlots[matchIndex] = true
+		}
+	}
+
+	merged.Version = bookingPassengerSnapshotVersion
+	merged.ExpectedDocumentCount = expected
+	if merged.ExpectedDocumentCount <= 0 {
+		merged.ExpectedDocumentCount = len(merged.Passengers)
+	}
+	return merged
+}
+
+func bookingPassengerDocumentMatchIndex(passengers []BookingCreatePassengerInput, candidate BookingCreatePassengerInput) int {
+	candidateKeys := bookingPassengerDocumentKeys(candidate)
+	if len(candidateKeys) == 0 {
+		return -1
+	}
+	for index, passenger := range passengers {
+		passengerKeys := bookingPassengerDocumentKeys(passenger)
+		for _, candidateKey := range candidateKeys {
+			for _, passengerKey := range passengerKeys {
+				if candidateKey == passengerKey {
+					return index
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func uniqueCurrentDocumentExtractionReplacementIndex(older []BookingCreatePassengerInput, newer BookingCreatePassengerInput, used map[int]bool, expected int) int {
+	if expected <= 0 || len(older) < expected {
+		return -1
+	}
+
+	newerName := strings.Join(strings.Fields(foldChatText(newer.Name)), " ")
+	nameMatch := -1
+	if newerName != "" {
+		for index, passenger := range older {
+			if used[index] || strings.Join(strings.Fields(foldChatText(passenger.Name)), " ") != newerName {
+				continue
+			}
+			if nameMatch >= 0 {
+				nameMatch = -1
+				break
+			}
+			nameMatch = index
+		}
+	}
+	if nameMatch >= 0 {
+		return nameMatch
+	}
+	return -1
+}
+
+func enrichBookingPassengerDetails(older BookingCreatePassengerInput, newer BookingCreatePassengerInput) BookingCreatePassengerInput {
+	older.Name = firstNonEmpty(newer.Name, older.Name)
+	older.Document = firstNonEmpty(newer.Document, older.Document)
+	older.DocumentType = firstNonEmpty(newer.DocumentType, older.DocumentType)
+	older.CPF = firstNonEmpty(newer.CPF, older.CPF)
+	older.RG = firstNonEmpty(newer.RG, older.RG)
+	older.CNH = firstNonEmpty(newer.CNH, older.CNH)
+	older.BirthDate = firstNonEmpty(newer.BirthDate, older.BirthDate)
+	older.BirthCertificateNumber = firstNonEmpty(newer.BirthCertificateNumber, older.BirthCertificateNumber)
+	older.BirthCity = firstNonEmpty(newer.BirthCity, older.BirthCity)
+	older.Phone = firstNonEmpty(newer.Phone, older.Phone)
+	older.Email = firstNonEmpty(newer.Email, older.Email)
+	older.Notes = firstNonEmpty(newer.Notes, older.Notes)
+	older.IsLapChild = older.IsLapChild || newer.IsLapChild
+	return older
+}
+
+func enrichBookingPassengerDetailsFromDocumentExtract(older BookingCreatePassengerInput, newer BookingCreatePassengerInput) BookingCreatePassengerInput {
+	merged := enrichBookingPassengerDetails(older, newer)
+	if _, validBirthDate := parseFlexibleDate(newer.BirthDate); validBirthDate {
+		merged.IsLapChild = newer.IsLapChild
+	}
+	return merged
+}
+
+func enrichBookingPassengerDetailsFromNameFallback(older BookingCreatePassengerInput, newer BookingCreatePassengerInput) BookingCreatePassengerInput {
+	merged := enrichBookingPassengerDetails(older, newer)
+	merged.IsLapChild = older.IsLapChild
+	return merged
 }
 
 func looksLikePassengerDocumentCorrectionInstruction(text string) bool {
@@ -2594,10 +3004,7 @@ func countLapChildPassengers(passengers []BookingCreatePassengerInput) int {
 }
 
 func hasExpectedLapChildCount(passengers []BookingCreatePassengerInput, expected int) bool {
-	if expected <= 0 {
-		return true
-	}
-	return countLapChildPassengers(passengers) == expected
+	return expected >= 0 && countLapChildPassengers(passengers) == expected
 }
 
 func inferLapChildAssignmentIndexes(history []Message, currentTurn string, passengers []BookingCreatePassengerInput, expected int) ([]int, bool) {
@@ -2607,7 +3014,13 @@ func inferLapChildAssignmentIndexes(history []Message, currentTurn string, passe
 	if indexes := lapChildIndexesFromPassengers(passengers); len(indexes) == expected {
 		return indexes, true
 	}
+	return explicitLapChildAssignmentIndexes(history, currentTurn, passengers, expected)
+}
 
+func explicitLapChildAssignmentIndexes(history []Message, currentTurn string, passengers []BookingCreatePassengerInput, expected int) ([]int, bool) {
+	if expected <= 0 || len(passengers) == 0 {
+		return nil, false
+	}
 	if lastAssistantAskedLapChildAssignment(history) {
 		if indexes, ok := parseLapChildAssignmentAnswer(currentTurn, passengers, expected); ok {
 			return indexes, true
