@@ -15,7 +15,32 @@ env:
   IMAGE_NAME: joaovitormessias/sistema-schumacher-api
 
 jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Test chat package
+        run: go test -count=1 ./internal/chat
+
+      - name: Test API
+        run: go test -count=1 ./...
+
   publish-api:
+    needs: test-api
     runs-on: ubuntu-latest
     permissions:
       contents: read
