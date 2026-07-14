@@ -282,7 +282,7 @@ Regras:
 |---:|---|---|---|---|
 | 1 | P0-A | **CONCLUIDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
 | 2 | P0-B | **EM CORREÇÃO APÓS REVIEW** | `plans/p0-b-corrigir-fixtures-temporais.md` | Corrigir o P2 de virada do ano nas fixtures temporais, sem alterar produção. |
-| 3 | P0-C | **BLOQUEADA por P0-B** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
+| 3 | P0-C | **EM REVIEW — GATE LOCAL VALIDADO** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
 | 4 | 3.6F-A | **PENDENTE após P0-C** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
 | 5 | 3.6F-B | **PENDENTE** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
 | 6 | 3.6F-C | **PENDENTE** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
@@ -548,7 +548,59 @@ mudança funcional de produção: nenhuma
 resultado do review: dois achados P2 identificados; correções implementadas e aguardando novo review antes de concluir P0-B
 teste em produção: não necessário; alteração exclusiva de testes e helpers de fixture
 riscos restantes: correção da fronteira anual ainda aguarda confirmação do novo review
-próxima ação única: revisar novamente o P0-B; P0-C permanece bloqueado e não foi iniciado
+próxima ação única registrada no fechamento do P0-B: revisar novamente o P0-B; naquele momento, P0-C permanecia bloqueado e não iniciado
+```
+
+### 8.5 Registro operacional — P0-C (2026-07-14)
+
+**Status:** **EM REVIEW — GATE LOCAL VALIDADO**.
+
+A execução local deste slice ocorreu por novo `/goal` explícito na branch `ci/p0-c-test-gate`, baseada no commit `b384358` do P0-B. Isso não conclui o review canônico do P0-B e não libera 3.6F-A.
+
+#### Workflow antes e depois
+
+Antes do slice, `.github/workflows/publish-api-ghcr.yml` possuía somente o job `publish-api`: não havia job de testes nem dependência anterior ao build/push da imagem.
+
+O workflow agora possui o job `test-api`, que:
+
+```text
+faz checkout com actions/checkout@v4
+configura o Go de apps/api/go.mod com actions/setup-go@v5
+usa apps/api/go.sum como dependency path do cache
+executa go test -count=1 ./internal/chat
+executa go test -count=1 ./...
+```
+
+`publish-api` recebeu somente `needs: test-api`. Com isso, uma falha na suíte impede o job de publicação, enquanto o fluxo existente de checkout, Buildx, login no GHCR, metadata e build/push permanece inalterado. As tags `main` e SHA, as permissões `contents: read`/`packages: write`, o uso de `GITHUB_TOKEN`, o contexto, o Dockerfile e `workflow_dispatch` foram preservados. Nenhum job ou comando de deploy foi adicionado ou executado.
+
+#### Arquivos alterados
+
+```text
+.github/workflows/publish-api-ghcr.yml
+docs/EXECUTION_TRACKER.md
+```
+
+#### Validação executada
+
+Os comandos Go locais usaram `GOCACHE=/tmp/schumacher-go-build` e `GOTMPDIR=/tmp`:
+
+```text
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS
+ruby YAML.parse_file e checagem estrutural do gate em .github/workflows/publish-api-ghcr.yml -> PASS
+git diff --check -> PASS
+```
+
+#### Fechamento
+
+```text
+comportamento antes: build/push da API podia iniciar sem um gate anterior da suíte Go
+comportamento depois: publish-api depende de test-api e só pode iniciar após os dois comandos Go passarem
+mudança funcional de produção: nenhuma
+resultado do review: revisão local do diff sem achados P1/P2; review canônico do P0-C permanece pendente
+teste em produção: não necessário; execução real do workflow no GitHub não ocorreu porque commit e push não foram autorizados
+riscos restantes: validação local não executa o runner do GitHub Actions; confirmar o gate na execução da CI após integração
+próxima ação única: revisar o P0-C; não iniciar 3.6F-A
 ```
 
 ---
