@@ -1680,7 +1680,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			now := availabilityTestObservedAt()
 			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 				Channel:        "WHATSAPP",
 				ContactKey:     "5511999999999",
@@ -1692,7 +1692,8 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 			if err != nil {
 				t.Fatalf("seed session: %v", err)
 			}
-			availability := availabilityOptionPromptFiveOptionsFutureResult()
+			availability := availabilityOptionPromptFiveOptionsFutureResultAt(now)
+			optionTwo := availability.Results[1]
 			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 				SessionID:        session.ID,
 				IdempotencyKey:   "draft-specific-rejected-availability-out-of-turn-" + reply,
@@ -1748,7 +1749,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
 				}
 				snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != optionTwo.TripID {
 					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
 				}
 				return
@@ -1770,7 +1771,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			now := availabilityTestObservedAt()
 			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 				Channel:        "WHATSAPP",
 				ContactKey:     "5511999999999",
@@ -1782,7 +1783,10 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 			if err != nil {
 				t.Fatalf("seed session: %v", err)
 			}
-			availability := availabilityOptionPromptFiveOptionsFutureResult()
+			availability := availabilityOptionPromptFiveOptionsFutureResultAt(now)
+			rejectedDateInput := availabilityTestDateInput(t, availability.Results[0].TripDate)
+			rejectedDateMetadata := availabilityTestDayMonthMetadata(t, availability.Results[0].TripDate)
+			optionTwo := availability.Results[1]
 			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 				SessionID:        session.ID,
 				IdempotencyKey:   "draft-specific-rejected-date-out-of-turn-" + reply,
@@ -1799,7 +1803,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 				t.Fatalf("seed availability draft: %v", err)
 			}
 
-			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "specific-rejected-date-out-of-turn-payment-"+reply, "não quero 13/07, paga agora?")
+			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "specific-rejected-date-out-of-turn-payment-"+reply, "não quero "+rejectedDateInput+", paga agora?")
 			if first.Draft == nil {
 				t.Fatal("expected payment info draft")
 			}
@@ -1817,8 +1821,8 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 				templateDataBool(templateData, outOfTurnRejectedWholeContextDataKey) {
 				t.Fatalf("expected specific rejected date metadata, got %+v", templateData)
 			}
-			if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{"13/07"}) {
-				t.Fatalf("expected rejected trip date [13/07], got %+v metadata=%+v", got, templateData)
+			if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{rejectedDateMetadata}) {
+				t.Fatalf("expected rejected trip date [%s], got %+v metadata=%+v", rejectedDateMetadata, got, templateData)
 			}
 
 			markSessionMessagesAutomationSent(t, store, session.ID)
@@ -1838,7 +1842,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
 				}
 				snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != optionTwo.TripID {
 					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
 				}
 				return
@@ -1944,7 +1948,7 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := availabilityTestObservedAt()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:        "WHATSAPP",
 		ContactKey:     "5511999999999",
@@ -1955,7 +1959,10 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	availability := availabilityOptionPromptHiddenPastPrefixResult()
+	availability := availabilityOptionPromptHiddenPastPrefixResultAt(now)
+	hiddenPast := availability.Results[0]
+	visibleFuture := availability.Results[1]
+	visibleDate := availabilityTestDateInput(t, visibleFuture.TripDate)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-availability-hidden-raw-prefix-date-selection",
@@ -1972,7 +1979,7 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 		t.Fatalf("seed availability draft: %v", err)
 	}
 
-	out := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "hidden-raw-prefix-date-selection", "13/07, paga agora?")
+	out := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "hidden-raw-prefix-date-selection", visibleDate+", paga agora?")
 	if out.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
@@ -1987,8 +1994,8 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	if !ok {
 		t.Fatalf("expected canonical_state in memory, got %#v", out.Memory["canonical_state"])
 	}
-	if canonicalState.Route.TripID != "trip-2026-07-13" ||
-		canonicalState.Route.TripID == "trip-2026-07-06" {
+	if canonicalState.Route.TripID != visibleFuture.TripID ||
+		canonicalState.Route.TripID == hiddenPast.TripID {
 		t.Fatalf("expected canonical route to use visible trip, got %+v", canonicalState.Route)
 	}
 	toolContext := asMap(out.Draft.Payload["tool_context"])
@@ -1997,7 +2004,7 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	if len(results) != 1 {
 		t.Fatalf("expected filtered availability facts with 1 visible result, got %d payload=%+v", len(results), availabilityPayload)
 	}
-	if got := strings.TrimSpace(asString(results[0]["trip_id"])); got != "trip-2026-07-13" {
+	if got := strings.TrimSpace(asString(results[0]["trip_id"])); got != visibleFuture.TripID {
 		t.Fatalf("expected filtered facts to start with visible trip, got trip_id=%q payload=%+v", got, availabilityPayload)
 	}
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
@@ -2012,7 +2019,7 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := availabilityTestObservedAt()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:        "WHATSAPP",
 		ContactKey:     "5511999999999",
@@ -2023,7 +2030,9 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	selectedOption := availability.Results[1]
+	selectedDate := availabilityTestDateInput(t, selectedOption.TripDate)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-availability-two-options-date-selection",
@@ -2040,7 +2049,7 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 		t.Fatalf("seed availability draft: %v", err)
 	}
 
-	first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "two-options-date-selection", "14/07, paga agora?")
+	first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "two-options-date-selection", selectedDate+", paga agora?")
 	if first.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
@@ -2057,17 +2066,17 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	if got := asInt(firstSnapshot["selected_option_index"]); got != 2 {
 		t.Fatalf("expected selected availability snapshot index 2, got %d snapshot=%+v", got, firstSnapshot)
 	}
-	if got := strings.TrimSpace(asString(firstSnapshot["trip_id"])); got != "trip-2026-07-14" {
-		t.Fatalf("expected selected availability snapshot trip-2026-07-14, got %q snapshot=%+v", got, firstSnapshot)
+	if got := strings.TrimSpace(asString(firstSnapshot["trip_id"])); got != selectedOption.TripID {
+		t.Fatalf("expected selected availability snapshot %s, got %q snapshot=%+v", selectedOption.TripID, got, firstSnapshot)
 	}
 	normalizedSnapshot := asMap(first.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(normalizedSnapshot["trip_id"])); got != "trip-2026-07-14" {
-		t.Fatalf("expected normalized selected availability snapshot trip-2026-07-14, got %q snapshot=%+v", got, normalizedSnapshot)
+	if got := strings.TrimSpace(asString(normalizedSnapshot["trip_id"])); got != selectedOption.TripID {
+		t.Fatalf("expected normalized selected availability snapshot %s, got %q snapshot=%+v", selectedOption.TripID, got, normalizedSnapshot)
 	}
 	firstAvailability := asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
 	firstResults := asInterfaceSliceMaps(firstAvailability["results"])
-	if len(firstResults) != 2 || strings.TrimSpace(asString(firstResults[1]["trip_id"])) != "trip-2026-07-14" {
-		t.Fatalf("expected selection draft to carry visible options with 14/07 at index 2, got %+v", firstAvailability)
+	if len(firstResults) != 2 || strings.TrimSpace(asString(firstResults[1]["trip_id"])) != selectedOption.TripID {
+		t.Fatalf("expected selection draft to carry visible options with %s at index 2, got %+v", selectedDate, firstAvailability)
 	}
 	markSessionMessagesAutomationSent(t, store, session.ID)
 
@@ -2079,8 +2088,8 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	if got := asInt(bookingDraft["selected_option_index"]); got != 2 {
 		t.Fatalf("expected persisted selected option index 2, got %d context=%+v", got, bookingDraft)
 	}
-	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != "trip-2026-07-14" {
-		t.Fatalf("expected passenger turn to keep trip-2026-07-14, got %q context=%+v", got, bookingDraft)
+	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != selectedOption.TripID {
+		t.Fatalf("expected passenger turn to keep %s, got %q context=%+v", selectedOption.TripID, got, bookingDraft)
 	}
 	if got := asInt(bookingDraft["passenger_count"]); got != 1 {
 		t.Fatalf("expected passenger_count=1, got %d context=%+v", got, bookingDraft)
@@ -2089,7 +2098,7 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 		t.Fatalf("expected continuation draft to preserve selected_option_index=2, got %d payload=%+v", got, second.Draft.NormalizedPayload)
 	}
 	secondSnapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(secondSnapshot["trip_id"])); got != "trip-2026-07-14" {
+	if got := strings.TrimSpace(asString(secondSnapshot["trip_id"])); got != selectedOption.TripID {
 		t.Fatalf("expected continuation draft to preserve selected trip snapshot, got %q snapshot=%+v", got, secondSnapshot)
 	}
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
@@ -2104,7 +2113,7 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := availabilityTestObservedAt()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:        "WHATSAPP",
 		ContactKey:     "5511999999999",
@@ -2115,7 +2124,9 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	selectedOption := availability.Results[1]
+	selectedDate := availabilityTestDateInput(t, selectedOption.TripDate)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-availability-two-options-before-reminder",
@@ -2141,12 +2152,12 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	}
 	firstAvailability := asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
 	firstResults := asInterfaceSliceMaps(firstAvailability["results"])
-	if len(firstResults) != 2 || strings.TrimSpace(asString(firstResults[1]["trip_id"])) != "trip-2026-07-14" {
-		t.Fatalf("expected reminder to carry two visible options with 14/07 at index 2, got %+v", firstAvailability)
+	if len(firstResults) != 2 || strings.TrimSpace(asString(firstResults[1]["trip_id"])) != selectedOption.TripID {
+		t.Fatalf("expected reminder to carry two visible options with %s at index 2, got %+v", selectedDate, firstAvailability)
 	}
 	markSessionMessagesAutomationSent(t, store, session.ID)
 
-	second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "two-options-selection-after-reminder", "14/07")
+	second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "two-options-selection-after-reminder", selectedDate)
 	if second.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
@@ -2157,7 +2168,7 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 		t.Fatalf("expected selected option index 2 after reminder, got %d payload=%+v", got, second.Draft.NormalizedPayload)
 	}
 	secondSnapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(secondSnapshot["trip_id"])); got != "trip-2026-07-14" {
+	if got := strings.TrimSpace(asString(secondSnapshot["trip_id"])); got != selectedOption.TripID {
 		t.Fatalf("expected selected trip snapshot after reminder, got %q snapshot=%+v", got, secondSnapshot)
 	}
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
@@ -2173,11 +2184,11 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	if got := asInt(bookingDraft["selected_option_index"]); got != 2 {
 		t.Fatalf("expected selected option index 2 after passenger turn, got %d context=%+v", got, bookingDraft)
 	}
-	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != "trip-2026-07-14" {
-		t.Fatalf("expected passenger turn to keep selected trip-2026-07-14, got %q context=%+v", got, bookingDraft)
+	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != selectedOption.TripID {
+		t.Fatalf("expected passenger turn to keep selected %s, got %q context=%+v", selectedOption.TripID, got, bookingDraft)
 	}
 	thirdSnapshot := asMap(third.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(thirdSnapshot["trip_id"])); got != "trip-2026-07-14" {
+	if got := strings.TrimSpace(asString(thirdSnapshot["trip_id"])); got != selectedOption.TripID {
 		t.Fatalf("expected passenger continuation to preserve selected trip snapshot, got %q snapshot=%+v", got, thirdSnapshot)
 	}
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(third.ToolCalls) != 0 {
@@ -2192,7 +2203,7 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := availabilityTestObservedAt()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:        "WHATSAPP",
 		ContactKey:     "5511999999999",
@@ -2203,22 +2214,7 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	oldAvailability := AvailabilitySearchResult{
-		Filter: AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 1},
-		Results: []AvailabilitySearchItem{{
-			TripID:                 "trip-2026-07-13",
-			BoardStopID:            "board-2026-07-13",
-			AlightStopID:           "alight-2026-07-13",
-			OriginDisplayName:      "Videira/SC",
-			DestinationDisplayName: "Santa Ines/MA",
-			OriginDepartTime:       "13:00",
-			TripDate:               "2026-07-13",
-			Price:                  950,
-			Currency:               "BRL",
-			Status:                 "ACTIVE",
-			TripStatus:             "SCHEDULED",
-		}},
-	}
+	oldAvailability := availabilityOptionPromptFutureResultAt(now)
 	oldSelection := selectedAvailabilityResultPayloadFromAvailability(&oldAvailability, 1)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
@@ -2237,7 +2233,9 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 		t.Fatalf("seed old selected route draft: %v", err)
 	}
 
-	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	selectedOption := availability.Results[1]
+	selectedDate := availabilityTestDateInput(t, selectedOption.TripDate)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-new-availability-two-options",
@@ -2254,7 +2252,7 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 		t.Fatalf("seed new availability draft: %v", err)
 	}
 
-	out := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "replace-old-route-with-new-selection", "14/07, paga agora?")
+	out := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "replace-old-route-with-new-selection", selectedDate+", paga agora?")
 	if out.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
@@ -2263,15 +2261,15 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 		t.Fatalf("expected canonical_state in memory, got %#v", out.Memory["canonical_state"])
 	}
 	if canonicalState.Route.SelectedOptionIndex != 2 ||
-		canonicalState.Route.TripID != "trip-2026-07-14" ||
-		canonicalState.Route.BoardStopID != "board-2026-07-14" ||
-		canonicalState.Route.AlightStopID != "alight-2026-07-14" ||
-		canonicalState.Route.TripDate != "2026-07-14" ||
-		canonicalState.Route.DepartureTime != "14:00" {
+		canonicalState.Route.TripID != selectedOption.TripID ||
+		canonicalState.Route.BoardStopID != selectedOption.BoardStopID ||
+		canonicalState.Route.AlightStopID != selectedOption.AlightStopID ||
+		canonicalState.Route.TripDate != selectedOption.TripDate ||
+		canonicalState.Route.DepartureTime != selectedOption.OriginDepartTime {
 		t.Fatalf("expected new selection to replace old canonical route atomically, got %+v", canonicalState.Route)
 	}
 	snapshot := asMap(out.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
+	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != selectedOption.TripID {
 		t.Fatalf("expected draft selected snapshot to use new trip, got %q snapshot=%+v", got, snapshot)
 	}
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
@@ -2280,15 +2278,22 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 }
 
 func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.T) {
-	for _, reply := range []string{"essa msm", "13/07"} {
-		t.Run(reply, func(t *testing.T) {
+	testCases := []struct {
+		name    string
+		deictic bool
+	}{
+		{name: "essa_msm", deictic: true},
+		{name: "data_visivel"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
 			store := newFakeStore()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
 
-			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			now := availabilityTestObservedAt()
 			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
 				Channel:        "WHATSAPP",
 				ContactKey:     "5511999999999",
@@ -2299,10 +2304,16 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 			if err != nil {
 				t.Fatalf("seed session: %v", err)
 			}
-			availability := availabilityOptionPromptHiddenPastPrefixResult()
+			availability := availabilityOptionPromptHiddenPastPrefixResultAt(now)
+			hiddenPast := availability.Results[0]
+			visibleFuture := availability.Results[1]
+			reply := availabilityTestDateInput(t, visibleFuture.TripDate)
+			if testCase.deictic {
+				reply = "essa msm"
+			}
 			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 				SessionID:        session.ID,
-				IdempotencyKey:   "draft-availability-before-out-of-turn-" + reply,
+				IdempotencyKey:   "draft-availability-before-out-of-turn-" + testCase.name,
 				Body:             buildAvailabilityListReply(availability),
 				SenderName:       "SHABAS",
 				ProcessingStatus: messageStatusAutomationSent,
@@ -2316,7 +2327,7 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 				t.Fatalf("seed availability draft: %v", err)
 			}
 
-			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "out-of-turn-payment-"+reply, "paga agora?")
+			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "out-of-turn-payment-"+testCase.name, "paga agora?")
 			if first.Draft == nil {
 				t.Fatal("expected out-of-turn payment draft")
 			}
@@ -2328,7 +2339,7 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 			}
 			firstAvailability := asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
 			firstResults := asInterfaceSliceMaps(firstAvailability["results"])
-			if len(firstResults) != 1 || strings.TrimSpace(asString(firstResults[0]["trip_id"])) != "trip-2026-07-13" {
+			if len(firstResults) != 1 || strings.TrimSpace(asString(firstResults[0]["trip_id"])) != visibleFuture.TripID {
 				t.Fatalf("expected payment reminder to carry filtered visible availability context, got %+v", firstAvailability)
 			}
 			markSessionMessagesAutomationSent(t, store, session.ID)
@@ -2351,13 +2362,13 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 			if !ok {
 				t.Fatalf("expected canonical_state in memory, got %#v", second.Memory["canonical_state"])
 			}
-			if canonicalState.Route.TripID != "trip-2026-07-13" ||
-				canonicalState.Route.TripID == "trip-2026-07-06" {
+			if canonicalState.Route.TripID != visibleFuture.TripID ||
+				canonicalState.Route.TripID == hiddenPast.TripID {
 				t.Fatalf("expected selected route to use visible trip after %q, got %+v", reply, canonicalState.Route)
 			}
 			secondAvailability := asMap(asMap(second.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
 			secondResults := asInterfaceSliceMaps(secondAvailability["results"])
-			if len(secondResults) != 1 || strings.TrimSpace(asString(secondResults[0]["trip_id"])) != "trip-2026-07-13" {
+			if len(secondResults) != 1 || strings.TrimSpace(asString(secondResults[0]["trip_id"])) != visibleFuture.TripID {
 				t.Fatalf("expected selection draft to carry filtered visible availability context, got %+v", secondAvailability)
 			}
 			if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
