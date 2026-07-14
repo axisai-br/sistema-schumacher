@@ -280,8 +280,8 @@ Regras:
 
 | Ordem | Slice | Status canônico | Plano | Objetivo resumido |
 |---:|---|---|---|---|
-| 1 | P0-A | **PRÓXIMA** | `plans/p0-a-reconciliar-deploy-smoke.md` | Executar a reconciliação operacional prevista no plano antes de qualquer mudança subsequente. |
-| 2 | P0-B | **BLOQUEADA por P0-A** | `plans/p0-b-corrigir-fixtures-temporais.md` | Tornar determinísticas as nove fixtures temporais sem alterar produção. |
+| 1 | P0-A | **CONCLUIDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
+| 2 | P0-B | **PRÓXIMA - NAO INICIADA** | `plans/p0-b-corrigir-fixtures-temporais.md` | Tornar determinísticas as nove fixtures temporais sem alterar produção. |
 | 3 | P0-C | **PENDENTE após P0-B** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
 | 4 | 3.6F-A | **PENDENTE após P0-C** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
 | 5 | 3.6F-B | **PENDENTE** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
@@ -401,6 +401,83 @@ próxima ação única
 ```
 
 Não marcar etapa como concluída sem evidência correspondente ao critério de aceite do seu plano.
+
+### 8.3 Registro operacional — P0-A (2026-07-14)
+
+**Status:** **PASS CONTROLADO — REVIEW PENDENTE**.
+
+#### Baseline e deploy
+
+```text
+HEAD local e origin/main nesta execução: eacacd35350e415cd2470b157968db8f6d2a34c6
+SHA implantado verificado anteriormente em 2026-07-14: d5e9ae9ef57333fb309d2a8447a76ba0f5332a60
+serviço: schumacher-api_schumacher-api, 1/1
+imagem: ghcr.io/joaovitormessias/sistema-schumacher-api:main
+digest implantado: sha256:d9db37a9f1313dfa65df4b320a33409779513f46fc88508c18ac0f21075e0fde
+```
+
+O commit `eacacd3` contém somente a canonicalização documental posterior ao deploy. `git diff --stat d5e9ae9..eacacd3 -- apps/api` não apresentou diferenças; portanto o código da API exercitado deterministicamente abaixo é o mesmo do SHA implantado. A nova tentativa read-only de inspecionar o Swarm exigiu senha de `sudo` e foi interrompida sem alteração de estado; o SHA, a imagem, o digest e as flags implantadas abaixo são a evidência operacional já verificada anteriormente nesta data.
+
+#### Flags efetivas e saúde
+
+```text
+CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED=true
+CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED ausente -> false pelo config
+CHAT_AGENT_MODE ausente -> legacy pelo config
+GET https://api.schumachertursc.com.br/health -> 200 {"status":"ok"}
+GET https://api.schumachertursc.com.br/ready -> 200 {"status":"ready"}
+```
+
+Os fallbacks de flags foram conferidos em `apps/api/internal/shared/config/config.go`: booleano ausente é `false` e `CHAT_AGENT_MODE` usa `legacy` como default.
+
+#### Smoke H-012 implantado até a fronteira sem side effect
+
+| Passo | Evidência persistida |
+|---|---|
+| opção `1` | `ASK_PASSENGER_COUNT`, `selected_option_index=1` |
+| `só pra mim` | `ASK_CHILD_UNDER_5` |
+| `sim` | `ASK_PASSENGER_DOCUMENTS`, `expected_document_count=2` |
+| documento adulto sintético | snapshot `1/2`; permaneceu em `ASK_PASSENGER_DOCUMENTS` |
+| documento criança sintético | snapshot `2/2`; avançou para `ASK_LAP_CHILD_ASSIGNMENT` |
+| atribuição `2` | snapshot v1 com adulto + criança, fonte `EXPLICIT_ASSIGNMENT`; `CONFIRM_EXTRACTED_DOCUMENT` |
+| confirmação final `sim` | não executada em produção; zero chamadas de `booking_create` na sessão implantada |
+
+O smoke implantado chegou corretamente a `CONFIRM_EXTRACTED_DOCUMENT` e comprovou o bloqueio de `booking_create` antes da confirmação final. Ele não é usado isoladamente como prova de PASS.
+
+#### Evidência controlada do gate final no mesmo SHA
+
+Um archive temporário exato de `d5e9ae9ef57333fb309d2a8447a76ba0f5332a60` executou:
+
+```text
+go test -count=1 ./internal/chat -run '^(TestReprocessSequentialChildThenAdultDocumentExtractMergesPassengers|TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreate)$' -v
+PASS
+ok schumacher-tur/api/internal/chat
+```
+
+Em conjunto, os dois testes comprovam somente:
+
+- fluxo com dois passageiros;
+- zero chamadas de `booking_create` antes da confirmação final;
+- exatamente uma chamada de `booking_create` depois de uma confirmação final.
+
+A composição das duas evidências classifica o P0-A como **PASS CONTROLADO**: o serviço implantado foi exercitado somente até a fronteira sem side effect, enquanto o gate final e a cardinalidade de uma única chamada foram comprovados em ambiente determinístico e seguro no mesmo SHA da API implantada.
+
+#### Justificativa de segurança
+
+A viagem e os stops sintéticos do smoke não existem nas tabelas operacionais; confirmar essa sessão em produção terminaria em falha e não provaria o caminho de sucesso. Substituí-los por uma viagem real faria `booking_create` persistir `bookings`, `passengers` e `booking_payment_details` e ocupar assentos reais. Como o alvo não possui dry-run ou sandbox configurado, a confirmação final em produção não foi executada.
+
+#### Fechamento
+
+```text
+arquivos alterados: docs/EXECUTION_TRACKER.md
+mudança funcional: nenhuma
+testes Go: dois testes focados no archive exato do SHA implantado; PASS
+verificações: git fetch --prune origin; HEAD/origin-main; diff de apps/api entre os SHAs; health; ready; git diff --check
+resultado do review: review final concluído sem P1/P2
+teste em produção: não executar confirmação final sem sandbox; fronteira sem side effect já verificada
+riscos restantes: SHA/flags do Swarm não foram relidos após a exigência de sudo; permanecem registrados pela verificação anterior de 2026-07-14
+próxima ação única: executar somente o Slice P0-B mediante novo /goal explícito.
+```
 
 ---
 
