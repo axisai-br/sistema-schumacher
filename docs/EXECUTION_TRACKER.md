@@ -280,11 +280,11 @@ Regras:
 
 | Ordem | Slice | Status canônico | Plano | Objetivo resumido |
 |---:|---|---|---|---|
-| 1 | P0-A | **CONCLUIDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
-| 2 | P0-B | **EM CORREÇÃO APÓS REVIEW** | `plans/p0-b-corrigir-fixtures-temporais.md` | Corrigir o P2 de virada do ano nas fixtures temporais, sem alterar produção. |
-| 3 | P0-C | **EM REVIEW — GATE LOCAL VALIDADO** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
-| 4 | 3.6F-A | **PENDENTE após P0-C** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
-| 5 | 3.6F-B | **PENDENTE** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
+| 1 | P0-A | **CONCLUÍDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
+| 2 | P0-B | **CONCLUÍDA** | `plans/p0-b-corrigir-fixtures-temporais.md` | fixtures temporais estabilizadas e review final concluído sem P1/P2. |
+| 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | `publish-api` depende de `test-api`; execução remota concluída com sucesso. |
+| 4 | 3.6F-A | **EM REVIEW — CONTRATO LOCAL VALIDADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
+| 5 | 3.6F-B | **BLOQUEADA por 3.6F-A** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
 | 6 | 3.6F-C | **PENDENTE** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
 | 7 | 3.6F-D | **PENDENTE** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis. |
 | 8 | 3.6F-E | **PENDENTE** | `plans/3.6f-e-observabilidade-v2.md` | Expor métricas V2 sanitizadas e read-only. |
@@ -404,7 +404,9 @@ Não marcar etapa como concluída sem evidência correspondente ao critério de 
 
 ### 8.3 Registro operacional — P0-A (2026-07-14)
 
-**Status:** **PASS CONTROLADO — REVIEW PENDENTE**.
+**Status:** **CONCLUÍDA — PASS CONTROLADO**.
+
+O review final foi concluído sem achados P1/P2. Não permanece status ou ação de review pendente no P0-A.
 
 #### Baseline e deploy
 
@@ -476,12 +478,25 @@ verificações: git fetch --prune origin; HEAD/origin-main; diff de apps/api ent
 resultado do review: review final concluído sem P1/P2
 teste em produção: não executar confirmação final sem sandbox; fronteira sem side effect já verificada
 riscos restantes: SHA/flags do Swarm não foram relidos após a exigência de sudo; permanecem registrados pela verificação anterior de 2026-07-14
-próxima ação única: executar somente o Slice P0-B mediante novo /goal explícito.
+próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B.
 ```
 
 ### 8.4 Registro operacional — P0-B (2026-07-14)
 
-**Status:** **EM CORREÇÃO APÓS REVIEW**.
+**Status:** **CONCLUÍDA**.
+
+#### Evidência Git e review final
+
+Na base atual `HEAD=42eb73c08ac331d28d3edf1fdec8cf50c96d43fc`:
+
+```text
+commit do P0-B: b3843585f7af0b285086a9a4e6c53ddcb86f0d9a
+merge da PR #53: 7dbc6eef92edd82fe611c94e4d0bb511deb51da9
+git merge-base b384358 HEAD: b3843585f7af0b285086a9a4e6c53ddcb86f0d9a
+git merge-base --is-ancestor b384358 HEAD: exit 0
+```
+
+A PR #53 está `MERGED` e o commit `b384358` é o segundo pai do merge `7dbc6ee`, confirmando que a correção integra a base atual. O review final foi concluído sem achados P1/P2.
 
 #### Baseline reproduzida e classificação
 
@@ -545,17 +560,17 @@ git diff --check -> PASS
 comportamento antes: datas fixas alteravam a lista visível conforme o calendário real e deslocavam seleção, rejeição e snapshot
 comportamento depois: categorias passado/hoje/futuro são relativas ao clock UTC, entradas dinâmicas preservam o ano e as expectativas acompanham a fixture
 mudança funcional de produção: nenhuma
-resultado do review: dois achados P2 identificados; correções implementadas e aguardando novo review antes de concluir P0-B
+resultado do review: os dois achados P2 foram corrigidos; review final concluído sem P1/P2
 teste em produção: não necessário; alteração exclusiva de testes e helpers de fixture
-riscos restantes: correção da fronteira anual ainda aguarda confirmação do novo review
-próxima ação única registrada no fechamento do P0-B: revisar novamente o P0-B; naquele momento, P0-C permanecia bloqueado e não iniciado
+riscos restantes: nenhum dentro do escopo do P0-B; a fronteira anual foi coberta pelas validações UTC e Pacific/Kiritimati
+próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
 ```
 
 ### 8.5 Registro operacional — P0-C (2026-07-14)
 
-**Status:** **EM REVIEW — GATE LOCAL VALIDADO**.
+**Status:** **CONCLUÍDA — GATE REMOTO VALIDADO**.
 
-A execução local deste slice ocorreu por novo `/goal` explícito na branch `ci/p0-c-test-gate`, baseada no commit `b384358` do P0-B. Isso não conclui o review canônico do P0-B e não libera 3.6F-A.
+A execução local deste slice ocorreu por novo `/goal` explícito na branch `ci/p0-c-test-gate`, baseada no commit `b384358` do P0-B. A PR #54 está `MERGED` em `42eb73c08ac331d28d3edf1fdec8cf50c96d43fc`, que é o `HEAD` da base atual; `git merge-base --is-ancestor 42eb73c HEAD` retornou exit 0.
 
 #### Workflow antes e depois
 
@@ -580,7 +595,7 @@ executa go test -count=1 ./...
 docs/EXECUTION_TRACKER.md
 ```
 
-#### Validação executada
+#### Validação local e remota executada
 
 Os comandos Go locais usaram `GOCACHE=/tmp/schumacher-go-build` e `GOTMPDIR=/tmp`:
 
@@ -591,16 +606,99 @@ ruby YAML.parse_file e checagem estrutural do gate em .github/workflows/publish-
 git diff --check -> PASS
 ```
 
+O GitHub Actions executou o workflow `Publish API to GHCR` no SHA de merge `42eb73c`:
+
+```text
+run: 29351723680
+evento: push em main
+status final do workflow: success
+test-api: success; 2026-07-14T16:56:52Z → 2026-07-14T16:58:17Z
+publish-api: success; 2026-07-14T16:58:20Z → 2026-07-14T16:59:26Z
+```
+
+`publish-api` iniciou somente depois da conclusão bem-sucedida de `test-api`, confirmando remotamente o encadeamento `test-api -> publish-api`. O workflow preserva `needs: test-api` no job `publish-api`.
+
 #### Fechamento
 
 ```text
 comportamento antes: build/push da API podia iniciar sem um gate anterior da suíte Go
 comportamento depois: publish-api depende de test-api e só pode iniciar após os dois comandos Go passarem
 mudança funcional de produção: nenhuma
-resultado do review: revisão local do diff sem achados P1/P2; review canônico do P0-C permanece pendente
-teste em produção: não necessário; execução real do workflow no GitHub não ocorreu porque commit e push não foram autorizados
-riscos restantes: validação local não executa o runner do GitHub Actions; confirmar o gate na execução da CI após integração
-próxima ação única: revisar o P0-C; não iniciar 3.6F-A
+resultado do review: review final concluído sem P1/P2; merge da PR #54 e gate remoto confirmados
+teste em produção: não necessário; o gate foi validado no GitHub Actions e não executa deploy
+riscos restantes: nenhum dentro do escopo do P0-C; o workflow publicou a imagem, sem alterar o fluxo de deploy
+próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
+```
+
+### 8.6 Registro operacional — 3.6F-A (2026-07-14)
+
+**Status:** **EM REVIEW — CONTRATO LOCAL VALIDADO**.
+
+#### Contrato criado
+
+O agregado local `TravelQueryMeaningV2` foi criado em paralelo ao `StructuredInterpretation` V1. O contrato contém:
+
+```text
+TravelQueryIntent
+LocationMeaning e LocationRole
+DatePreference e DateMode
+OptionReference e OptionReferenceKind
+RouteCoverageMeaning e RouteCoverageMode
+SeatRequestMode
+InstitutionalTopic
+DecisionStrength
+```
+
+`TravelQueryMeaningV2` preserva origem, destino, lista de localidades mencionadas, preferência de data, referência de opção, proposta semântica de cobertura, modo de poltrona, tema institucional, necessidade de esclarecimento, campos ausentes, confidence e reasons. `ACKNOWLEDGEMENT` foi adicionado como `TurnMeaning`, não como `TravelQueryIntent`. `DecisionStrength` permanece um tipo separado do agregado, preservando a separação entre significado semântico e arbitragem futura.
+
+O contrato não contém IDs operacionais, dependências externas, provider, banco, HTTP, parser, regex, execução de tool, persistência, resposta ao cliente ou integração runtime.
+
+#### Invariantes testadas
+
+```text
+valores explícitos de todos os novos enums
+estado zero não acionável
+origem, destino, via e referência próxima com papéis explícitos
+MentionedLocations preservada como lista
+EXACT, EARLIEST_AVAILABLE e ANY_AVAILABLE
+referência de opção por INDEX, DATE e DEICTIC
+BOOK_TRAVEL distinto de CHOOSE_SPECIFIC_SEAT
+pergunta institucional tipada
+cobertura por parada exata e referência próxima
+DecisionStrength STRONG, WEAK e FALLBACK distintos
+necessidade de esclarecimento, missing fields, confidence e reasons
+ACKNOWLEDGEMENT restrito a TurnMeaning
+```
+
+#### Arquivos alterados
+
+```text
+apps/api/internal/chat/travel_query_meaning_v2.go
+apps/api/internal/chat/travel_query_meaning_v2_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+#### Validação executada
+
+Os gates Go finais usaram o cache padrão fora do sandbox porque o cache temporário isolado atingiu a quota de disco durante as tentativas amplas:
+
+```text
+go test -count=1 ./internal/chat -run 'Test.*TravelQueryMeaningV2|Test.*Travel.*Contract|Test.*DecisionStrength' -> PASS
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS
+git diff --check -> PASS
+```
+
+#### Fechamento provisório
+
+```text
+comportamento antes: não existia contrato V2 capaz de representar papéis de localidade, data relativa, referência de opção, cobertura, poltrona e tema institucional
+comportamento depois: existe contrato Go local e puro para essas semânticas, sem consumo pelo fluxo atual
+mudança funcional de runtime: nenhuma
+resultado do review: revisão local sem achados P1/P2; review canônico do 3.6F-A permanece pendente
+teste em produção: não necessário; o contrato não está integrado ao runtime
+riscos restantes: enums e shapes ainda dependem do validator puro planejado para o 3.6F-B, que permanece bloqueado
+próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
 ```
 
 ---
