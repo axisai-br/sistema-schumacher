@@ -752,6 +752,43 @@ func TestIntentRouterAvailabilityDateSelectionMatchesVisibleOptions(t *testing.T
 	}
 }
 
+func TestAvailabilityDateSelectionAcrossYearBoundaryPreservesFutureYear(t *testing.T) {
+	observedAt := time.Date(2026, 12, 27, 12, 0, 0, 0, time.UTC)
+	availability := availabilityOptionPromptFutureResultAt(observedAt)
+	futureTrip := availability.Results[0]
+	dateInput := availabilityTestDateInput(t, futureTrip.TripDate)
+	if dateInput != "03/01/2027" {
+		t.Fatalf("expected full next-year date input 03/01/2027, got %q", dateInput)
+	}
+
+	parsedInput := extractTripDate(dateInput, observedAt)
+	if parsedInput == nil || parsedInput.UTC().Format("2006-01-02") != futureTrip.TripDate {
+		t.Fatalf("expected input to preserve future trip year %s, got %v", futureTrip.TripDate, parsedInput)
+	}
+	previousYearDate := parsedInput.AddDate(-1, 0, 0).Format("2006-01-02")
+	if parsedInput.Format("2006-01-02") == previousYearDate || parsedInput.Year() == observedAt.Year() {
+		t.Fatalf("next-year input must not resolve to previous year %s, got %s", previousYearDate, parsedInput.Format("2006-01-02"))
+	}
+
+	history := availabilityOptionPromptHistory(observedAt, availability)
+	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+	decision := routeDeterministicIntent(history, dateInput+", paga agora?", state, observedAt)
+	if decision.Intent != IntentSelectAvailabilityOption ||
+		decision.SelectedOptionIndex != 1 ||
+		decision.TemplateName != TemplateAskPassengerCount {
+		t.Fatalf("expected next-year date to select the future trip, got %+v", decision)
+	}
+
+	visible := currentAvailabilitySelectionPromptAvailabilityContextAt(history, observedAt)
+	snapshot := selectedAvailabilityResultPayloadFromAvailability(visible, decision.SelectedOptionIndex)
+	if got := strings.TrimSpace(asString(snapshot["trip_date"])); got != futureTrip.TripDate || got == previousYearDate {
+		t.Fatalf("expected selected snapshot date %s and not %s, got %q snapshot=%+v", futureTrip.TripDate, previousYearDate, got, snapshot)
+	}
+	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != futureTrip.TripID {
+		t.Fatalf("expected selected future trip %s, got %q snapshot=%+v", futureTrip.TripID, got, snapshot)
+	}
+}
+
 func TestIntentRouterAvailabilityDateSelectionIgnoresHiddenOrAmbiguousVisibleDates(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 
@@ -967,8 +1004,8 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment(t *testi
 }
 
 func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPaymentBlocksMatchingNumericOption(t *testing.T) {
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	history := availabilityRejectedDateOutOfTurnPaymentHistory(t, now)
+	now := availabilityTestObservedAt()
+	history, rejectedDateInput := availabilityRejectedDateOutOfTurnPaymentHistory(t, now)
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
 	rejected := routeDeterministicIntent(history, "1", state, now)
@@ -983,18 +1020,21 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPaymentBlocksMat
 	if selected.Intent != IntentSelectAvailabilityOption ||
 		selected.SelectedOptionIndex != 2 ||
 		selected.TemplateName != TemplateAskPassengerCount {
-		t.Fatalf("expected option 2 to remain selectable after rejecting 13/07, got %+v", selected)
+		t.Fatalf("expected option 2 to remain selectable after rejecting %s, got %+v", rejectedDateInput, selected)
 	}
 }
 
-func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time) []Message {
+func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time) ([]Message, string) {
 	t.Helper()
 
-	availability := availabilityOptionPromptFiveOptionsFutureResult()
+	availability := availabilityOptionPromptFiveOptionsFutureResultAt(now)
+	rejectedDateInput := availabilityTestDateInput(t, availability.Results[0].TripDate)
+	rejectedDateMetadata := availabilityTestDayMonthMetadata(t, availability.Results[0].TripDate)
+	rejectionBody := "não quero " + rejectedDateInput + ", paga agora?"
 	history := availabilityOptionPromptHistory(now, availability)
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 	activePrompt := InferActivePromptContext(history, state)
-	decision, ok := buildOutOfTurnInfoDecision("não quero 13/07, paga agora?", activePrompt)
+	decision, ok := buildOutOfTurnInfoDecision(rejectionBody, activePrompt)
 	if !ok {
 		t.Fatal("expected rejected date payment question to build out-of-turn decision")
 	}
@@ -1003,14 +1043,14 @@ func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time
 		t.Fatalf("expected rejected date payment question to render, got %+v", decision)
 	}
 	templateData := cloneMap(decision.TemplateData)
-	if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{"13/07"}) {
-		t.Fatalf("expected rejected trip date metadata [13/07], got %+v data=%+v", got, templateData)
+	if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{rejectedDateMetadata}) {
+		t.Fatalf("expected rejected trip date metadata [%s], got %+v data=%+v", rejectedDateMetadata, got, templateData)
 	}
 
 	return append(history,
 		Message{
 			Direction:  "INBOUND",
-			Body:       "não quero 13/07, paga agora?",
+			Body:       rejectionBody,
 			ReceivedAt: now.Add(-30 * time.Second),
 		},
 		Message{
@@ -1027,7 +1067,7 @@ func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time
 				},
 			},
 		},
-	)
+	), rejectedDateInput
 }
 
 func sameIntSlice(left []int, right []int) bool {
@@ -2412,6 +2452,87 @@ func availabilityOptionPromptHiddenPastPrefixResult() AvailabilitySearchResult {
 	hiddenPast.TripDate = "2026-07-06"
 	result.Results = []AvailabilitySearchItem{hiddenPast, result.Results[0]}
 	return result
+}
+
+func availabilityTestObservedAt() time.Time {
+	return time.Now().UTC()
+}
+
+func availabilityOptionPromptFutureResultAt(observedAt time.Time) AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	result.Results[0] = availabilityOptionPromptItemAt(result.Results[0], availabilityTestDate(observedAt, 7), "13:00")
+	return result
+}
+
+func availabilityOptionPromptTwoOptionsFutureResultAt(observedAt time.Time) AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResultAt(observedAt)
+	second := availabilityOptionPromptItemAt(result.Results[0], availabilityTestDate(observedAt, 8), "14:00")
+	result.Results = []AvailabilitySearchItem{result.Results[0], second}
+	return result
+}
+
+func availabilityOptionPromptTodayAndFutureResultAt(observedAt time.Time) AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResult()
+	today := availabilityOptionPromptItemAt(result.Results[0], availabilityTestDate(observedAt, 0), "13:00")
+	future := availabilityOptionPromptItemAt(result.Results[0], availabilityTestDate(observedAt, 1), "14:00")
+	result.Results = []AvailabilitySearchItem{today, future}
+	return result
+}
+
+func availabilityOptionPromptFiveOptionsFutureResultAt(observedAt time.Time) AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResultAt(observedAt)
+	options := make([]AvailabilitySearchItem, 0, 5)
+	for index := 0; index < 5; index++ {
+		item := availabilityOptionPromptItemAt(
+			result.Results[0],
+			availabilityTestDate(observedAt, 7+index),
+			twoDigit(13+index)+":00",
+		)
+		options = append(options, item)
+	}
+	result.Results = options
+	return result
+}
+
+func availabilityOptionPromptHiddenPastPrefixResultAt(observedAt time.Time) AvailabilitySearchResult {
+	result := availabilityOptionPromptFutureResultAt(observedAt)
+	hiddenPast := availabilityOptionPromptItemAt(result.Results[0], availabilityTestDate(observedAt, -7), "08:00")
+	result.Results = []AvailabilitySearchItem{hiddenPast, result.Results[0]}
+	return result
+}
+
+func availabilityOptionPromptItemAt(item AvailabilitySearchItem, tripDate time.Time, departureTime string) AvailabilitySearchItem {
+	suffix := tripDate.UTC().Format("2006-01-02")
+	item.TripID = "trip-" + suffix
+	item.BoardStopID = "board-" + suffix
+	item.AlightStopID = "alight-" + suffix
+	item.OriginDepartTime = departureTime
+	item.TripDate = suffix
+	return item
+}
+
+func availabilityTestDate(observedAt time.Time, dayOffset int) time.Time {
+	observedAt = observedAt.UTC()
+	today := time.Date(observedAt.Year(), observedAt.Month(), observedAt.Day(), 0, 0, 0, 0, time.UTC)
+	return today.AddDate(0, 0, dayOffset)
+}
+
+func availabilityTestDateInput(t *testing.T, tripDate string) string {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02", tripDate)
+	if err != nil {
+		t.Fatalf("parse availability fixture trip date %q: %v", tripDate, err)
+	}
+	return parsed.Format("02/01/2006")
+}
+
+func availabilityTestDayMonthMetadata(t *testing.T, tripDate string) string {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02", tripDate)
+	if err != nil {
+		t.Fatalf("parse availability fixture trip date %q: %v", tripDate, err)
+	}
+	return parsed.Format("02/01")
 }
 
 func availabilityOptionPromptDuplicateVisibleDateResult() AvailabilitySearchResult {

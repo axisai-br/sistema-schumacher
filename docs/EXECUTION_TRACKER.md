@@ -281,8 +281,8 @@ Regras:
 | Ordem | Slice | Status canônico | Plano | Objetivo resumido |
 |---:|---|---|---|---|
 | 1 | P0-A | **CONCLUIDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
-| 2 | P0-B | **PRÓXIMA - NAO INICIADA** | `plans/p0-b-corrigir-fixtures-temporais.md` | Tornar determinísticas as nove fixtures temporais sem alterar produção. |
-| 3 | P0-C | **PENDENTE após P0-B** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
+| 2 | P0-B | **EM CORREÇÃO APÓS REVIEW** | `plans/p0-b-corrigir-fixtures-temporais.md` | Corrigir o P2 de virada do ano nas fixtures temporais, sem alterar produção. |
+| 3 | P0-C | **BLOQUEADA por P0-B** | `plans/p0-c-ci-test-gate.md` | Fazer a publicação da API depender da suíte Go, preservando publicação e deploy. |
 | 4 | 3.6F-A | **PENDENTE após P0-C** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
 | 5 | 3.6F-B | **PENDENTE** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
 | 6 | 3.6F-C | **PENDENTE** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
@@ -477,6 +477,78 @@ resultado do review: review final concluído sem P1/P2
 teste em produção: não executar confirmação final sem sandbox; fronteira sem side effect já verificada
 riscos restantes: SHA/flags do Swarm não foram relidos após a exigência de sudo; permanecem registrados pela verificação anterior de 2026-07-14
 próxima ação única: executar somente o Slice P0-B mediante novo /goal explícito.
+```
+
+### 8.4 Registro operacional — P0-B (2026-07-14)
+
+**Status:** **EM CORREÇÃO APÓS REVIEW**.
+
+#### Baseline reproduzida e classificação
+
+No worktree limpo anterior ao patch, a execução focada dos nove cenários apresentou oito testes falhando e `TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach` passando, embora também usasse as mesmas fixtures fixas. As falhas deslocavam índices e snapshots porque datas de 06/07 e 13–17/07/2026 já eram passadas ou representavam o dia da execução.
+
+As baselines amplas anteriores ao patch confirmaram que não havia falha adicional fora desse conjunto:
+
+```text
+go test -count=1 ./internal/chat -> FAIL somente nos oito cenários temporais reproduzidos
+go test -count=1 ./... -> FAIL somente em internal/chat pelos mesmos oito cenários
+```
+
+#### Estratégia aplicada
+
+Os nove testes passaram a usar um clock de teste capturado em UTC e fixtures derivadas desse clock:
+
+```text
+passado explícito: observedAt - 7 dias
+hoje explícito: observedAt
+futuro imediato explícito: observedAt + 1 dia
+opções futuras dos fluxos integrados: observedAt + 7 a + 11 dias
+```
+
+Datas de entrada, IDs de viagem e expectativas são derivados dos itens da fixture. O cenário de atomic attach valida passado, hoje e futuro com o mesmo `ObservedAt` capturado pelo teste. Nenhuma regra, filtro ou arquivo de produção foi alterado.
+
+#### Defeito encontrado pelo review
+
+O review encontrou um P2 na fronteira dezembro→janeiro: `availabilityTestDayMonth` gerava mensagens apenas em `dd/mm`, enquanto `extractTripDate` associa entradas sem ano ao ano de `observedAt`. Assim, uma viagem relativa em janeiro do ano seguinte podia ser interpretada como janeiro do ano anterior e deixar de resolver a opção futura correta. Os gates executados em 14/07 e com timezone alternativo não cobriam essa virada anual.
+
+#### Correção dos achados P2
+
+O helper de entrada dinâmica foi substituído por `availabilityTestDateInput`, que formata a mensagem como `dd/mm/aaaa`. O formato `dd/mm` permaneceu somente no helper separado de expectativa dos metadados de rejeição, pois esse contrato armazena dia e mês. Nenhuma chamada a `extractTripDate` ou código de produção foi alterada.
+
+`TestAvailabilityDateSelectionAcrossYearBoundaryPreservesFutureYear` fixa `observedAt` em 27/12/2026, envia `03/01/2027`, exige a seleção da viagem futura de 2027 e confirma que o snapshot não usa 03/01/2026.
+
+#### Arquivos alterados
+
+```text
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+#### Validação executada
+
+Os comandos Go usaram `GOCACHE=/tmp/schumacher-go-build` e `GOTMPDIR=/tmp`. Uma tentativa intermediária de link falhou por quota de disco; após limpar somente o cache Go temporário, todas as execuções finais passaram:
+
+```text
+nove testes focados -> PASS
+TestAvailabilityDateSelectionAcrossYearBoundaryPreservesFutureYear -> PASS
+nove testes focados + fronteira anual com TZ=Pacific/Kiritimati -> PASS
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS
+git diff --check -> PASS
+```
+
+#### Fechamento
+
+```text
+comportamento antes: datas fixas alteravam a lista visível conforme o calendário real e deslocavam seleção, rejeição e snapshot
+comportamento depois: categorias passado/hoje/futuro são relativas ao clock UTC, entradas dinâmicas preservam o ano e as expectativas acompanham a fixture
+mudança funcional de produção: nenhuma
+resultado do review: dois achados P2 identificados; correções implementadas e aguardando novo review antes de concluir P0-B
+teste em produção: não necessário; alteração exclusiva de testes e helpers de fixture
+riscos restantes: correção da fronteira anual ainda aguarda confirmação do novo review
+próxima ação única: revisar novamente o P0-B; P0-C permanece bloqueado e não foi iniciado
 ```
 
 ---

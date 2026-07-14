@@ -443,7 +443,7 @@ func TestReprocessOpenAIInterpreterShadowAndAssistReuseSingleProviderCall(t *tes
 }
 
 func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *testing.T) {
-	observedAt := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	observedAt := availabilityTestObservedAt()
 	proposal := assistTestInterpretation(StructuredIntentSelectAvailabilityOption)
 	proposal.Booking.SelectedOptionIndex = 2
 	proposal.Booking.SelectedOptionIndexKnown = true
@@ -454,7 +454,19 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 			ProviderResponseID: "resp_assist_select_option",
 		},
 	}
-	availability := availabilityOptionPromptTwoOptionsFutureResult()
+	temporalFixture := availabilityOptionPromptTodayAndFutureResultAt(observedAt)
+	pastOption := availabilityOptionPromptItemAt(temporalFixture.Results[0], availabilityTestDate(observedAt, -1), "08:00")
+	visibleOptions := futureAvailabilityOptions(
+		[]AvailabilitySearchItem{pastOption, temporalFixture.Results[0], temporalFixture.Results[1]},
+		observedAt,
+	)
+	if len(visibleOptions) != 2 ||
+		visibleOptions[0].TripID != temporalFixture.Results[0].TripID ||
+		visibleOptions[1].TripID != temporalFixture.Results[1].TripID {
+		t.Fatalf("expected explicit past, today and future fixture semantics, got %+v", visibleOptions)
+	}
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(observedAt)
+	selectedOption := availability.Results[1]
 	history := []Message{{
 		Direction:        "OUTBOUND",
 		Body:             buildAvailabilityListReply(availability),
@@ -493,13 +505,13 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 	if got := asInt(run.RequestPayload["selected_option_index"]); got != 0 {
 		t.Fatalf("expected assist template builder not to persist metadata-only selected_option_index, got %d payload=%+v", got, run.RequestPayload)
 	}
-	run = attachSelectedAvailabilityResultToTemplateRun(run, currentAvailabilitySelectionPromptAvailabilityContext(history), assist.IntentDecision)
+	run = attachSelectedAvailabilityResultToTemplateRun(run, currentAvailabilitySelectionPromptAvailabilityContextAt(history, observedAt), assist.IntentDecision)
 	if got := asInt(run.RequestPayload["selected_option_index"]); got != 2 {
 		t.Fatalf("expected atomic attach to persist selected_option_index=2, got %d payload=%+v", got, run.RequestPayload)
 	}
 	snapshot := asMap(run.RequestPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != "trip-2026-07-14" {
-		t.Fatalf("expected selected snapshot trip-2026-07-14, got %q snapshot=%+v", got, snapshot)
+	if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != selectedOption.TripID {
+		t.Fatalf("expected selected snapshot %s, got %q snapshot=%+v", selectedOption.TripID, got, snapshot)
 	}
 	if got := asInt(snapshot["selected_option_index"]); got != 2 {
 		t.Fatalf("expected selected snapshot index 2, got %d snapshot=%+v", got, snapshot)
@@ -534,10 +546,10 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 	)
 	bookingDraft := collectBookingDraftContext(Session{}, history, "")
 	if bookingDraft.SelectedOptionIndex != 2 ||
-		bookingDraft.TripID != "trip-2026-07-14" ||
-		bookingDraft.BoardStopID != "board-2026-07-14" ||
-		bookingDraft.AlightStopID != "alight-2026-07-14" ||
-		bookingDraft.TripDate != "2026-07-14" ||
+		bookingDraft.TripID != selectedOption.TripID ||
+		bookingDraft.BoardStopID != selectedOption.BoardStopID ||
+		bookingDraft.AlightStopID != selectedOption.AlightStopID ||
+		bookingDraft.TripDate != selectedOption.TripDate ||
 		bookingDraft.PassengerCount != 1 ||
 		!bookingDraft.PassengerCountKnown {
 		t.Fatalf("expected passenger turn to keep assist-selected trip facts, got %+v", bookingDraft)
