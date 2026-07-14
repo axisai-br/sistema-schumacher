@@ -283,8 +283,8 @@ Regras:
 | 1 | P0-A | **CONCLUÍDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
 | 2 | P0-B | **CONCLUÍDA** | `plans/p0-b-corrigir-fixtures-temporais.md` | fixtures temporais estabilizadas e review final concluído sem P1/P2. |
 | 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | `publish-api` depende de `test-api`; execução remota concluída com sucesso. |
-| 4 | 3.6F-A | **EM REVIEW — CONTRATO LOCAL VALIDADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
-| 5 | 3.6F-B | **BLOQUEADA por 3.6F-A** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
+| 4 | 3.6F-A | **CONCLUÍDA** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criado `TravelQueryMeaningV2` e tipos fechados, sem runtime; review concluida sem p1/p2. |
+| 5 | 3.6F-B | **PRÓXIMA** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
 | 6 | 3.6F-C | **PENDENTE** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
 | 7 | 3.6F-D | **PENDENTE** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis. |
 | 8 | 3.6F-E | **PENDENTE** | `plans/3.6f-e-observabilidade-v2.md` | Expor métricas V2 sanitizadas e read-only. |
@@ -632,7 +632,7 @@ próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
 
 ### 8.6 Registro operacional — 3.6F-A (2026-07-14)
 
-**Status:** **EM REVIEW — CONTRATO LOCAL VALIDADO**.
+**Status:** **CONCLUÍDA — DEPLOY REALIZADO**.
 
 #### Contrato criado
 
@@ -695,10 +695,10 @@ git diff --check -> PASS
 comportamento antes: não existia contrato V2 capaz de representar papéis de localidade, data relativa, referência de opção, cobertura, poltrona e tema institucional
 comportamento depois: existe contrato Go local e puro para essas semânticas, sem consumo pelo fluxo atual
 mudança funcional de runtime: nenhuma
-resultado do review: revisão local sem achados P1/P2; review canônico do 3.6F-A permanece pendente
+resultado do review: revisão local sem achados P1/P2; review canônico do 3.6F-A concluido 
 teste em produção: não necessário; o contrato não está integrado ao runtime
-riscos restantes: enums e shapes ainda dependem do validator puro planejado para o 3.6F-B, que permanece bloqueado
-próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
+riscos restantes: enums e shapes ainda dependem do validator puro planejado para o 3.6F-B, que agora esta liberado para execução 
+próxima ação única: iniciar 3.6F-B
 ```
 
 ---
