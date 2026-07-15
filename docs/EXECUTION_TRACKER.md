@@ -283,9 +283,9 @@ Regras:
 | 1 | P0-A | **CONCLUÍDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
 | 2 | P0-B | **CONCLUÍDA** | `plans/p0-b-corrigir-fixtures-temporais.md` | fixtures temporais estabilizadas e review final concluído sem P1/P2. |
 | 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | `publish-api` depende de `test-api`; execução remota concluída com sucesso. |
-| 4 | 3.6F-A | **EM REVIEW — CONTRATO LOCAL VALIDADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | Criar `TravelQueryMeaningV2` e tipos fechados, sem runtime. |
-| 5 | 3.6F-B | **BLOQUEADA por 3.6F-A** | `plans/3.6f-b-validator-v2.md` | Criar `ValidateTravelQueryMeaningV2` puro por invariantes e evidências. |
-| 6 | 3.6F-C | **PENDENTE** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
+| 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | `TravelQueryMeaningV2` criado sem integração runtime; review final sem P1/P2 e deploy confirmado. |
+| 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | Validator factual V2 concluído, puro e sem integração runtime. |
+| 6 | 3.6F-C | **PRÓXIMA** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
 | 7 | 3.6F-D | **PENDENTE** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis. |
 | 8 | 3.6F-E | **PENDENTE** | `plans/3.6f-e-observabilidade-v2.md` | Expor métricas V2 sanitizadas e read-only. |
 | 9 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | Liberar somente templates seguros para poltrona, institucional e acknowledgement. |
@@ -478,7 +478,7 @@ verificações: git fetch --prune origin; HEAD/origin-main; diff de apps/api ent
 resultado do review: review final concluído sem P1/P2
 teste em produção: não executar confirmação final sem sandbox; fronteira sem side effect já verificada
 riscos restantes: SHA/flags do Swarm não foram relidos após a exigência de sudo; permanecem registrados pela verificação anterior de 2026-07-14
-próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B.
+próxima ação única: executar somente o Slice 3.6F-B mediante novo /goal explícito.
 ```
 
 ### 8.4 Registro operacional — P0-B (2026-07-14)
@@ -563,7 +563,7 @@ mudança funcional de produção: nenhuma
 resultado do review: os dois achados P2 foram corrigidos; review final concluído sem P1/P2
 teste em produção: não necessário; alteração exclusiva de testes e helpers de fixture
 riscos restantes: nenhum dentro do escopo do P0-B; a fronteira anual foi coberta pelas validações UTC e Pacific/Kiritimati
-próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
+próxima ação única: executar somente o Slice 3.6F-B mediante novo /goal explícito.
 ```
 
 ### 8.5 Registro operacional — P0-C (2026-07-14)
@@ -627,12 +627,31 @@ mudança funcional de produção: nenhuma
 resultado do review: review final concluído sem P1/P2; merge da PR #54 e gate remoto confirmados
 teste em produção: não necessário; o gate foi validado no GitHub Actions e não executa deploy
 riscos restantes: nenhum dentro do escopo do P0-C; o workflow publicou a imagem, sem alterar o fluxo de deploy
-próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
+próxima ação única: executar somente o Slice 3.6F-B mediante novo /goal explícito.
 ```
 
 ### 8.6 Registro operacional — 3.6F-A (2026-07-14)
 
-**Status:** **EM REVIEW — CONTRATO LOCAL VALIDADO**.
+**Status:** **CONCLUÍDA — DEPLOY CONFIRMADO**.
+
+#### Evidência Git, publicação e deploy
+
+```text
+commit do contrato 3.6F-A: b6020a3364e6e962f52e83df10aa12629bb1807b
+merge da PR #55 em main: 32ab3bcc1ce12288d7c5f251a59b6ecc5f293aad
+git merge-base --is-ancestor b6020a3 origin/main: exit 0
+GitHub Actions run: 29355071178
+test-api: success; 2026-07-14T17:45:13Z → 2026-07-14T17:46:03Z
+publish-api: success; 2026-07-14T17:46:07Z → 2026-07-14T17:47:10Z
+tags publicadas: main, sha-32ab3bc
+digest publicado: sha256:0131fa77a8f372fb1ba25f60dab43f181e6e91d627dfab7fca1dd5df8e784ec1
+serviço: schumacher-api_schumacher-api
+deploy: concluído e confirmado pelo responsável operacional
+health: HTTP 200 {"status":"ok"}
+ready: HTTP 200 {"status":"ready"}
+```
+
+O job `publish-api` iniciou somente após o sucesso de `test-api`. A imagem contém o contrato local do 3.6F-A, mas o slice não possui integração runtime nem comportamento user-visible.
 
 #### Contrato criado
 
@@ -689,16 +708,359 @@ go test -count=1 ./... -> PASS
 git diff --check -> PASS
 ```
 
-#### Fechamento provisório
+#### Fechamento
 
 ```text
 comportamento antes: não existia contrato V2 capaz de representar papéis de localidade, data relativa, referência de opção, cobertura, poltrona e tema institucional
 comportamento depois: existe contrato Go local e puro para essas semânticas, sem consumo pelo fluxo atual
 mudança funcional de runtime: nenhuma
-resultado do review: revisão local sem achados P1/P2; review canônico do 3.6F-A permanece pendente
-teste em produção: não necessário; o contrato não está integrado ao runtime
-riscos restantes: enums e shapes ainda dependem do validator puro planejado para o 3.6F-B, que permanece bloqueado
-próxima ação única: executar o /review do 3.6F-A; não iniciar 3.6F-B
+resultado do review: review final concluído sem achados P1/P2
+teste em produção: deploy, health e ready confirmados; não há cenário funcional específico porque o contrato não está integrado ao runtime
+riscos restantes: a validação de enums, shapes e evidências pertence ao 3.6F-B e não bloqueia o fechamento do 3.6F-A
+próxima ação única: executar somente o Slice 3.6F-B mediante novo /goal explícito
+```
+
+### 8.7 Registro operacional — 3.6F-B (2026-07-14)
+
+**Status:** **CONCLUÍDA — REVIEW FINAL SEM P1/P2**.
+
+O primeiro review canônico identificou 3 P1 e 6 P2. O segundo identificou
+1 P1 e 3 P2. O terceiro identificou 4 P2, o quarto identificou 3 P2,
+o quinto identificou 1 P1 e 2 P2 e o sexto identificou 2 P1 e 2 P2.
+O sétimo review identificou 2 P1.
+O oitavo review identificou 1 P2.
+O nono review identificou inicialmente 2 P2; após as correções e a validação
+local, o review final não encontrou P1/P2.
+
+As correções dos cinco primeiros ciclos foram implementadas e testadas
+localmente. O sexto review, porém, revelou um problema arquitetural:
+o validator passou a reinterpretar linguagem natural em vez de apenas
+validar contrato, fatos e invariantes.
+
+O 3.6F-B está concluído e seguro para commit. Somente o 3.6F-C foi liberado
+como próxima etapa; sua execução depende de novo `/goal` explícito.
+
+#### Decisão arquitetural após o sexto review
+
+Os achados revelaram que o validator passou a reinterpretar linguagem
+natural por tokens, pontuação, caixa, conectores e janelas numéricas.
+
+Decisão canônica:
+
+- OpenAI interpreta linguagem humana;
+- validator verifica contrato, fatos e invariantes;
+- casos linguísticos adversariais pertencem ao corpus/evaluator;
+- não serão adicionadas novas regras semânticas locais para corrigir
+  os achados do sexto review;
+- o código semântico criado nos ciclos anteriores foi removido do validator e
+  retirado do caminho de aceitação;
+- o 3.6F-C permaneceu bloqueado até o review final da refatoração
+  arquitetural, concluído sem P1/P2.
+
+#### API local criada
+
+```text
+ValidateTravelQueryMeaningV2(TravelQueryValidationInputV2) TravelQueryValidationResultV2
+TravelQueryValidationStatus: ACCEPTED | REJECTED
+TravelQueryValidationResultV2: somente Status + ReasonCodes
+TravelQueryLocationEvidenceV2: nome canônico + StopID opcional
+TravelQueryAvailabilityFactsV2: opções visíveis + identidade temporal da mensagem fonte
+```
+
+`TravelQueryValidationInputV2` recebe a proposta `TravelQueryMeaningV2`, `currentTurn`, estado canônico, `ActivePromptContext`, histórico, `observedAt`, facts visíveis de disponibilidade, catálogo de localidades/paradas e a força da decisão existente. `CurrentTurn` é consultado somente para rejeitar entrada vazia; seu conteúdo não descobre ou altera significado. A aceitação é exclusivamente semântica: o resultado não contém tool, template, mutação de estado, mensagem, seleção, booking, pagamento ou handoff.
+
+#### Invariantes e reason codes
+
+O validator cobre estado zero/intent desconhecido, enums fechados, confidence, coerência de clarification/missing fields, combinações semânticas, papéis e evidências de localidade, data exata, `EARLIEST_AVAILABLE`, referência de opção, facts atuais, cobertura, institucional, poltrona e preservação de `STRONG`.
+
+```text
+EMPTY_CURRENT_TURN
+UNKNOWN_INTENT
+INVALID_ENUM_VALUE
+INVALID_CONFIDENCE
+LOW_CONFIDENCE_REQUIRES_CLARIFICATION
+INCOHERENT_CLARIFICATION
+INCONSISTENT_SEMANTIC_COMBINATION
+CONTRADICTORY_LOCATION_ROLE
+LOCATION_NOT_IN_CATALOG
+LOCATION_NOT_GROUNDED
+OBSERVED_AT_REQUIRED
+INVALID_EXACT_DATE
+EXACT_DATE_IN_PAST
+EARLIEST_AVAILABLE_ROUTE_REQUIRED
+CURRENT_AVAILABILITY_FACTS_REQUIRED
+CURRENT_AVAILABILITY_FACTS_INVALID
+INVALID_OPTION_REFERENCE
+OPTION_REFERENCE_MISMATCH
+OPTION_INDEX_OUT_OF_RANGE
+OPTION_DATE_NOT_VISIBLE
+AMBIGUOUS_OPTION_REFERENCE
+INVALID_ROUTE_COVERAGE
+ROUTE_COVERAGE_EVIDENCE_REQUIRED
+INVALID_SEAT_REQUEST
+INVALID_INSTITUTIONAL_TOPIC
+STRONG_DECISION_PROTECTED
+```
+
+A implementação anterior adicionou marcadores direcionais, matching lexical
+de localidades, extração contextual de índices e reconhecimento de UF.
+O sexto review demonstrou que essas regras estavam formando um segundo
+interpreter local; esses mecanismos foram removidos do validator e de seus
+testes unitários durante a correção arquitetural.
+
+#### Histórico das tentativas anteriores
+
+As seções abaixo preservam os achados e correções dos cinco primeiros ciclos.
+Elas são registro histórico, não definição da arquitetura final.
+
+As correções baseadas em parsing de frases, tokens, prefixos, caixa,
+pontuação ou janelas numéricas foram retiradas da suíte factual e
+reclassificadas para o shadow/corpus pelos planos 3.6F-C/D.
+
+#### Achados do review canônico e correções
+
+| Prioridade | Achado | Correção local |
+|---|---|---|
+| P1 | `INDEX` era aceito sem evidência explícita do índice | `INDEX` agora exige índice positivo explícito e compatível no turno; deíxis como `essa ai` não pode ser convertida silenciosamente, com uma ou várias opções. |
+| P1 | grounding de origem/destino aceitava o endpoint oposto | estado canônico e opções visíveis agora fundamentam origem somente como origem e destino somente como destino. |
+| P1 | opção visível incompleta podia ser tratada como fact confiável | toda opção agora exige `TripID`, `BoardStopID`, `AlightStopID` e data ISO válida não passada. |
+| P2 | `""` era aceito nos enums discriminadores | `DateMode`, `OptionReferenceKind`, `RouteCoverageMode`, `SeatRequestMode` e `InstitutionalTopic` agora exigem sentinelas explícitas do contrato. |
+| P2 | shape de `OptionReference` podia escapar pelo bypass de clarification | o shape discriminado de `NONE`, `INDEX`, `DATE` e `DEICTIC` é validado antes da coerência de clarification. |
+| P2 | cidade duplicada podia receber UF arbitrária | cidade presente em mais de uma UF exige UF explícita no turno ou evidência inequívoca em estado/facts atuais. |
+| P2 | coverage não era cruzado com `LocationRole` | `EXACT_STOP` exige `VIA`; `NEARBY_REFERENCE` exige `NEARBY_REFERENCE`, independentemente dos marcadores lexicais. |
+| P2 | `option_reference` podia ser declarado ausente sem ambiguidade real | deíxis/data resolvida por uma única opção rejeita clarification falsa; ausência real ou múltiplas opções continuam esclarecíveis. |
+| P2 | acknowledgement podia ser combinado com intent operacional | `ACKNOWLEDGEMENT` agora é rejeitado quando combinado com qualquer intent de viagem do agregado V2. |
+
+#### Segundo review canônico e correções
+
+| Prioridade | Achado | Correção local |
+|---|---|---|
+| P1 | presença dos dois endpoints no turno permitia inverter `Origin` e `Destination` | a construção explícita e catalogada `de A para B` agora fundamenta `A` somente como origem e `B` somente como destino; a regressão principal usa `Fraiburgo/SC → Santa Inês/MA`. |
+| P2 | `ExistingDecisionStrength=""` era aceito | a allowlist agora contém somente `STRONG`, `WEAK` e `FALLBACK`; vazio e desconhecido são rejeitados, `STRONG` continua protegido. |
+| P2 | cidade curta podia usar como grounding o prefixo de outra cidade | o matcher por tokens prioriza a correspondência canônica mais longa no mesmo ponto; `Santa Cecilia do Pavao/PR` não fundamenta `Santa Cecilia/SC`, enquanto `Santa Cecilia/SC` explícita continua válida. |
+| P2 | clarification por `DATE` não possuía regressões dos dois ramos | uma única opção na data rejeita clarification falsa; duas opções na mesma data aceitam ambiguidade real; data ausente, inválida ou invisível continua rejeitada. |
+
+#### Terceiro review canônico e correções
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P2 | acknowledgement puro não podia ser validado | somente `TurnMeaning=ACKNOWLEDGEMENT` com `Intent=UNKNOWN`, payload de viagem vazio e sentinelas tipadas válidas é aceito; intents operacionais e payload em origem, destino, local mencionado, data, opção, coverage, poltrona, institucional ou clarification são rejeitados. |
+| P2 | `State.Route` stale fundamentava endpoints antes dos facts atuais | endpoints das opções atuais, visíveis e confiáveis agora são autoritativos para origem/destino; a proposta dos facts é aceita apesar do estado antigo divergente e a rota fundamentada apenas pelo estado stale é rejeitada. |
+| P2 | UF incompatível na cidade longa liberava fallback para o prefixo curto | o matcher fixa primeiro a maior sequência lexical catalogada e só então valida a UF; `Santa Cecilia do Pavao/SC` não fundamenta a cidade longa `/PR` nem `Santa Cecilia/SC`, enquanto as menções explícitas corretas da longa `/PR` e da curta `/SC` continuam aceitas. |
+| P2 | `INDEX` exigia que o turno inteiro fosse um número | a validação extrai somente token inteiro positivo e delimitado, compatível com a opção proposta e dentro dos facts visíveis; aceita `quero a opção 2`, `pode ser a 2` e `escolho 2`, e rejeita ausência, zero, negativo, mismatch, fora do range, número em palavra/data/telefone e índices contraditórios. |
+
+As regressões do terceiro review foram executadas primeiro contra o validator anterior e reproduziram os quatro defeitos antes do patch funcional. A extração de índice usa somente limites de tokens e separadores numéricos locais; não foi criado parser geral ou regex ampla.
+
+#### Quarto review canônico e correções
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P2 | clarification por `option_reference` aceitava um índice explícito resolvível no turno | antes de considerar a referência ausente, o validator cruza o índice com facts atuais; índice explícito único e in-range torna a clarification incoerente, enquanto índice ausente, contraditório ou fora do range continua esclarecível. |
+| P2 | qualquer inteiro positivo isolado podia fundamentar `INDEX` | bare number permanece válido somente após o gate de prompt/facts atuais; respostas naturais exigem janela curta com contexto explícito de opção, preservando `quero a opção 2`, `pode ser a 2` e `escolho 2`, e rejeitando dia, idade, passageiros, data, telefone, CPF, valor, palavra e números contraditórios. |
+| P2 | palavra minúscula após cidade podia ser consumida como sigla de UF | o matcher passou a preservar valor normalizado, caixa original e separador anterior; esse ciclo bloqueou `Santa Cecilia se tiver vaga`, mas o caso em caixa alta ainda exigiu o endurecimento registrado no quinto review. |
+
+As regressões do quarto review foram executadas contra o validator anterior e reproduziram os três defeitos antes do patch funcional. A janela numérica e o token lexical com metadados mínimos permanecem locais e determinísticos, sem parser geral ou regex ampla.
+
+#### Quinto review canônico e correções
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P1 | `DATE`, `DEICTIC` ou clarification falsa podiam prevalecer apesar de índice explícito e resolvível no turno | o validator detecta primeiro o índice explícito contra os facts atuais; quando ele é único e in-range, somente `INDEX` com o mesmo valor é aceito. As regressões preservam o `INDEX` compatível e rejeitam `DATE`, `DEICTIC`, `NONE` com clarification e índice incompatível. |
+| P2 | a extração numérica varria o turno inteiro e deixava data, quantidade ou outro número competir com o índice | respostas naturais agora coletam somente números em janelas locais de referência de opção; `opção 2 no dia 15/07/2030` e `opção 2 para 3 passageiros` preservam o índice 2, enquanto alternativas coordenadas como `opção 1 ou 2` permanecem ambíguas e números sem contexto de opção são ignorados. |
+| P2 | `SE` em caixa alta e separado somente por espaço ainda podia ser consumido como UF | a UF adjacente à cidade exige delimitador explícito; somente `/SE`, `- SE`, `, SE` e `(SE)` são consumidos, e tanto `se` quanto `SE` conjuntivos sem delimitador são rejeitados como evidência de Sergipe. |
+
+As regressões do quinto review cobrem a precedência factual do índice, a limitação da janela numérica e as formas aceitas/rejeitadas de UF. As correções permanecem locais ao validator puro e não adicionam parser geral, provider, catálogo, integração runtime ou mudança de contrato.
+
+#### Sexto review canônico e decisão de refatoração
+
+| Prioridade | Achado | Destino correto |
+|---|---|---|
+| P1 | `opção 1 ou 2` podia ser resolvida silenciosamente por DATE | interpretação de ambiguidade pertence ao OpenAI V2 e ao corpus do 3.6F-D |
+| P1 | `opção 3` fora do range podia ser reinterpretada como DATE | o interpreter propõe INDEX; o validator apenas valida range e facts |
+| P2 | `daqui a 2 dias` podia fundamentar INDEX=2 | papel linguístico do número pertence ao interpreter |
+| P2 | cidade homônima podia ser fundamentada por facts coletivamente ambíguos | validator deve exigir fact estruturado inequívoco ou clarification |
+
+O sexto review não será corrigido com novas regras lexicais. Ele abriu uma
+refatoração da fronteira entre interpreter e validator.
+
+#### Refatoração arquitetural implementada
+
+- removidos parsing `de A para B`, marcadores de origem/destino/via/proximidade,
+  tokenização lexical, prefix matching e interpretação de UF;
+- removidas extração de índice, janelas numéricas, classificação de números e
+  qualquer comparação entre `CurrentTurn` e `OptionReference`;
+- removida interpretação local de deíxis; `DEICTIC` já estruturado é validado
+  somente pela cardinalidade dos facts e pela clarification;
+- `INDEX` já estruturado exige valor positivo, facts atuais confiáveis e range;
+- `DATE` já estruturada exige shape ISO e ocorrência nos facts atuais, com
+  clarification quando mais de uma opção compartilha a data;
+- origem/destino são cruzados com catálogo, state ou endpoints dos facts; facts
+  atuais vencem state antigo;
+- quando várias opções possuem endpoints diferentes, elas não fundamentam
+  coletivamente uma cidade homônima; um `INDEX` válido limita o grounding à
+  opção resolvida;
+- nomes canônicos com UF inexistente no catálogo não fazem fallback para outra
+  UF da mesma cidade;
+- testes linguísticos foram removidos da suíte do validator e registrados nos
+  planos 3.6F-C/D; os testes locais agora cobrem contrato, facts e invariantes.
+
+Casos movidos para o plano do corpus 3.6F-D:
+
+- `opção 1 ou 2`;
+- `opção 3`;
+- `daqui a 2 dias`;
+- `Santa Cecilia se tiver vaga`;
+- cidades homônimas com e sem fact inequívoco.
+
+#### Sétimo review canônico e correções (2026-07-15)
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P1 | o lookup de identidade canônica ainda chamava `normalizeCanonicalLocationKey`, que aplica `NormalizeIncomingCustomerText` e convertia `Freiburg/SC` em `Fraiburgo/SC` | o validator passou a usar normalização canônica dedicada e estável, limitada a trim, caixa, acentos e separador; ASR, aliases, fuzzy, fonética, prefixos, substituições e fallback de cidade ficam proibidos nesse lookup. `Freiburg/SC` agora é rejeitada quando somente `Fraiburgo/SC` existe no catálogo, e a identidade canônica correta continua aceita. |
+| P1 | endpoints de facts atuais eram fundamentados por `OriginDisplayName`/`DestinationDisplayName`, ignorando `OriginStopID`/`DestinationStopID` | cada StopID agora precisa resolver de forma única no catálogo e é a identidade autoritativa do endpoint. Display serve somente para apresentação/consistência: divergência invalida o fact; display sem UF pode ser consistente com a cidade resolvida, mas nunca escolhe identidade. StopID vazio, desconhecido ou ambíguo invalida os facts atuais. |
+
+Sem `INDEX` resolvido, todas as opções visíveis precisam concordar pelos StopIDs
+para fundamentar coletivamente um endpoint. Com `INDEX` válido, somente os IDs
+da opção selecionada são considerados. As regressões do sétimo review cobrem:
+
+- `Freiburg/SC` não corresponde a `Fraiburgo/SC`;
+- a identidade canônica correta continua aceita;
+- `DestinationStopID=SE_SANTA_CECILIA` com display `Santa Cecilia/SC` não
+  fundamenta a proposta `/SC`;
+- StopID correto com display sem UF usa a identidade do catálogo;
+- StopID inexistente ou ambíguo invalida os facts atuais;
+- opções com StopIDs diferentes não fundamentam coletivamente um endpoint;
+- `INDEX` válido limita o grounding aos IDs da opção selecionada.
+
+Esta correção não alterou `TravelQueryMeaningV2`, não adicionou parsing ou
+integração runtime e não implementou os slices 3.6F-C/D.
+
+#### Oitavo review canônico e correção (2026-07-15)
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P2 | facts aplicáveis ao prompt/histórico atual, porém inválidos, retornavam o mesmo `ok=false` usado para ausência/staleness e liberavam fallback para `State.Route`; sem `OptionReference`, uma proposta podia ser aceita pelo state stale | o envelope passou a receber classificação interna explícita `NOT_APPLICABLE`, `VALID` ou `INVALID`. Somente `NOT_APPLICABLE` permite evidência secundária do state; `INVALID` encerra a validação com `CURRENT_AVAILABILITY_FACTS_INVALID`, inclusive em `AVAILABILITY_SEARCH` com referência `NONE`. |
+
+A classificação separa identidade/aplicabilidade do envelope da validade das
+opções. Source/prompt/histórico divergente, invisível ou stale é
+`NOT_APPLICABLE`. Envelope atual com StopID vazio/desconhecido/ambíguo, display
+divergente, opção incompleta, contagem inconsistente ou data inválida/passada é
+`INVALID`. Envelope atual completo é `VALID`, autoritativo sobre `State.Route`.
+
+As regressões do oitavo review cobrem:
+
+- StopID desconhecido e ambíguo com state compatível;
+- display divergente com state compatível;
+- opção incompleta com state compatível;
+- data inválida e passada com state compatível;
+- proposta sem `OptionReference` com facts atuais inválidos;
+- facts atuais válidos vencendo state divergente;
+- facts ausentes permitindo state compatível;
+- facts stale/não aplicáveis sem classificação falsa como inválidos;
+- `INDEX` válido limitado à opção selecionada.
+
+Esta correção permanece local e pura, sem alteração do contrato ou integração
+runtime.
+
+#### Nono review canônico, correções e fechamento (2026-07-15)
+
+| Prioridade | Achado | Correção local e regressão |
+|---|---|---|
+| P2 | facts atuais inválidos eram classificados somente depois da coerência de clarification, permitindo que origem/destino do `State.Route` produzissem `INCOHERENT_CLARIFICATION` antes da rejeição factual terminal | a classificação é criada uma única vez logo após os gates de entrada vazia e proteção de `STRONG`, antes de clarification e das demais validações que podem consultar a rota efetiva. `INVALID` agora termina imediatamente com seu reason code fechado; os gates anteriores preservam precedência. |
+| P2 | `EARLIEST_AVAILABLE` sem origem/destino na proposta podia completar a rota pelo `State.Route` stale mesmo com facts atuais válidos e divergentes | quando os facts são `VALID`, a rota factual é derivada exclusivamente dos `OriginStopID`/`DestinationStopID` resolvidos de forma única no catálogo. As opções relevantes precisam concordar nos dois endpoints; divergência ou ausência de rota única retorna `EARLIEST_AVAILABLE_ROUTE_REQUIRED`, sem fallback para state ou identidade por display. |
+
+O contexto interno propaga a mesma classificação e a rota factual derivada para
+clarification, grounding, `EARLIEST_AVAILABLE`, referência de opção e coverage;
+nenhum helper reclassifica o envelope. `NOT_APPLICABLE` continua sendo o único
+estado que permite consultar `State.Route`, enquanto `INVALID` permanece
+terminal e `VALID` mantém autoridade sobre state stale.
+
+As regressões do nono review cobrem:
+
+- StopID desconhecido, display divergente, opção incompleta e data inválida
+  diante de clarification de origem/destino com state preenchido;
+- precedência de `EMPTY_CURRENT_TURN` e `STRONG_DECISION_PROTECTED` diante dos
+  mesmos facts inválidos;
+- `EARLIEST_AVAILABLE` aceito quando opções atuais concordam por StopID apesar
+  de `State.Route` divergente;
+- rejeição de `EARLIEST_AVAILABLE` quando opções atuais válidas não definem uma
+  rota única, mesmo que o state ofereça rota compatível;
+- preservação do fallback por state somente para facts `NOT_APPLICABLE`;
+- rejeição terminal de facts `INVALID` no fluxo `EARLIEST_AVAILABLE`.
+
+Esta correção não altera contrato, não usa display como identidade e não
+adiciona parser, provider, side effect ou integração runtime.
+
+O review final posterior às correções não encontrou P1/P2. O validator foi
+confirmado como estritamente factual: facts são classificados antes de
+clarification e grounding; `INVALID` é terminal; `VALID` usa somente facts
+atuais; `NOT_APPLICABLE` pode usar `State.Route`; e `EARLIEST_AVAILABLE`
+deriva a rota somente de StopIDs concordantes. O Slice 3.6F-B está seguro para
+commit. Produção não mudou porque o validator continua sem consumidor runtime.
+
+#### Regra operacional futura de cobertura — somente registro
+
+Não implementar no 3.6F-B:
+
+- cobertura poderá ser confirmada somente para rotas `SC → MA` ou `MA → SC`;
+- rotas `SC → SC` e `MA → MA` não deverão ser confirmadas automaticamente;
+- nesses casos, o fluxo futuro deverá orientar contato com suporte e oferecer consulta `SC ↔ MA`;
+- o lookup e a decisão de cobertura pertencem ao 3.6F-H;
+- o template e o número oficial pertencem ao slice apropriado e deverão usar fonte canônica, sem hardcode ou número inventado.
+
+Resposta futura esperada, ainda sem implementação:
+
+```text
+Referente a esse trajeto, peço que entre em contato com o suporte: [número oficial]. Caso queira verificar outra rota de SC para MA ou de MA para SC, estou à disposição.
+```
+
+#### Arquivos alterados
+
+```text
+apps/api/internal/chat/travel_query_validation_v2.go
+apps/api/internal/chat/travel_query_validation_v2_test.go
+docs/EXECUTION_TRACKER.md
+plans/3.6f-b-validator-v2.md
+```
+
+O contrato `travel_query_meaning_v2.go` não foi alterado.
+
+Composição prevista do commit do 3.6F-B:
+
+```text
+apps/api/internal/chat/travel_query_validation_v2.go
+apps/api/internal/chat/travel_query_validation_v2_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+`plans/3.6f-b-validator-v2.md` é fonte canônica local, mas está ignorado pela
+regra `plans` do `.gitignore`; suas mudanças ficam fora do commit. O
+`.gitignore` não foi alterado.
+
+#### Validação executada no fechamento após o review final
+
+As correções foram formatadas e validadas com o cache Go padrão:
+
+```text
+gofmt nos dois arquivos Go -> PASS
+go test -count=1 ./internal/chat -run 'TestValidateTravelQueryMeaningV2ClassifiesInvalidFactsBeforeRouteClarification|TestEarliestAvailableValidationUsesAvailabilityFactsRoutePrecedence' -> PASS
+go test -count=1 ./internal/chat -run 'TestValidateTravelQueryMeaningV2|Test.*LocationRole.*Validation|Test.*Earliest.*Validation|Test.*Seat.*Validation|Test.*Coverage.*Validation' -> PASS
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS
+git diff --check -> PASS
+```
+
+#### Fechamento do 3.6F-B
+
+```text
+comportamento antes: clarification podia consultar State.Route antes da classificação de facts inválidos; EARLIEST_AVAILABLE com facts válidos podia completar endpoints ausentes pelo state stale
+comportamento depois: a classificação factual ocorre uma única vez antes de clarification; INVALID é terminal, VALID fornece rota somente por StopIDs concordantes e somente NOT_APPLICABLE permite fallback para State.Route
+mudança funcional de runtime: nenhuma; o validator V2 não possui consumidor runtime
+resultado do review: o nono review encontrou inicialmente 2 P2; após as correções, o review final não encontrou P1/P2 e confirmou o validator como estritamente factual
+status final: CONCLUÍDA — REVIEW FINAL SEM P1/P2; seguro para commit
+teste em produção: não necessário; função não integrada
+riscos restantes: o future interpreter deverá produzir a identidade canônica e os StopIDs corretos; esses riscos pertencem ao shadow e aos slices posteriores, não reabrem o 3.6F-B
+próxima ação única: executar somente o 3.6F-C mediante novo /goal explícito
 ```
 
 ---
