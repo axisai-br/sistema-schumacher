@@ -68,6 +68,8 @@ type Service struct {
 	bookingCancel     BookingCanceler
 	profiles          AuthUserProfileEnsurer
 	openaiInterpreter OpenAIStructuredInterpreter
+	openaiTravelV2    OpenAITravelQueryV2Interpreter
+	travelV2Timeout   time.Duration
 }
 
 type chatLogger interface {
@@ -93,6 +95,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 	var bookingCancel BookingCanceler
 	var profiles AuthUserProfileEnsurer
 	var openaiInterpreter OpenAIStructuredInterpreter
+	var openaiTravelV2 OpenAITravelQueryV2Interpreter
 	for _, dep := range deps {
 		switch typed := dep.(type) {
 		case chatLogger:
@@ -152,6 +155,10 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 			if openaiInterpreter == nil {
 				openaiInterpreter = typed
 			}
+		case OpenAITravelQueryV2Interpreter:
+			if openaiTravelV2 == nil {
+				openaiTravelV2 = typed
+			}
 		}
 	}
 	return &Service{
@@ -171,6 +178,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 		bookingCancel:     bookingCancel,
 		profiles:          profiles,
 		openaiInterpreter: openaiInterpreter,
+		openaiTravelV2:    openaiTravelV2,
 	}
 }
 
@@ -712,7 +720,14 @@ func (s *Service) ReplyMedia(ctx context.Context, input ReplyMediaInput) (ReplyM
 	})
 }
 
-func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (ReprocessResult, error) {
+func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output ReprocessResult, outputErr error) {
+	var travelV2BackgroundJob *travelQueryV2ShadowBackgroundJob
+	defer func() {
+		if outputErr == nil && travelV2BackgroundJob != nil {
+			s.scheduleTravelQueryV2Shadow(*travelV2BackgroundJob)
+		}
+	}()
+
 	sessionID := strings.TrimSpace(input.SessionID)
 	session, err := s.GetSession(ctx, sessionID)
 	if err != nil {
@@ -861,6 +876,26 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (Reproces
 		jobRunID,
 		len(persisted.Messages),
 	)
+	if s.cfg.ChatOpenAITravelV2ShadowEnabled {
+		travelV2IdempotencyKey := buildTravelQueryV2ShadowIdempotencyKey(session.ID, candidates)
+		travelV2AvailabilityFacts := buildTravelQueryV2ShadowAvailabilityFacts(structuredInput, activePrompt)
+		travelV2BackgroundJob = &travelQueryV2ShadowBackgroundJob{
+			SessionID:      session.ID,
+			MessageID:      latestCandidateMessageID(candidates),
+			IdempotencyKey: travelV2IdempotencyKey,
+			Input: TravelQueryV2ShadowInput{
+				Enabled:                  true,
+				OpenAIInterpreter:        s.openaiTravelV2,
+				StructuredInput:          structuredInput,
+				ActivePrompt:             activePrompt,
+				AvailabilityFacts:        travelV2AvailabilityFacts,
+				LocationCatalog:          buildTravelQueryV2ShadowLocationCatalog(travelV2AvailabilityFacts),
+				ExistingDecisionStrength: travelQueryV2ShadowDecisionStrength(precomputedDeterministicDecision, shouldRunDocumentExtract(memory)),
+				IdempotencyKey:           travelV2IdempotencyKey,
+			},
+			Timeout: s.travelV2Timeout,
+		}
+	}
 
 	result := ReprocessResult{
 		Session:  persisted.Session,
@@ -3104,6 +3139,15 @@ func buildStructuredInterpreterShadowIdempotencyKey(sessionID string, candidates
 		parts = append(parts, message.ID)
 	}
 	return "chat-openai-interpreter-shadow-" + deterministicID(strings.Join(parts, "|"))
+}
+
+func buildTravelQueryV2ShadowIdempotencyKey(sessionID string, candidates []Message) string {
+	parts := make([]string, 0, len(candidates)+1)
+	parts = append(parts, sessionID)
+	for _, message := range candidates {
+		parts = append(parts, message.ID)
+	}
+	return "chat-openai-travel-v2-shadow-" + deterministicID(strings.Join(parts, "|"))
 }
 
 func deterministicID(value string) string {

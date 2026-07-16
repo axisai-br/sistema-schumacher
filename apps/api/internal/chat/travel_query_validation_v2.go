@@ -351,7 +351,7 @@ func travelQueryDecisionStrengthAllowed(strength DecisionStrength) bool {
 func travelQueryClarificationCoherent(input TravelQueryValidationInputV2, context travelQueryValidationContext) bool {
 	missing := make(map[string]struct{}, len(input.Proposal.MissingFields))
 	for _, raw := range input.Proposal.MissingFields {
-		field := strings.ToLower(strings.TrimSpace(raw))
+		field := strings.TrimSpace(raw)
 		if !travelQueryMissingFieldAllowed(field) {
 			return false
 		}
@@ -983,7 +983,7 @@ func travelQueryOptionAmbiguityClarified(proposal TravelQueryMeaningV2) bool {
 
 func travelQueryMissingFieldPresent(proposal TravelQueryMeaningV2, field string) bool {
 	for _, candidate := range proposal.MissingFields {
-		if strings.EqualFold(strings.TrimSpace(candidate), field) {
+		if strings.TrimSpace(candidate) == field {
 			return true
 		}
 	}

@@ -285,8 +285,8 @@ Regras:
 | 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | `publish-api` depende de `test-api`; execução remota concluída com sucesso. |
 | 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | `TravelQueryMeaningV2` criado sem integração runtime; review final sem P1/P2 e deploy confirmado. |
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | Validator factual V2 concluído, puro e sem integração runtime. |
-| 6 | 3.6F-C | **PRÓXIMA** | `plans/3.6f-c-openai-v2-shadow.md` | Produzir e validar V2 em shadow, sem efeito user-visible. |
-| 7 | 3.6F-D | **PENDENTE** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis. |
+| 6 | 3.6F-C | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-c-openai-v2-shadow.md` | Shadow V2 concluído sem efeito user-visible e com review final limpo. |
+| 7 | 3.6F-D | **PRÓXIMA** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis mediante novo `/goal` explícito. |
 | 8 | 3.6F-E | **PENDENTE** | `plans/3.6f-e-observabilidade-v2.md` | Expor métricas V2 sanitizadas e read-only. |
 | 9 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | Liberar somente templates seguros para poltrona, institucional e acknowledgement. |
 | 10 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | Consultar `EARLIEST_AVAILABLE` read-only e exigir confirmação. |
@@ -1061,6 +1061,353 @@ status final: CONCLUÍDA — REVIEW FINAL SEM P1/P2; seguro para commit
 teste em produção: não necessário; função não integrada
 riscos restantes: o future interpreter deverá produzir a identidade canônica e os StopIDs corretos; esses riscos pertencem ao shadow e aos slices posteriores, não reabrem o 3.6F-B
 próxima ação única: executar somente o 3.6F-C mediante novo /goal explícito
+```
+
+### 8.8 Registro operacional — 3.6F-C (2026-07-15 a 2026-07-16)
+
+**Status:** **CONCLUÍDA — REVIEW FINAL SEM P1/P2**.
+
+O primeiro review encontrou **3 P1 e 4 P2**. O 3.6F-D voltou a ficar
+bloqueado até que os achados sejam corrigidos, validados e submetidos a novo
+review sem P1/P2.
+
+As sete correções foram implementadas e validadas localmente neste ciclo. O
+status permanece `EM CORREÇÃO APÓS REVIEW` porque o novo review ainda é um gate
+obrigatório; esta validação local não libera o 3.6F-D.
+
+O segundo review encontrou **2 P2** adicionais: `missing_fields` ainda era
+case-insensitive dentro do validator factual, e uma falha de
+`CompleteTravelQueryV2Shadow` podia deixar o claim `IN_PROGRESS` sem estado
+terminal. As duas correções estão implementadas localmente, mas o status segue
+`EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado até novo review limpo.
+
+O terceiro review encontrou **1 P2**: a recuperação do lease ainda dependia de
+outro `Reprocess` para a mesma key. Sem novo turno, o ledger durável podia ficar
+`IN_PROGRESS` indefinidamente. A correção adiciona sweeper durável e
+independente de `Reprocess`, mas não antecipa aprovação: o status continua
+`EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado até review limpo.
+
+O quarto review encontrou **1 P1**: embora o lote transformado tivesse limite,
+a seleção ainda precisava varrer `chat_messages` e abrir o ledger JSONB antes
+do `LIMIT`. Em tabelas grandes, timeouts repetidos poderiam impedir progresso.
+A correção exigiu migration para um marcador relacional indexável; o status
+continua `EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado.
+
+O quinto review encontrou **1 P2**: a fixture PostgreSQL de recovery não criava
+as sessões-pai e omitia `chat_messages.direction`, portanto o teste falhava no
+schema canônico limpo antes de exercitar o lifecycle. A preparação canônica foi
+corrigida sem alterar migration ou runtime; o status continua
+`EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado.
+
+O sexto review encontrou **1 P2**: o teste alterava `enable_seqscan` no nível
+da sessão e descartava o erro do `RESET`, podendo devolver ao pool uma conexão
+com configuração artificial. O isolamento foi movido para `SET LOCAL` em
+transação com finalização verificada; o status continua
+`EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado.
+
+Após as seis correções e a reexecução dos gates, o review final não encontrou
+P1/P2. O 3.6F-C está concluído e seguro para commit. Somente o 3.6F-D foi
+liberado como `PRÓXIMA`; sua implementação depende de novo `/goal` explícito.
+
+O OpenAI Travel Interpreter V2 foi integrado em paralelo ao V1 somente como
+shadow. A flag `CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED` permanece desligada por
+padrão. A proposta V2 e o resultado factual do validator são persistidos
+somente como resumo sanitizado; nenhum dado do shadow alimenta router, decisão,
+template, resposta, tool, estado canônico ou autosend.
+
+#### Schema, prompt e runner
+
+O structured output `travel_query_meaning_v2` cobre todos os campos de
+`TravelQueryMeaningV2`, exige todos os campos, fecha enums e usa
+`additionalProperties=false` em todos os objetos. Origem e destino são campos
+obrigatórios nullable. O schema não contém tool, template, ação ou ID
+operacional executável.
+
+O prompt compacto recebe somente:
+
+- mensagem atual, com CPF/RG/CNH/documentos e telefone redigidos;
+- data observada e estado canônico mínimo de rota/seleção;
+- `ActivePromptContext` sem body ou identidade da mensagem;
+- facts estruturados da lista atual visível e confiável, sem IDs operacionais;
+- catálogo mínimo de localidades conhecidas somente quando os facts atuais não
+  bastam.
+
+As instruções delegam à OpenAI a interpretação de origem/destino, papéis de
+localidade, papel contextual de números, `INDEX`/`DATE`/`DEICTIC`, UF versus
+conjunção, ambiguidade/clarification, `EARLIEST_AVAILABLE`, coverage, poltrona,
+institucional e `ACKNOWLEDGEMENT`. O validator V2 permaneceu factual e não
+ganhou parsing linguístico.
+
+O runner usa Responses API com `store=false`, `tools=[]` e `tool_choice=none`.
+`missing_fields` é comparado após somente `TrimSpace`, de forma exata e
+case-sensitive; `ORIGIN` não é aceito como `origin`. Schema inválido, recusa,
+erro HTTP, timeout e resultado ausente geram status seguros. Toda proposta
+parseável, inclusive schema-invalid, passa por `ValidateTravelQueryMeaningV2`.
+
+#### Correções do primeiro review
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P1 | texto livre do provider podia entrar no resumo | `Origin`, `Destination`, `MentionedLocations` e `QueryLocation` persistem somente nome canônico com correspondência exata no catálogo confiável; nome completo, e-mail, endereço e texto arbitrário viram `__redacted_unallowlisted`, inclusive em proposta rejeitada. |
+| P1 | novo `Reprocess` ou concorrência repetia a chamada V2 | o inbound mantém ledger durável em `normalized_payload.travel_query_v2_shadow_claims[IdempotencyKey]`; `UPDATE ... WHERE claim ausente` concede `ACQUIRED` uma vez, `IN_PROGRESS` é ignorado com status seguro e `COMPLETED` reutiliza o resumo sem chamar o provider. Refusal, erro, timeout e panic também terminam em `COMPLETED`. |
+| P1 | provider síncrono bloqueava/cancelava o fluxo real | o job é agendado somente no retorno bem-sucedido de `Reprocess`, depois de draft/autosend; usa contexto independente, timeout de 10 segundos, completion com contexto próprio, limite global de quatro jobs e recuperação de panic. Fila cheia falha aberta sem bloquear. |
+| P2 | `missing_fields=["ORIGIN"]` passava por lowercase | validação agora é exata e case-sensitive antes do mapping. |
+| P2 | display `Seara` duplicava `SC_SEARA` | StopID único já conhecido preserva `Seara/SC`; display não cria identidade, e StopID desconhecido ou ambíguo é omitido do catálogo. |
+| P2 | mídia documental com legenda `segue` podia usar `FALLBACK` | a mesma regra pura `shouldRunDocumentExtract(memory)` roda antes de montar o job e força `DecisionStrengthStrong`; o validator retorna `STRONG_DECISION_PROTECTED`. |
+| P2 | 3.6F-D foi liberado antes do review limpo | 3.6F-C voltou a `EM CORREÇÃO APÓS REVIEW` e 3.6F-D ficou `BLOQUEADA por 3.6F-C`. |
+
+#### Correções do segundo review
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P2 | proposta parseável com `missing_fields=["ORIGIN"]` podia combinar schema inválido com `validation.accepted=true` | runner, validator e helpers usam somente `TrimSpace` e allowlist exata case-sensitive; `origin` continua válido, enquanto `ORIGIN`, `Origin` e desconhecidos são rejeitados. O validator sempre roda para proposta parseável, mas `effectiveAccepted = schemaValid && factualAccepted`, e schema inválido acrescenta razão fechada `openai_schema_invalid`. |
+| P2 | falha de completion podia deixar claim `IN_PROGRESS` indefinidamente | persistência terminal faz três tentativas com contextos independentes e backoff de 10/20 ms, sempre sem repetir provider e preservando o mesmo summary. O claim guarda `claimed_at`, `lease_expires_at` e epoch; o lease excede timeout do provider, orçamento máximo dos retries e margem de segurança. Após expirar, `ClaimTravelQueryV2Shadow` converte atomicamente o órfão em `COMPLETED` com `travel_query_v2_shadow_execution_abandoned`; claim recente é ignorado e `COMPLETED` é reutilizado. |
+
+#### Correção do terceiro review (2026-07-16)
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P2 | claim órfão só era examinado por outro `Reprocess` da mesma key | `RecoverExpiredTravelQueryV2ShadowClaims` varre lotes limitados de mensagens, usa o relógio do PostgreSQL e `FOR UPDATE SKIP LOCKED`, preserva o ledger JSONB e terminaliza atomicamente todos os claims expirados da mensagem com summary fechado. O loop da API executa imediatamente no startup e depois a cada ticker, mesmo com a flag V2 desligada, com contexto da aplicação, timeout por sweep, execução sequencial, log sanitizado e retry no ciclo seguinte. |
+
+Claims legados `IN_PROGRESS` sem lease numérico recebem primeiro um lease de
+graça persistido de um minuto pelo relógio do PostgreSQL; permanecem recentes
+durante essa janela e são terminalizados pelo sweep posterior. A regra evita
+encerrar uma execução antiga imediatamente, mas também evita estado indefinido.
+Nenhum caminho do recovery chama provider, router, resposta, draft, state,
+tool ou autosend.
+
+#### Correção do quarto review (2026-07-16)
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P1 | `LIMIT 50` era aplicado somente depois de scan de `chat_messages` e `jsonb_each` | a migration `0021` adiciona `travel_query_v2_shadow_recovery_due_at timestamptz` e índice B-tree parcial por `(travel_query_v2_shadow_recovery_due_at, id)`. Aquisição, completion e recovery recalculam o marcador atomicamente com o ledger. A candidate query usa somente marcador vencido, `ORDER BY`, `LIMIT` e `FOR UPDATE SKIP LOCKED`; o JSONB é aberto apenas no CTE posterior ao lote materializado. |
+
+O backfill único da migration marca somente claims legados `IN_PROGRESS` de
+testes/ambientes locais; a feature ainda não foi implantada e não existem
+claims V2 de produção. Em runtime, mensagens comuns ficam fora do índice
+parcial. Claims futuros mantêm o menor lease, mensagens sem pendência recebem
+`NULL`, e duas réplicas consomem lotes distintos. O EXPLAIN PostgreSQL real
+confirmou `Limit -> LockRows -> Index Scan` usando
+`idx_chat_messages_travel_query_v2_shadow_recovery_due_at`.
+
+#### Correção do quinto review (2026-07-16)
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P2 | o teste PostgreSQL inseria mensagens sem `direction` e referenciava sessões inexistentes | a fixture cria duas `chat_sessions` determinísticas e distintas com os campos obrigatórios do schema canônico. Um helper único insere mensagens unitárias e em lote com `direction=INBOUND`, sessão existente, `normalized_payload`, marcador nullable ou devido e `created_at`; o cleanup remove filhos antes dos pais. O teste foi executado com `-race` em PostgreSQL 16 limpo após `0001`, `0019` e `0021`. |
+
+Nenhum `NOT NULL` ou foreign key foi relaxado e nenhum default foi criado.
+`repository.go`, candidate query, recovery loop e as migrations canônicas
+permaneceram intactos nesta correção.
+
+#### Correção do sexto review (2026-07-16)
+
+| Prioridade | Achado | Correção e regressão |
+|---|---|---|
+| P2 | o teste descartava erro de `RESET enable_seqscan` e podia contaminar a conexão devolvida ao pool | a conexão registra `SHOW enable_seqscan=on`, abre transação, executa `SET LOCAL enable_seqscan=off`, confirma o valor local e roda o `EXPLAIN` na mesma transação. O rollback é obrigatório e verificado em sucesso e em falha simulada; se falhar, a conexão é fechada e o erro é combinado com o erro principal. Depois do rollback, a mesma conexão é conferida diretamente e após nova aquisição pelo pool, com PID idêntico, valor inicial restaurado e consulta posterior normal. |
+
+O plano continua `Limit -> LockRows -> Index Scan` no índice parcial. Não há
+`SET`/`RESET` de sessão nesse caminho de teste, e a conexão só é liberada após
+rollback bem-sucedido ou fechamento forçado.
+
+#### Review final e contrato de fechamento
+
+O review final confirmou, sem P1/P2:
+
+- schema strict completo para `TravelQueryMeaningV2`;
+- Responses API com `store=false`, `tools=[]` e `tool_choice=none`;
+- no máximo uma chamada V2 por key, com claim durável e atômico;
+- recovery indexado, bounded e seguro entre réplicas;
+- shadow executado fora do caminho crítico e com fila fail-open;
+- resumo sanitizado sem texto livre do provider ou PII;
+- validator factual obrigatório para toda proposta parseável;
+- decisões `STRONG` protegidas;
+- V1 intacto;
+- zero influência do V2 sobre decisão, resposta, template, tool, state ou
+  autosend;
+- flag `CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED` desligada por padrão.
+
+#### Claim e resumo shadow persistidos
+
+Cada IdempotencyKey usa um registro no `normalized_payload` do inbound como
+fonte detalhada. A coluna relacional adicionada pela migration `0021` é apenas
+o marcador indexável do recovery; não substitui o ledger e não existe mutex/map
+em memória como fonte de verdade:
+
+```text
+travel_query_v2_shadow_claims[IdempotencyKey]
+status = IN_PROGRESS | COMPLETED
+idempotency_key
+claimed_at + lease_expires_at enquanto IN_PROGRESS
+summary somente quando COMPLETED
+chat_messages.travel_query_v2_shadow_recovery_due_at = menor lease pendente | NULL
+```
+
+O resumo terminal contém somente:
+
+```text
+status e error_code fechados
+intent e turn_meaning
+origin, destination e mentioned_locations canônicos ou marcador fechado
+date_preference
+option_reference
+route_coverage
+seat_request
+institutional_topic
+needs_clarification e missing_fields fechados
+confidence
+provider_response_id sanitizado e latency_ms
+validation.status, accepted e reason_codes factuais
+```
+
+Não são persistidos body atual, histórico, body do prompt ativo, documentos,
+CPF, telefone, nome completo, e-mail, endereço, texto arbitrário, reasons
+livres do provider, request/response brutos ou payload sensível.
+
+#### Casos cobertos
+
+```text
+de Fraiburgo para Santa Inês -> ORIGIN Fraiburgo/SC + DESTINATION Santa Ines/MA
+opção 1 ou 2 -> NONE + clarification, sem seleção silenciosa
+opção 3 com duas opções -> INDEX=3 antes de OPTION_INDEX_OUT_OF_RANGE
+daqui a 2 dias -> data temporal, nunca INDEX
+opção 2 no dia 15 -> INDEX=2 e data preservados separadamente
+Santa Cecilia se tiver vaga -> cidade sem UF inventada
+Santa Cecilia/SE -> UF explícita preservada
+essa com uma e várias opções -> DEICTIC com clarification quando ambígua
+EARLIEST_AVAILABLE, coverage, poltrona, institucional e acknowledgement
+schema inválido, refusal, erro, timeout, panic, resultado ausente e dado sensível
+missing_fields ORIGIN rejeitado como schema-invalid
+missing_fields origin aceito após TrimSpace; ORIGIN, Origin e booking_id rejeitados sem aliases
+proposta parseável schema-invalid sempre com validation.accepted=false e openai_schema_invalid
+nome completo, e-mail, endereço e texto livre substituídos por marcador fechado
+claim concorrente IN_PROGRESS sem segunda chamada
+novo Reprocess reutilizando COMPLETED sem segunda chamada
+refusal, erro, timeout e panic persistidos como COMPLETED sem retry do provider
+primeira e segunda completion falhando e terceira persistindo o mesmo summary terminal
+falha das três completions mantendo IN_PROGRESS recente sem nova chamada ao provider
+claim órfão após lease convertido pelo sweeper em COMPLETED abandonado sem novo Reprocess
+sweep imediato no startup inclusive com flag V2 desligada, e encerramento por cancelamento
+claim recente e COMPLETED preservados; múltiplos expirados da mesma mensagem recuperados
+duas instâncias concorrentes terminalizando uma única vez com lote bounded
+storage indisponível ou panic em um ciclo recuperado no próximo sem vazar detalhe no log
+lease legado ausente reparado com graça durável e terminalizado no ciclo posterior
+recuperação stale e reutilização de COMPLETED preservando uma chamada por key
+10.000 mensagens comuns fora do marcador e 120 vencidas processadas em 50/50/20
+candidate query sem jsonb_each/lateral antes do LIMIT indexado
+claim adquirido marcando o mesmo lease; último completion limpando o marcador
+claim futuro mantendo o próximo due_at e múltiplos expirados da mensagem no mesmo sweep
+duas réplicas PostgreSQL usando SKIP LOCKED sem processar a mesma mensagem
+fixture canônica criando sessões-pai antes de inserts unitários e em lote com direction INBOUND
+SET LOCAL enable_seqscan=off restrito à transação do EXPLAIN e rollback verificado
+falha simulada após SET LOCAL encerrando a transação sem mascarar erro principal
+mesmo backend readquirido do pool com enable_seqscan restaurado e consulta normal
+provider lento não bloqueando draft/autosend nem herdando cancelamento do contexto principal
+display Seara + SC_SEARA preservando somente Seara/SC; StopID desconhecido omitido
+imagem documental com legenda segue produzindo STRONG_DECISION_PROTECTED
+lista visível confiável prevalecendo sobre draft invisível mais novo
+decisão STRONG rejeitada com STRONG_DECISION_PROTECTED
+V1 e V2 chamados uma vez, com resposta real e tools inalterados
+```
+
+#### Arquivos alterados
+
+```text
+apps/api/.env.example
+apps/api/cmd/api/main.go
+apps/api/internal/chat/openai_travel_query_v2_prompt.go
+apps/api/internal/chat/openai_travel_query_v2_runner.go
+apps/api/internal/chat/openai_travel_query_v2_schema.go
+apps/api/internal/chat/openai_travel_query_v2_test.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/travel_query_v2_shadow.go
+apps/api/internal/chat/travel_query_v2_shadow_background.go
+apps/api/internal/chat/travel_query_v2_shadow_repository_test.go
+apps/api/internal/chat/travel_query_validation_v2.go
+apps/api/internal/chat/travel_query_validation_v2_test.go
+apps/api/internal/shared/config/config.go
+apps/api/migrations/0021_chat_travel_query_v2_shadow_recovery_due_at.sql
+apps/api/migrations/checks/0021_chat_travel_query_v2_shadow_recovery_due_at_explain.sql
+docs/EXECUTION_TRACKER.md
+plans/3.6f-c-openai-v2-shadow.md
+```
+
+#### Composição prevista do commit
+
+O futuro staging normal do 3.6F-C deve conter exatamente os arquivos tracked
+modificados e untracked confirmados por `git status`, `git diff --name-only` e
+`git ls-files --others --exclude-standard`:
+
+```text
+apps/api/.env.example
+apps/api/cmd/api/main.go
+apps/api/internal/chat/openai_travel_query_v2_prompt.go
+apps/api/internal/chat/openai_travel_query_v2_runner.go
+apps/api/internal/chat/openai_travel_query_v2_schema.go
+apps/api/internal/chat/openai_travel_query_v2_test.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/travel_query_v2_shadow.go
+apps/api/internal/chat/travel_query_v2_shadow_background.go
+apps/api/internal/chat/travel_query_v2_shadow_repository_test.go
+apps/api/internal/chat/travel_query_validation_v2.go
+apps/api/internal/chat/travel_query_validation_v2_test.go
+apps/api/internal/shared/config/config.go
+apps/api/migrations/0021_chat_travel_query_v2_shadow_recovery_due_at.sql
+apps/api/migrations/checks/0021_chat_travel_query_v2_shadow_recovery_due_at_explain.sql
+docs/EXECUTION_TRACKER.md
+```
+
+A migration `0021`, seu check SQL, os novos arquivos Go e as correções
+case-sensitive de `travel_query_validation_v2.go` e
+`travel_query_validation_v2_test.go` fazem parte obrigatória dessa composição.
+
+#### Plano local ignorado
+
+`plans/3.6f-c-openai-v2-shadow.md` é fonte canônica local, porém está ignorado
+pela regra `plans` do `.gitignore` e não entrará em um `git add` normal. O
+`.gitignore` permanece inalterado. O plano ficará fora do futuro commit, salvo
+uso explícito de `git add -f`; esse comando não foi e não será usado neste
+fechamento.
+
+#### Validação executada
+
+```text
+gofmt nos arquivos Go alterados -> PASS
+PostgreSQL 16 efêmero limpo: migrations canônicas 0001, 0019 e 0021 -> PASS
+fixture canônica: duas chat_sessions-pai, insert unitário e inserts em lote com direction=INBOUND e session_id válido -> PASS
+psql migrations/checks/0021_chat_travel_query_v2_shadow_recovery_due_at_explain.sql -> PASS com 20.000 mensagens comuns, 120 vencidas e lote 50
+EXPLAIN candidate query -> Limit -> LockRows -> Index Scan using idx_chat_messages_travel_query_v2_shadow_recovery_due_at
+isolamento do EXPLAIN: SHOW inicial on; SET LOCAL + SHOW off na transação; rollback verificado; mesma PID readquirida com SHOW on e SELECT 1 -> PASS
+falha simulada após SET LOCAL -> erro principal preservado, rollback verificado e configuração restaurada -> PASS
+go test -count=1 ./internal/chat -run 'TestTravelQueryV2ShadowRecovery(Migration|Candidate|Explain)' -> PASS
+CHAT_TRAVEL_V2_SHADOW_POSTGRES_TEST_URL=<postgres efêmero> go test -race -count=1 ./internal/chat -run TestTravelQueryV2ShadowRecoveryPostgresMarkerLifecycleAndBoundedProgress -> PASS
+go test -count=1 ./internal/chat -run 'Test.*OpenAI.*Travel.*V2|Test.*Travel.*Shadow|Test.*Travel.*Schema|Test.*Travel.*Prompt|TestValidateTravelQueryMeaningV2' -> PASS
+go test -race -count=1 ./internal/chat -run 'TestTravelQueryV2Shadow(ExhaustedCompletionRetriesAreRecoveredBySweeperWithoutReprocess|Recovery)' -> PASS
+go test -count=1 ./internal/chat -> FAIL somente em TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption e TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment
+go test -count=1 ./... -> FAIL nos mesmos dois testes; demais pacotes PASS
+HEAD limpo: go test -count=1 ./internal/chat -run 'TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption|TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment' -> reproduz as mesmas duas falhas
+git diff --check -> PASS
+```
+
+As duas falhas amplas são baseline temporal preexistente e foram reproduzidas
+no `HEAD` limpo em 2026-07-16. Nenhuma falha adicional apareceu; o código de
+produção fora do recovery não foi alterado para acomodar esse baseline.
+
+#### Fechamento final do 3.6F-C
+
+```text
+comportamento antes das correções: além das lacunas dos reviews anteriores, o teste PostgreSQL de recovery alterava enable_seqscan na sessão e ignorava erro do RESET antes de devolver a conexão ao pool
+comportamento depois das correções: resumo usa identidades canônicas/markers fechados; accepted exige schema e validator; claim JSONB atômico mantém marcador relacional indexável; candidate query lê lote limitado antes de abrir JSONB; recovery durável de startup/ticker não repete provider; fixture PostgreSQL cria pais canônicos e usa direction INBOUND; EXPLAIN usa SET LOCAL em transação com rollback verificado e prova de ausência de vazamento na mesma conexão readquirida; execução bounded ocorre depois do fluxo real em contexto próprio; enum exato, StopID canônico e mídia STRONG estão cobertos
+mudança funcional user-visible: nenhuma; flag V2 desligada por padrão, background é fail-open e o resultado não é consumido por decisão, resposta, template, tool, estado canônico ou autosend
+resultado do review: primeiro review encontrou 3 P1 e 4 P2; segundo review encontrou 2 P2; terceiro review encontrou 1 P2; quarto review encontrou 1 P1; quinto review encontrou 1 P2; sexto review encontrou 1 P2; após todas as correções, o review final não encontrou P1/P2
+status final: CONCLUÍDA — REVIEW FINAL SEM P1/P2; seguro para commit; somente 3.6F-D liberado como PRÓXIMA
+commit/push/deploy: nenhum executado neste ciclo
+teste em produção: não executado; a flag V2 deve permanecer desligada após deploy futuro até habilitação explícita
+ordem de deploy futura: aplicar obrigatoriamente a migration 0021 antes do novo binário
+riscos restantes: enquanto a API ou o storage estiverem indisponíveis nenhum sweep pode persistir a transição, mas startup/ticks posteriores retomam o recovery; a fila bounded pode descartar shadow para preservar o fluxo real; qualidade semântica, custo e latência reais pertencem aos próximos slices de corpus, evaluator e observabilidade
+próxima ação única: executar somente o Slice 3.6F-D mediante novo /goal explícito; 3.6F-E e etapas seguintes permanecem PENDENTE
 ```
 
 ---
