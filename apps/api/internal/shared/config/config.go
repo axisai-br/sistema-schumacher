@@ -41,6 +41,7 @@ type Config struct {
 	ChatReviewAlertWebhookURL          string
 	ChatOpenAIInterpreterShadowEnabled bool
 	ChatOpenAIInterpreterAssistEnabled bool
+	ChatOpenAITravelV2ShadowEnabled    bool
 	OpenAIAPIKey                       string
 	OpenAIModel                        string
 	OpenAIVisionModel                  string
@@ -120,6 +121,7 @@ func Load() (Config, error) {
 		ChatAgentMode:                      getEnv("CHAT_AGENT_MODE", "legacy"),
 		ChatOpenAIInterpreterShadowEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED")),
 		ChatOpenAIInterpreterAssistEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED")),
+		ChatOpenAITravelV2ShadowEnabled:    parseBool(os.Getenv("CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED")),
 		GoogleSheetsSpreadsheetID:          strings.TrimSpace(os.Getenv("GOOGLE_SHEETS_SPREADSHEET_ID")),
 		GoogleServiceAccountJSON:           strings.TrimSpace(os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
 	}

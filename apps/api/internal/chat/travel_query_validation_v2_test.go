@@ -1569,6 +1569,36 @@ func TestValidateTravelQueryMeaningV2RequiresCoherentMissingFields(t *testing.T)
 	}
 }
 
+func TestValidateTravelQueryMeaningV2MissingFieldsAreExactAndCaseSensitive(t *testing.T) {
+	tests := []struct {
+		name    string
+		missing string
+		accept  bool
+	}{
+		{name: "origin exact", missing: "origin", accept: true},
+		{name: "origin exact after trim", missing: "  origin  ", accept: true},
+		{name: "origin uppercase", missing: "ORIGIN"},
+		{name: "origin title case", missing: "Origin"},
+		{name: "unknown value", missing: "booking_id"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validTravelQueryV2AvailabilityInput()
+			input.Proposal.Origin = nil
+			input.Proposal.NeedsClarification = true
+			input.Proposal.MissingFields = []string{test.missing}
+
+			got := ValidateTravelQueryMeaningV2(input)
+			if test.accept {
+				assertTravelQueryV2Accepted(t, got)
+				return
+			}
+			assertTravelQueryV2Rejected(t, got, TravelQueryValidationReasonIncoherentClarification)
+		})
+	}
+}
+
 func TestValidateTravelQueryMeaningV2AcceptsCoherentClarificationForMissingTypedDetail(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -98,6 +98,7 @@ func main() {
 	})
 
 	openaiStructuredInterpreter := chat.NewOpenAIStructuredInterpreterRunner(cfg)
+	openAITravelQueryV2 := chat.NewOpenAITravelQueryV2Runner(cfg)
 	paymentsRepo := payments.NewRepository(pool)
 	paymentsSvc := payments.NewService(paymentsRepo, cfg)
 	paymentsHandler := payments.NewHandler(paymentsSvc, cfg.PagarmeWebhookSecret, cfg.PagarmeWebhookBasicUser, cfg.PagarmeWebhookBasicPass)
@@ -121,7 +122,9 @@ func main() {
 	paymentStatusTool := chat.NewPaymentStatusTool(paymentsSvc)
 	paymentCreateTool := chat.NewPaymentCreateTool(bookingsSvc, paymentsSvc)
 	userProfileSvc := users.NewProfileService(pool)
-	chatSvc := chat.NewService(chat.NewRepository(pool), cfg, log.Default(), evolutionSender, openAIRunner, openAIJSONRunner, openaiStructuredInterpreter, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool, userProfileSvc)
+	chatRepo := chat.NewRepository(pool)
+	chatSvc := chat.NewService(chatRepo, cfg, log.Default(), evolutionSender, openAIRunner, openAIJSONRunner, openaiStructuredInterpreter, openAITravelQueryV2, availabilityTool, pricingQuoteTool, bookingLookupTool, bookingCreateTool, bookingCancelTool, rescheduleAssistTool, paymentStatusTool, paymentCreateTool, userProfileSvc)
+	chatSvc.StartTravelQueryV2ShadowRecoveryLoop(ctx)
 	chatHandler := chat.NewHandler(chatSvc)
 	automationSvc := automation.NewService(automation.NewRepository(pool), chatSvc, cfg, paymentsRepo, bookingsSvc)
 	automation.StartChatBufferFlushLoop(ctx, automationSvc, cfg, log.Default())

@@ -1999,6 +1999,383 @@ func (r *Repository) SaveReprocessSnapshot(ctx context.Context, input SaveReproc
 	}, nil
 }
 
+func (r *Repository) ClaimTravelQueryV2Shadow(ctx context.Context, sessionID string, messageID string, idempotencyKey string, leaseDuration time.Duration) (TravelQueryV2ShadowClaimResult, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	messageID = strings.TrimSpace(messageID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if sessionID == "" || messageID == "" || idempotencyKey == "" {
+		return TravelQueryV2ShadowClaimResult{}, ErrTravelQueryV2ShadowClaimNotFound
+	}
+	if leaseDuration <= 0 {
+		leaseDuration = travelQueryV2ShadowLeaseDuration(travelQueryV2ShadowProviderTimeout)
+	}
+	recordPayload, err := json.Marshal(travelQueryV2ShadowClaimRecord{
+		Status:         travelQueryV2ShadowClaimInProgress,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		return TravelQueryV2ShadowClaimResult{}, err
+	}
+	var raw []byte
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				case
+					when jsonb_typeof(message.normalized_payload -> $4) = 'object'
+						then message.normalized_payload -> $4
+					else '{}'::jsonb
+				end || jsonb_build_object($3::text, $5::jsonb || jsonb_build_object(
+					'claimed_at', statement_timestamp(),
+					'lease_expires_at', statement_timestamp() + ($6::double precision * interval '1 millisecond'),
+					'lease_expires_at_unix_ms', floor(extract(epoch from (statement_timestamp() + ($6::double precision * interval '1 millisecond'))) * 1000)
+				)) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and not (
+					case
+						when jsonb_typeof(message.normalized_payload -> $4) = 'object'
+							then message.normalized_payload -> $4
+						else '{}'::jsonb
+					end ? $3::text
+				)
+			for update of message
+		), updated as (
+			update chat_messages message
+			set
+				normalized_payload = jsonb_set(
+					candidate.normalized_payload,
+					array[$4]::text[],
+					candidate.claims,
+					true
+				),
+				travel_query_v2_shadow_recovery_due_at = (
+					select min(
+						case
+							when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+								then to_timestamp(((claim.value ->> 'lease_expires_at_unix_ms')::numeric / 1000)::double precision)
+							else statement_timestamp()
+						end
+					)
+					from jsonb_each(candidate.claims) claim(key, value)
+					where claim.value ->> 'status' = $7
+				)
+			from candidate
+			where message.id = candidate.id
+			returning candidate.claims -> $3::text
+		)
+		select * from updated
+	`, sessionID, messageID, idempotencyKey, travelQueryV2ShadowClaimsPayloadKey, recordPayload, leaseDuration.Milliseconds(), travelQueryV2ShadowClaimInProgress).Scan(&raw)
+	if err == nil {
+		return TravelQueryV2ShadowClaimResult{Status: TravelQueryV2ShadowClaimAcquired}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return TravelQueryV2ShadowClaimResult{}, err
+	}
+
+	recoveredSummary := abandonedTravelQueryV2ShadowSummary()
+	recoveredPayload, marshalErr := json.Marshal(travelQueryV2ShadowClaimRecord{
+		Status:         travelQueryV2ShadowClaimCompleted,
+		IdempotencyKey: idempotencyKey,
+		CompletedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		Summary:        &recoveredSummary,
+	})
+	if marshalErr != nil {
+		return TravelQueryV2ShadowClaimResult{}, marshalErr
+	}
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				(message.normalized_payload -> $4)
+					|| jsonb_build_object(
+						$3::text,
+						coalesce(message.normalized_payload -> $4 -> $3, '{}'::jsonb) || $5::jsonb
+					) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and coalesce(message.normalized_payload -> $4 -> $3 ->> 'status', '') = $6
+				and jsonb_typeof(message.normalized_payload -> $4 -> $3 -> 'lease_expires_at_unix_ms') = 'number'
+				and (message.normalized_payload -> $4 -> $3 ->> 'lease_expires_at_unix_ms')::numeric
+				<= floor(extract(epoch from clock_timestamp()) * 1000)
+			for update of message
+		), updated as (
+			update chat_messages message
+			set
+				normalized_payload = jsonb_set(
+					candidate.normalized_payload,
+					array[$4]::text[],
+					candidate.claims,
+					false
+				),
+				travel_query_v2_shadow_recovery_due_at = (
+					select min(
+						case
+							when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+								then to_timestamp(((claim.value ->> 'lease_expires_at_unix_ms')::numeric / 1000)::double precision)
+							else statement_timestamp()
+						end
+					)
+					from jsonb_each(candidate.claims) claim(key, value)
+					where claim.value ->> 'status' = $6
+				)
+			from candidate
+			where message.id = candidate.id
+			returning candidate.claims -> $3::text
+		)
+		select * from updated
+	`, sessionID, messageID, idempotencyKey, travelQueryV2ShadowClaimsPayloadKey, recoveredPayload, travelQueryV2ShadowClaimInProgress).Scan(&raw)
+	if err == nil {
+		return decodeTravelQueryV2ShadowClaim(raw)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return TravelQueryV2ShadowClaimResult{}, err
+	}
+	return r.readTravelQueryV2ShadowClaim(ctx, sessionID, messageID, idempotencyKey)
+}
+
+const travelQueryV2ShadowRecoveryCandidateSQL = `
+	select message.id, message.normalized_payload
+	from chat_messages message
+	where message.travel_query_v2_shadow_recovery_due_at is not null
+		and message.travel_query_v2_shadow_recovery_due_at <= statement_timestamp()
+	order by message.travel_query_v2_shadow_recovery_due_at, message.id
+	limit $1
+	for update of message skip locked
+`
+
+const recoverExpiredTravelQueryV2ShadowClaimsSQL = `
+	with candidates as materialized (` + travelQueryV2ShadowRecoveryCandidateSQL + `
+	), transformed as (
+		select
+			candidate.id,
+			jsonb_object_agg(
+				claim.key,
+				case
+					when (claim.value ->> 'status') is distinct from $3 then claim.value
+					when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number' then
+						case
+							when (claim.value ->> 'lease_expires_at_unix_ms')::numeric
+								<= floor(extract(epoch from statement_timestamp()) * 1000)
+							then claim.value
+								|| $4::jsonb
+								|| jsonb_build_object(
+									'idempotency_key', case
+										when coalesce(claim.value ->> 'idempotency_key', '') <> '' then claim.value ->> 'idempotency_key'
+										else claim.key
+									end,
+									'completed_at', statement_timestamp()
+								)
+							else claim.value
+						end
+					else claim.value || jsonb_build_object(
+						'idempotency_key', case
+							when coalesce(claim.value ->> 'idempotency_key', '') <> '' then claim.value ->> 'idempotency_key'
+							else claim.key
+						end,
+						'claimed_at', statement_timestamp(),
+						'lease_expires_at', statement_timestamp() + ($5::double precision * interval '1 millisecond'),
+						'lease_expires_at_unix_ms', floor(extract(epoch from (statement_timestamp() + ($5::double precision * interval '1 millisecond'))) * 1000),
+						'lease_repaired_at', statement_timestamp()
+					)
+				end
+			) as claims,
+			count(*) filter (
+				where claim.value ->> 'status' = $3
+					and jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+					and (claim.value ->> 'lease_expires_at_unix_ms')::numeric
+						<= floor(extract(epoch from statement_timestamp()) * 1000)
+			) as claims_completed,
+			count(*) filter (
+				where claim.value ->> 'status' = $3
+					and jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') is distinct from 'number'
+			) as claims_lease_repaired,
+			min(
+				case
+					when (claim.value ->> 'status') is distinct from $3 then null
+					when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+						and (claim.value ->> 'lease_expires_at_unix_ms')::numeric
+							> floor(extract(epoch from statement_timestamp()) * 1000)
+						then to_timestamp(((claim.value ->> 'lease_expires_at_unix_ms')::numeric / 1000)::double precision)
+					when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') is distinct from 'number'
+						then statement_timestamp() + ($5::double precision * interval '1 millisecond')
+					else null
+				end
+			) as next_recovery_due_at
+		from candidates candidate
+		cross join lateral jsonb_each(candidate.normalized_payload -> $2) as claim(key, value)
+		group by candidate.id
+	), updated as (
+		update chat_messages message
+		set
+			normalized_payload = jsonb_set(
+				coalesce(message.normalized_payload, '{}'::jsonb),
+				array[$2]::text[],
+				transformed.claims,
+				false
+			),
+			travel_query_v2_shadow_recovery_due_at = transformed.next_recovery_due_at
+		from transformed
+		where message.id = transformed.id
+		returning transformed.claims_completed, transformed.claims_lease_repaired
+	)
+	select
+		count(*)::bigint,
+		coalesce(sum(claims_completed), 0)::bigint,
+		coalesce(sum(claims_lease_repaired), 0)::bigint
+	from updated
+`
+
+func (r *Repository) RecoverExpiredTravelQueryV2ShadowClaims(ctx context.Context, batchSize int) (TravelQueryV2ShadowRecoveryResult, error) {
+	// Legacy IN_PROGRESS entries without a numeric lease receive one durable,
+	// PostgreSQL-clock grace period. A later sweep then terminalizes them through
+	// the same expired-lease branch, so malformed old claims are conservative but
+	// cannot remain IN_PROGRESS indefinitely while the recovery loop is running.
+	if batchSize <= 0 || batchSize > travelQueryV2ShadowRecoveryBatchSize {
+		batchSize = travelQueryV2ShadowRecoveryBatchSize
+	}
+	terminalPayload, err := json.Marshal(map[string]interface{}{
+		"status":  travelQueryV2ShadowClaimCompleted,
+		"summary": abandonedTravelQueryV2ShadowSummary(),
+	})
+	if err != nil {
+		return TravelQueryV2ShadowRecoveryResult{}, err
+	}
+
+	var messagesProcessed int64
+	var claimsCompleted int64
+	var claimsLeaseRepaired int64
+	err = r.pool.QueryRow(ctx, recoverExpiredTravelQueryV2ShadowClaimsSQL,
+		batchSize,
+		travelQueryV2ShadowClaimsPayloadKey,
+		travelQueryV2ShadowClaimInProgress,
+		terminalPayload,
+		travelQueryV2ShadowLegacyLeaseRepairGrace.Milliseconds(),
+	).Scan(&messagesProcessed, &claimsCompleted, &claimsLeaseRepaired)
+	if err != nil {
+		return TravelQueryV2ShadowRecoveryResult{}, err
+	}
+	return TravelQueryV2ShadowRecoveryResult{
+		MessagesProcessed:   int(messagesProcessed),
+		ClaimsCompleted:     int(claimsCompleted),
+		ClaimsLeaseRepaired: int(claimsLeaseRepaired),
+	}, nil
+}
+
+func (r *Repository) CompleteTravelQueryV2Shadow(ctx context.Context, sessionID string, messageID string, idempotencyKey string, summary TravelQueryV2ShadowSummary) error {
+	sessionID = strings.TrimSpace(sessionID)
+	messageID = strings.TrimSpace(messageID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if sessionID == "" || messageID == "" || idempotencyKey == "" {
+		return ErrTravelQueryV2ShadowClaimNotFound
+	}
+	recordPayload, err := json.Marshal(travelQueryV2ShadowClaimRecord{
+		Status:         travelQueryV2ShadowClaimCompleted,
+		IdempotencyKey: idempotencyKey,
+		CompletedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		Summary:        &summary,
+	})
+	if err != nil {
+		return err
+	}
+	var completed bool
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				(message.normalized_payload -> $4)
+					|| jsonb_build_object(
+						$3::text,
+						coalesce(message.normalized_payload -> $4 -> $3, '{}'::jsonb) || $5::jsonb
+					) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and coalesce(message.normalized_payload -> $4 -> $3 ->> 'status', '') = $6
+			for update of message
+		), updated as (
+			update chat_messages message
+			set
+				normalized_payload = jsonb_set(
+					candidate.normalized_payload,
+					array[$4]::text[],
+					candidate.claims,
+					false
+				),
+				travel_query_v2_shadow_recovery_due_at = (
+					select min(
+						case
+							when jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+								then to_timestamp(((claim.value ->> 'lease_expires_at_unix_ms')::numeric / 1000)::double precision)
+							else statement_timestamp()
+						end
+					)
+					from jsonb_each(candidate.claims) claim(key, value)
+					where claim.value ->> 'status' = $6
+				)
+			from candidate
+			where message.id = candidate.id
+			returning true
+		)
+		select * from updated
+	`, sessionID, messageID, idempotencyKey, travelQueryV2ShadowClaimsPayloadKey, recordPayload, travelQueryV2ShadowClaimInProgress).Scan(&completed)
+	if err == nil && completed {
+		return nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	existing, readErr := r.readTravelQueryV2ShadowClaim(ctx, sessionID, messageID, idempotencyKey)
+	if readErr == nil && existing.Status == TravelQueryV2ShadowClaimCompleted {
+		return nil
+	}
+	if readErr != nil {
+		return readErr
+	}
+	return ErrTravelQueryV2ShadowClaimNotFound
+}
+
+func (r *Repository) readTravelQueryV2ShadowClaim(ctx context.Context, sessionID string, messageID string, idempotencyKey string) (TravelQueryV2ShadowClaimResult, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `
+		select coalesce(normalized_payload -> $4 -> $3, '{}'::jsonb)
+		from chat_messages
+		where session_id = $1::uuid
+			and id = $2::uuid
+	`, sessionID, messageID, idempotencyKey, travelQueryV2ShadowClaimsPayloadKey).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TravelQueryV2ShadowClaimResult{}, ErrTravelQueryV2ShadowClaimNotFound
+		}
+		return TravelQueryV2ShadowClaimResult{}, err
+	}
+	return decodeTravelQueryV2ShadowClaim(raw)
+}
+
+func decodeTravelQueryV2ShadowClaim(raw []byte) (TravelQueryV2ShadowClaimResult, error) {
+	record := travelQueryV2ShadowClaimRecord{}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return TravelQueryV2ShadowClaimResult{}, err
+	}
+	switch strings.TrimSpace(record.Status) {
+	case travelQueryV2ShadowClaimInProgress:
+		return TravelQueryV2ShadowClaimResult{Status: TravelQueryV2ShadowClaimInProgress}, nil
+	case travelQueryV2ShadowClaimCompleted:
+		result := TravelQueryV2ShadowClaimResult{Status: TravelQueryV2ShadowClaimCompleted}
+		if record.Summary != nil {
+			result.Summary = *record.Summary
+		}
+		return result, nil
+	default:
+		return TravelQueryV2ShadowClaimResult{}, ErrTravelQueryV2ShadowClaimNotFound
+	}
+}
+
 func (r *Repository) SaveAgentDraft(ctx context.Context, input SaveAgentDraftInput) (SaveAgentDraftResult, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
