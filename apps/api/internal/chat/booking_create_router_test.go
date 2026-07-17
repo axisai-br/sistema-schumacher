@@ -1350,31 +1350,46 @@ func TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply(t
 }
 
 func TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption(t *testing.T) {
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := availabilityTestObservedAt()
+	availability := availabilityOptionPromptFiveOptionsFutureResultAt(now)
+	optionTwo := availability.Results[1]
+
 	session := Session{
 		ContactKey:    "5549988709047",
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
-	history := append(availabilityOptionPromptHistory(now, availabilityOptionPromptFiveOptionsFutureResult()), Message{
+
+	history := append(availabilityOptionPromptHistory(now, availability), Message{
 		Direction:  "INBOUND",
 		Body:       "não quero opção 1",
 		ReceivedAt: now.Add(-30 * time.Second),
 	})
 	history = appendExplicitSoloPassengerDeclaration(history, now)
 
-	input, ok := parseBookingCreateInput(session, history, "quero reservar opção 2\nJoao Vitor Messias | CPF | 84960815086", nil)
+	input, ok := parseBookingCreateInput(
+		session,
+		history,
+		"quero reservar opção 2\nJoao Vitor Messias | CPF | 84960815086",
+		nil,
+	)
 	if !ok {
-		t.Fatalf("expected option 2 booking input after rejecting option 1")
+		t.Fatal("expected option 2 booking input after rejecting option 1")
 	}
+
 	if input.SelectedOptionIndex != 2 ||
-		input.TripID != "trip-2026-07-14" ||
-		input.BoardStopID != "board-2026-07-14" ||
-		input.AlightStopID != "alight-2026-07-14" {
+		input.TripID != optionTwo.TripID ||
+		input.BoardStopID != optionTwo.BoardStopID ||
+		input.AlightStopID != optionTwo.AlightStopID {
 		t.Fatalf("expected option 2 trip after rejecting option 1, got %+v", input)
 	}
 
-	if input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil); ok {
+	if input, ok := parseBookingCreateInput(
+		session,
+		history,
+		"quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086",
+		nil,
+	); ok {
 		t.Fatalf("expected rejected option 1 to be blocked, got %+v", input)
 	}
 }

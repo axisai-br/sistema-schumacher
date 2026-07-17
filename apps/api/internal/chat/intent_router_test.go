@@ -979,19 +979,28 @@ func TestParseAvailabilityRejectionEvidenceSpecificTargets(t *testing.T) {
 }
 
 func TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment(t *testing.T) {
-	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	history := append(availabilityOptionPromptHistory(now, availabilityOptionPromptFiveOptionsFutureResult()), Message{
+	now := availabilityTestObservedAt()
+	availability := availabilityOptionPromptFiveOptionsFutureResultAt(now)
+
+	history := append(availabilityOptionPromptHistory(now, availability), Message{
 		Direction:  "INBOUND",
 		Body:       "opção 1 não serve",
 		ReceivedAt: now.Add(-30 * time.Second),
 	})
-	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
+	state := deriveCanonicalConversationState(
+		Session{ID: "session-1", HandoffStatus: "BOT"},
+		history,
+		"",
+	)
 
 	selected := routeDeterministicIntent(history, "2", state, now)
 	if selected.Intent != IntentSelectAvailabilityOption ||
 		selected.SelectedOptionIndex != 2 ||
 		selected.TemplateName != TemplateAskPassengerCount {
-		t.Fatalf("expected option 2 to remain selectable after rejecting option 1, got %+v", selected)
+		t.Fatalf(
+			"expected option 2 to remain selectable after rejecting option 1, got %+v",
+			selected,
+		)
 	}
 
 	rejected := routeDeterministicIntent(history, "1", state, now)
@@ -1000,7 +1009,11 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionWithoutPayment(t *testi
 		rejected.TemplateName == TemplateAskPassengerCount {
 		t.Fatalf("expected rejected option 1 not to select, got %+v", rejected)
 	}
-	assertContextualFallbackDecision(t, rejected, TemplateContextFallbackAvailabilityOption)
+	assertContextualFallbackDecision(
+		t,
+		rejected,
+		TemplateContextFallbackAvailabilityOption,
+	)
 }
 
 func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPaymentBlocksMatchingNumericOption(t *testing.T) {
