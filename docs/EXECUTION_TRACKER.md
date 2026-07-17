@@ -281,17 +281,19 @@ Regras:
 | Ordem | Slice | Status canônico | Plano | Objetivo resumido |
 |---:|---|---|---|---|
 | 1 | P0-A | **CONCLUÍDA — PASS CONTROLADO** | `plans/p0-a-reconciliar-deploy-smoke.md` | review final concluído sem P1/P2. |
-| 2 | P0-B | **CONCLUÍDA** | `plans/p0-b-corrigir-fixtures-temporais.md` | fixtures temporais estabilizadas e review final concluído sem P1/P2. |
-| 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | `publish-api` depende de `test-api`; execução remota concluída com sucesso. |
-| 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | `TravelQueryMeaningV2` criado sem integração runtime; review final sem P1/P2 e deploy confirmado. |
-| 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | Validator factual V2 concluído, puro e sem integração runtime. |
-| 6 | 3.6F-C | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-c-openai-v2-shadow.md` | Shadow V2 concluído sem efeito user-visible e com review final limpo. |
-| 7 | 3.6F-D | **PRÓXIMA** | `plans/3.6f-d-corpus-evaluator-v2.md` | Versionar corpus e evaluator V2 reproduzíveis mediante novo `/goal` explícito. |
-| 8 | 3.6F-E | **PENDENTE** | `plans/3.6f-e-observabilidade-v2.md` | Expor métricas V2 sanitizadas e read-only. |
-| 9 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | Liberar somente templates seguros para poltrona, institucional e acknowledgement. |
-| 10 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | Consultar `EARLIEST_AVAILABLE` read-only e exigir confirmação. |
-| 11 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | Consultar cobertura de rota read-only sem inventar proximidade. |
-| 12 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | Permitir arbitragem gated somente sobre decisões `WEAK`/`FALLBACK`. |
+| 2 | P0-B | **CONCLUÍDA** | `plans/p0-b-corrigir-fixtures-temporais.md` | fixtures temporais estabilizadas. |
+| 3 | P0-C | **CONCLUÍDA — GATE REMOTO VALIDADO** | `plans/p0-c-ci-test-gate.md` | CI bloqueia publicação quando testes falham. |
+| 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | contrato V2 local. |
+| 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
+| 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
+| 7 | H-2026-07-16A | **EM VALIDAÇÃO OPERACIONAL — PATCH LOCAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | observabilidade e regressões locais concluídas; causa específica de produção aguarda smoke do patch. |
+| 8 | H-2026-07-16B | **PENDENTE após H-2026-07-16A** | `plans/h-2026-07-16b-passenger-child-state.md` | corrigir contagem de passageiros e loop de criança menor de 5. |
+| 9 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 reproduzíveis após os hotfixes. |
+| 10 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
+| 11 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
+| 12 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
+| 13 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
+| 14 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
 
 ### Regra de desbloqueio
 
@@ -305,6 +307,8 @@ tracker atualizado
 ```
 
 A liberação altera somente o próximo status; não autoriza executar dois slices no mesmo `/goal` ou PR.
+
+Para mudanças em runtime, banco, worker ou deploy, review local limpo não substitui smoke obrigatório. Evidência operacional pode reabrir o gate e inserir hotfix antes do sucessor.
 
 ---
 
@@ -1065,7 +1069,9 @@ próxima ação única: executar somente o 3.6F-C mediante novo /goal explícito
 
 ### 8.8 Registro operacional — 3.6F-C (2026-07-15 a 2026-07-16)
 
-**Status:** **CONCLUÍDA — REVIEW FINAL SEM P1/P2**.
+**Status:** **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO**.
+
+O review local final permaneceu sem P1/P2. O smoke implantado de 2026-07-16, porém, não criou claims V2 e o recovery registrou `sweep_failed` recorrente. Isso não apaga o review do código, mas bloqueia a promoção da fila até H-2026-07-16A.
 
 O primeiro review encontrou **3 P1 e 4 P2**. O 3.6F-D voltou a ficar
 bloqueado até que os achados sejam corrigidos, validados e submetidos a novo
@@ -1106,8 +1112,10 @@ transação com finalização verificada; o status continua
 `EM CORREÇÃO APÓS REVIEW` e o 3.6F-D permanece bloqueado.
 
 Após as seis correções e a reexecução dos gates, o review final não encontrou
-P1/P2. O 3.6F-C está concluído e seguro para commit. Somente o 3.6F-D foi
-liberado como `PRÓXIMA`; sua implementação depende de novo `/goal` explícito.
+P1/P2 e o código foi considerado seguro para commit. A liberação operacional foi
+posteriormente reaberta pelo smoke implantado: a flag estava ativa, mas nenhum claim
+foi persistido e o recovery falhou sem causa observável. H-2026-07-16A tornou-se a
+única etapa `PRÓXIMA`; o 3.6F-D voltou a ficar bloqueado.
 
 O OpenAI Travel Interpreter V2 foi integrado em paralelo ao V1 somente como
 shadow. A flag `CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED` permanece desligada por
@@ -1402,12 +1410,197 @@ comportamento antes das correções: além das lacunas dos reviews anteriores, o
 comportamento depois das correções: resumo usa identidades canônicas/markers fechados; accepted exige schema e validator; claim JSONB atômico mantém marcador relacional indexável; candidate query lê lote limitado antes de abrir JSONB; recovery durável de startup/ticker não repete provider; fixture PostgreSQL cria pais canônicos e usa direction INBOUND; EXPLAIN usa SET LOCAL em transação com rollback verificado e prova de ausência de vazamento na mesma conexão readquirida; execução bounded ocorre depois do fluxo real em contexto próprio; enum exato, StopID canônico e mídia STRONG estão cobertos
 mudança funcional user-visible: nenhuma; flag V2 desligada por padrão, background é fail-open e o resultado não é consumido por decisão, resposta, template, tool, estado canônico ou autosend
 resultado do review: primeiro review encontrou 3 P1 e 4 P2; segundo review encontrou 2 P2; terceiro review encontrou 1 P2; quarto review encontrou 1 P1; quinto review encontrou 1 P2; sexto review encontrou 1 P2; após todas as correções, o review final não encontrou P1/P2
-status final: CONCLUÍDA — REVIEW FINAL SEM P1/P2; seguro para commit; somente 3.6F-D liberado como PRÓXIMA
+status de código: CONCLUÍDA — REVIEW FINAL SEM P1/P2; gate operacional reaberto pelo smoke
 commit/push/deploy: nenhum executado neste ciclo
-teste em produção: não executado; a flag V2 deve permanecer desligada após deploy futuro até habilitação explícita
+teste em produção: executado em 2026-07-16; flag V2 ativa, porém nenhum claim criado e recovery com sweep_failed recorrente
 ordem de deploy futura: aplicar obrigatoriamente a migration 0021 antes do novo binário
 riscos restantes: enquanto a API ou o storage estiverem indisponíveis nenhum sweep pode persistir a transição, mas startup/ticks posteriores retomam o recovery; a fila bounded pode descartar shadow para preservar o fluxo real; qualidade semântica, custo e latência reais pertencem aos próximos slices de corpus, evaluator e observabilidade
-próxima ação única: executar somente o Slice 3.6F-D mediante novo /goal explícito; 3.6F-E e etapas seguintes permanecem PENDENTE
+próxima ação única: executar H-2026-07-16A; H-2026-07-16B e 3.6F-D permanecem bloqueados/pendentes
+```
+
+---
+
+### 8.9 Incidente operacional — H-2026-07-16A (2026-07-16)
+
+**Status:** **EM VALIDAÇÃO OPERACIONAL — PATCH LOCAL VERDE**.
+
+#### Sintoma
+
+```text
+CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED=true no processo PID 1
+mensagens reais processadas normalmente
+nenhum normalized_payload.travel_query_v2_shadow_claims criado
+travel_v2_shadow_recovery event=sweep_failed a cada ciclo
+```
+
+#### Evidências já eliminadas
+
+```text
+API conectada ao PostgreSQL/Supabase correto
+schema public
+migration 0021 aplicada
+coluna e índice presentes
+usuário com SELECT e UPDATE
+candidate query com LIMIT/FOR UPDATE SKIP LOCKED: PASS
+query completa de recovery manual: PASS, 0 mensagens/0 claims/0 reparos
+query manual de criação de claim: PASS dentro de transação com ROLLBACK
+nenhum claim IN_PROGRESS preso
+```
+
+Conclusão: o defeito restante está no fluxo Go de scheduler/job/claim/recovery ou na observabilidade, não na existência da migration, permissão ou SQL básico já comprovado.
+
+#### Gate de fechamento
+
+```text
+reason fechado para toda saída do scheduler
+erro sanitizado com operation/error_class/SQLSTATE
+mensagem real gera claim
+claim termina COMPLETED
+recovery_due_at volta a NULL
+nenhum sweep_failed recorrente
+zero efeito user-visible
+```
+
+Não registrar SQL, payload, body, telefone, CPF, documento, segredo ou `DATABASE_URL`.
+
+#### Execução local do hotfix (2026-07-17)
+
+O call path real foi reconciliado de `StartChatBufferFlushLoop` até
+`Service.Reprocess`, scheduler, claim, provider, completion e recovery. A suíte
+anterior já comprovava o lifecycle feliz com store fake, mas deixava saídas
+operacionais silenciosas.
+
+Lacunas comprovadas no código anterior:
+
+- o defer de `Reprocess` só chamava o scheduler quando o job já existia; um
+  retorno bem-sucedido anterior à construção do job não produzia reason, e
+  `disabled` não era observável pelo fluxo real;
+- scheduler, claim e completion descartavam erro/panic sem classificação;
+- recovery reduzia erro e panic ao mesmo `event=sweep_failed` sem
+  `operation`, `error_class`, `sqlstate`, `timeout` ou `canceled`;
+- recovery com zero candidatos era sucesso, mas não emitia `sweep_done`.
+
+O patch local agora preserva `event` para compatibilidade e registra também
+`reason` fechado:
+
+```text
+scheduler: disabled, empty_idempotency_key, incompatible_store, capacity_full, scheduled
+job: started, claim_acquired, claim_in_progress, claim_completed_reused, claim_failed, provider_started, provider_completed, completion_failed, completion_completed
+recovery: sweep_started, sweep_done, sweep_failed
+```
+
+Falhas de storage registram somente:
+
+```text
+operation=claim|completion|recovery
+error_class=postgres|timeout|canceled|panic|storage
+sqlstate=<codigo ou vazio>
+timeout=true|false
+canceled=true|false
+```
+
+O texto do erro nunca entra no log. Panic de claim/completion/recovery é
+convertido em classe fechada, o slot global é liberado pelo defer e o provider
+não roda após falha da claim. O retorno real continua fail-open: o shadow não
+entra em resposta, template, tool, state ou autosend.
+
+#### Evidência local
+
+```text
+SYSTEM_BUFFER_FLUSH bem-sucedido -> exatamente um scheduled, claim COMPLETED, uma chamada de provider e um único outbound draft
+Reprocess com erro -> zero scheduled e zero provider
+retorno idempotente anterior ao job -> empty_idempotency_key, zero claim e zero provider
+flag desligada -> disabled pelo fluxo real
+store incompatível e capacidade cheia -> reasons próprios
+claim com erro, timeout ou panic -> claim_failed sanitizado, zero provider e slot liberado
+claim IN_PROGRESS e COMPLETED -> reasons próprios, sem segunda chamada
+completion com falha -> completion_failed sanitizado
+recovery 0/0/0 -> sweep_started + sweep_done, nunca sweep_failed
+SQLSTATE 57014 sintético -> somente metadados permitidos; mensagem sensível ausente
+```
+
+#### Arquivos alterados no H-2026-07-16A
+
+```text
+apps/api/internal/chat/service.go
+apps/api/internal/chat/travel_query_v2_shadow_background.go
+apps/api/internal/chat/openai_travel_query_v2_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+#### Validação executada
+
+Os comandos Go usaram `GOCACHE=/tmp/schumacher-h16a-go-build` e
+`GOTMPDIR=/tmp` após o cache padrão retornar erro de filesystem read-only.
+
+```text
+go test -count=1 ./internal/chat -run 'Test.*Travel.*V2.*Shadow|Test.*Shadow.*Schedule|Test.*Shadow.*Claim|Test.*Shadow.*Recovery' -> PASS
+go test -race -count=1 ./internal/chat -run 'Test.*Travel.*V2.*Shadow|Test.*Shadow.*Recovery' -> PASS
+go test -count=20 ./internal/chat -run 'TestTravelQueryV2ShadowScheduler|TestReprocessSystemBufferFlushSchedulesTravelQueryV2ShadowExactlyOnce|TestReprocessTravelQueryV2SchedulerObservesDisabledAndEarlyIdempotentReturns|TestReprocessTravelQueryV2ErrorDoesNotSchedule' -> PASS
+go test -count=20 ./internal/automation -run '^(TestStartChatBufferFlushLoopRunsSystemCycleWhenEnabled|TestRunChatBufferFlushProcessesDueBuffers)$' -> PASS
+go test -race -count=20 ./internal/chat -run '^(TestReprocessSystemBufferFlushSchedulesTravelQueryV2ShadowExactlyOnce|TestTravelQueryV2ShadowSchedulerReleasesSlotOnClaimErrorAndPanic|TestTravelQueryV2ShadowRecoveryZeroCandidatesIsSuccessfulSweep)$' -> PASS
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS
+PostgreSQL 16 efêmero: migrations 0001 e 0019 -> PASS
+CHAT_TRAVEL_V2_SHADOW_POSTGRES_TEST_URL=<PostgreSQL 16 efêmero> go test -race -count=1 -v ./internal/chat -run '^TestTravelQueryV2ShadowRecoveryPostgresMarkerLifecycleAndBoundedProgress$' -> PASS
+git diff --check -> PASS
+```
+
+O repository e o SQL não foram alterados. A integração PostgreSQL executada em
+2026-07-17 comprova por chamada real do repository o lifecycle claim ->
+`COMPLETED`, o retorno de `recovery_due_at` a `NULL` e o progresso bounded. Os
+probes manuais de produção anteriores permanecem evidência histórica e não são
+reclassificados como execução nova deste patch.
+
+#### Review local e gate restante
+
+O review local encontrou um P2: a primeira versão dos logs removia o campo
+`event` já usado operacionalmente. A correção preserva `event` e adiciona
+`reason`; o review final local não encontrou P1/P2.
+
+A causa específica da execução implantada ainda não está comprovada porque o
+binário atual não expõe qual saída ocorreu. Portanto este registro não atribui
+o incidente a timeout, SQLSTATE, store incompatível ou capacidade sem evidência.
+
+```text
+mudança user-visible: nenhuma
+commit/push/deploy: não executados
+teste em produção: obrigatório após implantação autorizada do patch
+smoke exigido: nova mensagem segura -> scheduled -> claim_acquired -> provider_started/provider_completed -> completion_completed; claim COMPLETED; recovery_due_at NULL; sweep_done 0/0/0; nenhum sweep_failed
+se houver falha: usar somente reason, operation, error_class, sqlstate, timeout e canceled para localizar e corrigir a causa real
+riscos restantes: a causa operacional específica e o fechamento do incidente dependem desse smoke; capacity_full continua fail-open por contrato
+próxima ação única: revisar/implantar o patch por fluxo autorizado e executar o smoke sanitizado; H-2026-07-16B e 3.6F-D permanecem bloqueados
+```
+
+### 8.10 Bug user-visible — H-2026-07-16B (2026-07-16)
+
+**Status:** **PENDENTE após H-2026-07-16A**.
+
+#### Reprodução
+
+```text
+entrada: "eu e meus 2 filhos que são criança"
+observado: passenger_count=2
+esperado: 3 viajantes
+
+active prompt: ASK_CHILD_UNDER_5
+entrada: "sim o mais novo de 4 anos"
+observado: child_under_5_count_known=false e pergunta repetida
+esperado: child_under_5_count=1, estado conhecido e avanço do fluxo
+```
+
+Este bug pertence ao estado determinístico de passageiros, não ao contrato `TravelQueryMeaningV2`.
+
+#### Gate de fechamento
+
+```text
+contagem relativa correta
+sem duplicação de viajante
+idade/afirmação consumida no prompt correto
+expected_document_count consistente
+sem loop
+cobrança somente de passageiros pagantes
+H-012 verde
 ```
 
 ---

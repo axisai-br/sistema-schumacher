@@ -87,12 +87,13 @@ tipo(escopo): ação objetiva
 ## Workflow com tracker de execução
 
 - Sempre leia `docs/EXECUTION_TRACKER.md` antes de iniciar uma tarefa de arquitetura, etapa, hotfix ou bug.
+- Se `docs/SESSION_HANDOFF.md` existir, leia-o logo depois do tracker para reconciliar evidências operacionais recentes.
 - O tracker é fonte de contexto e rastreio, não backlog autoexecutável.
 - Execute somente a etapa ou hotfix explicitamente pedido no `/goal`.
 - Não avance para a próxima etapa sem pedido explícito.
 - Se encontrar melhoria fora do escopo, registre como observação/backlog no tracker, mas não implemente.
 - Para tarefas com plano detalhado, leia também o arquivo informado em `plans/`.
-- `plans/` contém planos locais/operacionais e pode estar ignorado pelo Git.
+- `plans/` contém planos canônicos e deve ser versionado. Rascunhos locais devem usar `plans/local/` ou o sufixo `.local.md`.
 - Ao final da execução, atualize `docs/EXECUTION_TRACKER.md` com:
 
   - status;
@@ -113,6 +114,24 @@ git diff --check
 ```
 
 Use essa validação para qualquer etapa, hotfix ou bug que altere o fluxo de chat.
+
+
+## Gate operacional e observabilidade
+
+- Review local limpo não substitui smoke obrigatório quando o slice altera runtime, banco, worker ou deploy.
+- Evidência de produção pode bloquear o sucessor sem apagar o histórico de review local.
+- Se uma feature habilitada não produzir o artefato esperado, registre incidente operacional no tracker antes de avançar.
+- Workers/background jobs devem registrar reasons fechados e erros sanitizados.
+- Para PostgreSQL, registrar no máximo `operation`, `error_class`, `SQLSTATE`, timeout ou cancelamento.
+- Nunca registrar SQL completo, payload, body, telefone, CPF, documento, segredo ou `DATABASE_URL`.
+- Não considerar uma etapa operacionalmente encerrada enquanto o smoke obrigatório estiver pendente ou falhando.
+
+## Disciplina de escopo
+
+- Um `/goal` executa uma única etapa ou hotfix.
+- Um PR deve concentrar uma responsabilidade principal.
+- Achado fora do escopo vira backlog ou novo hotfix; não ampliar silenciosamente o slice.
+- Se o review exigir uma terceira rodada corretiva, reavaliar arquitetura e divisão do slice antes de continuar empilhando remendos.
 
 ## Formato da resposta
 
