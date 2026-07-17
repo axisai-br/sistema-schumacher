@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"schumacher-tur/api/internal/shared/config"
 )
 
@@ -37,6 +39,10 @@ type fakeTravelQueryV2ShadowClaimStore struct {
 	completionAttempts          int
 	completionSummaries         []TravelQueryV2ShadowSummary
 	completionDeadlines         []time.Time
+	claimFailuresRemaining      int
+	claimPanicsRemaining        int
+	claimError                  error
+	claimDeadlines              []time.Time
 	recoverySweeps              chan struct{}
 	recoveryFailuresRemaining   int
 	recoveryPanicsRemaining     int
@@ -59,12 +65,26 @@ func newFakeTravelQueryV2ShadowClaimStore() *fakeTravelQueryV2ShadowClaimStore {
 	}
 }
 
-func (store *fakeTravelQueryV2ShadowClaimStore) ClaimTravelQueryV2Shadow(_ context.Context, sessionID string, messageID string, idempotencyKey string, leaseDuration time.Duration) (TravelQueryV2ShadowClaimResult, error) {
+func (store *fakeTravelQueryV2ShadowClaimStore) ClaimTravelQueryV2Shadow(ctx context.Context, sessionID string, messageID string, idempotencyKey string, leaseDuration time.Duration) (TravelQueryV2ShadowClaimResult, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if deadline, ok := ctx.Deadline(); ok {
+		store.claimDeadlines = append(store.claimDeadlines, deadline)
+	}
 	select {
 	case store.claimAttempts <- struct{}{}:
 	default:
+	}
+	if store.claimPanicsRemaining > 0 {
+		store.claimPanicsRemaining--
+		panic("sensitive claim panic detail")
+	}
+	if store.claimFailuresRemaining > 0 {
+		store.claimFailuresRemaining--
+		if store.claimError != nil {
+			return TravelQueryV2ShadowClaimResult{}, store.claimError
+		}
+		return TravelQueryV2ShadowClaimResult{}, errors.New("sensitive claim storage detail")
 	}
 	key := sessionID + "|" + messageID + "|" + idempotencyKey
 	if record, exists := store.claims[key]; exists {
@@ -369,10 +389,191 @@ func (logger *threadSafeTravelQueryV2ShadowLogger) contains(fragment string) boo
 	return false
 }
 
+func (logger *threadSafeTravelQueryV2ShadowLogger) count(fragment string) int {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	count := 0
+	for _, entry := range logger.entries {
+		if strings.Contains(entry, fragment) {
+			count++
+		}
+	}
+	return count
+}
+
 func (logger *threadSafeTravelQueryV2ShadowLogger) snapshot() []string {
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
 	return append([]string(nil), logger.entries...)
+}
+
+func waitTravelQueryV2ShadowBackgroundSlotsEmpty(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(travelQueryV2ShadowBackgroundSlots) == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("travel V2 shadow background slots were not released: used=%d capacity=%d", len(travelQueryV2ShadowBackgroundSlots), cap(travelQueryV2ShadowBackgroundSlots))
+}
+
+func travelQueryV2ShadowTestBackgroundJob(provider OpenAITravelQueryV2Interpreter) travelQueryV2ShadowBackgroundJob {
+	return travelQueryV2ShadowBackgroundJob{
+		SessionID:      "scheduler-session",
+		MessageID:      "scheduler-message",
+		IdempotencyKey: "scheduler-key",
+		Input: TravelQueryV2ShadowInput{
+			Enabled:                  true,
+			OpenAIInterpreter:        provider,
+			StructuredInput:          StructuredInterpreterInput{CurrentTurn: "quero escolher a poltrona", ObservedAt: time.Now().UTC()},
+			LocationCatalog:          buildTravelQueryV2ShadowLocationCatalog(TravelQueryAvailabilityFactsV2{}),
+			ExistingDecisionStrength: DecisionStrengthFallback,
+			IdempotencyKey:           "scheduler-key",
+		},
+	}
+}
+
+func TestTravelQueryV2ShadowSchedulerLogsEveryClosedReason(t *testing.T) {
+	waitTravelQueryV2ShadowBackgroundSlotsEmpty(t)
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
+	provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true, result: OpenAITravelQueryV2RunResult{
+		Proposal: travelQueryV2BaseProposal(TravelQueryIntentSeatRequest), ProposalParseable: true, SchemaValid: true,
+	}}
+	job := travelQueryV2ShadowTestBackgroundJob(provider)
+
+	disabled := NewService(newFakeTravelQueryV2ShadowClaimStore(), config.Config{}, logger, provider)
+	if disabled.scheduleTravelQueryV2Shadow(job) {
+		t.Fatal("disabled scheduler must reject the job")
+	}
+
+	emptyKey := NewService(newFakeTravelQueryV2ShadowClaimStore(), config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	emptyJob := job
+	emptyJob.IdempotencyKey = ""
+	if emptyKey.scheduleTravelQueryV2Shadow(emptyJob) {
+		t.Fatal("scheduler must reject an empty idempotency key")
+	}
+
+	incompatible := NewService(newFakeStore(), config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	if incompatible.scheduleTravelQueryV2Shadow(job) {
+		t.Fatal("scheduler must reject an incompatible store")
+	}
+
+	heldSlots := 0
+	defer func() {
+		for heldSlots > 0 {
+			<-travelQueryV2ShadowBackgroundSlots
+			heldSlots--
+		}
+	}()
+	for heldSlots < cap(travelQueryV2ShadowBackgroundSlots) {
+		select {
+		case travelQueryV2ShadowBackgroundSlots <- struct{}{}:
+			heldSlots++
+		default:
+			t.Fatalf("could not reserve scheduler capacity for the capacity_full regression: held=%d", heldSlots)
+		}
+	}
+	capacityStore := newFakeTravelQueryV2ShadowClaimStore()
+	capacityService := NewService(capacityStore, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	if capacityService.scheduleTravelQueryV2Shadow(job) {
+		t.Fatal("scheduler must reject a job when all slots are occupied")
+	}
+	for heldSlots > 0 {
+		<-travelQueryV2ShadowBackgroundSlots
+		heldSlots--
+	}
+
+	scheduledStore := newFakeTravelQueryV2ShadowClaimStore()
+	scheduled := NewService(scheduledStore, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	if !scheduled.scheduleTravelQueryV2Shadow(job) {
+		t.Fatal("compatible enabled scheduler must accept the job")
+	}
+	waitTravelQueryV2ShadowSignal(t, scheduledStore.completed, "scheduled terminal claim")
+	waitTravelQueryV2ShadowBackgroundSlotsEmpty(t)
+
+	for _, reason := range []string{"disabled", "empty_idempotency_key", "incompatible_store", "capacity_full", "scheduled"} {
+		if !logger.contains("travel_v2_shadow_scheduler event=" + reason + " reason=" + reason) {
+			t.Fatalf("missing scheduler reason %q in logs: %v", reason, logger.snapshot())
+		}
+	}
+}
+
+func TestTravelQueryV2ShadowSchedulerReleasesSlotOnClaimErrorAndPanic(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*fakeTravelQueryV2ShadowClaimStore)
+		wantClass string
+	}{
+		{name: "claim error", configure: func(store *fakeTravelQueryV2ShadowClaimStore) { store.claimFailuresRemaining = 1 }, wantClass: "storage"},
+		{name: "claim timeout", configure: func(store *fakeTravelQueryV2ShadowClaimStore) {
+			store.claimFailuresRemaining = 1
+			store.claimError = context.DeadlineExceeded
+		}, wantClass: "timeout"},
+		{name: "claim panic", configure: func(store *fakeTravelQueryV2ShadowClaimStore) { store.claimPanicsRemaining = 1 }, wantClass: "panic"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			waitTravelQueryV2ShadowBackgroundSlotsEmpty(t)
+			store := newFakeTravelQueryV2ShadowClaimStore()
+			test.configure(store)
+			logger := &threadSafeTravelQueryV2ShadowLogger{}
+			provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+			service := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+			if !service.scheduleTravelQueryV2Shadow(travelQueryV2ShadowTestBackgroundJob(provider)) {
+				t.Fatal("scheduler unexpectedly rejected claim failure regression job")
+			}
+			waitTravelQueryV2ShadowSignal(t, store.claimAttempts, "claim attempt before "+test.name)
+			waitTravelQueryV2ShadowBackgroundSlotsEmpty(t)
+			if provider.calls != 0 {
+				t.Fatalf("provider must not run after %s, calls=%d", test.name, provider.calls)
+			}
+			store.mu.Lock()
+			claimDeadlines := append([]time.Time(nil), store.claimDeadlines...)
+			store.mu.Unlock()
+			if len(claimDeadlines) != 1 {
+				t.Fatalf("claim must receive one bounded context, deadlines=%v", claimDeadlines)
+			}
+			claimBudget := time.Until(claimDeadlines[0])
+			if claimBudget <= 0 || claimBudget > travelQueryV2ShadowStoreTimeout {
+				t.Fatalf("claim context budget=%s, want within (0,%s]", claimBudget, travelQueryV2ShadowStoreTimeout)
+			}
+			if !logger.contains("reason=claim_failed operation=claim error_class="+test.wantClass) || logger.contains("sensitive") {
+				t.Fatalf("claim failure must be sanitized and classified, logs=%v", logger.snapshot())
+			}
+		})
+	}
+}
+
+func TestTravelQueryV2ShadowStorageFailureLogIsSanitized(t *testing.T) {
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
+	service := NewService(newFakeTravelQueryV2ShadowClaimStore(), config.Config{}, logger)
+	postgresError := &pgconn.PgError{Code: "57014", Message: "sensitive SQL and payload detail"}
+	service.logTravelQueryV2ShadowStorageFailure("job", "claim_failed", travelQueryV2ShadowOperationClaim, fmt.Errorf("wrapped: %w", postgresError))
+	entries := logger.snapshot()
+	if len(entries) != 1 || !strings.Contains(entries[0], "operation=claim error_class=postgres sqlstate=57014 timeout=false canceled=false") {
+		t.Fatalf("unexpected PostgreSQL metadata log: %v", entries)
+	}
+	if strings.Contains(strings.Join(entries, "\n"), "sensitive") {
+		t.Fatalf("storage log leaked error detail: %v", entries)
+	}
+}
+
+func TestTravelQueryV2ShadowRecoveryZeroCandidatesIsSuccessfulSweep(t *testing.T) {
+	store := newFakeTravelQueryV2ShadowClaimStore()
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
+	service := NewService(store, config.Config{}, logger)
+	service.runTravelQueryV2ShadowRecoverySweep(context.Background(), store, travelQueryV2ShadowRecoveryLoopConfig{
+		BatchSize:    10,
+		SweepTimeout: time.Second,
+	})
+	entries := logger.snapshot()
+	if !logger.contains("travel_v2_shadow_recovery event=sweep_started reason=sweep_started") ||
+		!logger.contains("travel_v2_shadow_recovery event=sweep_done reason=sweep_done messages=0 claims_completed=0 claims_lease_repaired=0") ||
+		logger.contains("reason=sweep_failed") {
+		t.Fatalf("zero candidates must be logged as a successful sweep: %v", entries)
+	}
 }
 
 type blockingOpenAITravelQueryV2Interpreter struct {
@@ -1161,6 +1362,7 @@ func TestTravelQueryV2ShadowPersistsOnlyExactCanonicalLocationIdentities(t *test
 
 func TestTravelQueryV2ShadowDurableClaimAllowsOnlyOneProviderCall(t *testing.T) {
 	store := newFakeTravelQueryV2ShadowClaimStore()
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
 	proposal := travelQueryV2BaseProposal(TravelQueryIntentSeatRequest)
 	proposal.SeatRequest = SeatRequestChooseSpecificSeat
 	provider := &blockingOpenAITravelQueryV2Interpreter{
@@ -1168,7 +1370,7 @@ func TestTravelQueryV2ShadowDurableClaimAllowsOnlyOneProviderCall(t *testing.T) 
 		release: make(chan struct{}),
 		result:  OpenAITravelQueryV2RunResult{Proposal: proposal, ProposalParseable: true, SchemaValid: true},
 	}
-	svc := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true})
+	svc := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger)
 	job := travelQueryV2ShadowBackgroundJob{
 		SessionID:      "session-one-call",
 		MessageID:      "message-one-call",
@@ -1218,6 +1420,11 @@ func TestTravelQueryV2ShadowDurableClaimAllowsOnlyOneProviderCall(t *testing.T) 
 	}
 	if reused.ClaimStatus != TravelQueryV2ShadowClaimCompleted || reused.Summary.OpenAI.Status != claim.Summary.OpenAI.Status {
 		t.Fatalf("COMPLETED result must be reused, reused=%+v claim=%+v", reused, claim)
+	}
+	for _, reason := range []string{"started", "claim_acquired", "claim_in_progress", "claim_completed_reused", "provider_started", "provider_completed", "completion_completed"} {
+		if !logger.contains("travel_v2_shadow_job event=" + reason + " reason=" + reason) {
+			t.Fatalf("missing job reason %q in logs: %v", reason, logger.snapshot())
+		}
 	}
 }
 
@@ -1329,8 +1536,9 @@ func TestTravelQueryV2ShadowFailuresBecomeTerminalClaims(t *testing.T) {
 func TestTravelQueryV2ShadowExhaustedCompletionRetriesAreRecoveredBySweeperWithoutReprocess(t *testing.T) {
 	store := newFakeTravelQueryV2ShadowClaimStore()
 	store.completionAlwaysFails = true
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
 	provider := &blockingOpenAITravelQueryV2Interpreter{err: ErrOpenAITravelQueryV2RequestFailed}
-	svc := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true})
+	svc := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger)
 	job := travelQueryV2ShadowBackgroundJob{
 		SessionID:      "session-stale-claim",
 		MessageID:      "message-stale-claim",
@@ -1348,6 +1556,9 @@ func TestTravelQueryV2ShadowExhaustedCompletionRetriesAreRecoveredBySweeperWitho
 	first := svc.executeTravelQueryV2ShadowJob(job)
 	if first.CompletionError == nil {
 		t.Fatal("expected all bounded terminal persistence attempts to fail")
+	}
+	if !logger.contains("travel_v2_shadow_job event=completion_failed reason=completion_failed operation=completion") || logger.contains("sensitive") {
+		t.Fatalf("completion failure must be sanitized and classified, logs=%v", logger.snapshot())
 	}
 	if provider.callCount() != 1 {
 		t.Fatalf("expected one provider call before completion failure, got %d", provider.callCount())
@@ -1634,7 +1845,7 @@ func TestTravelQueryV2ShadowRecoveryLoopRetriesAfterStorageFailureOrPanic(t *tes
 			if recoveryCalls < 2 {
 				t.Fatalf("failed sweep must retry next cycle, calls=%d", recoveryCalls)
 			}
-			if !logger.contains("event=sweep_failed") || logger.contains("sensitive") {
+			if !logger.contains("reason=sweep_started") || !logger.contains("reason=sweep_failed") || logger.contains("sensitive") {
 				t.Fatalf("recovery errors must be logged with sanitized fixed metadata, entries=%v", logger.snapshot())
 			}
 			if provider.callCount() != 0 {
@@ -1684,6 +1895,131 @@ func TestTravelQueryV2ShadowRecoveryRepairsLegacyLeaseBeforeTerminalizing(t *tes
 	}
 	if dueAt, hasMarker := store.recoveryMarker("legacy-session", "legacy-message"); hasMarker {
 		t.Fatalf("terminal legacy claim must clear marker, due_at=%s", dueAt)
+	}
+}
+
+func TestReprocessSystemBufferFlushSchedulesTravelQueryV2ShadowExactlyOnce(t *testing.T) {
+	store := newFakeTravelQueryV2ShadowClaimStore()
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
+	agentRunner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "resposta real do buffer", Model: "gpt-test"}}
+	proposal := travelQueryV2BaseProposal(TravelQueryIntentSeatRequest)
+	proposal.SeatRequest = SeatRequestChooseSpecificSeat
+	provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true, result: OpenAITravelQueryV2RunResult{
+		Proposal: proposal, ProposalParseable: true, SchemaValid: true,
+	}}
+	service := NewService(store, config.Config{ChatDebounceWindowMS: 1500, ChatOpenAITravelV2ShadowEnabled: true}, logger, agentRunner, provider)
+	ingested, err := service.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: "5511900000310",
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "msg-system-buffer-shadow",
+			IdempotencyKey:    "idem-system-buffer-shadow",
+			Body:              "oi",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest system buffer turn: %v", err)
+	}
+	out, err := service.Reprocess(context.Background(), ReprocessInput{
+		SessionID: ingested.Session.ID,
+		Trigger:   "SYSTEM_BUFFER_FLUSH",
+		Metadata:  map[string]interface{}{"job_run_id": "job-system-buffer-shadow"},
+	})
+	if err != nil {
+		t.Fatalf("reprocess system buffer turn: %v", err)
+	}
+	waitTravelQueryV2ShadowSignal(t, store.completed, "system buffer terminal shadow claim")
+	waitTravelQueryV2ShadowBackgroundSlotsEmpty(t)
+	if logger.count("travel_v2_shadow_scheduler event=scheduled reason=scheduled") != 1 {
+		t.Fatalf("successful SYSTEM_BUFFER_FLUSH must schedule exactly once: %v", logger.snapshot())
+	}
+	if provider.calls != 1 {
+		t.Fatalf("successful SYSTEM_BUFFER_FLUSH must call provider once, calls=%d", provider.calls)
+	}
+	claim, ok := store.completedClaim(out.Session.ID, latestCandidateMessageID(out.Messages), provider.lastInput.IdempotencyKey)
+	if !ok || claim.Status != travelQueryV2ShadowClaimCompleted || claim.Summary == nil {
+		t.Fatalf("system buffer turn must persist a COMPLETED claim: claim=%+v exists=%t", claim, ok)
+	}
+	if out.Draft == nil || out.Draft.Body != agentRunner.result.ReplyText {
+		t.Fatalf("shadow must preserve the real draft: %+v", out.Draft)
+	}
+	messages, err := store.ListMessages(context.Background(), out.Session.ID, ListMessagesFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("list system buffer messages: %v", err)
+	}
+	outboundCount := 0
+	for _, message := range messages {
+		if message.Direction == "OUTBOUND" {
+			outboundCount++
+		}
+	}
+	if outboundCount != 1 {
+		t.Fatalf("shadow must not create a second response, outbound_count=%d messages=%+v", outboundCount, messages)
+	}
+}
+
+func TestReprocessTravelQueryV2SchedulerObservesDisabledAndEarlyIdempotentReturns(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		store := newFakeTravelQueryV2ShadowClaimStore()
+		logger := &threadSafeTravelQueryV2ShadowLogger{}
+		agentRunner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "resposta sem shadow", Model: "gpt-test"}}
+		provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+		service := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, logger, agentRunner, provider)
+		ingested, err := service.Ingest(context.Background(), IngestMessageInput{
+			ContactKey: "5511900000311",
+			Message:    IngestMessagePayload{Direction: "INBOUND", ProviderMessageID: "msg-shadow-disabled", IdempotencyKey: "idem-shadow-disabled", Body: "oi"},
+		})
+		if err != nil {
+			t.Fatalf("ingest disabled shadow turn: %v", err)
+		}
+		if _, err := service.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID}); err != nil {
+			t.Fatalf("reprocess disabled shadow turn: %v", err)
+		}
+		if logger.count("travel_v2_shadow_scheduler event=disabled reason=disabled") != 1 || provider.calls != 0 {
+			t.Fatalf("disabled successful Reprocess must log once without provider call: logs=%v calls=%d", logger.snapshot(), provider.calls)
+		}
+	})
+
+	t.Run("early idempotent draft", func(t *testing.T) {
+		store := newFakeTravelQueryV2ShadowClaimStore()
+		logger := &threadSafeTravelQueryV2ShadowLogger{}
+		provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+		service := NewService(store, config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+		queued, err := service.QueueAutomationDraft(context.Background(), QueueAutomationDraftInput{
+			ContactKey:     "5511900000312",
+			Body:           "draft existente",
+			IdempotencyKey: "existing-draft-before-shadow-job",
+		})
+		if err != nil {
+			t.Fatalf("queue existing draft: %v", err)
+		}
+		out, err := service.Reprocess(context.Background(), ReprocessInput{SessionID: queued.Session.ID})
+		if err != nil {
+			t.Fatalf("reprocess early idempotent draft: %v", err)
+		}
+		if !out.Idempotent || out.Draft == nil || out.Draft.ID != queued.Message.ID {
+			t.Fatalf("expected existing draft idempotent return, got %+v", out)
+		}
+		if logger.count("travel_v2_shadow_scheduler event=empty_idempotency_key reason=empty_idempotency_key") != 1 || provider.calls != 0 {
+			t.Fatalf("early idempotent return must be observable without provider call: logs=%v calls=%d", logger.snapshot(), provider.calls)
+		}
+		select {
+		case <-store.claimAttempts:
+			t.Fatal("early idempotent return without a current turn must not attempt a claim")
+		default:
+		}
+	})
+}
+
+func TestReprocessTravelQueryV2ErrorDoesNotSchedule(t *testing.T) {
+	logger := &threadSafeTravelQueryV2ShadowLogger{}
+	provider := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+	service := NewService(newFakeTravelQueryV2ShadowClaimStore(), config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	if _, err := service.Reprocess(context.Background(), ReprocessInput{SessionID: "missing-session"}); err == nil {
+		t.Fatal("expected missing session Reprocess to fail")
+	}
+	if logger.count("travel_v2_shadow_scheduler") != 0 || provider.calls != 0 {
+		t.Fatalf("failed Reprocess must not schedule shadow: logs=%v calls=%d", logger.snapshot(), provider.calls)
 	}
 }
 
