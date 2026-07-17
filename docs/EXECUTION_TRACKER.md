@@ -1668,6 +1668,48 @@ H-012 verde
 
 ---
 
+## H-2026-07-16A — Travel V2 Shadow operacional
+
+**Status:** CONCLUÍDO
+
+### Causa raiz comprovada
+
+O repository serializava os payloads JSON do claim, completion e recovery
+como `[]byte`. Em produção, o pool usa `pgx.QueryExecModeExec`, fazendo os
+parâmetros serem inferidos como binários antes do cast `$n::jsonb`.
+
+O PostgreSQL retornava SQLSTATE `22P02` (`invalid_text_representation`) nos
+caminhos de claim e recovery.
+
+A correção passou os payloads JSON como texto, preservando os casts `::jsonb`,
+e adicionou cobertura PostgreSQL usando o mesmo QueryExecMode da produção.
+
+### Smoke operacional
+
+Em 2026-07-17, mensagens reais produziram:
+
+- scheduler `scheduled`;
+- job `started`;
+- claim `claim_acquired`;
+- provider `provider_started` e `provider_completed`;
+- completion `completion_completed`;
+- claims persistidos como `COMPLETED`;
+- `travel_query_v2_shadow_recovery_due_at = NULL`;
+- recovery `sweep_done 0/0/0`;
+- nenhuma nova ocorrência de `sweep_failed`;
+- nenhum efeito adicional user-visible causado pelo shadow.
+
+Foram verificados 8 claims reais, todos terminalizados em `COMPLETED`.
+
+Um request atingiu o timeout de 10 segundos, mas foi persistido como erro
+terminal e não deixou claim órfão. O acompanhamento de latência fica fora
+do escopo deste hotfix.
+
+### Próximo gate
+
+H-2026-07-16B — estado de passageiro/criança.
+3.6F-D continua bloqueado até a conclusão de H-B.
+
 ## 9. Fases posteriores condicionais
 
 ### Retrieval
