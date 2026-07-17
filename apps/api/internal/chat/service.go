@@ -723,9 +723,14 @@ func (s *Service) ReplyMedia(ctx context.Context, input ReplyMediaInput) (ReplyM
 func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output ReprocessResult, outputErr error) {
 	var travelV2BackgroundJob *travelQueryV2ShadowBackgroundJob
 	defer func() {
-		if outputErr == nil && travelV2BackgroundJob != nil {
-			s.scheduleTravelQueryV2Shadow(*travelV2BackgroundJob)
+		if outputErr != nil {
+			return
 		}
+		if travelV2BackgroundJob == nil {
+			s.scheduleTravelQueryV2Shadow(travelQueryV2ShadowBackgroundJob{})
+			return
+		}
+		s.scheduleTravelQueryV2Shadow(*travelV2BackgroundJob)
 	}()
 
 	sessionID := strings.TrimSpace(input.SessionID)

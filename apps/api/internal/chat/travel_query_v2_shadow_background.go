@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -24,10 +26,16 @@ const (
 	travelQueryV2ShadowRecoveryInterval       = 30 * time.Second
 	travelQueryV2ShadowRecoverySweepTimeout   = 5 * time.Second
 	travelQueryV2ShadowLegacyLeaseRepairGrace = time.Minute
+
+	travelQueryV2ShadowOperationClaim      = "claim"
+	travelQueryV2ShadowOperationCompletion = "completion"
+	travelQueryV2ShadowOperationRecovery   = "recovery"
 )
 
 var (
 	ErrTravelQueryV2ShadowClaimNotFound = errors.New("travel query v2 shadow claim not found")
+	errTravelQueryV2ShadowClaimPanic    = errors.New("travel query v2 shadow claim panic")
+	errTravelQueryV2ShadowCompletePanic = errors.New("travel query v2 shadow completion panic")
 	errTravelQueryV2ShadowRecoveryPanic = errors.New("travel query v2 shadow recovery panic")
 )
 
@@ -144,26 +152,25 @@ func (s *Service) runTravelQueryV2ShadowRecoveryLoop(ctx context.Context, store 
 }
 
 func (s *Service) runTravelQueryV2ShadowRecoverySweep(ctx context.Context, store TravelQueryV2ShadowRecoveryStore, loopConfig travelQueryV2ShadowRecoveryLoopConfig) {
+	s.logTravelQueryV2ShadowEvent("recovery", "sweep_started")
 	defer func() {
 		if recover() != nil {
-			s.logTravelQueryV2ShadowRecovery("chat travel_v2_shadow_recovery event=sweep_failed")
+			s.logTravelQueryV2ShadowStorageFailure("recovery", "sweep_failed", travelQueryV2ShadowOperationRecovery, errTravelQueryV2ShadowRecoveryPanic)
 		}
 	}()
 	sweepContext, cancelSweep := context.WithTimeout(ctx, loopConfig.SweepTimeout)
 	result, err := recoverExpiredTravelQueryV2ShadowClaimsSafely(sweepContext, store, loopConfig.BatchSize)
 	cancelSweep()
 	if err != nil {
-		s.logTravelQueryV2ShadowRecovery("chat travel_v2_shadow_recovery event=sweep_failed")
+		s.logTravelQueryV2ShadowStorageFailure("recovery", "sweep_failed", travelQueryV2ShadowOperationRecovery, err)
 		return
 	}
-	if result.MessagesProcessed > 0 {
-		s.logTravelQueryV2ShadowRecovery(
-			"chat travel_v2_shadow_recovery event=sweep_done messages=%d claims_completed=%d claims_lease_repaired=%d",
-			result.MessagesProcessed,
-			result.ClaimsCompleted,
-			result.ClaimsLeaseRepaired,
-		)
-	}
+	s.logTravelQueryV2ShadowRecovery(
+		"chat travel_v2_shadow_recovery event=sweep_done reason=sweep_done messages=%d claims_completed=%d claims_lease_repaired=%d",
+		result.MessagesProcessed,
+		result.ClaimsCompleted,
+		result.ClaimsLeaseRepaired,
+	)
 }
 
 func (s *Service) logTravelQueryV2ShadowRecovery(format string, values ...interface{}) {
@@ -171,6 +178,50 @@ func (s *Service) logTravelQueryV2ShadowRecovery(format string, values ...interf
 		_ = recover()
 	}()
 	s.logReprocess(format, values...)
+}
+
+func (s *Service) logTravelQueryV2ShadowEvent(component string, reason string) {
+	s.logTravelQueryV2ShadowRecovery(
+		"chat travel_v2_shadow_%s event=%s reason=%s",
+		strings.TrimSpace(component),
+		strings.TrimSpace(reason),
+		strings.TrimSpace(reason),
+	)
+}
+
+func (s *Service) logTravelQueryV2ShadowStorageFailure(component string, reason string, operation string, err error) {
+	errorClass, sqlState, timeout, canceled := travelQueryV2ShadowStorageErrorMetadata(err)
+	s.logTravelQueryV2ShadowRecovery(
+		"chat travel_v2_shadow_%s event=%s reason=%s operation=%s error_class=%s sqlstate=%s timeout=%t canceled=%t",
+		strings.TrimSpace(component),
+		strings.TrimSpace(reason),
+		strings.TrimSpace(reason),
+		strings.TrimSpace(operation),
+		errorClass,
+		sqlState,
+		timeout,
+		canceled,
+	)
+}
+
+func travelQueryV2ShadowStorageErrorMetadata(err error) (errorClass string, sqlState string, timeout bool, canceled bool) {
+	timeout = errors.Is(err, context.DeadlineExceeded)
+	canceled = errors.Is(err, context.Canceled)
+	var postgresError *pgconn.PgError
+	switch {
+	case errors.As(err, &postgresError):
+		return "postgres", strings.TrimSpace(postgresError.Code), timeout, canceled
+	case errors.Is(err, errTravelQueryV2ShadowClaimPanic),
+		errors.Is(err, errTravelQueryV2ShadowCompletePanic),
+		errors.Is(err, errTravelQueryV2ShadowRecoveryPanic):
+		return "panic", "", timeout, canceled
+	case timeout:
+		return "timeout", "", true, canceled
+	case canceled:
+		return "canceled", "", timeout, true
+	default:
+		return "storage", "", timeout, canceled
+	}
 }
 
 func recoverExpiredTravelQueryV2ShadowClaimsSafely(ctx context.Context, store TravelQueryV2ShadowRecoveryStore, batchSize int) (result TravelQueryV2ShadowRecoveryResult, err error) {
@@ -184,17 +235,28 @@ func recoverExpiredTravelQueryV2ShadowClaimsSafely(ctx context.Context, store Tr
 }
 
 func (s *Service) scheduleTravelQueryV2Shadow(job travelQueryV2ShadowBackgroundJob) bool {
-	if s == nil || !s.cfg.ChatOpenAITravelV2ShadowEnabled || strings.TrimSpace(job.IdempotencyKey) == "" {
+	if s == nil {
+		return false
+	}
+	if !s.cfg.ChatOpenAITravelV2ShadowEnabled {
+		s.logTravelQueryV2ShadowEvent("scheduler", "disabled")
+		return false
+	}
+	if strings.TrimSpace(job.IdempotencyKey) == "" {
+		s.logTravelQueryV2ShadowEvent("scheduler", "empty_idempotency_key")
 		return false
 	}
 	if _, ok := s.store.(TravelQueryV2ShadowClaimStore); !ok {
+		s.logTravelQueryV2ShadowEvent("scheduler", "incompatible_store")
 		return false
 	}
 	select {
 	case travelQueryV2ShadowBackgroundSlots <- struct{}{}:
 	default:
+		s.logTravelQueryV2ShadowEvent("scheduler", "capacity_full")
 		return false
 	}
+	s.logTravelQueryV2ShadowEvent("scheduler", "scheduled")
 
 	go func() {
 		defer func() {
@@ -210,6 +272,7 @@ func (s *Service) scheduleTravelQueryV2Shadow(job travelQueryV2ShadowBackgroundJ
 }
 
 func (s *Service) executeTravelQueryV2ShadowJob(job travelQueryV2ShadowBackgroundJob) travelQueryV2ShadowExecutionResult {
+	s.logTravelQueryV2ShadowEvent("job", "started")
 	store, ok := s.store.(TravelQueryV2ShadowClaimStore)
 	if !ok {
 		return travelQueryV2ShadowExecutionResult{}
@@ -219,8 +282,9 @@ func (s *Service) executeTravelQueryV2ShadowJob(job travelQueryV2ShadowBackgroun
 		timeout = travelQueryV2ShadowProviderTimeout
 	}
 	claimContext, cancelClaim := context.WithTimeout(context.Background(), travelQueryV2ShadowStoreTimeout)
-	claim, err := store.ClaimTravelQueryV2Shadow(
+	claim, err := claimTravelQueryV2ShadowSafely(
 		claimContext,
+		store,
 		strings.TrimSpace(job.SessionID),
 		strings.TrimSpace(job.MessageID),
 		strings.TrimSpace(job.IdempotencyKey),
@@ -228,9 +292,11 @@ func (s *Service) executeTravelQueryV2ShadowJob(job travelQueryV2ShadowBackgroun
 	)
 	cancelClaim()
 	if err != nil {
+		s.logTravelQueryV2ShadowStorageFailure("job", "claim_failed", travelQueryV2ShadowOperationClaim, err)
 		return travelQueryV2ShadowExecutionResult{}
 	}
 	if claim.Status == TravelQueryV2ShadowClaimInProgress {
+		s.logTravelQueryV2ShadowEvent("job", "claim_in_progress")
 		return travelQueryV2ShadowExecutionResult{
 			ClaimStatus: claim.Status,
 			Summary: TravelQueryV2ShadowSummary{
@@ -240,17 +306,27 @@ func (s *Service) executeTravelQueryV2ShadowJob(job travelQueryV2ShadowBackgroun
 		}
 	}
 	if claim.Status == TravelQueryV2ShadowClaimCompleted {
+		s.logTravelQueryV2ShadowEvent("job", "claim_completed_reused")
 		return travelQueryV2ShadowExecutionResult{ClaimStatus: claim.Status, Summary: claim.Summary}
 	}
 	if claim.Status != TravelQueryV2ShadowClaimAcquired {
+		s.logTravelQueryV2ShadowStorageFailure("job", "claim_failed", travelQueryV2ShadowOperationClaim, ErrTravelQueryV2ShadowClaimNotFound)
 		return travelQueryV2ShadowExecutionResult{}
 	}
+	s.logTravelQueryV2ShadowEvent("job", "claim_acquired")
 
+	s.logTravelQueryV2ShadowEvent("job", "provider_started")
 	providerContext, cancelProvider := context.WithTimeout(context.Background(), timeout)
 	summary := runTravelQueryV2ShadowSafely(providerContext, job.Input)
 	cancelProvider()
+	s.logTravelQueryV2ShadowEvent("job", "provider_completed")
 
 	completionErr := completeTravelQueryV2ShadowWithRetry(store, job, summary)
+	if completionErr != nil {
+		s.logTravelQueryV2ShadowStorageFailure("job", "completion_failed", travelQueryV2ShadowOperationCompletion, completionErr)
+	} else {
+		s.logTravelQueryV2ShadowEvent("job", "completion_completed")
+	}
 	return travelQueryV2ShadowExecutionResult{
 		ClaimStatus:     TravelQueryV2ShadowClaimAcquired,
 		Summary:         summary,
@@ -262,8 +338,9 @@ func completeTravelQueryV2ShadowWithRetry(store TravelQueryV2ShadowClaimStore, j
 	var lastErr error
 	for attempt := 1; attempt <= travelQueryV2ShadowCompletionMaxAttempts; attempt++ {
 		completeContext, cancelComplete := context.WithTimeout(context.Background(), travelQueryV2ShadowStoreTimeout)
-		lastErr = store.CompleteTravelQueryV2Shadow(
+		lastErr = completeTravelQueryV2ShadowSafely(
 			completeContext,
+			store,
 			strings.TrimSpace(job.SessionID),
 			strings.TrimSpace(job.MessageID),
 			strings.TrimSpace(job.IdempotencyKey),
@@ -280,6 +357,39 @@ func completeTravelQueryV2ShadowWithRetry(store TravelQueryV2ShadowClaimStore, j
 		<-timer.C
 	}
 	return lastErr
+}
+
+func claimTravelQueryV2ShadowSafely(
+	ctx context.Context,
+	store TravelQueryV2ShadowClaimStore,
+	sessionID string,
+	messageID string,
+	idempotencyKey string,
+	leaseDuration time.Duration,
+) (result TravelQueryV2ShadowClaimResult, err error) {
+	defer func() {
+		if recover() != nil {
+			result = TravelQueryV2ShadowClaimResult{}
+			err = errTravelQueryV2ShadowClaimPanic
+		}
+	}()
+	return store.ClaimTravelQueryV2Shadow(ctx, sessionID, messageID, idempotencyKey, leaseDuration)
+}
+
+func completeTravelQueryV2ShadowSafely(
+	ctx context.Context,
+	store TravelQueryV2ShadowClaimStore,
+	sessionID string,
+	messageID string,
+	idempotencyKey string,
+	summary TravelQueryV2ShadowSummary,
+) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errTravelQueryV2ShadowCompletePanic
+		}
+	}()
+	return store.CompleteTravelQueryV2Shadow(ctx, sessionID, messageID, idempotencyKey, summary)
 }
 
 func travelQueryV2ShadowLeaseDuration(providerTimeout time.Duration) time.Duration {
