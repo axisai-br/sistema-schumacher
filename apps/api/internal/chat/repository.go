@@ -1999,6 +1999,14 @@ func (r *Repository) SaveReprocessSnapshot(ctx context.Context, input SaveReproc
 	}, nil
 }
 
+func encodeTravelQueryV2ShadowJSON(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func (r *Repository) ClaimTravelQueryV2Shadow(ctx context.Context, sessionID string, messageID string, idempotencyKey string, leaseDuration time.Duration) (TravelQueryV2ShadowClaimResult, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	messageID = strings.TrimSpace(messageID)
@@ -2009,7 +2017,7 @@ func (r *Repository) ClaimTravelQueryV2Shadow(ctx context.Context, sessionID str
 	if leaseDuration <= 0 {
 		leaseDuration = travelQueryV2ShadowLeaseDuration(travelQueryV2ShadowProviderTimeout)
 	}
-	recordPayload, err := json.Marshal(travelQueryV2ShadowClaimRecord{
+	recordPayload, err := encodeTravelQueryV2ShadowJSON(travelQueryV2ShadowClaimRecord{
 		Status:         travelQueryV2ShadowClaimInProgress,
 		IdempotencyKey: idempotencyKey,
 	})
@@ -2076,7 +2084,7 @@ func (r *Repository) ClaimTravelQueryV2Shadow(ctx context.Context, sessionID str
 	}
 
 	recoveredSummary := abandonedTravelQueryV2ShadowSummary()
-	recoveredPayload, marshalErr := json.Marshal(travelQueryV2ShadowClaimRecord{
+	recoveredPayload, marshalErr := encodeTravelQueryV2ShadowJSON(travelQueryV2ShadowClaimRecord{
 		Status:         travelQueryV2ShadowClaimCompleted,
 		IdempotencyKey: idempotencyKey,
 		CompletedAt:    time.Now().UTC().Format(time.RFC3339Nano),
@@ -2238,7 +2246,7 @@ func (r *Repository) RecoverExpiredTravelQueryV2ShadowClaims(ctx context.Context
 	if batchSize <= 0 || batchSize > travelQueryV2ShadowRecoveryBatchSize {
 		batchSize = travelQueryV2ShadowRecoveryBatchSize
 	}
-	terminalPayload, err := json.Marshal(map[string]interface{}{
+	terminalPayload, err := encodeTravelQueryV2ShadowJSON(map[string]interface{}{
 		"status":  travelQueryV2ShadowClaimCompleted,
 		"summary": abandonedTravelQueryV2ShadowSummary(),
 	})
@@ -2273,7 +2281,7 @@ func (r *Repository) CompleteTravelQueryV2Shadow(ctx context.Context, sessionID 
 	if sessionID == "" || messageID == "" || idempotencyKey == "" {
 		return ErrTravelQueryV2ShadowClaimNotFound
 	}
-	recordPayload, err := json.Marshal(travelQueryV2ShadowClaimRecord{
+	recordPayload, err := encodeTravelQueryV2ShadowJSON(travelQueryV2ShadowClaimRecord{
 		Status:         travelQueryV2ShadowClaimCompleted,
 		IdempotencyKey: idempotencyKey,
 		CompletedAt:    time.Now().UTC().Format(time.RFC3339Nano),
