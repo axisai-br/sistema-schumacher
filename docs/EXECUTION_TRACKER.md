@@ -286,7 +286,7 @@ Regras:
 | 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | contrato V2 local. |
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
-| 7 | H-2026-07-16A | **EM VALIDAÇÃO OPERACIONAL — PATCH LOCAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | observabilidade e regressões locais concluídas; causa específica de produção aguarda smoke do patch. |
+| 7 | H-2026-07-16A | **EM VALIDAÇÃO OPERACIONAL — PATCH LOCAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | SQLSTATE 22P02 atribuído à codificação `[]byte` dos parâmetros `::jsonb`; patch textual aguarda novo smoke. |
 | 8 | H-2026-07-16B | **PENDENTE após H-2026-07-16A** | `plans/h-2026-07-16b-passenger-child-state.md` | corrigir contagem de passageiros e loop de criança menor de 5. |
 | 9 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 reproduzíveis após os hotfixes. |
 | 10 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -1546,8 +1546,9 @@ CHAT_TRAVEL_V2_SHADOW_POSTGRES_TEST_URL=<PostgreSQL 16 efêmero> go test -race -
 git diff --check -> PASS
 ```
 
-O repository e o SQL não foram alterados. A integração PostgreSQL executada em
-2026-07-17 comprova por chamada real do repository o lifecycle claim ->
+Na execução de observabilidade descrita acima, o repository e o SQL não foram
+alterados. A integração PostgreSQL então executada em 2026-07-17 comprovou por
+chamada real do repository o lifecycle claim ->
 `COMPLETED`, o retorno de `recovery_due_at` a `NULL` e o progresso bounded. Os
 probes manuais de produção anteriores permanecem evidência histórica e não são
 reclassificados como execução nova deste patch.
@@ -1558,18 +1559,80 @@ O review local encontrou um P2: a primeira versão dos logs removia o campo
 `event` já usado operacionalmente. A correção preserva `event` e adiciona
 `reason`; o review final local não encontrou P1/P2.
 
-A causa específica da execução implantada ainda não está comprovada porque o
-binário atual não expõe qual saída ocorreu. Portanto este registro não atribui
-o incidente a timeout, SQLSTATE, store incompatível ou capacidade sem evidência.
+O patch de observabilidade permitiu obter a causa específica descrita abaixo.
+
+#### Correção do SQLSTATE 22P02 (2026-07-17)
+
+A nova evidência de produção fechou o caminho até a falha:
+
+```text
+scheduler -> scheduled
+job -> started
+ClaimTravelQueryV2Shadow -> postgres SQLSTATE 22P02
+RecoverExpiredTravelQueryV2ShadowClaims -> postgres SQLSTATE 22P02
+pgx -> QueryExecModeExec
+```
+
+A hipótese foi confirmada no repository. Os quatro payloads destinados a
+parâmetros SQL com cast `::jsonb` eram retornados diretamente por
+`json.Marshal` como `[]byte`:
+
+```text
+aquisição da claim -> recordPayload
+recuperação de claim expirada -> recoveredPayload
+completion -> recordPayload
+recovery em lote -> terminalPayload
+```
+
+Em `QueryExecModeExec`, o pgx envia parâmetros sem descrever previamente os
+OIDs e infere a codificação pelo tipo Go. O `[]byte` é codificado como `bytea`;
+o conteúdo resultante não é JSON textual válido para o cast `::jsonb`, causando
+`22P02`. O patch centraliza somente esses quatro marshals em
+`encodeTravelQueryV2ShadowJSON`, que devolve `string` contendo JSON válido. As
+queries e todos os casts `::jsonb` foram preservados.
+
+O teste unitário cobre validade e round trip do JSON textual. A integração
+PostgreSQL agora fixa `pgx.QueryExecModeExec`, reproduzindo a configuração da
+API ao exercitar claim, completion e recovery. A URL de integração PostgreSQL
+não estava disponível nesta execução, portanto esse teste permaneceu `SKIP`
+local e ainda exige execução com banco efêmero ou no CI apropriado.
+
+#### Arquivos alterados na correção 22P02
+
+```text
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/travel_query_v2_shadow_repository_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+#### Validação da correção 22P02
+
+Os comandos Go usaram `GOCACHE=/tmp/schumacher-go-build` e `GOTMPDIR=/tmp`.
+A primeira tentativa de `go test -count=1 ./...` foi inconclusiva por quota de
+disco; após limpar somente caches Go temporários antigos, a repetição passou.
+
+```text
+gofmt -w internal/chat/repository.go internal/chat/travel_query_v2_shadow_repository_test.go -> PASS
+go test -count=1 ./internal/chat -run 'TestEncodeTravelQueryV2ShadowJSON|Test.*Travel.*V2.*Shadow' -> PASS
+go test -race -count=1 ./internal/chat -run 'Test.*Travel.*V2.*Shadow|Test.*Shadow.*Recovery' -> PASS
+go test -count=1 ./internal/chat -> PASS
+go test -count=1 ./... -> PASS na repetição após liberar caches temporários
+CHAT_TRAVEL_V2_SHADOW_POSTGRES_TEST_URL=<ausente> TestTravelQueryV2ShadowRecoveryPostgresMarkerLifecycleAndBoundedProgress -> SKIP local
+git diff --check -> PASS
+```
+
+O review local da correção 22P02 não encontrou P1/P2. H-2026-07-16A permanece
+em validação operacional: o patch local verde não substitui o novo smoke com o
+mesmo `QueryExecModeExec` da produção.
 
 ```text
 mudança user-visible: nenhuma
 commit/push/deploy: não executados
 teste em produção: obrigatório após implantação autorizada do patch
 smoke exigido: nova mensagem segura -> scheduled -> claim_acquired -> provider_started/provider_completed -> completion_completed; claim COMPLETED; recovery_due_at NULL; sweep_done 0/0/0; nenhum sweep_failed
-se houver falha: usar somente reason, operation, error_class, sqlstate, timeout e canceled para localizar e corrigir a causa real
-riscos restantes: a causa operacional específica e o fechamento do incidente dependem desse smoke; capacity_full continua fail-open por contrato
-próxima ação única: revisar/implantar o patch por fluxo autorizado e executar o smoke sanitizado; H-2026-07-16B e 3.6F-D permanecem bloqueados
+se houver falha: usar somente reason, operation, error_class, sqlstate, timeout e canceled; não registrar payload ou SQL
+riscos restantes: integração PostgreSQL em QueryExecModeExec não executada localmente por ausência da URL; fechamento operacional depende do novo smoke; capacity_full continua fail-open por contrato
+próxima ação única: revisar e, por fluxo autorizado, implantar o patch 22P02 e executar o smoke sanitizado; H-2026-07-16B e 3.6F-D permanecem bloqueados
 ```
 
 ### 8.10 Bug user-visible — H-2026-07-16B (2026-07-16)

@@ -17,6 +17,29 @@ import (
 
 const travelQueryV2ShadowRecoveryIndexName = "idx_chat_messages_travel_query_v2_shadow_recovery_due_at"
 
+func TestEncodeTravelQueryV2ShadowJSON(t *testing.T) {
+	summary := abandonedTravelQueryV2ShadowSummary()
+	encoded, err := encodeTravelQueryV2ShadowJSON(travelQueryV2ShadowClaimRecord{
+		Status:         travelQueryV2ShadowClaimCompleted,
+		IdempotencyKey: "json-text-key",
+		Summary:        &summary,
+	})
+	if err != nil {
+		t.Fatalf("encode Travel Query V2 shadow JSON: %v", err)
+	}
+	if !json.Valid([]byte(encoded)) {
+		t.Fatalf("encoded payload must be valid textual JSON: %q", encoded)
+	}
+
+	var decoded travelQueryV2ShadowClaimRecord
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+		t.Fatalf("decode Travel Query V2 shadow textual JSON: %v", err)
+	}
+	if decoded.Status != travelQueryV2ShadowClaimCompleted || decoded.IdempotencyKey != "json-text-key" || decoded.Summary == nil {
+		t.Fatalf("unexpected textual JSON round trip: %+v", decoded)
+	}
+}
+
 func TestTravelQueryV2ShadowRecoveryMigrationDefinesMarkerAndPartialIndex(t *testing.T) {
 	migration := readTravelQueryV2ShadowSQLTestFile(t, "../../migrations/0021_chat_travel_query_v2_shadow_recovery_due_at.sql")
 	lowerMigration := strings.ToLower(migration)
@@ -88,7 +111,12 @@ func TestTravelQueryV2ShadowRecoveryPostgresMarkerLifecycleAndBoundedProgress(t 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL verification config: %v", err)
+	}
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatalf("open PostgreSQL verification pool: %v", err)
 	}
