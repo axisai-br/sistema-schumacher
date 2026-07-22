@@ -297,7 +297,7 @@ func TestOpenAIInterpreterAssistMetadataDoesNotPersistRawOpenAIReasons(t *testin
 }
 
 func TestReprocessOpenAIInterpreterAssistRejectedProposalUsesFallbackMetadata(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -347,7 +347,7 @@ func TestReprocessOpenAIInterpreterAssistRejectedProposalUsesFallbackMetadata(t 
 }
 
 func TestReprocessOpenAIInterpreterAssistLowConfidenceDoesNotUseProposalFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -392,7 +392,7 @@ func TestReprocessOpenAIInterpreterAssistLowConfidenceDoesNotUseProposalFallback
 
 func TestReprocessOpenAIInterpreterShadowAndAssistReuseSingleProviderCall(t *testing.T) {
 	t.Setenv("CHAT_INTENT_ROUTER_ENABLED", "false")
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -544,7 +544,11 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 			ReceivedAt:       observedAt.Add(2 * time.Minute),
 		},
 	)
-	bookingDraft := collectBookingDraftContext(Session{}, history, "")
+	bookingDraft := collectBookingDraftContext(
+		sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)),
+		history,
+		"",
+	)
 	if bookingDraft.SelectedOptionIndex != 2 ||
 		bookingDraft.TripID != selectedOption.TripID ||
 		bookingDraft.BoardStopID != selectedOption.BoardStopID ||
@@ -601,7 +605,7 @@ func TestOpenAIInterpreterAssistSelectionWithoutAvailabilityFactsIsRejected(t *t
 
 func TestReprocessOpenAIInterpreterAssistAvailabilityProposalDoesNotRunTools(t *testing.T) {
 	t.Setenv("CHAT_INTENT_ROUTER_ENABLED", "false")
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -645,7 +649,7 @@ func TestReprocessOpenAIInterpreterAssistAvailabilityProposalDoesNotRunTools(t *
 }
 
 func TestReprocessOpenAIInterpreterAssistSkippedMetadataWhenDisabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -672,7 +676,7 @@ func TestReprocessOpenAIInterpreterAssistSkippedMetadataWhenDisabled(t *testing.
 
 func TestReprocessOpenAIInterpreterAssistSkippedMetadataWhenLocalNotEligible(t *testing.T) {
 	t.Setenv("CHAT_INTENT_ROUTER_ENABLED", "false")
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},

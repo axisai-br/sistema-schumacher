@@ -44,7 +44,7 @@ func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *
 		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "e so para mim")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "e so para mim")
 	context = mergePassengerReplyIntoBookingDraft(context, 1, 0)
 
 	if !context.HasAvailabilityShown {
@@ -168,7 +168,7 @@ func TestPassengerSlotFlowPraMimThenNaoAsksDocuments(t *testing.T) {
 		Message{Direction: "OUTBOUND", Body: "Tem crianca de 5 anos ou menos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "nao")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)), history, "nao")
 
 	if context.PassengerCount != 1 || !context.PassengerCountKnown {
 		t.Fatalf("expected passenger_count=1 known, got %+v", context)
@@ -184,7 +184,7 @@ func TestPassengerSlotFlowPraMimThenNaoAsksDocuments(t *testing.T) {
 func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 
-	context := collectBookingDraftContext(Session{}, history, "eu e mais uma pessoa")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(2, PassengerCountProvenanceIncludesSpeakerComposition)), history, "eu e mais uma pessoa")
 	if context.PassengerCount != 2 || !context.PassengerCountKnown {
 		t.Fatalf("expected passenger_count=2 known, got %+v", context)
 	}
@@ -203,7 +203,7 @@ func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testin
 		Message{Direction: "INBOUND", Body: "eu e mais uma pessoa", ProcessingStatus: "PROCESSED", ReceivedAt: time.Now().UTC().Add(-90 * time.Second)},
 		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
 	)
-	context = collectBookingDraftContext(Session{}, history, "nao")
+	context = collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 0)), history, "nao")
 	if context.PassengerCount != 2 || !context.PassengerCountKnown || context.ChildUnder5Count != 0 || !context.ChildUnder5CountKnown {
 		t.Fatalf("expected two passengers and no child under 5, got %+v", context)
 	}
@@ -219,7 +219,7 @@ func TestPassengerSlotFlowEuEMaisUmaPessoaAsksChildThenDocumentsForTwo(t *testin
 func TestPassengerSlotFlowEuEMaisTresThenSimAsksDocumentsForFour(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 
-	context := collectBookingDraftContext(Session{}, history, "eu e mais 3 pessoas")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(4, PassengerCountProvenanceIncludesSpeakerComposition)), history, "eu e mais 3 pessoas")
 	if context.PassengerCount != 4 || !context.PassengerCountKnown {
 		t.Fatalf("expected passenger_count=4 known, got %+v", context)
 	}
@@ -239,7 +239,7 @@ func TestPassengerSlotFlowEuEMaisTresThenSimAsksDocumentsForFour(t *testing.T) {
 		Message{Direction: "INBOUND", Body: "eu e mais 3 pessoas", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-90 * time.Second)},
 		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-60 * time.Second)},
 	)
-	context = collectBookingDraftContext(Session{}, history, "sim")
+	context = collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(4, 1)), history, "sim")
 	if context.PassengerCount != 4 || !context.PassengerCountKnown || context.ChildUnder5Count != 1 || !context.ChildUnder5CountKnown {
 		t.Fatalf("expected four passengers and one child under 5, got %+v", context)
 	}
@@ -261,7 +261,7 @@ func TestTypedPassengerDocsWithoutChildLabelAskLapChildAssignment(t *testing.T) 
 		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 06645648103\nIvoneide Messias 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 1)), history, "")
 	if context.PassengerCount != 2 || context.ChildUnder5Count != 1 || !context.NeedsLapChildAssignment {
 		t.Fatalf("expected pending lap child assignment, got %+v", context)
 	}
@@ -286,7 +286,7 @@ func TestInlinePassengerDocsWithIncompleteSecondNameAsksResendWithNameAndCPF(t *
 		Message{Direction: "INBOUND", Body: "joão vitor messias 06645648103 ivoneide 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 1)), history, "")
 	if context.PassengerCount != 2 || context.ChildUnder5Count != 1 || !context.ChildUnder5CountKnown {
 		t.Fatalf("expected two passengers and one child context, got %+v", context)
 	}
@@ -323,7 +323,7 @@ func TestInlinePassengerDocsWithIncompleteFirstNameDoesNotUseWrongOrdinal(t *tes
 		Message{Direction: "INBOUND", Body: "joão 06645648103 Ivoneide Pereira 46643591104", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 0)), history, "")
 	if context.PassengerDetailsCount != 1 || context.PartialPassengerDetailsCount != 1 {
 		t.Fatalf("expected one complete passenger and one partial passenger, got %+v", context)
 	}
@@ -360,7 +360,7 @@ func TestParsePassengerClarificationSlotsEuEMeuFilhoDe4Anos(t *testing.T) {
 func TestPassengerSlotCombinedMeAndChildDoesNotDoubleCountChildDocuments(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 
-	context := collectBookingDraftContext(Session{}, history, "para mim e meu filho de 4 anos")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 1)), history, "para mim e meu filho de 4 anos")
 
 	if context.PassengerCount != 2 || !context.PassengerCountKnown {
 		t.Fatalf("expected two travelers from combined reply, got %+v", context)
@@ -388,7 +388,7 @@ func TestPassengerSlotCombinedMeAndChildDoesNotDoubleCountChildDocuments(t *test
 func TestPassengerSlotFlowSoEuDoesNotAssumeNoChild(t *testing.T) {
 	history := passengerSlotAvailabilityHistory(t, "Perfeito. A passagem e so para voce ou vai mais alguem junto?")
 
-	context := collectBookingDraftContext(Session{}, history, "so eu")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(1, PassengerCountProvenanceSoloSpeaker)), history, "so eu")
 
 	if context.PassengerCount != 1 || !context.PassengerCountKnown {
 		t.Fatalf("expected passenger_count=1 known, got %+v", context)
@@ -412,7 +412,7 @@ func TestPassengerSlotFlowSoEuThenNaoKeepsOneDocument(t *testing.T) {
 		Message{Direction: "OUTBOUND", Body: "Tem crianca de 5 anos ou menos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "nao")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)), history, "nao")
 
 	if context.PassengerCount != 1 || !context.PassengerCountKnown {
 		t.Fatalf("expected passenger_count=1 known, got %+v", context)
@@ -451,7 +451,7 @@ func TestPassengerSlotFlowSoEuThenSimAsksDocumentsForAdultAndChild(t *testing.T)
 		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "sim")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "sim")
 
 	if context.PassengerCount != 1 || !context.PassengerCountKnown {
 		t.Fatalf("expected one paying passenger, got %+v", context)
@@ -493,7 +493,7 @@ func TestPassengerSlotFlowSoEuThenSimOneAdultDocumentKeepsAskingDocuments(t *tes
 		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "")
 
 	if context.PassengerCount != 1 || context.ExpectedDocumentCount != 2 || context.PassengerDetailsCount != 1 {
 		t.Fatalf("expected one paying passenger, two expected documents and one collected document, got %+v", context)
@@ -523,7 +523,7 @@ func TestBookingDraftVerboseChildKeepsAskingDocumentsAfterOnlyAdultDoc(t *testin
 		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "")
 
 	if context.PassengerCount != 1 || context.ExpectedDocumentCount != 2 || context.PassengerDetailsCount != 1 {
 		t.Fatalf("expected one paying passenger, two expected documents and one collected document, got %+v", context)
@@ -547,7 +547,7 @@ func TestPassengerSlotFlowSoEuThenSimTwoDocumentsCanAskLapChildAssignment(t *tes
 		Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "")
 
 	if context.PassengerCount != 1 || context.ExpectedDocumentCount != 2 || context.PassengerDetailsCount != 2 {
 		t.Fatalf("expected one paying passenger and two collected travelers, got %+v", context)
@@ -575,7 +575,7 @@ func TestCollectBookingDraftContextMergesTextProgressWithCombinedDocumentSnapsho
 		t.Fatalf("expected outbound formatted assignment to stay excluded from textual progress, got %+v", progress)
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "")
 	if context.PassengerDetailsCount != 2 || len(context.PassengerDetails) != 2 {
 		t.Fatalf("expected text progress and combined snapshot to reconstruct two passengers, got %+v", context)
 	}
@@ -592,7 +592,7 @@ func TestCollectBookingDraftContextMergesTextProgressWithCombinedDocumentSnapsho
 func TestCollectBookingDraftContextCorrectionPreservesOtherSnapshotPassenger(t *testing.T) {
 	history := soloChildTextAndCombinedDocumentSnapshotHistory(t)
 
-	context := collectBookingDraftContext(Session{}, history, "Maria Messias 06645648103")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, "Maria Messias 06645648103")
 
 	if context.PassengerDetailsCount != 2 || len(context.PassengerDetails) != 2 {
 		t.Fatalf("expected correction to preserve both snapshot passengers, got %+v", context)
@@ -626,7 +626,7 @@ func TestOutboundDocumentConfirmationWithoutSnapshotDoesNotReplaceInboundProgres
 	if len(progress.Passengers) != 2 || progress.SourceHistoryIndex != 0 {
 		t.Fatalf("expected only the inbound document list as progress, got %+v", progress)
 	}
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
 	if context.PassengerDetailsCount != 2 {
 		t.Fatalf("outbound confirmation must not reduce passenger details, got %+v", context)
 	}
@@ -667,6 +667,7 @@ func TestOutboundPartialDocumentTextDoesNotMergeIntoInboundProgress(t *testing.T
 
 func TestHistoricalPartialForDifferentPassengerRemainsUnresolved(t *testing.T) {
 	session := Session{ID: "session-historical-partial", ContactKey: "5549988709221", CustomerPhone: "5549988709221", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 1,
@@ -724,7 +725,7 @@ func TestCorrectionChronologyNewerExtractWinsOlderCorrection(t *testing.T) {
 		NormalizedPayload: map[string]interface{}{"tool_context": toolContext},
 	})
 
-	context := collectBookingDraftContext(Session{}, history, "sim")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)), history, "sim")
 	if len(context.PassengerDetails) != 1 || context.PassengerDetails[0].DocumentType != "CNH" || context.PassengerDetails[0].Document != "12345678901" {
 		t.Fatalf("newer CNH snapshot must win over the older CPF correction, got %+v", context.PassengerDetails)
 	}
@@ -739,7 +740,7 @@ func TestCorrectionChronologyNewerCorrectionWinsOlderExtract(t *testing.T) {
 		},
 	})
 
-	context := collectBookingDraftContext(Session{}, history, "corrigir documento para CPF 52998224725")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)), history, "corrigir documento para CPF 52998224725")
 	if len(context.PassengerDetails) != 1 || context.PassengerDetails[0].DocumentType != "CPF" || context.PassengerDetails[0].Document != "52998224725" {
 		t.Fatalf("newer CPF correction must win over the older CNH snapshot, got %+v", context.PassengerDetails)
 	}
@@ -759,7 +760,7 @@ func TestCanonicalEvidenceTimelineCurrentTurnWinsNonEmptyFields(t *testing.T) {
 		confirmation,
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "nome: Nome Final CPF 52998224725")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)), history, "nome: Nome Final CPF 52998224725")
 	if len(context.PassengerDetails) != 1 || context.PassengerDetails[0].Name != "Nome Final" || context.PassengerDetails[0].BirthCity != "Santa Ines" {
 		t.Fatalf("current turn must win non-empty matching fields without erasing the extract, got %+v", context.PassengerDetails)
 	}
@@ -880,7 +881,8 @@ func TestCollectBookingDraftContextKeepsCombinedDeclaredCountWhenSnapshotHasExce
 		},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "sim")
+	passengerSession := sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 1))
+	context := collectBookingDraftContext(passengerSession, history, "sim")
 	if !context.PassengerCountKnown || context.PassengerCount != 2 || context.ExpectedDocumentCount != 2 {
 		t.Fatalf("declared passenger count must remain authoritative, got %+v", context)
 	}
@@ -894,7 +896,7 @@ func TestCollectBookingDraftContextKeepsCombinedDeclaredCountWhenSnapshotHasExce
 	if !strings.Contains(reply, "informou 2 passageiros") || !strings.Contains(reply, "documentos de 3 pessoas") || strings.Contains(reply, "Ainda falta") {
 		t.Fatalf("expected explicit overflow reply instead of missing-document copy, got %q", reply)
 	}
-	if input, ok := parseBookingCreateFromDocumentConfirmation(Session{}, history, "sim"); ok {
+	if input, ok := parseBookingCreateFromDocumentConfirmation(passengerSession, history, "sim"); ok {
 		t.Fatalf("overflow must not authorize booking_create, got %+v", input)
 	}
 }
@@ -924,7 +926,8 @@ func TestCollectBookingDraftContextDoesNotPromoteUnknownCountFromDocuments(t *te
 		},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, "sim")
+	session := sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest())
+	context := collectBookingDraftContext(session, history, "sim")
 	if context.PassengerCountKnown || context.PassengerCount != 0 {
 		t.Fatalf("documents must not turn an unknown passenger count into a declaration, got %+v", context)
 	}
@@ -934,7 +937,7 @@ func TestCollectBookingDraftContextDoesNotPromoteUnknownCountFromDocuments(t *te
 	if action := decideNextBookingStep(context); action != BookingNextAskPassengerClarification {
 		t.Fatalf("unknown passenger count must request clarification, got %s", action)
 	}
-	if input, ok := parseBookingCreateFromDocumentConfirmation(Session{}, history, "sim"); ok {
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
 		t.Fatalf("unknown passenger count must not authorize booking_create, got %+v", input)
 	}
 }
@@ -963,7 +966,7 @@ func assertSoloChildReplyAddsExpectedDocument(t *testing.T, childReply string) {
 		Message{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: time.Now().UTC().Add(-60 * time.Second)},
 	)
 
-	context := collectBookingDraftContext(Session{}, history, childReply)
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, soloPlusChildPassengerStateForTest()), history, childReply)
 
 	if context.PassengerCount != 1 || !context.PassengerCountKnown {
 		t.Fatalf("expected one paying passenger for %q, got %+v", childReply, context)
@@ -1500,7 +1503,7 @@ func TestPassengerSnapshotExplicitAssignmentByIndexSurvivesReplay(t *testing.T) 
 		Direction: "OUTBOUND", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now,
 		Body: "Recebi os dados dos 2 passageiros. Qual passageiro e a crianca de ate 5 anos?\n1. Joao Vitor Messias\n2. Ivoneide Messias",
 	})
-	context := collectBookingDraftContext(Session{}, history, "2")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(2, 1)), history, "2")
 	if len(context.PassengerSnapshot.Passengers) != 2 ||
 		context.PassengerSnapshot.Passengers[0].LapChildSource != bookingPassengerLapChildSourceExplicitAssignment ||
 		context.PassengerSnapshot.Passengers[1].LapChildSource != bookingPassengerLapChildSourceExplicitAssignment {

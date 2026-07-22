@@ -20,6 +20,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -125,6 +126,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 func TestParseBookingCreateInputBlocksSoloChildUntilChildDocumentCollected(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, soloPlusChildPassengerStateForTest())
 	history := soloChildBookingHistory(now)
 	history = append(history,
 		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
@@ -138,6 +140,7 @@ func TestParseBookingCreateInputBlocksSoloChildUntilChildDocumentCollected(t *te
 func TestParseBookingCreateBlocksVerboseSoloChildWithMissingChildDocument(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, soloPlusChildPassengerStateForTest())
 	history := soloChildBookingHistoryWithReply(now, "sim, meu filho de 4 anos")
 	history = append(history,
 		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
@@ -151,6 +154,7 @@ func TestParseBookingCreateBlocksVerboseSoloChildWithMissingChildDocument(t *tes
 func TestParseBookingCreateFromDocumentConfirmationBlocksSoloChildWithOneDocument(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, soloPlusChildPassengerStateForTest())
 	history := soloChildBookingHistory(now)
 	history = append(history,
 		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-90 * time.Second)},
@@ -166,6 +170,7 @@ func TestParseBookingCreateFromDocumentConfirmationBlocksSoloChildWithOneDocumen
 func TestParseBookingCreateFromDocumentConfirmationSoloChildAfterAssignment(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
 	history := soloChildBookingHistory(now)
 	history = append(history,
 		Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF, RG ou CNH completos).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
@@ -190,6 +195,7 @@ func TestParseBookingCreateFromDocumentConfirmationSoloChildAfterAssignment(t *t
 func TestParseBookingCreateInputUsesExplicitLapChildLabel(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
 	history := lapChildBookingHistory(now, "Criança: Joao Vitor Messias 84960815086\nAdulto: Ivoneide Messias 04822340082")
 
 	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
@@ -554,6 +560,7 @@ func TestNormalizePassengerDocumentValueRequires32DigitBirthCertificate(t *testi
 func TestParseBookingCreateFromDocumentConfirmationUsesLapChildAssignmentReplyByIndex(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Messias"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
 	history := lapChildBookingHistory(now, "Joao Vitor Messias 84960815086\nIvoneide Messias 04822340082")
 	history = history[:len(history)-1]
 	history = append(history, Message{
@@ -734,7 +741,7 @@ func TestFindLatestSelectedOptionIndexRejectsIncompleteSameMessageAvailabilityFa
 	if got := findLatestSelectedOptionIndex(history); got != 0 {
 		t.Fatalf("expected incomplete same-message availability facts not to materialize selection, got %d", got)
 	}
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
 	if context.SelectedOptionIndex != 0 ||
 		context.TripID != "" ||
 		context.BoardStopID != "" ||
@@ -812,7 +819,7 @@ func TestCollectBookingDraftContextPrefersSelectedAvailabilitySnapshot(t *testin
 		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(1, PassengerCountProvenanceSoloSpeaker)), history, "")
 	if context.SelectedOptionIndex != 2 {
 		t.Fatalf("expected selected option index 2, got %+v", context)
 	}
@@ -890,7 +897,7 @@ func TestCollectBookingDraftContextKeepsLatestSelectedAvailabilitySnapshotIndex(
 		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(1, PassengerCountProvenanceSoloSpeaker)), history, "")
 	if context.SelectedOptionIndex != 2 {
 		t.Fatalf("expected latest selected option index 2, got %+v", context)
 	}
@@ -949,7 +956,7 @@ func TestCollectBookingDraftContextDoesNotCombineMetadataOnlySelectionWithOldSna
 		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, passengerOnlyStateForTest(1, PassengerCountProvenanceSoloSpeaker)), history, "")
 	if context.SelectedOptionIndex != 0 {
 		t.Fatalf("expected metadata-only selected_option_index not to remain a valid selection, got %+v", context)
 	}
@@ -1096,7 +1103,7 @@ func TestCollectBookingDraftContextAllowsFreshAvailabilityAfterOldSelectionBlock
 	})[0]
 	history := []Message{oldAvailability, blocker, freshAvailability}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
 	if context.TripID != "trip-2026-07-14" ||
 		context.BoardStopID != "board-2026-07-14" ||
 		context.AlightStopID != "alight-2026-07-14" {
@@ -1118,7 +1125,7 @@ func TestCollectBookingDraftContextBlocksOldAvailabilityWhenSelectionBlockerIsNe
 	blocker := metadataOnlyAvailabilitySelectionMessage(now.Add(-1*time.Minute), 2)
 	history := []Message{oldAvailability, blocker}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
 	if context.TripID != "" ||
 		context.BoardStopID != "" ||
 		context.AlightStopID != "" {
@@ -1244,7 +1251,7 @@ func TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySel
 		{Direction: "INBOUND", Body: "só pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	context := collectBookingDraftContext(Session{}, history, "")
+	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
 	if context.SelectedOptionIndex != 2 ||
 		context.TripID != "trip-2026-07-14" ||
 		context.BoardStopID != "board-2026-07-14" ||
@@ -1261,6 +1268,7 @@ func TestParseBookingCreateInputSingleOptionFallbackWorksWithoutSelectionBlocker
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := singleOptionBookingCreateAvailabilityHistory(now)
 
 	input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil)
@@ -1282,6 +1290,7 @@ func TestParseBookingCreateInputExplicitIndexWorksWithoutSelectionBlocker(t *tes
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := singleOptionBookingCreateAvailabilityHistory(now)
 
 	input, ok := parseBookingCreateInput(session, history, "quero reservar opcao 1\nJoao Vitor Messias | CPF | 84960815086", nil)
@@ -1303,6 +1312,7 @@ func TestParseBookingCreateInputRejectsNegatedAvailabilitySelection(t *testing.T
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := singleOptionBookingCreateAvailabilityHistory(now)
 
 	for _, text := range []string{
@@ -1332,6 +1342,7 @@ func TestParseBookingCreateInputBlocksAvailabilityAfterPriorNegatedOptionReply(t
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 
 	for _, text := range []string{"opção 1 não serve", "1 não serve"} {
 		t.Run(text, func(t *testing.T) {
@@ -1359,6 +1370,7 @@ func TestParseBookingCreateInputSpecificRejectedOptionAllowsOtherOption(t *testi
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 
 	history := append(availabilityOptionPromptHistory(now, availability), Message{
 		Direction:  "INBOUND",
@@ -1401,6 +1413,7 @@ func TestParseBookingCreateInputRejectedHiddenVisibleSelectionUsesVisibleContext
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 
 	cases := []struct {
 		name                           string
@@ -1458,6 +1471,7 @@ func TestParseBookingCreateInputAllowsFreshAvailabilityAfterPriorNegatedOptionRe
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
 		TripID:                 "trip-2026-07-13",
 		BoardStopID:            "board-2026-07-13",
@@ -1502,6 +1516,7 @@ func TestParseBookingCreateInputMetadataOnlySelectionBlocksStaleSingleOptionFall
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
@@ -1526,6 +1541,7 @@ func TestParseBookingCreateInputMetadataOnlySelectionBlocksExplicitStaleAvailabi
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
@@ -1550,6 +1566,7 @@ func TestParseBookingCreateInputIncompleteSelectionBlocksStaleSingleOptionFallba
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
@@ -1578,6 +1595,7 @@ func TestParseBookingCreateInputIncompleteSelectionBlocksExplicitStaleAvailabili
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := append(singleOptionBookingCreateAvailabilityHistory(now), Message{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
@@ -1606,6 +1624,7 @@ func TestParseBookingCreateInputOldSelectionBlockerAllowsFreshAvailability(t *te
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	oldItem := bookingCreateSelectionAvailabilityResult("trip-2026-07-13", "board-2026-07-13", "alight-2026-07-13").Results[0]
 	freshItem := bookingCreateSelectionAvailabilityResult("trip-2026-07-14", "board-2026-07-14", "alight-2026-07-14").Results[0]
 
@@ -1669,6 +1688,7 @@ func TestParseBookingCreateInputCurrentAvailabilityIgnoresOldSelectionBlocker(t 
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := []Message{{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
@@ -1837,6 +1857,7 @@ func TestParseBookingCreateInputUsesStructuredPassengerConfirmationOnHistory(t *
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -1977,6 +1998,7 @@ func TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSe
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao Vitor Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 
 	for _, status := range []string{
 		messageStatusAutomationDraft,
@@ -2065,6 +2087,7 @@ func TestParseBookingCreateInputRejectsConfirmationWhenPassengerCountStillIncomp
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, passengerOnlyStateForTest(2, PassengerCountProvenanceIncludesSpeakerComposition))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -2113,6 +2136,7 @@ func TestParseBookingCreateInputBlocksShortPaymentReplyAfterBookingCreated(t *te
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -2152,6 +2176,7 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
 
 	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem")
@@ -2188,6 +2213,7 @@ func TestParseBookingCreateFromPartialDocumentConfirmationUsesVisibleCPF(t *test
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := partialDocumentConfirmationBookingHistory(time.Now().UTC(), DocumentExtractPassenger{
 		Name:         "Joao Vitor Messias",
 		DocumentType: "RG",
@@ -2219,6 +2245,7 @@ func TestParseBookingCreateFromPartialDocumentConfirmationAcceptsContextPhrases(
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	cases := []string{
 		"tá certo",
 		"esta certo",
@@ -2252,6 +2279,7 @@ func TestParseBookingCreateFromDocumentConfirmationRejectsShortConfirmationOutsi
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	histories := [][]Message{
 		{
 			{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
@@ -2281,6 +2309,7 @@ func TestParseBookingCreateFromPartialDocumentConfirmationRejectsIncompleteDocum
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := partialDocumentConfirmationBookingHistory(time.Now().UTC(), DocumentExtractPassenger{
 		Name:         "Joao Vitor Messias",
 		DocumentType: "RG",
@@ -2301,6 +2330,7 @@ func TestParsePassengerDocumentCorrectionPreservesNameAndReplacesRGWithCPF(t *te
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Claudecir",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := documentCorrectionBookingHistory(now)
 
 	correction, ok := findLatestPassengerDocumentCorrection(history, "sim")
@@ -2359,7 +2389,10 @@ func TestTranscriptCNHeCorrectionCreatesBookingAndPaymentUsesReservationCPF(t *t
 	}
 
 	now := time.Now().UTC()
-	session := Session{ID: "session-transcript", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Claudecir"}
+	session := sessionWithPassengerClarificationStateForTest(
+		Session{ID: "session-transcript", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Claudecir"},
+		completePassengerStateForTest(1, 0),
+	)
 	history := documentCorrectionBookingHistory(now)
 	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
 	if !ok {
@@ -2412,6 +2445,7 @@ func TestTranscriptCNHeCorrectionCreatesBookingAndPaymentUsesReservationCPF(t *t
 func TestDocumentConfirmationPreservesAdditionalIdentityFields(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ID: "session-doc-extra", ContactKey: "5549988709047", CustomerPhone: "5549988709047", CustomerName: "Maria"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 1))
 	history := documentConfirmationBookingHistory(now, "EXTRACTED", true)
 	history[2].Body = "uma pessoa, com uma crianca de 4 anos"
 	history[len(history)-1].Payload = map[string]interface{}{
@@ -2584,6 +2618,7 @@ func TestParseBookingCreateFromDocumentConfirmationRejectsCorrectionSameTurn(t *
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
 
 	currentTurn := "pode corrigir o cpf para 52998224725"
@@ -2607,6 +2642,7 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Joao",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -2672,6 +2708,7 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 
 func TestParseBookingCreateFromDocumentConfirmationRejectsDetailsAboveKnownPassengerCount(t *testing.T) {
 	session := Session{ID: "session-known-count-mismatch", ContactKey: "5549988709201", CustomerPhone: "5549988709201", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2692,6 +2729,7 @@ func TestParseBookingCreateFromDocumentConfirmationRejectsDetailsAboveKnownPasse
 
 func TestCanonicalBookingCreateContextExcessBlocksBodyPassengerBypass(t *testing.T) {
 	session := Session{ID: "session-canonical-body-bypass", ContactKey: "5549988709208", CustomerPhone: "5549988709208", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2718,6 +2756,7 @@ func TestCanonicalBookingCreateContextExcessBlocksBodyPassengerBypass(t *testing
 
 func TestUnknownAvailabilityQtyDoesNotBecomePassengerCountDeclaration(t *testing.T) {
 	session := Session{ID: "session-unknown-availability-qty", ContactKey: "5549988709220", CustomerPhone: "5549988709220", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, unknownPassengerStateForTest())
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 	now := time.Now().UTC()
 	extract := DocumentExtractResult{
@@ -2778,6 +2817,7 @@ func TestCanonicalBookingCreateReadinessClassifiesQuantity(t *testing.T) {
 
 func TestCanonicalBookingCreateResolvedPartialByLaterDocumentExtract(t *testing.T) {
 	session := Session{ID: "session-resolved-partial", ContactKey: "5549988709209", CustomerPhone: "5549988709209", CustomerName: "Ivoneide"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
 	now := time.Now().UTC()
 	extract := DocumentExtractResult{
@@ -2846,6 +2886,7 @@ func TestCanonicalBookingCreateUnresolvedPartialsKeepOnlyRealIdentities(t *testi
 
 func TestParseBookingCreateFromDocumentConfirmationRejectsMergedIncompletePassenger(t *testing.T) {
 	session := Session{ID: "session-merged-incomplete", ContactKey: "5549988709205", CustomerPhone: "5549988709205", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2869,6 +2910,7 @@ func TestParseBookingCreateFromDocumentConfirmationRejectsMergedIncompletePassen
 
 func TestParseBookingCreateFromDocumentConfirmationRejectsUnresolvedInboundPartial(t *testing.T) {
 	session := Session{ID: "session-unresolved-partial", ContactKey: "5549988709206", CustomerPhone: "5549988709206", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "so pra mim", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 1,
@@ -2894,6 +2936,7 @@ func TestParseBookingCreateFromDocumentConfirmationRejectsUnresolvedInboundParti
 
 func TestParseBookingCreateFromDocumentConfirmationUsesMergedPassengerCorrection(t *testing.T) {
 	session := Session{ID: "session-merged-passenger-correction", ContactKey: "5549988709202", CustomerPhone: "5549988709202", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2923,6 +2966,7 @@ func TestParseBookingCreateFromDocumentConfirmationUsesMergedPassengerCorrection
 
 func TestParseBookingCreateFromDocumentConfirmationUsesMergedImageThenTextPassengers(t *testing.T) {
 	session := Session{ID: "session-image-then-text", ContactKey: "5549988709203", CustomerPhone: "5549988709203", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2955,6 +2999,7 @@ func TestParseBookingCreateFromDocumentConfirmationUsesMergedImageThenTextPassen
 
 func TestBookingCreateEntryPointsUseCanonicalReadinessAndPassengers(t *testing.T) {
 	session := Session{ID: "session-entrypoint-readiness", ContactKey: "5549988709210", CustomerPhone: "5549988709210", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 0))
 	history := knownPassengerCountDocumentConfirmationHistory(t, "eu e mais uma pessoa", DocumentExtractResult{
 		Mode:                   "EXTRACTED",
 		ExpectedPassengerCount: 2,
@@ -2986,6 +3031,7 @@ func TestBookingCreateEntryPointsUseCanonicalReadinessAndPassengers(t *testing.T
 func TestParseBookingCreateFromDocumentConfirmationStillRequiresLapChildAssignment(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{ID: "session-lap-child-unassigned", ContactKey: "5549988709207", CustomerPhone: "5549988709207", CustomerName: "Joao"}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
 	history := lapChildBookingHistory(now, "Joao Vitor Messias 52998224725\nMaria Messias RG 1234567")
 
 	context := collectBookingDraftContext(session, history, "sim")
@@ -3015,6 +3061,7 @@ func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
 		ContactKey:    "5549988709047",
 		CustomerPhone: "5549988709047",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3062,6 +3109,7 @@ func TestDocumentConfirmationDoesNotCreateBookingWithoutPreviousDocumentExtract(
 		CustomerPhone: "5549988709047",
 		CustomerName:  "Messias",
 	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", false)
 
 	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem"); ok {

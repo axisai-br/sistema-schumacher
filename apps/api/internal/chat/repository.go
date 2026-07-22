@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,6 +22,7 @@ type Store interface {
 	CreateToolCall(ctx context.Context, input CreateToolCallInput) (ToolCall, error)
 	UpdateSessionBufferState(ctx context.Context, input UpdateSessionBufferStateInput) (Session, error)
 	UpdateSessionMetadata(ctx context.Context, input UpdateSessionMetadataInput) (Session, error)
+	ApplyPassengerClarificationEventsV1(ctx context.Context, input ApplyPassengerClarificationEventsV1Input) (ApplyPassengerClarificationEventsV1Result, error)
 	RequestHandoff(ctx context.Context, input RequestHandoffInput) (RequestHandoffResult, error)
 	ResumeSession(ctx context.Context, input ResumeSessionInput) (ResumeSessionResult, error)
 	ResolveSession(ctx context.Context, input ResolveSessionInput) (ResolveSessionResult, error)
@@ -387,6 +389,222 @@ func (r *Repository) UpdateSessionMetadata(ctx context.Context, input UpdateSess
 			updated_at
 	`, input.SessionID, metadataPayload)
 
+	return scanSession(row)
+}
+
+func (r *Repository) ApplyPassengerClarificationEventsV1(
+	ctx context.Context,
+	input ApplyPassengerClarificationEventsV1Input,
+) (ApplyPassengerClarificationEventsV1Result, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	session, err := r.scanSessionByIDForUpdate(ctx, tx, input.SessionID)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	state, err := r.reducePassengerClarificationStateV1Tx(ctx, tx, session, input.Events)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	session, err = persistPassengerClarificationStateV1Tx(ctx, tx, session, state)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	return ApplyPassengerClarificationEventsV1Result{Session: session, State: state}, nil
+}
+
+func (r *Repository) reducePassengerClarificationStateV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	session Session,
+	events []PassengerClarificationEventV1,
+) (PassengerClarificationStateV1, error) {
+	value, statePresent := passengerClarificationStateV1ValueFromSession(session)
+	var existing *PassengerClarificationStateV1
+	if statePresent {
+		state, ok := decodePassengerClarificationStateV1(value)
+		if !ok {
+			return invalidPassengerClarificationStateV1(), nil
+		}
+		existing = &state
+	}
+
+	bookingID := passengerClarificationStructuredBookingIDV1(session.Metadata)
+	hadPostBookingAuthority := existing != nil && existing.Authority == PassengerClarificationAuthorityPostBooking
+	if bookingID == "" && hadPostBookingAuthority {
+		bookingID = strings.TrimSpace(existing.BookingID)
+	}
+	booking, err := passengerClarificationBookingAuthorityV1Tx(ctx, tx, bookingID)
+	if err != nil {
+		return PassengerClarificationStateV1{}, err
+	}
+	if booking != nil {
+		existing = nil
+	} else if hadPostBookingAuthority {
+		existing = nil
+	}
+	var bootstrapEvents []PassengerClarificationEventV1
+	if existing == nil && booking == nil && !hadPostBookingAuthority {
+		bootstrapEvents, err = passengerClarificationBootstrapEventsV1Tx(ctx, tx, session.ID)
+		if err != nil {
+			return PassengerClarificationStateV1{}, err
+		}
+	}
+
+	state := bootstrapPassengerClarificationStateV1(existing, booking, bootstrapEvents)
+	if booking == nil && !hadPostBookingAuthority && state.Authority != PassengerClarificationAuthorityPostBooking {
+		for _, event := range events {
+			if !passengerClarificationEventValidV1(event) || strings.TrimSpace(passengerClarificationEventIDV1(event)) == "" {
+				return invalidPassengerClarificationStateV1(), nil
+			}
+		}
+		state = ReducePassengerClarificationEventsV1(state, events)
+	}
+	if err := validatePassengerClarificationStateV1(state); err != nil {
+		return invalidPassengerClarificationStateV1(), nil
+	}
+	return state, nil
+}
+
+func passengerClarificationBootstrapEventsV1Tx(ctx context.Context, tx pgx.Tx, sessionID string) ([]PassengerClarificationEventV1, error) {
+	rows, err := tx.Query(ctx, `
+		select
+			id::text,
+			direction,
+			normalized_payload,
+			processing_status,
+			sent_at,
+			received_at,
+			created_at
+		from chat_messages
+		where session_id = $1::uuid
+			and (
+				normalized_payload ? 'passenger_clarification_events_v1'
+				or normalized_payload ? 'passenger_prompt_event'
+			)
+		order by received_at asc, created_at asc, id asc
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0)
+	for rows.Next() {
+		var message Message
+		var normalizedPayload []byte
+		if err := rows.Scan(
+			&message.ID,
+			&message.Direction,
+			&normalizedPayload,
+			&message.ProcessingStatus,
+			&message.SentAt,
+			&message.ReceivedAt,
+			&message.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		message.NormalizedPayload = decodeMap(normalizedPayload)
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return passengerClarificationStructuredEventsV1(messages), nil
+}
+
+func passengerClarificationBookingAuthorityV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	bookingID string,
+) (*PassengerClarificationBookingAuthorityV1, error) {
+	bookingID = strings.TrimSpace(bookingID)
+	if bookingID == "" {
+		return nil, nil
+	}
+	var passengerCount int
+	var lapChildCount int
+	err := tx.QueryRow(ctx, `
+		select
+			count(*)::int,
+			count(*) filter (
+				where position('CRIANCA_DE_COLO_ATE_5_ANOS' in upper(coalesce(passenger.notes, ''))) > 0
+			)::int
+		from bookings booking
+		join booking_passengers passenger on passenger.booking_id = booking.id
+		where booking.id = $1::uuid
+			and passenger.is_active = true
+	`, bookingID).Scan(&passengerCount, &lapChildCount)
+	if err != nil {
+		return nil, err
+	}
+	if passengerCount <= 0 {
+		return nil, nil
+	}
+	return &PassengerClarificationBookingAuthorityV1{
+		BookingID: bookingID, PassengerCount: passengerCount, LapChildCount: lapChildCount,
+	}, nil
+}
+
+func passengerClarificationStructuredBookingIDV1(metadata map[string]interface{}) string {
+	for _, root := range []map[string]interface{}{
+		asMap(metadata["memory"]),
+		asMap(metadata["agent"]),
+		metadata,
+	} {
+		canonical := asMap(root["canonical_state"])
+		booking := asMap(canonical["booking"])
+		if bookingID := strings.TrimSpace(asString(booking["booking_id"])); bookingID != "" {
+			return bookingID
+		}
+	}
+	return ""
+}
+
+func persistPassengerClarificationStateV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	session Session,
+	state PassengerClarificationStateV1,
+) (Session, error) {
+	metadata := cloneMap(session.Metadata)
+	memory := cloneMap(asMap(metadata["memory"]))
+	memory[passengerClarificationStateV1MemoryKey] = state
+	metadata["memory"] = memory
+	payload, err := encodeMap(metadata)
+	if err != nil {
+		return Session{}, err
+	}
+	row := tx.QueryRow(ctx, `
+		update chat_sessions
+		set metadata = $2::jsonb,
+			updated_at = now()
+		where id = $1::uuid
+		returning
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+	`, session.ID, payload)
 	return scanSession(row)
 }
 
@@ -943,6 +1161,12 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 	for key, value := range input.Metadata {
 		replyPayload[key] = value
 	}
+	replyMessageID := uuid.NewString()
+	if reviewedDraft != nil && reviewAction == "APPROVED_AS_IS" {
+		if event, ok := passengerPromptEventForOutboundV1(*reviewedDraft, replyMessageID, true); ok {
+			replyPayload[passengerPromptEventV1MessageKey] = event
+		}
+	}
 	replyKind := "TEXT"
 	if mediaKind := strings.ToUpper(strings.TrimSpace(asString(replyPayload["media_kind"]))); mediaKind != "" {
 		switch mediaKind {
@@ -958,6 +1182,7 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 
 	messageRow := tx.QueryRow(ctx, `
 		insert into chat_messages (
+			id,
 			session_id,
 			direction,
 			kind,
@@ -969,6 +1194,7 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 			processing_status,
 			received_at
 		) values (
+			$8::uuid,
 			$1::uuid,
 			'OUTBOUND',
 			$7,
@@ -996,7 +1222,7 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 			received_at,
 			sent_at,
 			created_at
-	`, input.SessionID, input.IdempotencyKey, input.SenderName, replyBody, messagePayload, recordedAt, replyKind)
+	`, input.SessionID, input.IdempotencyKey, input.SenderName, replyBody, messagePayload, recordedAt, replyKind, replyMessageID)
 
 	message, err := scanMessage(messageRow)
 	if err != nil {
@@ -1015,7 +1241,6 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 	if reviewedDraft != nil {
 		updatedMetadata["agent"] = buildDraftReviewedAgentState(session.Metadata, *reviewedDraft, input.OwnerUserID, reviewAction, recordedAt)
 	}
-
 	metadataPayload, err := encodeMap(updatedMetadata)
 	if err != nil {
 		return ReplyResult{}, err
@@ -1064,6 +1289,9 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 		outboundPayload["review_mode"] = "CONTROLLED"
 		outboundPayload["review_action"] = reviewAction
 		outboundPayload["draft_reviewed"] = true
+	}
+	if event, ok := replyPayload[passengerPromptEventV1MessageKey]; ok {
+		outboundPayload[passengerPromptEventV1MessageKey] = event
 	}
 	for key, value := range input.Metadata {
 		outboundPayload[key] = value
@@ -1222,6 +1450,10 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 	for key, value := range input.Metadata {
 		replyPayload[key] = value
 	}
+	replyMessageID := uuid.NewString()
+	if event, ok := passengerPromptEventForOutboundV1(draft, replyMessageID, true); ok {
+		replyPayload[passengerPromptEventV1MessageKey] = event
+	}
 
 	messagePayload, err := encodeMap(replyPayload)
 	if err != nil {
@@ -1230,6 +1462,7 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 
 	messageRow := tx.QueryRow(ctx, `
 		insert into chat_messages (
+			id,
 			session_id,
 			direction,
 			kind,
@@ -1241,6 +1474,7 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 			processing_status,
 			received_at
 		) values (
+			$7::uuid,
 			$1::uuid,
 			'OUTBOUND',
 			'TEXT',
@@ -1268,7 +1502,7 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 			received_at,
 			sent_at,
 			created_at
-	`, input.SessionID, input.IdempotencyKey, senderName, replyBody, messagePayload, recordedAt)
+	`, input.SessionID, input.IdempotencyKey, senderName, replyBody, messagePayload, recordedAt, replyMessageID)
 
 	message, err := scanMessage(messageRow)
 	if err != nil {
@@ -1330,6 +1564,9 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 	}
 	if reasons, ok := replyPayload["auto_send_reasons"]; ok {
 		outboundPayload["auto_send_reasons"] = reasons
+	}
+	if event, ok := replyPayload[passengerPromptEventV1MessageKey]; ok {
+		outboundPayload[passengerPromptEventV1MessageKey] = event
 	}
 	for key, value := range input.Metadata {
 		outboundPayload[key] = value
@@ -1404,7 +1641,7 @@ func (r *Repository) UpdateDraftAutoSendState(ctx context.Context, input UpdateD
 		_ = tx.Rollback(ctx)
 	}()
 
-	session, err := r.scanSessionByID(ctx, tx, input.SessionID)
+	session, err := r.scanSessionByIDForUpdate(ctx, tx, input.SessionID)
 	if err != nil {
 		return SaveAgentDraftResult{}, err
 	}
@@ -1532,6 +1769,10 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	lockedSession, err := r.scanSessionByIDForUpdate(ctx, tx, input.SessionID)
+	if err != nil {
+		return ReplyResult{}, err
+	}
 
 	messageBefore, err := r.scanMessageByID(ctx, tx, input.MessageID)
 	if err != nil {
@@ -1539,14 +1780,15 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 	}
 
 	deliveryMode := deliveryModeForPayload(messageBefore.Payload)
-	payload := map[string]interface{}{
-		"delivery_mode":        deliveryMode,
-		"delivery_recorded_at": input.SentAt.UTC().Format(time.RFC3339Nano),
-		"provider_status":      input.ProviderStatus,
-	}
+	payload := map[string]interface{}{}
 	for key, value := range input.Payload {
 		payload[key] = value
 	}
+	// Reserved delivery evidence is written only by this canonical sender
+	// transition and cannot be replaced by provider payload fields.
+	payload["delivery_mode"] = deliveryMode
+	payload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
+	payload["provider_status"] = input.ProviderStatus
 	payloadBytes, err := encodeMap(payload)
 	if err != nil {
 		return ReplyResult{}, err
@@ -1611,6 +1853,25 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 	outbound, err := scanReplyOutbound(outboundRow)
 	if err != nil {
 		return ReplyResult{}, err
+	}
+
+	if rawPromptEvent := messageBefore.NormalizedPayload[passengerPromptEventV1MessageKey]; rawPromptEvent != nil && passengerPromptDeliveryConfirmedV1(message) {
+		event, ok := decodePassengerClarificationEventV1(rawPromptEvent)
+		if !ok {
+			return ReplyResult{}, ErrPassengerClarificationStateInvalid
+		}
+		event, ok = passengerClarificationEventForMessageV1(event, messageBefore.ID)
+		if !ok || !passengerClarificationEventIsPromptV1(event) {
+			return ReplyResult{}, ErrPassengerClarificationStateInvalid
+		}
+		state, reduceErr := r.reducePassengerClarificationStateV1Tx(ctx, tx, lockedSession, []PassengerClarificationEventV1{event})
+		if reduceErr != nil {
+			return ReplyResult{}, reduceErr
+		}
+		lockedSession, reduceErr = persistPassengerClarificationStateV1Tx(ctx, tx, lockedSession, state)
+		if reduceErr != nil {
+			return ReplyResult{}, reduceErr
+		}
 	}
 
 	var updatedDraft *Message
@@ -1713,6 +1974,10 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	session, err := r.scanSessionByIDForUpdate(ctx, tx, input.SessionID)
+	if err != nil {
+		return ReplyResult{}, err
+	}
 
 	messageBefore, err := r.scanMessageByID(ctx, tx, input.MessageID)
 	if err != nil {
@@ -1781,11 +2046,6 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 	`, input.OutboundID, input.ErrorText, payloadBytes)
 
 	outbound, err := scanReplyOutbound(outboundRow)
-	if err != nil {
-		return ReplyResult{}, err
-	}
-
-	session, err := r.scanSessionByID(ctx, tx, input.SessionID)
 	if err != nil {
 		return ReplyResult{}, err
 	}
@@ -1901,6 +2161,10 @@ func (r *Repository) SaveReprocessSnapshot(ctx context.Context, input SaveReproc
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+	lockedSession, err := r.scanSessionByIDForUpdate(ctx, tx, input.SessionID)
+	if err != nil {
+		return SaveReprocessSnapshotResult{}, err
+	}
 
 	messagePayload, err := encodeMap(input.MessageMetadata)
 	if err != nil {
@@ -1946,7 +2210,11 @@ func (r *Repository) SaveReprocessSnapshot(ctx context.Context, input SaveReproc
 		return SaveReprocessSnapshotResult{}, err
 	}
 
-	memoryPayload, err := encodeMap(input.Memory)
+	memory := cloneMap(input.Memory)
+	if value, ok := passengerClarificationStateV1ValueFromSession(lockedSession); ok {
+		memory[passengerClarificationStateV1MemoryKey] = value
+	}
+	memoryPayload, err := encodeMap(memory)
 	if err != nil {
 		return SaveReprocessSnapshotResult{}, err
 	}
@@ -2403,6 +2671,7 @@ func (r *Repository) SaveAgentDraft(ctx context.Context, input SaveAgentDraftInp
 	}
 	messageRow := tx.QueryRow(ctx, `
 		insert into chat_messages (
+			id,
 			session_id,
 			direction,
 			kind,
@@ -2415,15 +2684,16 @@ func (r *Repository) SaveAgentDraft(ctx context.Context, input SaveAgentDraftInp
 			received_at
 		) values (
 			$1::uuid,
+			$2::uuid,
 			'OUTBOUND',
 			'TEXT',
-			$2,
-			nullif($3, ''),
+			$3,
 			nullif($4, ''),
-			$5::jsonb,
+			nullif($5, ''),
 			$6::jsonb,
-			$7,
-			$8
+			$7::jsonb,
+			$8,
+			$9
 		)
 		returning
 			id::text,
@@ -2441,7 +2711,7 @@ func (r *Repository) SaveAgentDraft(ctx context.Context, input SaveAgentDraftInp
 			received_at,
 			sent_at,
 			created_at
-	`, input.SessionID, input.IdempotencyKey, input.SenderName, input.Body, payload, normalized, input.ProcessingStatus, input.RecordedAt.UTC())
+	`, firstNonEmpty(strings.TrimSpace(input.MessageID), uuid.NewString()), input.SessionID, input.IdempotencyKey, input.SenderName, input.Body, payload, normalized, input.ProcessingStatus, input.RecordedAt.UTC())
 
 	message, err := scanMessage(messageRow)
 	if err != nil {
@@ -2753,6 +3023,33 @@ func (r *Repository) scanSessionByID(ctx context.Context, querier interface {
 			updated_at
 		from chat_sessions
 		where id = $1::uuid
+	`, id)
+
+	return scanSession(row)
+}
+
+func (r *Repository) scanSessionByIDForUpdate(ctx context.Context, querier interface {
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
+}, id string) (Session, error) {
+	row := querier.QueryRow(ctx, `
+		select
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+		from chat_sessions
+		where id = $1::uuid
+		for update
 	`, id)
 
 	return scanSession(row)

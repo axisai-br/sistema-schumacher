@@ -428,7 +428,18 @@ type SaveReprocessSnapshotResult struct {
 	Messages []Message
 }
 
+type ApplyPassengerClarificationEventsV1Input struct {
+	SessionID string
+	Events    []PassengerClarificationEventV1
+}
+
+type ApplyPassengerClarificationEventsV1Result struct {
+	Session Session
+	State   PassengerClarificationStateV1
+}
+
 type SaveAgentDraftInput struct {
+	MessageID         string
 	SessionID         string
 	IdempotencyKey    string
 	Body              string

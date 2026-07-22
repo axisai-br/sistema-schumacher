@@ -400,7 +400,13 @@ func (s *Service) resolveAgentToolContext(ctx context.Context, session Session, 
 	}
 
 	if s.canCreateBookings() {
-		createInput, ok := parseBookingCreateInput(session, history, currentTurn, context.Availability)
+		createInput, ok := parseBookingCreateInputWithPassengerState(
+			session,
+			history,
+			currentTurn,
+			context.Availability,
+			passengerClarificationStateV1OrDefault(session),
+		)
 		if ok {
 			startedAt := time.Now().UTC()
 			requestPayload := buildBookingCreateRequestPayload(createInput)
@@ -461,12 +467,13 @@ func (s *Service) resolveContextualActionTools(ctx context.Context, session Sess
 		}
 	}
 	if s.canCreateBookings() {
-		createInput, ok := parseBookingCreateFromDocumentConfirmation(session, history, currentTurn)
+		passengerState := passengerClarificationStateV1OrDefault(session)
+		createInput, ok := parseBookingCreateFromDocumentConfirmationWithPassengerState(session, history, currentTurn, passengerState)
 		if ok {
 			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
 			return updated, true, err
 		}
-		createInput, ok = parseBookingCreateInput(session, history, currentTurn, nil)
+		createInput, ok = parseBookingCreateInputWithPassengerState(session, history, currentTurn, nil, passengerState)
 		if ok {
 			updated, err := s.executeBookingCreateTool(ctx, session, context, createInput)
 			return updated, true, err

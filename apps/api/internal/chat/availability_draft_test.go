@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func TestAvailabilityDraftMonthlyFlowCompletesAndSearchesBeforePassengerCollection(t *testing.T) {
-	store := newFakeStore()
+func TestAvailabilityDraftMonthlyFlowUsesStructuredPassengerAuthorityAfterSelection(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -98,8 +98,8 @@ func TestAvailabilityDraftMonthlyFlowCompletesAndSearchesBeforePassengerCollecti
 	if searcher.calls != 1 {
 		t.Fatalf("expected no new availability search on option selection, got %d", searcher.calls)
 	}
-	if !strings.Contains(foldChatText(third.Draft.Body), "passagem e so para voce") {
-		t.Fatalf("expected option selection to continue into passenger question, got %q", third.Draft.Body)
+	if !strings.Contains(foldChatText(third.Draft.Body), "documento de 1 passageiro") {
+		t.Fatalf("expected option selection to continue from the structured passenger state into documents, got %q", third.Draft.Body)
 	}
 }
 
@@ -135,7 +135,7 @@ func TestAvailabilityDraftMonthlyVariationsAskOnlyMissingSlots(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{
 				enabled: true,
@@ -190,7 +190,7 @@ func TestAvailabilityDraftMonthlyVariationsAskOnlyMissingSlots(t *testing.T) {
 }
 
 func TestAvailabilityDraftCurrentMonthQuantityWithoutRouteAsksRouteNotChild(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -263,7 +263,7 @@ func TestAvailabilityDraftCurrentMonthMatcherWordBoundaries(t *testing.T) {
 }
 
 func TestAvailabilityDraftRoutePassengerPromptReplyDoesNotAskChild(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -303,7 +303,7 @@ func TestAvailabilityDraftRoutePassengerPromptReplyDoesNotAskChild(t *testing.T)
 }
 
 func TestAvailabilityDraftMoncaoCurrentMonthAsksSCDestination(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	currentMonth := int(time.Now().UTC().Month())
 	searcher := &fakeAvailabilitySearcher{
@@ -362,7 +362,7 @@ func TestAvailabilityDraftMoncaoCurrentMonthAsksSCDestination(t *testing.T) {
 
 func TestAvailabilityDraftRouteThenQuantityFollowUps(t *testing.T) {
 	t.Run("route follow-up asks quantity", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		searcher := &fakeAvailabilitySearcher{enabled: true}
 		svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -389,7 +389,7 @@ func TestAvailabilityDraftRouteThenQuantityFollowUps(t *testing.T) {
 	})
 
 	t.Run("quantity follow-up searches", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		searcher := &fakeAvailabilitySearcher{
 			enabled: true,
@@ -414,7 +414,7 @@ func TestAvailabilityDraftRouteThenQuantityFollowUps(t *testing.T) {
 }
 
 func TestAvailabilityDraftRouteOnlyPendingQuestionCompletesAndSearches(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -448,7 +448,7 @@ func TestAvailabilityDraftRouteOnlyPendingQuestionCompletesAndSearches(t *testin
 }
 
 func TestAvailabilityDraftQtyOnlyPendingQuestionCompletesAndSearches(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -482,7 +482,7 @@ func TestAvailabilityDraftQtyOnlyPendingQuestionCompletesAndSearches(t *testing.
 }
 
 func TestAvailabilityDraftDoesNotCreateEmptyPendingQuestionForReadyDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: false}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -527,7 +527,7 @@ func TestAvailabilityDraftDoesNotCreateEmptyPendingQuestionForReadyDraft(t *test
 }
 
 func TestAvailabilityDraftUsesPendingQuestionContextWithoutTopLevelDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -563,11 +563,18 @@ func TestAvailabilityDraftUsesPendingQuestionContextWithoutTopLevelDraft(t *test
 }
 
 func TestAvailabilityDraftDoesNotStealPassengerCountWithoutActiveDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
 	session := seedPassengerCollectionPhase(t, store)
+	state := ReducePassengerClarificationEventsV1(newPassengerClarificationStateV1(), []PassengerClarificationEventV1{{
+		Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+		MessageID: "explicit-passenger-count", Value: 1, ValueKnown: true,
+		PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+	}})
+	state.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, state)
 
 	out := ingestAvailabilityDraftTurn(t, svc, session, "1 pessoa", "passenger-count")
 	if out.Draft == nil {
@@ -637,7 +644,7 @@ func TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			bookingCreator := &fakeBookingCreator{enabled: true}
@@ -669,9 +676,8 @@ func TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools(t *testing.T) {
 			if runner.calls != 0 {
 				t.Fatalf("expected deterministic template without LLM/document_extract, got runner calls=%d", runner.calls)
 			}
-			assertShadowNotSkippedAsOutOfTurnInfo(t, out)
-			if openAI.calls != 1 {
-				t.Fatalf("expected OpenAI shadow to run without deterministic out-of-turn skip, got calls=%d", openAI.calls)
+			if openAI.calls != 0 {
+				t.Fatalf("unsafe passenger state must gate OpenAI shadow, got calls=%d", openAI.calls)
 			}
 			if searcher.calls != 0 {
 				t.Fatalf("expected no availability search, got %d", searcher.calls)
@@ -695,20 +701,12 @@ func TestOutOfTurnInfoDuringPassengerCountDoesNotCallTools(t *testing.T) {
 				t.Fatalf("expected no auto-send reasons for out-of-turn info draft, got %+v", reasons)
 			}
 			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(tc.template) {
-				t.Fatalf("expected template %s, got %q payload=%+v", tc.template, got, out.Draft.NormalizedPayload)
-			}
-			templateData := asMap(out.Draft.NormalizedPayload["template_data"])
-			if pending := ResponseTemplateName(asString(templateData[outOfTurnPendingPromptTemplateDataKey])); pending != TemplateContextFallbackPassengerCount {
-				t.Fatalf("expected pending passenger prompt in template data, got %+v", templateData)
+				t.Fatalf("safe parallel question must use local info template, got %q payload=%+v", got, out.Draft.NormalizedPayload)
 			}
 			body := strings.TrimSpace(out.Draft.Body)
 			folded := foldChatText(body)
-			if !strings.Contains(folded, tc.wantInfoFold) {
-				t.Fatalf("expected info text %q in draft %q", tc.wantInfoFold, body)
-			}
-			if !strings.Contains(folded, "para continuar") ||
-				!strings.Contains(folded, "passagem e so para voce") {
-				t.Fatalf("expected passenger prompt reminder, got %q", body)
+			if !strings.Contains(folded, "passagem e so para voce") || !strings.Contains(folded, tc.wantInfoFold) {
+				t.Fatalf("safe local answer must preserve passenger prompt, got %q", body)
 			}
 		})
 	}
@@ -727,7 +725,7 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			bookingCreator := &fakeBookingCreator{enabled: true}
@@ -749,6 +747,10 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 				ChatOpenAIInterpreterAssistEnabled: true,
 			}, runner, searcher, bookingCreator, paymentCreator, openAI)
 			session := seedPassengerCollectionPhase(t, store)
+			passengerState, ok := passengerClarificationStateV1FromSession(store.sessions[session.ID])
+			if !ok || strings.TrimSpace(passengerState.PassengerPromptMessageID) == "" {
+				t.Fatalf("expected explicit delivered passenger prompt fixture, got %+v", passengerState)
+			}
 
 			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
 				ContactKey: session.ContactKey,
@@ -757,6 +759,13 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 					ProviderMessageID: "msg-mixed-passenger-payment-" + tc.name,
 					IdempotencyKey:    "idem-mixed-passenger-payment-" + tc.name,
 					Body:              tc.text,
+					NormalizedPayload: map[string]interface{}{
+						passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+							Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+							PromptMessageID: passengerState.PassengerPromptMessageID,
+							Value:           1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+						}},
+					},
 				},
 			}); err != nil {
 				t.Fatalf("ingest mixed passenger/payment reply: %v", err)
@@ -769,8 +778,8 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 			if runner.calls != 0 {
 				t.Fatalf("expected passenger count handling without LLM/document_extract, got runner calls=%d", runner.calls)
 			}
-			if openAI.calls != 1 {
-				t.Fatalf("expected OpenAI shadow not to be skipped as deterministic out-of-turn, got calls=%d", openAI.calls)
+			if openAI.calls != 0 {
+				t.Fatalf("unsafe passenger state must gate OpenAI shadow, got calls=%d", openAI.calls)
 			}
 			if searcher.calls != 0 {
 				t.Fatalf("expected no availability search, got %d", searcher.calls)
@@ -784,22 +793,19 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 			if len(out.ToolCalls) != 0 {
 				t.Fatalf("expected no tool calls, got %+v", out.ToolCalls)
 			}
-			if got := asInt(out.Memory["passenger_count"]); got != 1 {
-				t.Fatalf("expected passenger_count=1, got %d", got)
+			if got := asInt(out.Memory["passenger_count"]); got != 1 || out.Memory["passenger_count_known"] != true {
+				t.Fatalf("legacy solo fast path must still provide its structured fixture event, memory=%+v", out.Memory)
 			}
 			if out.Draft == nil {
 				t.Fatal("expected passenger-count continuation draft")
 			}
-			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentPassengerCountReply) {
-				t.Fatalf("expected passenger count intent in draft payload, got %q payload=%+v", got, out.Draft.NormalizedPayload)
-			}
 			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskChildUnder5) {
-				t.Fatalf("expected child-under-5 prompt, got template %q payload=%+v", got, out.Draft.NormalizedPayload)
+				t.Fatalf("expected the unresolved child slot clarification, got template %q payload=%+v", got, out.Draft.NormalizedPayload)
 			}
 			body := strings.TrimSpace(out.Draft.Body)
 			folded := foldChatText(body)
 			if !strings.Contains(folded, "tem crianca de 5 anos ou menos") {
-				t.Fatalf("expected passenger flow to continue with child question, got %q", body)
+				t.Fatalf("expected unresolved child clarification, got %q", body)
 			}
 			if strings.Contains(folded, "pagamento pode ser realizado") ||
 				strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])) == string(TemplatePaymentOptionsInfo) {
@@ -811,7 +817,7 @@ func TestPassengerCountAnswerWithPaymentQuestionDoesNotUseOutOfTurnShortcut(t *t
 
 func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 	t.Run("payment choice cancellation wins over payment info", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		openAI := &fakeOpenAIInterpreter{enabled: true}
 		bookingSearcher := &fakeBookingLookupSearcher{
@@ -883,7 +889,7 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 	})
 
 	t.Run("payment choice handoff wins over payment info", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		openAI := &fakeOpenAIInterpreter{enabled: true}
 		paymentCreator := &fakePaymentCreator{enabled: true}
@@ -929,7 +935,7 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 	})
 
 	t.Run("unsupported cargo wins over passenger payment info", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		searcher := &fakeAvailabilitySearcher{enabled: true}
 		bookingCreator := &fakeBookingCreator{enabled: true}
@@ -957,9 +963,8 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reprocess cargo/payment mixed turn: %v", err)
 		}
-		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
-		if openAI.calls != 1 {
-			t.Fatalf("expected OpenAI shadow to run for unsupported cargo guardrail, got calls=%d", openAI.calls)
+		if openAI.calls != 0 {
+			t.Fatalf("unsafe passenger state must gate OpenAI shadow, got calls=%d", openAI.calls)
 		}
 		if searcher.calls != 0 {
 			t.Fatalf("expected no availability search for unsupported cargo, got %d", searcher.calls)
@@ -973,13 +978,13 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 		if out.Draft == nil {
 			t.Fatal("expected unsupported cargo draft")
 		}
-		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateUnsupportedCargo) {
-			t.Fatalf("expected unsupported cargo template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != safePhaseFallbackTemplateName {
+			t.Fatalf("unsafe passenger state must precede cargo routing, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
 		}
 	})
 
 	t.Run("pure passenger payment question runs shadow and emits info template", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		searcher := &fakeAvailabilitySearcher{enabled: true}
 		bookingCreator := &fakeBookingCreator{enabled: true}
@@ -1007,9 +1012,8 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reprocess pure payment info turn: %v", err)
 		}
-		assertShadowNotSkippedAsOutOfTurnInfo(t, out)
-		if openAI.calls != 1 {
-			t.Fatalf("expected OpenAI shadow to run for pure out-of-turn payment info, got calls=%d", openAI.calls)
+		if openAI.calls != 0 {
+			t.Fatalf("unsafe passenger state must gate OpenAI shadow, got calls=%d", openAI.calls)
 		}
 		if runner.calls != 0 {
 			t.Fatalf("expected payment info template without LLM, got runner calls=%d", runner.calls)
@@ -1027,13 +1031,11 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 			t.Fatal("expected payment info draft")
 		}
 		if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
-			t.Fatalf("expected payment info template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+			t.Fatalf("safe parallel payment question must use local template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
 		}
 		folded := foldChatText(out.Draft.Body)
-		if !strings.Contains(folded, "pagamento pode ser realizado") ||
-			!strings.Contains(folded, "para continuar") ||
-			!strings.Contains(folded, "passagem e so para voce") {
-			t.Fatalf("expected payment info with pending passenger reminder, got %q", out.Draft.Body)
+		if !strings.Contains(folded, "pagamento pode ser realizado") || !strings.Contains(folded, "passagem e so para voce") {
+			t.Fatalf("safe local payment answer must preserve passenger prompt, got %q", out.Draft.Body)
 		}
 	})
 
@@ -1046,7 +1048,7 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(tc.env, "false")
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			bookingCreator := &fakeBookingCreator{enabled: true}
@@ -1074,9 +1076,8 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reprocess pure payment info with %s disabled: %v", tc.env, err)
 			}
-			assertShadowNotSkippedAsOutOfTurnInfo(t, out)
-			if openAI.calls != 1 {
-				t.Fatalf("expected OpenAI shadow to run with %s disabled, got calls=%d", tc.env, openAI.calls)
+			if openAI.calls != 0 {
+				t.Fatalf("unsafe passenger state must gate OpenAI shadow with %s disabled, got calls=%d", tc.env, openAI.calls)
 			}
 			if searcher.calls != 0 {
 				t.Fatalf("expected no availability search with %s disabled, got %d", tc.env, searcher.calls)
@@ -1101,7 +1102,7 @@ func TestServiceOutOfTurnInfoShortcutRequiresFinalRouterDecision(t *testing.T) {
 }
 
 func TestServiceOutOfTurnInfoDocumentMediaDoesNotRecordShadowSkip(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1164,7 +1165,7 @@ func TestServiceOutOfTurnInfoDocumentMediaDoesNotRecordShadowSkip(t *testing.T) 
 }
 
 func TestServiceOutOfTurnInfoDocumentMediaFailureDoesNotUseShortcut(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		err:     errors.New("vision failed"),
@@ -1247,7 +1248,7 @@ func structuredShadowSummaryFromMemory(t *testing.T, out ReprocessResult) Struct
 
 func TestAvailabilityDraftPendingQuestionDoesNotBlockHumanSupportOrCancellation(t *testing.T) {
 	t.Run("human support", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 		searcher := &fakeAvailabilitySearcher{enabled: true}
 		svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -1275,7 +1276,7 @@ func TestAvailabilityDraftPendingQuestionDoesNotBlockHumanSupportOrCancellation(
 	})
 
 	t.Run("cancellation", func(t *testing.T) {
-		store := newFakeStore()
+		store := newFakeStoreWithPassengerAuthority()
 		runner := &fakeAgentRunner{
 			enabled: true,
 			result: RunAgentResult{

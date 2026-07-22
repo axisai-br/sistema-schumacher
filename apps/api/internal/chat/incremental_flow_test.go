@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"schumacher-tur/api/internal/shared/config"
 	"strings"
@@ -33,13 +35,13 @@ func TestExtractSelectedOptionIndexBarePrimeira(t *testing.T) {
 	}
 }
 
-func TestSelectAvailabilityOptionPrimeiraAsksPassengerCount(t *testing.T) {
+func TestSelectAvailabilityOptionPrimeiraContinuesFromStructuredPassengerState(t *testing.T) {
 	out, runner, searcher := reprocessAvailabilitySelection(t, "primeira")
 	if out.Draft == nil {
 		t.Fatal("expected draft")
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger question %q, got %q", askPassengerCountReply, got)
+	if got := foldChatText(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected the next missing document after selection, got %q", out.Draft.Body)
 	}
 	if readDraftAutoSendStatus(*out.Draft) != draftAutoSendStatusEligible {
 		t.Fatalf("expected auto-send eligible, got %s", readDraftAutoSendStatus(*out.Draft))
@@ -59,16 +61,16 @@ func TestSelectAvailabilityOptionDoesNotCallLLM(t *testing.T) {
 	}
 }
 
-func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T) {
+func TestSelectAvailabilityOptionWithIntentPhraseContinuesFromStructuredPassengerState(t *testing.T) {
 	out, runner, searcher, creator := reprocessAvailabilitySelectionWithBookingCreator(t, "quero a primeira opcao")
 	if out.Draft == nil {
 		t.Fatal("expected draft")
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger question %q, got %q", askPassengerCountReply, got)
+	if got := foldChatText(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected the next missing document after selection, got %q", out.Draft.Body)
 	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected template %s, got %q", TemplateAskDocuments, got)
 	}
 	if runner.calls != 0 {
 		t.Fatalf("expected LLM not to be called, got %d", runner.calls)
@@ -81,16 +83,16 @@ func TestSelectAvailabilityOptionWithIntentPhraseAsksPassengerCount(t *testing.T
 	}
 }
 
-func TestSelectAvailabilityOptionContextualConfirmationsAskPassengerCount(t *testing.T) {
+func TestSelectAvailabilityOptionContextualConfirmationsUseStructuredPassengerState(t *testing.T) {
 	for _, text := range []string{"isso msm", "essa msm"} {
 		t.Run(text, func(t *testing.T) {
-			assertContextualAvailabilitySelectionAsksPassengerCount(t, text)
+			assertContextualAvailabilitySelectionUsesStructuredPassengerState(t, text)
 		})
 	}
 }
 
 func TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -185,9 +187,9 @@ func TestAvailabilityOptionEssaMsmRenderedSingleOptionWithStaleFactsUsesFallback
 	}
 }
 
-func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text string) {
+func assertContextualAvailabilitySelectionUsesStructuredPassengerState(t *testing.T, text string) {
 	t.Helper()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -209,6 +211,7 @@ func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text 
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
 	seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
@@ -275,14 +278,14 @@ func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text 
 	if out.Draft == nil {
 		t.Fatal("expected draft")
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger question %q, got %q", askPassengerCountReply, got)
+	if got := foldChatText(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected the next missing document after selection, got %q", out.Draft.Body)
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentSelectAvailabilityOption) {
 		t.Fatalf("expected selected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
 	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected template %s, got %q", TemplateAskDocuments, got)
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
 		t.Fatalf("contextual selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
@@ -300,7 +303,7 @@ func assertContextualAvailabilitySelectionAsksPassengerCount(t *testing.T, text 
 }
 
 func TestAvailabilityOptionMultipleAmbiguousReplyUsesContextualFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -322,6 +325,7 @@ func TestAvailabilityOptionMultipleAmbiguousReplyUsesContextualFallback(t *testi
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
 	seedOutboundSent(t, store, session.ID, "De qual cidade do Maranhao voce vai sair?", now.Add(-3*time.Minute))
 	seedInboundSent(t, store, session.ID, "opcao 2", now.Add(-150*time.Second))
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
@@ -403,7 +407,7 @@ func TestAvailabilityOptionMultipleAmbiguousReplyUsesContextualFallback(t *testi
 func TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage(t *testing.T) {
 	for _, text := range []string{"06/7", "6/7", "6/07", "06/07"} {
 		t.Run(text, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{
 				enabled: true,
 				result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -488,7 +492,7 @@ func TestAvailabilityDateSelectionAfterListDoesNotBecomeUnsupportedPackage(t *te
 }
 
 func TestIncrementalFlowUsesActivePromptForAvailabilityOptionAfterDate(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -508,30 +512,35 @@ func TestIncrementalFlowUsesActivePromptForAvailabilityOptionAfterDate(t *testin
 	sessionID := first.Session.ID
 	seedOutboundSent(t, store, sessionID, first.Draft.Body, now.Add(1*time.Minute))
 
-	second := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-route", "de monção pra videira")
-	if second.Draft == nil {
-		t.Fatal("expected availability draft after route")
+	availability := activePromptFlowAvailabilityResult()
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        sessionID,
+		IdempotencyKey:   "active-prompt-flow-availability",
+		Body:             buildAvailabilityListReply(availability),
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			},
+		},
+		RecordedAt: now.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed availability prompt: %v", err)
 	}
-	seedOutboundDraftSent(t, store, sessionID, *second.Draft, now.Add(2*time.Minute))
-
-	third := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-date", "06/07")
-	if third.Draft == nil {
-		t.Fatal("expected availability draft after date")
-	}
-	seedOutboundDraftSent(t, store, sessionID, *third.Draft, now.Add(3*time.Minute))
 
 	out := ingestAndReprocessActivePromptFlowTurn(t, svc, contactKey, "active-prompt-flow-option", "essa mesmo")
 	if out.Draft == nil {
-		t.Fatal("expected passenger count draft")
+		t.Fatal("expected booking continuation draft")
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["intent"])); got != string(IntentSelectAvailabilityOption) {
 		t.Fatalf("expected selected availability intent, got %q payload=%+v", got, out.Draft.NormalizedPayload)
 	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected template %s, got %q", TemplateAskDocuments, got)
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger count reply %q, got %q", askPassengerCountReply, got)
+	if got := strings.TrimSpace(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected document request, got %q", got)
 	}
 	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got == string(TemplateUnsupportedPackage) {
 		t.Fatalf("active prompt selection must not become unsupported package, got %+v", out.Draft.NormalizedPayload)
@@ -549,7 +558,7 @@ func TestIncrementalFlowUsesActivePromptForAvailabilityOptionAfterDate(t *testin
 }
 
 func TestReservationHowToProceedAsksRouteToSCWithoutPassengerCollection(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -618,7 +627,7 @@ func TestReservationHelpWithUnsupportedDestinationReturnsSupportWithoutOpenAI(t 
 		"como faço pra fazer uma reserva para Bahia",
 	} {
 		t.Run(text, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -646,7 +655,7 @@ func TestReservationHelpWithUnsupportedDestinationReturnsSupportWithoutOpenAI(t 
 }
 
 func TestReservationPhraseInPassengerCollectionDoesNotResetRoute(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -686,7 +695,7 @@ func TestReservationPhraseInPassengerCollectionDoesNotResetRoute(t *testing.T) {
 }
 
 func TestBroadMaranhaoQueryAsksSCOriginWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -723,7 +732,7 @@ func TestBroadMaranhaoQueryAsksSCOriginWithoutOpenAI(t *testing.T) {
 }
 
 func TestSCOriginAfterMaranhaoQueryAsksMADestinationWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -779,7 +788,7 @@ func TestBroadSantaCatarinaAbbreviationsReturnPublicTableWithoutOpenAI(t *testin
 
 func broadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T, body string) {
 	t.Helper()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -817,7 +826,7 @@ func broadSantaCatarinaQueryReturnsPublicTableWithoutOpenAI(t *testing.T, body s
 }
 
 func TestSCDestinationAfterPublicTableAsksMAOriginWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -857,7 +866,7 @@ func TestSCDestinationAfterPublicTableAsksMAOriginWithoutOpenAI(t *testing.T) {
 }
 
 func TestUnsupportedMAOriginFollowUpReturnsSupportWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -883,7 +892,7 @@ func TestUnsupportedMAOriginFollowUpReturnsSupportWithoutOpenAI(t *testing.T) {
 }
 
 func TestUnsupportedMADestinationFollowUpReturnsSupportWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -909,7 +918,7 @@ func TestUnsupportedMADestinationFollowUpReturnsSupportWithoutOpenAI(t *testing.
 }
 
 func TestSupportedMAOriginFollowUpStillRunsAvailabilityWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -964,7 +973,7 @@ func TestSupportedMAOriginFollowUpStillRunsAvailabilityWithoutOpenAI(t *testing.
 func TestMADestinationAfterSCOriginExecutesAvailabilityTool(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -1030,7 +1039,7 @@ func TestMADestinationAfterSCOriginExecutesAvailabilityTool(t *testing.T) {
 func TestSantaInesAfterChapecoCallsAvailabilitySearchOnceWithoutOpenAI(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -1088,7 +1097,7 @@ func TestSantaInesAfterChapecoCallsAvailabilitySearchOnceWithoutOpenAI(t *testin
 func TestMADestinationAfterSCOriginSkipsResolveAgentToolContext(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -1151,7 +1160,7 @@ func TestMADestinationAfterSCOriginSkipsResolveAgentToolContext(t *testing.T) {
 func TestMADestinationAfterSCOriginDoesNotCallLLMBeforeTool(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -1216,7 +1225,7 @@ func TestMADestinationAfterSCOriginDoesNotCallLLMBeforeTool(t *testing.T) {
 func TestMaranhaoFlowChapecoThenMoncaoCallsAvailabilitySearchOnce(t *testing.T) {
 	t.Setenv("CHAT_LEGACY_PROMPT_FALLBACK_ENABLED", "false")
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -1274,7 +1283,7 @@ func TestMaranhaoFlowChapecoThenMoncaoCallsAvailabilitySearchOnce(t *testing.T) 
 }
 
 func TestBlockAutoSendOperationalClaimWithoutTool(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1311,7 +1320,7 @@ func TestBlockAutoSendOperationalClaimWithoutTool(t *testing.T) {
 }
 
 func TestUnsupportedCargoDoesNotCallAvailability(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -1343,7 +1352,7 @@ func TestUnsupportedCargoDoesNotCallAvailability(t *testing.T) {
 }
 
 func TestSoEuFillsPassengerCountWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
@@ -1355,6 +1364,12 @@ func TestSoEuFillsPassengerCountWithoutOpenAI(t *testing.T) {
 			ProviderMessageID: "msg-so-eu-accent-1",
 			IdempotencyKey:    "idem-so-eu-accent-1",
 			Body:              "só eu",
+			NormalizedPayload: map[string]interface{}{
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+					Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+				}},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("ingest passenger reply: %v", err)
@@ -1379,10 +1394,17 @@ func TestSoEuFillsPassengerCountWithoutOpenAI(t *testing.T) {
 }
 
 func TestSemCriancaFillsChildUnder5CountWithoutOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Tem crianca de 5 anos ou menos viajando?")
+	passengerKnown := ReducePassengerClarificationEventsV1(newPassengerClarificationStateV1(), []PassengerClarificationEventV1{{
+		Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+		MessageID: "fixture-passenger-known", Value: 1, ValueKnown: true,
+		PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+	}})
+	passengerKnown.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, passengerKnown)
 
 	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: session.ContactKey,
@@ -1391,6 +1413,12 @@ func TestSemCriancaFillsChildUnder5CountWithoutOpenAI(t *testing.T) {
 			ProviderMessageID: "msg-sem-crianca-1",
 			IdempotencyKey:    "idem-sem-crianca-1",
 			Body:              "não, sem criança",
+			NormalizedPayload: map[string]interface{}{
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventChildCountSet, Slot: PassengerClarificationSlotChild,
+					Value: 0, ValueKnown: true,
+				}},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("ingest child reply: %v", err)
@@ -1419,7 +1447,7 @@ func TestPaymentCannotStartWithoutBooking(t *testing.T) {
 }
 
 func TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, paymentSearcher)
@@ -1468,7 +1496,7 @@ func TestPaymentInfoQuestionBeforeBookingUsesClosedTemplateWithoutTool(t *testin
 }
 
 func TestPaymentInfoQuestionDuringAvailabilitySelectionPreservesPromptAndAutoSends(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -1571,7 +1599,7 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 	}
 	for _, text := range cases {
 		t.Run(text, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -1674,7 +1702,7 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *testing.T) {
 	for _, reply := range []string{"2", "1"} {
 		t.Run(reply, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -1739,11 +1767,11 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 			}
 			intentDecision := asMap(second.Memory["intent_decision"])
 			if reply == "2" {
-				if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
-					t.Fatalf("expected passenger count prompt after option 2, got %q", got)
+				if got := strings.TrimSpace(second.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+					t.Fatalf("expected document request after option 2, got %q", got)
 				}
-				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskPassengerCount, got, second.Draft.NormalizedPayload)
+				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskDocuments, got, second.Draft.NormalizedPayload)
 				}
 				if got := asInt(intentDecision["selected_option_index"]); got != 2 {
 					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
@@ -1765,7 +1793,7 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testing.T) {
 	for _, reply := range []string{"2", "1"} {
 		t.Run(reply, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -1832,11 +1860,11 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 			}
 			intentDecision := asMap(second.Memory["intent_decision"])
 			if reply == "2" {
-				if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
-					t.Fatalf("expected passenger count prompt after option 2, got %q", got)
+				if got := strings.TrimSpace(second.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+					t.Fatalf("expected document request after option 2, got %q", got)
 				}
-				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskPassengerCount, got, second.Draft.NormalizedPayload)
+				if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+					t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskDocuments, got, second.Draft.NormalizedPayload)
 				}
 				if got := asInt(intentDecision["selected_option_index"]); got != 2 {
 					t.Fatalf("expected selected option index 2, got %d memory=%+v", got, intentDecision)
@@ -1858,91 +1886,928 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 	}
 }
 
-func TestOutOfTurnPaymentReminderDoesNotAttachStaleAvailabilityFacts(t *testing.T) {
-	for _, reply := range []string{"essa msm", "13/07"} {
-		t.Run(reply, func(t *testing.T) {
-			store := newFakeStore()
-			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
-			searcher := &fakeAvailabilitySearcher{enabled: true}
-			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
-			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher, paymentSearcher)
+func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncompleteFacts(t *testing.T) {
+	testCases := []struct {
+		name       string
+		secondTurn bool
+		seed       func(t *testing.T, store *fakeStore, session Session, now time.Time)
+	}{
+		{
+			name:       "stale_facts",
+			secondTurn: true,
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "stale-facts", stale, messageStatusAutomationSent, true, now.Add(-2*time.Minute))
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "current-without-facts", stale, messageStatusAutomationSent, false, now.Add(-time.Minute))
+			},
+		},
+		{
+			name: "invisible_outbound",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				current := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "invisible", current, messageStatusAutomationDraft, true, now.Add(-time.Minute))
+			},
+		},
+		{
+			name: "posterior_blocker",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				current := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-blocker", current, messageStatusAutomationSent, true, now.Add(-2*time.Minute))
+				if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+					SessionID: session.ID, IdempotencyKey: "metadata-only-selection-blocker",
+					Body: "Entendi a escolha e ainda preciso confirmar os dados.", SenderName: "SHABAS", ProcessingStatus: messageStatusAutomationSent,
+					Payload: map[string]interface{}{"selected_option_index": 1}, RecordedAt: now.Add(-time.Minute),
+				}); err != nil {
+					t.Fatalf("seed posterior metadata-only blocker: %v", err)
+				}
+			},
+		},
+		{
+			name: "incomplete_current_item",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				current := availabilityOptionPromptFutureResultAt(now)
+				current.Results = append([]AvailabilitySearchItem(nil), current.Results...)
+				current.Results[0].BoardStopID = ""
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "incomplete", current, messageStatusAutomationSent, true, now.Add(-time.Minute))
+			},
+		},
+	}
 
-			now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
-				Channel:        "WHATSAPP",
-				ContactKey:     "5511999999999",
-				CustomerPhone:  "5511999999999",
-				LastMessageAt:  &now,
-				LastOutboundAt: &now,
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			base := newFakeStore()
+			store := newFakeTravelQueryV2ShadowClaimStore()
+			store.fakeStore = base
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+			jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+			openAI := &fakeOpenAIInterpreter{enabled: true}
+			travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			booking := &fakeBookingCreator{enabled: true}
+			payment := &fakePaymentCreator{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+				ChatOpenAITravelV2ShadowEnabled:    true,
+				ChatAgentMode:                      chatAgentModeHybridJSON,
+			}, runner, jsonRunner, openAI, travel, searcher, booking, payment, paymentSearcher)
+
+			now := availabilityTestObservedAt()
+			session, err := base.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel: "WHATSAPP", ContactKey: "5511999999997", CustomerPhone: "5511999999997",
+				LastMessageAt: &now, LastOutboundAt: &now,
 			})
 			if err != nil {
-				t.Fatalf("seed session: %v", err)
+				t.Fatalf("seed fail-closed session: %v", err)
 			}
+			testCase.seed(t, base, session, now)
 
-			staleAvailability := availabilityOptionPromptFutureResult()
-			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
-				SessionID:        session.ID,
-				IdempotencyKey:   "draft-stale-availability-before-current-prompt-" + strings.ReplaceAll(reply, "/", "-"),
-				Body:             buildAvailabilityListReply(staleAvailability),
-				SenderName:       "SHABAS",
-				ProcessingStatus: messageStatusAutomationSent,
-				Payload: map[string]interface{}{
-					"tool_context": map[string]interface{}{
-						toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(staleAvailability),
-					},
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{
+					Direction: "INBOUND", ProviderMessageID: "fail-closed-" + testCase.name,
+					IdempotencyKey: "fail-closed-" + testCase.name, Body: "opcao 1",
 				},
-				RecordedAt: now.Add(-3 * time.Minute),
-			}); err != nil {
-				t.Fatalf("seed stale availability draft: %v", err)
+			})
+			if err != nil {
+				t.Fatalf("ingest fail-closed selection: %v", err)
 			}
-			currentPrompt := availabilityOptionPromptFutureResult()
-			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
-				SessionID:        session.ID,
-				IdempotencyKey:   "draft-current-availability-prompt-without-facts-" + strings.ReplaceAll(reply, "/", "-"),
-				Body:             buildAvailabilityListReply(currentPrompt),
-				SenderName:       "SHABAS",
-				ProcessingStatus: messageStatusAutomationSent,
-				RecordedAt:       now.Add(-1 * time.Minute),
-			}); err != nil {
-				t.Fatalf("seed current availability prompt without facts: %v", err)
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess fail-closed selection: %v", err)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected safe passenger clarification draft")
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+				t.Fatalf("expected safe %s, got %q payload=%+v", TemplateAskPassengerCount, got, out.Draft.NormalizedPayload)
+			}
+			for label, payload := range map[string]map[string]interface{}{
+				"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload,
+			} {
+				if index := payloadSelectedOptionIndex(payload); index != 0 {
+					t.Fatalf("%s leaked selected_option_index=%d: %+v", label, index, payload)
+				}
+				if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+					t.Fatalf("%s leaked selected availability snapshot: %+v", label, snapshot)
+				}
+			}
+			if facts := asMap(asMap(out.Draft.Payload["tool_context"])[toolNameAvailabilitySearch]); len(facts) != 0 {
+				t.Fatalf("fail-closed draft leaked stale/invisible/blocked/incomplete facts: %+v", facts)
+			}
+			canonicalState, ok := out.Memory["canonical_state"].(CanonicalConversationState)
+			if !ok {
+				t.Fatalf("expected sanitized canonical_state in fail-closed memory, got %#v", out.Memory["canonical_state"])
+			}
+			assertCanonicalAvailabilityInvalidatedForTest(t, canonicalState, "fail-closed memory")
+
+			reloaded, err := base.GetSession(context.Background(), session.ID)
+			if err != nil {
+				t.Fatalf("reload fail-closed session: %v", err)
+			}
+			persistedCanonical := canonicalConversationStateFromTestValue(
+				t,
+				asMap(reloaded.Metadata["agent"])["canonical_state"],
+				"metadata.agent.canonical_state",
+			)
+			assertCanonicalAvailabilityInvalidatedForTest(t, persistedCanonical, "persisted agent state")
+			persistedBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata)
+			if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) ||
+				persistedBoundary.AfterMessageID != ingested.Message.ID ||
+				!persistedBoundary.AfterCreatedAt.Equal(canonicalAvailabilityHistoryMessageTime(ingested.Message)) {
+				t.Fatalf("fail-closed did not persist the causal inbound boundary: marker=%t boundary=%+v inbound=%+v",
+					canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata), persistedBoundary, ingested.Message)
+			}
+			if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+				searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+				t.Fatalf("fail-closed selection dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d payment_status=%d tools=%+v",
+					runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, paymentSearcher.calls, out.ToolCalls)
+			}
+			select {
+			case <-store.claimAttempts:
+				t.Fatal("fail-closed selection scheduled Travel V2 shadow")
+			case <-time.After(25 * time.Millisecond):
 			}
 
-			key := strings.ReplaceAll(reply, "/", "-")
-			first := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "stale-availability-out-of-turn-payment-"+key, "paga agora?")
-			if first.Draft == nil {
-				t.Fatal("expected out-of-turn payment draft")
-			}
-			if got := strings.TrimSpace(asString(first.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
-				t.Fatalf("expected payment info template, got %q payload=%+v", got, first.Draft.NormalizedPayload)
-			}
-			if len(asMap(asMap(first.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])) != 0 {
-				t.Fatalf("payment reminder must not attach stale availability context, got %+v", first.Draft.Payload)
-			}
-			markSessionMessagesAutomationSent(t, store, session.ID)
-
-			second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "selection-after-stale-facts-reminder-"+key, reply)
-			if second.Draft == nil {
-				t.Fatal("expected fallback draft")
-			}
-			if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateContextFallbackAvailabilityOption) {
-				t.Fatalf("expected missing-current-facts fallback, got %q payload=%+v body=%q", got, second.Draft.NormalizedPayload, second.Draft.Body)
-			}
-			intentDecision := asMap(second.Memory["intent_decision"])
-			if got := asInt(intentDecision["selected_option_index"]); got != 0 {
-				t.Fatalf("stale facts must not select availability option, got %d memory=%+v", got, intentDecision)
-			}
-			if strings.TrimSpace(second.Draft.Body) == askPassengerCountReply {
-				t.Fatalf("stale facts must not advance to passenger count, got %q", second.Draft.Body)
-			}
-			if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
-				t.Fatalf("stale facts must not call LLM or tools, runner=%d availability=%d payment_status=%d tool_calls=%+v", runner.calls, searcher.calls, paymentSearcher.calls, second.ToolCalls)
+			if testCase.secondTurn {
+				markSessionMessagesAutomationSent(t, base, session.ID)
+				secondTurnMessage, err := base.CreateMessage(context.Background(), CreateMessageInput{
+					SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "talvez",
+					ProcessingStatus: "BUFFERED_PENDING", ReceivedAt: now.Add(time.Minute),
+					NormalizedPayload: map[string]interface{}{
+						passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{
+							{
+								Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+								Value: 1, ValueKnown: true,
+								PassengerProvenance: PassengerCountProvenanceAbsoluteTotal,
+							},
+							{
+								Type: PassengerClarificationEventChildCountSet, Slot: PassengerClarificationSlotChild,
+								Value: 0, ValueKnown: true,
+							},
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("seed structured passenger authority: %v", err)
+				}
+				second, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: secondTurnMessage.SessionID})
+				if err != nil {
+					t.Fatalf("reprocess safe turn after canonical invalidation: %v", err)
+				}
+				secondCanonical, ok := second.Memory["canonical_state"].(CanonicalConversationState)
+				if !ok {
+					t.Fatalf("expected canonical_state in safe second turn, got %#v", second.Memory["canonical_state"])
+				}
+				assertCanonicalAvailabilityInvalidatedForTest(t, secondCanonical, "safe second-turn memory")
+				if openAI.calls != 1 {
+					state, _ := passengerClarificationStateV1FromSession(second.Session)
+					t.Fatalf("expected V1 interpreter shadow once on safe second turn, got %d passenger_state=%+v draft=%+v", openAI.calls, state, second.Draft)
+				}
+				assertCanonicalAvailabilityInvalidatedForTest(t, openAI.lastInput.StructuredInput.State, "V1 interpreter input")
+				if jsonRunner.calls > 0 {
+					var compact JSONDecisionCompactInput
+					if err := json.Unmarshal([]byte(jsonRunner.lastInput.CompactInput), &compact); err != nil {
+						t.Fatalf("decode JSON interpreter input: %v", err)
+					}
+					if compact.State.SelectedOptionIndex != 0 || compact.State.TripID != "" ||
+						compact.State.TripDate != "" || compact.State.PackageName != "" || compact.State.HasAvailabilityFacts {
+						t.Fatalf("JSON interpreter received stale availability state: %+v", compact.State)
+					}
+				}
+				select {
+				case <-store.completed:
+					if travel.calls != 1 {
+						t.Fatalf("expected Travel V2 interpreter once on safe second turn, got %d", travel.calls)
+					}
+					assertCanonicalAvailabilityInvalidatedForTest(t, travel.lastInput.StructuredInput.State, "Travel V2 interpreter input")
+				case <-time.After(time.Second):
+					t.Fatal("timed out waiting for Travel V2 safe second-turn completion")
+				}
 			}
 		})
 	}
 }
 
-func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *testing.T) {
+func TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState(t *testing.T) {
+	testCases := []struct {
+		name        string
+		currentTurn string
+		seed        func(t *testing.T, store *fakeStore, session Session, now time.Time)
+	}{
+		{
+			name:        "stale_facts",
+			currentTurn: "1",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-stale", stale, messageStatusAutomationSent, true, now.Add(-3*time.Minute))
+			},
+		},
+		{
+			name:        "stale_facts_contextual",
+			currentTurn: "essa msm",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-stale-contextual", stale, messageStatusAutomationSent, true, now.Add(-3*time.Minute))
+			},
+		},
+		{
+			name:        "invisible_outbound",
+			currentTurn: "1",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-invisible", stale, messageStatusAutomationDraft, true, now.Add(-3*time.Minute))
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-invisible-current", stale, messageStatusAutomationSent, false, now.Add(-time.Minute))
+			},
+		},
+		{
+			name:        "posterior_blocker",
+			currentTurn: "1",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-blocked", stale, messageStatusAutomationSent, true, now.Add(-3*time.Minute))
+				if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+					SessionID: session.ID, IdempotencyKey: "before-router-blocker",
+					Body: "Entendi a escolha e ainda preciso confirmar os dados.", SenderName: "SHABAS",
+					ProcessingStatus: messageStatusAutomationSent, Payload: map[string]interface{}{"selected_option_index": 1}, RecordedAt: now.Add(-2 * time.Minute),
+				}); err != nil {
+					t.Fatalf("seed posterior blocker: %v", err)
+				}
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-blocked-current", stale, messageStatusAutomationSent, false, now.Add(-time.Minute))
+			},
+		},
+		{
+			name:        "incomplete_item",
+			currentTurn: "1",
+			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
+				stale := availabilityOptionPromptFutureResultAt(now)
+				stale.Results = append([]AvailabilitySearchItem(nil), stale.Results...)
+				stale.Results[0].BoardStopID = ""
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-incomplete", stale, messageStatusAutomationSent, true, now.Add(-3*time.Minute))
+				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "before-router-incomplete-current", stale, messageStatusAutomationSent, false, now.Add(-time.Minute))
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			base := newFakeStore()
+			store := newFakeTravelQueryV2ShadowClaimStore()
+			store.fakeStore = base
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+			jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+			openAI := &fakeOpenAIInterpreter{enabled: true}
+			travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			booking := &fakeBookingCreator{enabled: true}
+			payment := &fakePaymentCreator{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+				ChatOpenAITravelV2ShadowEnabled:    true,
+				ChatAgentMode:                      chatAgentModeHybridJSON,
+			},
+				runner, jsonRunner, openAI, travel, searcher, booking, payment, paymentSearcher)
+
+			now := availabilityTestObservedAt()
+			session, err := base.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel: "WHATSAPP", ContactKey: "5511888" + testCase.name, CustomerPhone: "5511888" + testCase.name,
+				LastMessageAt: &now, LastOutboundAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("seed marked session: %v", err)
+			}
+			seedPassengerClarificationStateV1ForTest(base, session.ID, completePassengerStateForTest(1, 0))
+			testCase.seed(t, base, session, now)
+			markCanonicalAvailabilityInvalidatedForTest(base, session.ID)
+
+			routerCalls := 0
+			routerHistory := []Message(nil)
+			routerState := CanonicalConversationState{}
+			routerActivePrompt := ActivePromptContext{}
+			routerDecision := IntentDecision{}
+			svc.deterministicRouter = func(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
+				routerCalls++
+				routerHistory = append([]Message(nil), history...)
+				routerState = canonicalConversationStateFromTestValue(t, state, "router input capture")
+				routerActivePrompt = InferActivePromptContext(history, state)
+				routerDecision = routeDeterministicIntent(history, currentTurn, state, observedAt)
+				return routerDecision
+			}
+
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{Direction: "INBOUND", ProviderMessageID: "before-router-" + testCase.name,
+					IdempotencyKey: "before-router-" + testCase.name, Body: testCase.currentTurn},
+			})
+			if err != nil {
+				t.Fatalf("ingest marked selection: %v", err)
+			}
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess marked selection: %v", err)
+			}
+			if routerCalls != 1 {
+				t.Fatalf("router calls=%d, want 1", routerCalls)
+			}
+			assertAvailabilityInvalidatedRouterHistoryForTest(t, routerHistory)
+			assertCanonicalAvailabilityInvalidatedForTest(t, routerState, "router input")
+			if routerActivePrompt.Kind == ActivePromptAvailabilityOptionChoice {
+				t.Fatalf("router received stale availability active prompt: %+v", routerActivePrompt)
+			}
+			if routerDecision.Intent == IntentSelectAvailabilityOption {
+				t.Fatalf("router selected invalidated availability: %+v", routerDecision)
+			}
+			if intentDecision := asMap(out.Memory["intent_decision"]); strings.TrimSpace(asString(intentDecision["intent"])) == string(IntentSelectAvailabilityOption) {
+				t.Fatalf("intent_decision selected invalidated availability: %+v", intentDecision)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected deterministic safe draft")
+			}
+			for label, payload := range map[string]map[string]interface{}{"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload} {
+				if index := payloadSelectedOptionIndex(payload); index != 0 {
+					t.Fatalf("%s leaked invalidated index=%d: %+v", label, index, payload)
+				}
+				if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+					t.Fatalf("%s leaked invalidated snapshot: %+v", label, snapshot)
+				}
+				assertNoRouteIDKeysAtAnyDepthForTest(t, payload, "draft."+label)
+			}
+			reloaded, err := base.GetSession(context.Background(), session.ID)
+			if err != nil {
+				t.Fatalf("reload marked invalidation: %v", err)
+			}
+			if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) {
+				t.Fatalf("invalid selection cleared the persisted marker: %+v", reloaded.Metadata)
+			}
+			persistedBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata)
+			if persistedBoundary.AfterMessageID != ingested.Message.ID ||
+				!persistedBoundary.AfterCreatedAt.Equal(canonicalAvailabilityHistoryMessageTime(ingested.Message)) {
+				t.Fatalf("legacy marker did not acquire a conservative current-turn boundary: got=%+v inbound=%+v",
+					persistedBoundary, ingested.Message)
+			}
+			if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+				searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+				t.Fatalf("marked invalidation dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d payment_status=%d tools=%+v",
+					runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, paymentSearcher.calls, out.ToolCalls)
+			}
+			select {
+			case <-store.claimAttempts:
+				t.Fatal("marked invalidation scheduled Travel V2 shadow")
+			case <-time.After(25 * time.Millisecond):
+			}
+			if travel.calls != 0 {
+				t.Fatalf("Travel V2 interpreter ran after the negative claim window: calls=%d", travel.calls)
+			}
+			if openAI.calls != 0 {
+				t.Fatalf("V1 interpreter shadow ran after the negative claim window: calls=%d", openAI.calls)
+			}
+		})
+	}
+}
+
+func TestPreInvalidationAvailabilityHistoryBoundaryDoesNotReachRouter(t *testing.T) {
 	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+	jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	booking := &fakeBookingCreator{enabled: true}
+	payment := &fakePaymentCreator{enabled: true}
+	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+		ChatOpenAITravelV2ShadowEnabled:    true,
+		ChatAgentMode:                      chatAgentModeHybridJSON,
+	}, runner, jsonRunner, openAI, travel, searcher, booking, payment, paymentSearcher)
+
+	now := availabilityTestObservedAt()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel: "WHATSAPP", ContactKey: "5511888000101", CustomerPhone: "5511888000101",
+		LastMessageAt: &now, LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed boundary session: %v", err)
+	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
+	stale := availabilityOptionPromptFutureResultAt(now)
+	seedAvailabilitySelectionPromptForFailClosedTest(
+		t, store, session.ID, "pre-boundary-sent", stale, messageStatusAutomationSent, true, now.Add(-4*time.Minute),
+	)
+	boundary, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "opcao antiga invalida",
+		ProcessingStatus: "AUTOMATION_PROCESSED", ReceivedAt: now.Add(-3 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("seed invalidation boundary: %v", err)
+	}
+	seedAvailabilitySelectionPromptForFailClosedTest(
+		t, store, session.ID, "post-boundary-draft", stale, messageStatusAutomationDraft, true, now.Add(-2*time.Minute),
+	)
+	markCanonicalAvailabilityInvalidatedAfterMessageForTest(store, session.ID, boundary)
+
+	routerDecision := IntentDecision{}
+	svc.deterministicRouter = func(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
+		routerDecision = routeDeterministicIntent(history, currentTurn, state, observedAt)
+		return routerDecision
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{Direction: "INBOUND", ProviderMessageID: "pre-boundary-router",
+			IdempotencyKey: "pre-boundary-router", Body: "essa msm"},
+	})
+	if err != nil {
+		t.Fatalf("ingest boundary selection: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess boundary selection: %v", err)
+	}
+	if routerDecision.Intent == IntentSelectAvailabilityOption {
+		t.Fatalf("router selected pre-boundary availability: %+v", routerDecision)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected safe deterministic draft")
+	}
+	for label, payload := range map[string]map[string]interface{}{
+		"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload,
+	} {
+		if index := payloadSelectedOptionIndex(payload); index != 0 {
+			t.Fatalf("%s leaked pre-boundary index=%d: %+v", label, index, payload)
+		}
+		if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+			t.Fatalf("%s leaked pre-boundary snapshot: %+v", label, snapshot)
+		}
+	}
+	reloaded, err := store.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("reload boundary session: %v", err)
+	}
+	if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) {
+		t.Fatalf("pre-boundary selection cleared invalidation marker: %+v", reloaded.Metadata)
+	}
+	if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+		searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("boundary fail-closed dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d payment_status=%d tools=%+v",
+			runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, paymentSearcher.calls, out.ToolCalls)
+	}
+}
+
+func TestAvailabilityInvalidationHistoryBoundaryRejectsUntrustedPostBoundaryAvailability(t *testing.T) {
+	testCases := []struct {
+		name             string
+		processingStatus string
+		incomplete       bool
+		botAutoReply     bool
+	}{
+		{name: "draft", processingStatus: messageStatusAutomationDraft},
+		{name: "blocked", processingStatus: "BLOCKED_BY_REVIEW"},
+		{name: "manual_pending", processingStatus: "MANUAL_PENDING"},
+		{name: "send_failed", processingStatus: "SEND_FAILED"},
+		{name: "incomplete_item", processingStatus: messageStatusAutomationSent, incomplete: true},
+		{name: "bot_auto_reply_without_reliable_source", processingStatus: "PENDING", botAutoReply: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newFakeStore()
+			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+			jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+			openAI := &fakeOpenAIInterpreter{enabled: true}
+			travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+			searcher := &fakeAvailabilitySearcher{enabled: true}
+			booking := &fakeBookingCreator{enabled: true}
+			payment := &fakePaymentCreator{enabled: true}
+			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+			svc := NewService(store, config.Config{
+				ChatDebounceWindowMS:               1500,
+				ChatOpenAIInterpreterShadowEnabled: true,
+				ChatOpenAITravelV2ShadowEnabled:    true,
+				ChatAgentMode:                      chatAgentModeHybridJSON,
+			}, runner, jsonRunner, openAI, travel, searcher, booking, payment, paymentSearcher)
+
+			now := availabilityTestObservedAt()
+			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+				Channel: "WHATSAPP", ContactKey: "boundary-" + testCase.name, CustomerPhone: "boundary-" + testCase.name,
+				LastMessageAt: &now, LastOutboundAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("seed boundary session: %v", err)
+			}
+			seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
+			oldAvailability := availabilityOptionPromptFutureResultAt(now)
+			seedAvailabilitySelectionPromptForFailClosedTest(
+				t, store, session.ID, "old-sent-"+testCase.name, oldAvailability, messageStatusAutomationSent, true, now.Add(-5*time.Minute),
+			)
+			boundary, err := store.CreateMessage(context.Background(), CreateMessageInput{
+				SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "invalidar availability anterior",
+				ProcessingStatus: "AUTOMATION_PROCESSED", ReceivedAt: now.Add(-4 * time.Minute),
+			})
+			if err != nil {
+				t.Fatalf("seed invalidation boundary: %v", err)
+			}
+			postBoundaryAvailability := availabilityOptionPromptFutureResultAt(now.Add(time.Hour))
+			if testCase.incomplete {
+				postBoundaryAvailability.Results = append([]AvailabilitySearchItem(nil), postBoundaryAvailability.Results...)
+				postBoundaryAvailability.Results[0].BoardStopID = ""
+			}
+			payload := map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(postBoundaryAvailability),
+				},
+			}
+			if testCase.botAutoReply {
+				payload["mode"] = "BOT_AUTO_REPLY"
+				payload["draft_message_id"] = "missing-unreliable-source"
+			}
+			if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+				SessionID: session.ID, IdempotencyKey: "post-boundary-" + testCase.name,
+				Body: buildAvailabilityListReply(postBoundaryAvailability), SenderName: "SHABAS",
+				ProcessingStatus: testCase.processingStatus, Payload: payload, RecordedAt: now.Add(-2 * time.Minute),
+			}); err != nil {
+				t.Fatalf("seed post-boundary availability: %v", err)
+			}
+			markCanonicalAvailabilityInvalidatedAfterMessageForTest(store, session.ID, boundary)
+
+			routerDecision := IntentDecision{}
+			svc.deterministicRouter = func(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
+				routerDecision = routeDeterministicIntent(history, currentTurn, state, observedAt)
+				return routerDecision
+			}
+			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+				ContactKey: session.ContactKey,
+				Message: IngestMessagePayload{Direction: "INBOUND", ProviderMessageID: "boundary-current-" + testCase.name,
+					IdempotencyKey: "boundary-current-" + testCase.name, Body: "essa msm"},
+			})
+			if err != nil {
+				t.Fatalf("ingest boundary reply: %v", err)
+			}
+			out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+			if err != nil {
+				t.Fatalf("reprocess boundary reply: %v", err)
+			}
+			if routerDecision.Intent == IntentSelectAvailabilityOption {
+				t.Fatalf("router selected untrusted post-boundary availability: %+v", routerDecision)
+			}
+			if out.Draft == nil {
+				t.Fatal("expected safe deterministic draft")
+			}
+			for label, draftPayload := range map[string]map[string]interface{}{
+				"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload,
+			} {
+				if index := payloadSelectedOptionIndex(draftPayload); index != 0 {
+					t.Fatalf("%s leaked old index=%d: %+v", label, index, draftPayload)
+				}
+				if snapshot := asMap(draftPayload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+					t.Fatalf("%s leaked old snapshot: %+v", label, snapshot)
+				}
+				if facts := asMap(asMap(draftPayload["tool_context"])[toolNameAvailabilitySearch]); len(facts) != 0 {
+					t.Fatalf("%s leaked old trip/stop facts: %+v", label, facts)
+				}
+			}
+			canonical, ok := out.Memory["canonical_state"].(CanonicalConversationState)
+			if !ok {
+				t.Fatalf("missing canonical state in fail-closed memory: %#v", out.Memory["canonical_state"])
+			}
+			assertCanonicalAvailabilityInvalidatedForTest(t, canonical, "boundary fail-closed memory")
+			reloaded, err := store.GetSession(context.Background(), session.ID)
+			if err != nil {
+				t.Fatalf("reload boundary session: %v", err)
+			}
+			persistedBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata)
+			if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) ||
+				persistedBoundary.AfterMessageID != boundary.ID ||
+				!persistedBoundary.AfterCreatedAt.Equal(canonicalAvailabilityHistoryMessageTime(boundary)) {
+				t.Fatalf("marker/boundary changed after rejected selection: marker=%t boundary=%+v metadata=%+v",
+					canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata), persistedBoundary, reloaded.Metadata)
+			}
+			if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+				searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+				t.Fatalf("boundary fail-closed dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d payment_status=%d tools=%+v",
+					runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, paymentSearcher.calls, out.ToolCalls)
+			}
+		})
+	}
+}
+
+func TestPostInvalidationHistoryBoundaryFreshAvailabilityClearsAfterRouter(t *testing.T) {
+	assertPostInvalidationHistoryBoundaryFreshAvailabilityClearsAfterRouter(t, "1")
+}
+
+func TestPostInvalidationHistoryBoundaryFreshAvailabilityContextualSelectionClearsAfterRouter(t *testing.T) {
+	assertPostInvalidationHistoryBoundaryFreshAvailabilityClearsAfterRouter(t, "essa msm")
+}
+
+func assertPostInvalidationHistoryBoundaryFreshAvailabilityClearsAfterRouter(t *testing.T, currentTurn string) {
+	t.Helper()
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+	jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	booking := &fakeBookingCreator{enabled: true}
+	payment := &fakePaymentCreator{enabled: true}
+	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500, ChatAgentMode: chatAgentModeHybridJSON},
+		runner, jsonRunner, openAI, travel, searcher, booking, payment, paymentSearcher)
+
+	now := availabilityTestObservedAt()
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel: "WHATSAPP", ContactKey: "5511888777777", CustomerPhone: "5511888777777",
+		LastMessageAt: &now, LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed fresh selection session: %v", err)
+	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
+	stale := availabilityOptionPromptFutureResultAt(now)
+	seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "fresh-replaces-stale", stale, messageStatusAutomationSent, true, now.Add(-3*time.Minute))
+	seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "fresh-replaces-stale-blocker", stale, messageStatusAutomationSent, false, now.Add(-2*time.Minute))
+	boundary, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "invalidar availability anterior",
+		ProcessingStatus: "AUTOMATION_PROCESSED", ReceivedAt: now.Add(-90 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("seed fresh availability boundary: %v", err)
+	}
+	fresh := availabilityOptionPromptFutureResultAt(now.AddDate(0, 0, 1))
+	if stale.Results[0].TripID == fresh.Results[0].TripID ||
+		stale.Results[0].BoardStopID == fresh.Results[0].BoardStopID ||
+		stale.Results[0].AlightStopID == fresh.Results[0].AlightStopID {
+		t.Fatalf("fresh control must use route IDs distinct from stale facts: stale=%+v fresh=%+v", stale.Results[0], fresh.Results[0])
+	}
+	seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "fresh-current", fresh, messageStatusAutomationSent, true, now.Add(-time.Minute))
+	markCanonicalAvailabilityInvalidatedAfterMessageForTest(store, session.ID, boundary)
+
+	routerState := CanonicalConversationState{}
+	routerDecision := IntentDecision{}
+	svc.deterministicRouter = func(history []Message, currentTurn string, state CanonicalConversationState, observedAt time.Time) IntentDecision {
+		routerState = canonicalConversationStateFromTestValue(t, state, "fresh router input capture")
+		routerDecision = routeDeterministicIntent(history, currentTurn, state, observedAt)
+		return routerDecision
+	}
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{Direction: "INBOUND", ProviderMessageID: "fresh-clears-marker",
+			IdempotencyKey: "fresh-clears-marker", Body: currentTurn},
+	})
+	if err != nil {
+		t.Fatalf("ingest fresh selection: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess fresh selection: %v", err)
+	}
+	assertCanonicalAvailabilityInvalidatedForTest(t, routerState, "fresh selection router input")
+	if routerDecision.Intent != IntentSelectAvailabilityOption || routerDecision.SelectedOptionIndex != 1 {
+		t.Fatalf("fresh current availability was not selected: %+v", routerDecision)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected fresh selection draft")
+	}
+	expectedSnapshot := selectedAvailabilityResultPayloadFromAvailability(&fresh, 1)
+	for label, payload := range map[string]map[string]interface{}{"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload} {
+		if index := payloadSelectedOptionIndex(payload); index != 1 {
+			t.Fatalf("%s selected index=%d, want 1: %+v", label, index, payload)
+		}
+		if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); !reflect.DeepEqual(snapshot, expectedSnapshot) {
+			t.Fatalf("%s fresh snapshot mismatch: got=%+v want=%+v", label, snapshot, expectedSnapshot)
+		}
+		assertStringValuesAbsentAtAnyDepthForTest(t, payload, "fresh draft."+label,
+			stale.Results[0].TripID, stale.Results[0].BoardStopID, stale.Results[0].AlightStopID)
+	}
+	reloaded, err := store.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("reload fresh selection: %v", err)
+	}
+	if canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) {
+		t.Fatalf("fresh complete availability did not clear invalidation marker: %+v", reloaded.Metadata)
+	}
+	if boundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata); boundary.known() {
+		t.Fatalf("fresh complete availability did not clear invalidation boundary: %+v", boundary)
+	}
+	persistedCanonical := canonicalConversationStateFromTestValue(t, asMap(reloaded.Metadata["agent"])["canonical_state"], "fresh metadata.agent.canonical_state")
+	if persistedCanonical.Route.SelectedOptionIndex != 1 || persistedCanonical.Route.TripID != fresh.Results[0].TripID ||
+		persistedCanonical.Route.BoardStopID != fresh.Results[0].BoardStopID || persistedCanonical.Route.AlightStopID != fresh.Results[0].AlightStopID {
+		t.Fatalf("fresh complete route was not persisted: %+v", persistedCanonical.Route)
+	}
+	if facts := asMap(persistedCanonical.LastToolFacts[toolNameAvailabilitySearch]); len(facts) == 0 {
+		t.Fatalf("fresh availability facts were not persisted: %+v", persistedCanonical.LastToolFacts)
+	} else {
+		assertStringValuesAbsentAtAnyDepthForTest(t, facts, "fresh persisted availability facts",
+			stale.Results[0].TripID, stale.Results[0].BoardStopID, stale.Results[0].AlightStopID)
+	}
+	if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+		searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("fresh deterministic selection dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d payment_status=%d tools=%+v",
+			runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, paymentSearcher.calls, out.ToolCalls)
+	}
+}
+
+func markCanonicalAvailabilityInvalidatedForTest(store *fakeStore, sessionID string) {
+	session := store.sessions[sessionID]
+	metadata := cloneMap(session.Metadata)
+	agent := cloneMap(asMap(metadata["agent"]))
+	if agent == nil {
+		agent = map[string]interface{}{}
+	}
+	agent[canonicalAvailabilityFactsInvalidatedMetadataKey] = true
+	metadata["agent"] = agent
+	memory := cloneMap(asMap(metadata["memory"]))
+	if memory == nil {
+		memory = map[string]interface{}{}
+	}
+	memory[canonicalAvailabilityFactsInvalidatedMetadataKey] = true
+	metadata["memory"] = memory
+	session.Metadata = metadata
+	store.sessions[sessionID] = session
+}
+
+func markCanonicalAvailabilityInvalidatedAfterMessageForTest(store *fakeStore, sessionID string, boundary Message) {
+	markCanonicalAvailabilityInvalidatedForTest(store, sessionID)
+	session := store.sessions[sessionID]
+	metadata := cloneMap(session.Metadata)
+	for _, key := range []string{"agent", "memory"} {
+		root := cloneMap(asMap(metadata[key]))
+		root[canonicalAvailabilityFactsInvalidatedAfterMessageIDMetadataKey] = boundary.ID
+		root[canonicalAvailabilityFactsInvalidatedAfterCreatedAtMetadataKey] = canonicalAvailabilityHistoryMessageTime(boundary).Format(time.RFC3339Nano)
+		metadata[key] = root
+	}
+	session.Metadata = metadata
+	store.sessions[sessionID] = session
+}
+
+func assertCanonicalAvailabilityInvalidatedForTest(t *testing.T, state CanonicalConversationState, label string) {
+	t.Helper()
+	if state.Route.SelectedOptionIndex != 0 ||
+		strings.TrimSpace(state.Route.TripID) != "" ||
+		strings.TrimSpace(state.Route.BoardStopID) != "" ||
+		strings.TrimSpace(state.Route.AlightStopID) != "" ||
+		strings.TrimSpace(state.Route.TripDate) != "" ||
+		strings.TrimSpace(state.Route.DepartureTime) != "" ||
+		state.Route.Price != 0 ||
+		strings.TrimSpace(state.Route.Currency) != "" ||
+		strings.TrimSpace(state.Route.PackageName) != "" {
+		t.Fatalf("%s retained stale selected route: %+v", label, state.Route)
+	}
+	if availability := asMap(state.LastToolFacts[toolNameAvailabilitySearch]); len(availability) != 0 {
+		t.Fatalf("%s retained stale availability facts: %+v", label, availability)
+	}
+}
+
+func assertAvailabilityInvalidatedRouterHistoryForTest(t *testing.T, history []Message) {
+	t.Helper()
+	for i, message := range history {
+		if messageLooksLikeAvailabilitySelectionPrompt(message) {
+			t.Fatalf("router history[%d] retained stale availability prompt: %+v", i, message)
+		}
+		for label, payload := range map[string]map[string]interface{}{
+			"payload": message.Payload, "normalized_payload": message.NormalizedPayload,
+		} {
+			assertAvailabilityInvalidatedRouterPayloadForTest(t, payload, fmt.Sprintf("history[%d].%s", i, label))
+		}
+	}
+}
+
+func assertAvailabilityInvalidatedRouterPayloadForTest(t *testing.T, payload map[string]interface{}, label string) {
+	t.Helper()
+	if len(payload) == 0 {
+		return
+	}
+	assertNoRouteIDKeysAtAnyDepthForTest(t, payload, label)
+	if index := asInt(payload["selected_option_index"]); index != 0 {
+		t.Fatalf("%s retained stale selected_option_index=%d: %+v", label, index, payload)
+	}
+	if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); len(snapshot) != 0 {
+		t.Fatalf("%s retained stale selected_availability_result: %+v", label, snapshot)
+	}
+	if availability := asMap(asMap(payload["tool_context"])[toolNameAvailabilitySearch]); len(availability) != 0 {
+		t.Fatalf("%s retained stale availability_search: %+v", label, availability)
+	}
+	for _, key := range []string{"request_payload", "response_payload"} {
+		assertAvailabilityInvalidatedRouterPayloadForTest(t, asMap(payload[key]), label+"."+key)
+	}
+}
+
+func assertNoRouteIDKeysAtAnyDepthForTest(t *testing.T, value interface{}, label string) {
+	t.Helper()
+	forbidden := map[string]struct{}{
+		"trip_id": {}, "board_stop_id": {}, "alight_stop_id": {},
+	}
+	var visit func(reflect.Value, string)
+	visit = func(node reflect.Value, path string) {
+		for node.IsValid() && (node.Kind() == reflect.Interface || node.Kind() == reflect.Ptr) {
+			if node.IsNil() {
+				return
+			}
+			node = node.Elem()
+		}
+		if !node.IsValid() {
+			return
+		}
+		switch node.Kind() {
+		case reflect.Map:
+			iterator := node.MapRange()
+			for iterator.Next() {
+				key := fmt.Sprint(iterator.Key().Interface())
+				childPath := path + "." + key
+				if _, blocked := forbidden[key]; blocked {
+					t.Fatalf("%s retained forbidden route key %q", childPath, key)
+				}
+				visit(iterator.Value(), childPath)
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < node.Len(); i++ {
+				visit(node.Index(i), fmt.Sprintf("%s[%d]", path, i))
+			}
+		}
+	}
+	visit(reflect.ValueOf(value), label)
+}
+
+func assertStringValuesAbsentAtAnyDepthForTest(t *testing.T, value interface{}, label string, forbiddenValues ...string) {
+	t.Helper()
+	forbidden := make(map[string]struct{}, len(forbiddenValues))
+	for _, value := range forbiddenValues {
+		forbidden[value] = struct{}{}
+	}
+	var visit func(reflect.Value, string)
+	visit = func(node reflect.Value, path string) {
+		for node.IsValid() && (node.Kind() == reflect.Interface || node.Kind() == reflect.Ptr) {
+			if node.IsNil() {
+				return
+			}
+			node = node.Elem()
+		}
+		if !node.IsValid() {
+			return
+		}
+		switch node.Kind() {
+		case reflect.Map:
+			iterator := node.MapRange()
+			for iterator.Next() {
+				key := fmt.Sprint(iterator.Key().Interface())
+				visit(iterator.Value(), path+"."+key)
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < node.Len(); i++ {
+				visit(node.Index(i), fmt.Sprintf("%s[%d]", path, i))
+			}
+		case reflect.String:
+			if _, blocked := forbidden[node.String()]; blocked {
+				t.Fatalf("%s retained stale route value %q", path, node.String())
+			}
+		}
+	}
+	visit(reflect.ValueOf(value), label)
+}
+
+func canonicalConversationStateFromTestValue(t *testing.T, value interface{}, label string) CanonicalConversationState {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", label, err)
+	}
+	var state CanonicalConversationState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("decode %s: %v", label, err)
+	}
+	return state
+}
+
+func seedAvailabilitySelectionPromptForFailClosedTest(
+	t *testing.T,
+	store *fakeStore,
+	sessionID string,
+	key string,
+	availability AvailabilitySearchResult,
+	processingStatus string,
+	withFacts bool,
+	recordedAt time.Time,
+) {
+	t.Helper()
+	payload := map[string]interface{}{}
+	if withFacts {
+		payload["tool_context"] = map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+		}
+	}
+	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID: sessionID, IdempotencyKey: "draft-fail-closed-" + key,
+		Body: buildAvailabilityListReply(availability), SenderName: "SHABAS",
+		ProcessingStatus: processingStatus, Payload: payload, RecordedAt: recordedAt,
+	}); err != nil {
+		t.Fatalf("seed %s availability prompt: %v", key, err)
+	}
+}
+
+func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -1983,8 +2848,8 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	if out.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
-	if got := strings.TrimSpace(out.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger count prompt, got %q", got)
+	if got := strings.TrimSpace(out.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected document request, got %q", got)
 	}
 	intentDecision := asMap(out.Memory["intent_decision"])
 	if got := asInt(intentDecision["selected_option_index"]); got != 1 {
@@ -2012,8 +2877,8 @@ func TestAvailabilityDateSelectionWithHiddenRawPrefixKeepsVisibleTripFacts(t *te
 	}
 }
 
-func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing.T) {
-	store := newFakeStore()
+func TestAvailabilityDateSelectionPersistsOptionForKnownPassengerContinuation(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -2053,8 +2918,8 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	if first.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
-	if got := strings.TrimSpace(first.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger count prompt, got %q", got)
+	if got := strings.TrimSpace(first.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected document request for known passenger state, got %q", got)
 	}
 	if got := asInt(first.Draft.Payload["selected_option_index"]); got != 2 {
 		t.Fatalf("expected draft payload selected_option_index=2, got %d payload=%+v", got, first.Draft.Payload)
@@ -2078,36 +2943,168 @@ func TestAvailabilityDateSelectionPersistsOptionForPassengerCountTurn(t *testing
 	if len(firstResults) != 2 || strings.TrimSpace(asString(firstResults[1]["trip_id"])) != selectedOption.TripID {
 		t.Fatalf("expected selection draft to carry visible options with %s at index 2, got %+v", selectedDate, firstAvailability)
 	}
-	markSessionMessagesAutomationSent(t, store, session.ID)
-
-	second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "passenger-count-after-date-selection", "só eu")
-	if second.Draft == nil {
-		t.Fatal("expected passenger continuation draft")
-	}
-	bookingDraft := asMap(second.Memory["booking_draft_context"])
-	if got := asInt(bookingDraft["selected_option_index"]); got != 2 {
-		t.Fatalf("expected persisted selected option index 2, got %d context=%+v", got, bookingDraft)
-	}
-	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != selectedOption.TripID {
-		t.Fatalf("expected passenger turn to keep %s, got %q context=%+v", selectedOption.TripID, got, bookingDraft)
-	}
-	if got := asInt(bookingDraft["passenger_count"]); got != 1 {
-		t.Fatalf("expected passenger_count=1, got %d context=%+v", got, bookingDraft)
-	}
-	if got := asInt(second.Draft.NormalizedPayload["selected_option_index"]); got != 2 {
-		t.Fatalf("expected continuation draft to preserve selected_option_index=2, got %d payload=%+v", got, second.Draft.NormalizedPayload)
-	}
-	secondSnapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(secondSnapshot["trip_id"])); got != selectedOption.TripID {
-		t.Fatalf("expected continuation draft to preserve selected trip snapshot, got %q snapshot=%+v", got, secondSnapshot)
-	}
-	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
-		t.Fatalf("expected no LLM or tool calls, runner=%d availability=%d payment_status=%d tool_calls=%+v", runner.calls, searcher.calls, paymentSearcher.calls, second.ToolCalls)
+	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(first.ToolCalls) != 0 {
+		t.Fatalf("expected no LLM or tool calls, runner=%d availability=%d payment_status=%d tool_calls=%+v", runner.calls, searcher.calls, paymentSearcher.calls, first.ToolCalls)
 	}
 }
 
-func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPassengerCountTurn(t *testing.T) {
-	store := newFakeStore()
+func TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWindow(t *testing.T) {
+	base := newFakeStore()
+	store := newFakeTravelQueryV2ShadowClaimStore()
+	store.fakeStore = base
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+	jsonRunner := &fakeJSONDecisionRunner{enabled: true}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	travel := &fakeOpenAITravelQueryV2Interpreter{enabled: true}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	booking := &fakeBookingCreator{enabled: true}
+	payment := &fakePaymentCreator{enabled: true}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+		ChatOpenAITravelV2ShadowEnabled:    true,
+		ChatAgentMode:                      chatAgentModeHybridJSON,
+	}, runner, jsonRunner, openAI, travel, searcher, booking, payment)
+
+	now := availabilityTestObservedAt()
+	session, err := base.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel:        "WHATSAPP",
+		ContactKey:     "5511999999998",
+		CustomerPhone:  "5511999999998",
+		LastMessageAt:  &now,
+		LastOutboundAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed fail-closed selection session: %v", err)
+	}
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	selected := availability.Results[1]
+	if _, err := base.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
+		SessionID:        session.ID,
+		IdempotencyKey:   "draft-passenger-fail-closed-two-options",
+		Body:             buildAvailabilityListReply(availability),
+		SenderName:       "SHABAS",
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			},
+		},
+		RecordedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed current two-option availability: %v", err)
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction:         "INBOUND",
+			ProviderMessageID: "passenger-fail-closed-option-2",
+			IdempotencyKey:    "passenger-fail-closed-option-2",
+			Body:              "opcao 2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest option 2 without passenger authority: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess option 2 without passenger authority: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected fail-closed passenger draft")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
+		t.Fatalf("expected %s, got %q payload=%+v", TemplateAskPassengerCount, got, out.Draft.NormalizedPayload)
+	}
+	expectedSnapshot := selectedAvailabilityResultPayloadFromAvailability(&availability, 2)
+	for label, payload := range map[string]map[string]interface{}{
+		"payload":            out.Draft.Payload,
+		"normalized_payload": out.Draft.NormalizedPayload,
+	} {
+		if got := asInt(payload["selected_option_index"]); got != 2 {
+			t.Fatalf("%s selected_option_index=%d, want 2: %+v", label, got, payload)
+		}
+		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
+		if !reflect.DeepEqual(snapshot, expectedSnapshot) {
+			t.Fatalf("%s must preserve the complete selected option snapshot: got=%+v want=%+v", label, snapshot, expectedSnapshot)
+		}
+	}
+	availabilityFacts := asMap(asMap(out.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
+	if want := buildAvailabilityToolResponsePayload(availability); !reflect.DeepEqual(availabilityFacts, want) {
+		t.Fatalf("draft must preserve current visible availability facts: got=%+v want=%+v", availabilityFacts, want)
+	}
+	persistedSelectionSession, err := base.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("reload complete fail-closed selection: %v", err)
+	}
+	persistedSelectionState := canonicalConversationStateFromTestValue(
+		t,
+		asMap(persistedSelectionSession.Metadata["agent"])["canonical_state"],
+		"complete metadata.agent.canonical_state",
+	)
+	if persistedSelectionState.Route.SelectedOptionIndex != 2 ||
+		persistedSelectionState.Route.TripID != selected.TripID ||
+		persistedSelectionState.Route.BoardStopID != selected.BoardStopID ||
+		persistedSelectionState.Route.AlightStopID != selected.AlightStopID {
+		t.Fatalf("complete selection route was not persisted canonically: %+v", persistedSelectionState.Route)
+	}
+	if facts := asMap(persistedSelectionState.LastToolFacts[toolNameAvailabilitySearch]); len(facts) == 0 {
+		t.Fatalf("complete selection availability facts were not persisted canonically: %+v", persistedSelectionState.LastToolFacts)
+	}
+	if got := strings.TrimSpace(asString(expectedSnapshot["trip_id"])); got != selected.TripID ||
+		strings.TrimSpace(asString(expectedSnapshot["board_stop_id"])) != selected.BoardStopID ||
+		strings.TrimSpace(asString(expectedSnapshot["alight_stop_id"])) != selected.AlightStopID {
+		t.Fatalf("selected snapshot lost route IDs: %+v", expectedSnapshot)
+	}
+	if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
+		searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("fail-closed selection dispatched external work: runner=%d json=%d shadow=%d travel=%d availability=%d booking=%d payment=%d tools=%+v",
+			runner.calls, jsonRunner.calls, openAI.calls, travel.calls, searcher.calls, booking.calls, payment.calls, out.ToolCalls)
+	}
+	select {
+	case <-store.claimAttempts:
+		t.Fatal("fail-closed selection scheduled Travel V2 shadow")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	markSessionMessagesAutomationSent(t, base, session.ID)
+	for i := 0; i < 49; i++ {
+		if _, err := base.CreateMessage(context.Background(), CreateMessageInput{
+			SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: "window filler",
+			ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(time.Duration(i+1) * time.Second),
+		}); err != nil {
+			t.Fatalf("create history filler %d: %v", i, err)
+		}
+	}
+	history, err := base.ListMessages(context.Background(), session.ID, ListMessagesFilter{})
+	if err != nil {
+		t.Fatalf("list fail-closed selection history: %v", err)
+	}
+	if len(history) < 50 {
+		t.Fatalf("expected at least 50 messages, got %d", len(history))
+	}
+	history = history[len(history)-50:]
+	for _, message := range history {
+		if message.ID == ingested.Message.ID {
+			t.Fatalf("selection inbound %s must be outside the bounded history", ingested.Message.ID)
+		}
+	}
+	latestSession, err := base.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("reload fail-closed selection session: %v", err)
+	}
+	projection := collectBookingDraftContextFromState(latestSession, history, "")
+	if projection.SelectedOptionIndex != 2 || projection.TripID != selected.TripID ||
+		projection.BoardStopID != selected.BoardStopID || projection.AlightStopID != selected.AlightStopID ||
+		projection.TripDate != selected.TripDate || projection.DepartureTime != selected.OriginDepartTime ||
+		projection.Price != selected.Price || projection.Currency != selected.Currency {
+		t.Fatalf("selected option must survive after the inbound leaves LIMIT 50: %+v", projection)
+	}
+}
+
+func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForKnownPassengerContinuation(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -2161,8 +3158,8 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	if second.Draft == nil {
 		t.Fatal("expected selection draft")
 	}
-	if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
-		t.Fatalf("expected passenger count prompt after reminder selection, got %q", got)
+	if got := strings.TrimSpace(second.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+		t.Fatalf("expected document request after reminder selection, got %q", got)
 	}
 	if got := asInt(second.Draft.NormalizedPayload["selected_option_index"]); got != 2 {
 		t.Fatalf("expected selected option index 2 after reminder, got %d payload=%+v", got, second.Draft.NormalizedPayload)
@@ -2174,30 +3171,10 @@ func TestAvailabilityDateSelectionAfterOutOfTurnReminderPersistsOptionForPasseng
 	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(second.ToolCalls) != 0 {
 		t.Fatalf("expected no LLM or tool calls through selection, runner=%d availability=%d payment_status=%d tool_calls=%+v", runner.calls, searcher.calls, paymentSearcher.calls, second.ToolCalls)
 	}
-	markSessionMessagesAutomationSent(t, store, session.ID)
-
-	third := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "two-options-passenger-after-reminder-selection", "só pra mim")
-	if third.Draft == nil {
-		t.Fatal("expected passenger continuation draft")
-	}
-	bookingDraft := asMap(third.Memory["booking_draft_context"])
-	if got := asInt(bookingDraft["selected_option_index"]); got != 2 {
-		t.Fatalf("expected selected option index 2 after passenger turn, got %d context=%+v", got, bookingDraft)
-	}
-	if got := strings.TrimSpace(asString(bookingDraft["trip_id"])); got != selectedOption.TripID {
-		t.Fatalf("expected passenger turn to keep selected %s, got %q context=%+v", selectedOption.TripID, got, bookingDraft)
-	}
-	thirdSnapshot := asMap(third.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if got := strings.TrimSpace(asString(thirdSnapshot["trip_id"])); got != selectedOption.TripID {
-		t.Fatalf("expected passenger continuation to preserve selected trip snapshot, got %q snapshot=%+v", got, thirdSnapshot)
-	}
-	if runner.calls != 0 || searcher.calls != 0 || paymentSearcher.calls != 0 || len(third.ToolCalls) != 0 {
-		t.Fatalf("expected no LLM or tool calls after passenger turn, runner=%d availability=%d payment_status=%d tool_calls=%+v", runner.calls, searcher.calls, paymentSearcher.calls, third.ToolCalls)
-	}
 }
 
 func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -2214,6 +3191,7 @@ func TestAvailabilitySelectionReplacesExistingCanonicalRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
 	oldAvailability := availabilityOptionPromptFutureResultAt(now)
 	oldSelection := selectedAvailabilityResultPayloadFromAvailability(&oldAvailability, 1)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
@@ -2287,7 +3265,7 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{enabled: true}
 			paymentSearcher := &fakePaymentStatusSearcher{enabled: true}
@@ -2348,11 +3326,11 @@ func TestAvailabilitySelectionContinuesAfterOutOfTurnPaymentReminder(t *testing.
 			if second.Draft == nil {
 				t.Fatal("expected selection draft")
 			}
-			if got := strings.TrimSpace(second.Draft.Body); got != askPassengerCountReply {
-				t.Fatalf("expected passenger count prompt after %q, got %q", reply, got)
+			if got := strings.TrimSpace(second.Draft.Body); !strings.Contains(got, "documento de 1 passageiro") {
+				t.Fatalf("expected document request after %q, got %q", reply, got)
 			}
-			if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-				t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskPassengerCount, got, second.Draft.NormalizedPayload)
+			if got := strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+				t.Fatalf("expected template %s, got %q payload=%+v", TemplateAskDocuments, got, second.Draft.NormalizedPayload)
 			}
 			intentDecision := asMap(second.Memory["intent_decision"])
 			if got := asInt(intentDecision["selected_option_index"]); got != 1 {
@@ -2385,7 +3363,8 @@ func TestBookingCannotCreateWithoutPassengers(t *testing.T) {
 			OriginDisplayName: "Fraiburgo/SC", DestinationDisplayName: "Moncao/MA",
 		}},
 	}
-	input, ok := parseBookingCreateInput(Session{}, nil, "quero reservar opcao 1", &availability)
+	session := sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest())
+	input, ok := parseBookingCreateInput(session, nil, "quero reservar opcao 1", &availability)
 	if ok {
 		t.Fatalf("expected booking create to be blocked without passengers, got %+v", input)
 	}
@@ -2424,7 +3403,7 @@ func reprocessAvailabilitySelection(t *testing.T, customerText string) (Reproces
 
 func reprocessAvailabilitySelectionWithBookingCreator(t *testing.T, customerText string) (ReprocessResult, *fakeAgentRunner, *fakeAvailabilitySearcher, *fakeBookingCreator) {
 	t.Helper()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},

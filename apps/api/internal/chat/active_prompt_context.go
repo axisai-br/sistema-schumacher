@@ -160,7 +160,7 @@ func isReliableActivePromptOutbound(message Message) bool {
 	status := strings.ToUpper(strings.TrimSpace(message.ProcessingStatus))
 	switch status {
 	case messageStatusAutomationDraft, messageStatusAutomationReviewed, messageStatusAutomationPending,
-		"REVIEW_REQUIRED", "PENDING_REVIEW", "BLOCKED_BY_REVIEW":
+		"MANUAL_PENDING", "SEND_FAILED", "REVIEW_REQUIRED", "PENDING_REVIEW", "BLOCKED_BY_REVIEW":
 		return false
 	}
 	if strings.Contains(status, "REVIEW_REQUIRED") ||

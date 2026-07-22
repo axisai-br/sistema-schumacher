@@ -188,7 +188,10 @@ P0-C  Adicionar gate de testes ao CI
 3.6F-C  OpenAI V2 em shadow
 
 H-2026-07-16A  Corrigir ausência de claims e observabilidade do recovery V2
-H-2026-07-16B  Corrigir contagem de passageiros e loop de criança menor de 5
+H-2026-07-16B  Umbrella do estado de passageiros
+H-2026-07-16B1 Fundação de autoridade, eventos, serialização e fail-closed
+H-2026-07-16B2 PassengerClarificationMeaningV1 strict, corpus e shadow
+H-2026-07-16B3 Promoção runtime gated do meaning de passageiros
 
 3.6F-D  Corpus e evaluator V2
 3.6F-E  Observabilidade V2
@@ -277,7 +280,9 @@ Conclusão:
 
 - o código do slice permanece revisado;
 - a promoção da fila foi reaberta por evidência operacional;
-- o 3.6F-D fica bloqueado até H-2026-07-16A;
+- o 3.6F-D ficou bloqueado por H-2026-07-16A naquele incidente e, após a
+  conclusão operacional de H-A, permanece bloqueado pelo umbrella
+  H-2026-07-16B;
 - o bug de passageiros/criança é separado em H-2026-07-16B;
 - não misturar infraestrutura shadow com estado de passageiros no mesmo PR.
 
@@ -285,7 +290,35 @@ Conclusão:
 
 `TravelQueryMeaningV2` não representa quantidade de passageiros, idades ou criança menor de 5 anos. Esses fatos não devem ser fabricados pelo evaluator do 3.6F-D.
 
-O hotfix H-2026-07-16B corrige o fluxo determinístico atual. Uma futura semântica ampla de passageiros só deve ser criada com contrato próprio, corpus e decisão arquitetural explícita.
+O H-2026-07-16B é um umbrella, não um hotfix executável. H-B1 constrói somente a
+fundação estrutural; H-B2 cria o contrato próprio, validator, corpus e shadow de
+`PassengerClarificationMeaningV1`; H-B3 promove esse meaning apenas sob gates
+restritos. A decisão canônica está em
+`docs/adr/ADR-2026-07-passenger-authority-and-serialization.md`.
+
+## Replanejamento H-B após o sexto review
+
+```text
+H-B1 — fonte durável, eventos, serialização por sessão, prompt enviado,
+        fail-closed e BookingDraftContext como projeção; sem linguagem
+  ↓ review sem P1/P2 e prova concorrente real
+H-B2 — PassengerClarificationMeaningV1 strict, validator, corpus e shadow;
+        sem tools ou efeito user-visible
+  ↓ review sem P1/P2 e gate de promoção aprovado
+H-B3 — runtime somente em prompt passageiro/criança e decisão
+        WEAK/FALLBACK/UNKNOWN; sem booking/payment direto
+  ↓ review e gates operacionais completos
+H-B concluída
+  ↓
+3.6F-D pode ser reavaliada
+```
+
+O reducer recebe somente eventos estruturados. Antes do booking, a autoridade é
+`PassengerClarificationStateV1`; depois do booking, são booking/passengers
+persistidos. Transcript e `tool_context` não reconstroem composição. Correções
+substituem o agregado completo, estados inválidos bloqueiam LLMs/tools e toda
+atualização por sessão usa transação curta com row lock ou revision/CAS e retry
+bounded, sem chamada externa sob lock.
 
 ## Definition of Done operacional
 

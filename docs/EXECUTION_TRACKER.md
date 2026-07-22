@@ -286,14 +286,17 @@ Regras:
 | 4 | 3.6F-A | **CONCLUÍDA — DEPLOY CONFIRMADO** | `plans/3.6f-a-contrato-travel-query-meaning-v2.md` | contrato V2 local. |
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
-| 7 | H-2026-07-16A | **EM VALIDAÇÃO OPERACIONAL — PATCH LOCAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | SQLSTATE 22P02 atribuído à codificação `[]byte` dos parâmetros `::jsonb`; patch textual aguarda novo smoke. |
-| 8 | H-2026-07-16B | **PENDENTE após H-2026-07-16A** | `plans/h-2026-07-16b-passenger-child-state.md` | corrigir contagem de passageiros e loop de criança menor de 5. |
-| 9 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 reproduzíveis após os hotfixes. |
-| 10 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
-| 11 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
-| 12 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
-| 13 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
-| 14 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
+| 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — B1 concluída; B2 é a próxima fundação do umbrella** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável para autoridade, meaning e promoção runtime. |
+| 9 | H-2026-07-16B1 | **CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fonte durável, eventos, serialização, prompt enviado, fail-closed e projeção; sem linguagem. |
+| 10 | H-2026-07-16B2 | **PRÓXIMA** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict, validator, corpus e shadow sem influência runtime. |
+| 11 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
+| 12 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
+| 13 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
+| 14 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
+| 15 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
+| 16 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
+| 17 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
 
 ### Regra de desbloqueio
 
@@ -1415,7 +1418,7 @@ commit/push/deploy: nenhum executado neste ciclo
 teste em produção: executado em 2026-07-16; flag V2 ativa, porém nenhum claim criado e recovery com sweep_failed recorrente
 ordem de deploy futura: aplicar obrigatoriamente a migration 0021 antes do novo binário
 riscos restantes: enquanto a API ou o storage estiverem indisponíveis nenhum sweep pode persistir a transição, mas startup/ticks posteriores retomam o recovery; a fila bounded pode descartar shadow para preservar o fluxo real; qualidade semântica, custo e latência reais pertencem aos próximos slices de corpus, evaluator e observabilidade
-próxima ação única: executar H-2026-07-16A; H-2026-07-16B e 3.6F-D permanecem bloqueados/pendentes
+próxima ação histórica daquela rodada: executar H-2026-07-16A; H-2026-07-16B e 3.6F-D permaneciam bloqueados/pendentes
 ```
 
 ---
@@ -1632,12 +1635,733 @@ teste em produção: obrigatório após implantação autorizada do patch
 smoke exigido: nova mensagem segura -> scheduled -> claim_acquired -> provider_started/provider_completed -> completion_completed; claim COMPLETED; recovery_due_at NULL; sweep_done 0/0/0; nenhum sweep_failed
 se houver falha: usar somente reason, operation, error_class, sqlstate, timeout e canceled; não registrar payload ou SQL
 riscos restantes: integração PostgreSQL em QueryExecModeExec não executada localmente por ausência da URL; fechamento operacional depende do novo smoke; capacity_full continua fail-open por contrato
-próxima ação única: revisar e, por fluxo autorizado, implantar o patch 22P02 e executar o smoke sanitizado; H-2026-07-16B e 3.6F-D permanecem bloqueados
+próxima ação histórica daquela rodada: revisar e, por fluxo autorizado, implantar o patch 22P02 e executar o smoke sanitizado; H-2026-07-16B e 3.6F-D permaneciam bloqueados
 ```
 
 ### 8.10 Bug user-visible — H-2026-07-16B (2026-07-16)
 
-**Status:** **PENDENTE após H-2026-07-16A**.
+**Status:** **EM ANDAMENTO — B1 concluída; B2 é a próxima fundação do
+umbrella**.
+
+O H-B agora é umbrella não executável. O 3.6F-D permanece **BLOQUEADA por
+H-2026-07-16B**.
+
+#### Sexto review — 9 P1 e divisão do umbrella
+
+O sexto review histórico comprovou que snapshot V1, versão, ledgers, reducer
+tipado e limpeza da correção zero ainda não fechavam a raiz temporal, de
+autoridade e proveniência. Naquele sexto review histórico, o patch então vigente
+não era seguro para commit, deploy ou smoke. Esse estado foi posteriormente
+superseded pelo review final sem P1/P2 de B1.
+
+| ID | P1 | Slice responsável | Prova obrigatória |
+|---|---|---|---|
+| P1-01 | parser lexical novo de família e crescimento de regex/listas | B1 remove a interpretação da fundação; B2 fornece o meaning semântico separado | B1: `TestPassengerStateFoundationDoesNotAddLexicalFamilyRules` e inventário `regexp.MustCompile == 54`; B2: `TestPassengerMeaningV1ValidatorDoesNotParseCurrentTurn` |
+| P1-02 | bootstrap reparsa inbound da janela histórica | B1 | `TestPassengerStateBootstrapUsesStructuredEvidenceOnly` |
+| P1-03 | `prompt_event` não acompanha o outbound efetivamente enviado | B1 | `TestPassengerPromptEventFollowsReviewedAndAutoSentOutboundBeyondHistoryWindow` |
+| P1-04 | contexto infantil deriva de `ActivePrompt.Kind`, não da época persistida | B1 | `TestPassengerChildAddsTravelerUsesPersistedPromptEpoch` |
+| P1-05 | estado inseguro chega a shadows, LLMs e tools | B1 | `TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch` |
+| P1-06 | `BookingDraftContext` recupera contagem de `booking_create` histórico | B1 | `TestBookingDraftProjectionIgnoresBookingCreatePassengerCount` |
+| P1-07 | booking criado avança payment antes da validação dos slots | B1 | `TestBookingCreatedWithUnknownPassengerSlotsFailsClosed` |
+| P1-08 | correção de total preserva `ChildUnder5AddsTraveler` incompatível | B1 | `TestPassengerAggregateCorrectionClearsDependentAddsTraveler` |
+| P1-09 | `Reprocess` concorrentes podem perder atualização do snapshot | B1 | `TestPassengerStateConcurrentReprocessPreservesBothEvents` e `TestPassengerStateApplyEventsSerializesSessionPostgres` |
+
+Decisão canônica:
+
+```text
+H-B1 — CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT
+  fonte durável + eventos + serialização por sessão + prompt enviado
+  + fail-closed + BookingDraftContext como projeção; sem linguagem
+H-B2 — PRÓXIMA
+  PassengerClarificationMeaningV1 strict + validator + corpus + shadow;
+  sem tools ou mudança user-visible
+H-B3 — BLOQUEADA por H-B2
+  promoção somente em prompt passageiro/criança e decisão
+  WEAK/FALLBACK/UNKNOWN; sem booking/payment direto
+3.6F-D — BLOQUEADA por H-B
+```
+
+A autoridade arquitetural é
+`docs/adr/ADR-2026-07-passenger-authority-and-serialization.md`. As ADRs
+anteriores são somente históricas. O plano futuro isolado de meaning foi
+superseded pelo B2.
+
+Critérios de desbloqueio:
+
+- B1 libera B2 somente com as nove regressões, inventário lexical sem
+  crescimento, teste PostgreSQL concorrente real, matriz completa e review sem
+  P1/P2;
+- B2 libera B3 somente com contrato strict, corpus/evaluator, shadow sem
+  influência runtime, métricas críticas zeradas, limiares aprovados e review
+  sem P1/P2;
+- B3 fecha o umbrella somente com gates runtime, review sem P1/P2,
+  rollout/rollback e smoke quando explicitamente autorizado, sem incidente
+  aberto;
+- somente o fechamento integral do umbrella permite reavaliar 3.6F-D.
+
+Arquivos documentais deste replanejamento:
+
+```text
+docs/adr/ADR-2026-07-passenger-authority-and-serialization.md
+docs/adr/ADR-2026-07-passenger-clarification-state.md
+docs/adr/ADR-2026-07-passenger-state-durable-events.md
+plans/README.md
+plans/00-plano-mestre-travel-semantic-v2.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+plans/h-2026-07-16b3-passenger-meaning-runtime.md
+plans/p-2026-07-passenger-clarification-meaning-v1.md
+docs/EXECUTION_TRACKER.md
+```
+
+Resultado do sexto review: **9 P1; H-B não concluída**. Código de produção e
+testes não foram alterados por este replanejamento.
+
+Validação executada neste replanejamento documental:
+
+```text
+PASS — git diff --check
+PASS — whitespace check dos sete artefatos documentais untracked
+PASS — existência dos quatro novos artefatos canônicos
+PASS — checksum do diff de apps/api e hashes dos seis arquivos Go untracked idênticos ao baseline anterior às edições documentais
+SKIP JUSTIFICADO — testes Go não executados; nenhum código de produção ou teste foi alterado nesta rodada
+```
+
+Commit, push, deploy e smoke não foram executados. Próxima ação única: executar
+somente H-2026-07-16B1 por `/goal` explícito.
+
+#### Execução local do H-2026-07-16B1 — 2026-07-20 a 2026-07-21
+
+**Status do slice:** **CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA
+COMMIT**.
+
+#### Review final — sem P1/P2
+
+O review final confirmou as provas numérica e contextual, ausência de claim V2,
+shadows V1/V2 zerados depois da janela assíncrona e nenhuma alteração de
+produção na correção final. O B1 está seguro para commit e libera somente o B2
+como próximo slice; isso não autoriza iniciar B2 nesta rodada nem conclui o
+umbrella H-B.
+
+Evidência de fechamento:
+
+```text
+PASS — review final sem P1/P2
+PASS — matrizes obrigatórias com -count=20
+PASS — go test -race -count=1 ./internal/chat
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS SEM SKIP — PostgreSQL real
+PASS — inventário de produção em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Os blocos de reviews intermediários abaixo são registros históricos das
+respectivas rodadas. Todos foram superseded pelo review final sem P1/P2 e não
+definem o status vigente de B1 nem a fila canônica atual.
+
+O review anterior encontrou uma lacuna de prova restante, sem demonstrar
+defeito novo de produção:
+
+- **P1 pós-janela assíncrona:** `travel.calls == 0` era verificado antes da
+  espera negativa em `claimAttempts`; a ausência de claim durante 25 ms não era
+  seguida por uma observação direta de que Travel V2 e o shadow V1 continuavam
+  com zero chamadas.
+
+Naquela rodada, a correção permaneceu exclusivamente em
+`incremental_flow_test.go`: as asserções anteriores e a espera negativa
+limitada foram preservadas, e `travel.calls == 0` e `openAI.calls == 0`
+passaram a ser verificados novamente imediatamente depois da janela. O status
+histórico daquela rodada, posteriormente superseded pelo review final de B1,
+era: H-B permanecia aberto/em andamento e ainda não liberava os sucessores; B2
+estava bloqueada por B1, B3 por B2 e 3.6F-D pelo umbrella H-B.
+
+O review anterior encontrou duas lacunas de prova, sem demonstrar defeito
+novo de produção:
+
+- **P1 contextual:** o único marker legado sem boundary e sem outbound
+  mascarador usava `"1"`; `"essa msm"` aparecia apenas em cenário com boundary
+  explícita e DRAFT posterior;
+- **P1 de árvore do draft:** índice e snapshot eram verificados, mas
+  `trip_id`, `board_stop_id` e `alight_stop_id` podiam permanecer em
+  `template_data`, request/response, tool context ou listas aninhadas.
+
+A correção ficou exclusivamente em `incremental_flow_test.go`: os casos legado
+numérico e contextual agora usam availability antiga completa sem outbound
+posterior confiável e capturam history, canonical state, active prompt e
+decisão diretamente no router. Um helper recursivo percorre maps e slices e
+rejeita as três chaves de rota em qualquer profundidade do history e dos dois
+payloads do draft. O controle positivo numérico foi preservado; o novo controle
+contextual usa availability pós-boundary com IDs distintos e comprova que
+somente a viagem nova é selecionada. O teste focado passou sem alteração de
+produção.
+
+O review anterior encontrou uma lacuna de prova no cenário de marker legado
+sem boundary:
+
+- **P1 de prova:** o caso principal continha uma availability antiga completa
+  seguida por outro outbound `AUTOMATION_SENT` sem facts. Como
+  `latestReliableAssistantMessage` parava no outbound posterior, o router já
+  não alcançava a availability antiga mesmo sem a lógica de boundary/overlay.
+
+A correção foi exclusivamente na fixture e nas asserções: o outbound posterior
+foi removido do caso principal, que agora contém somente availability antiga
+`AUTOMATION_SENT`, visível, completa e confiável, marker booleano sem boundary,
+estado de passageiros seguro e turno atual `"1"`. O teste captura diretamente
+history e canonical state do deterministic router e comprova ausência de
+availability facts, índice, snapshot, trip/stops e active prompt de escolha
+antigos. O teste focado passou sem alteração em `service.go`,
+`availability_invalidation_history.go` ou qualquer outro arquivo de produção.
+
+O review anterior encontrou a lacuna causal restante:
+
+- **P1:** `canonical_availability_facts_invalidated=true` sanitizava o estado,
+  mas `InferActivePromptContext`, `routeDeterministicIntent` e os helpers de
+  materialização ainda recebiam o histórico completo. Um outbound posterior
+  invisível fazia `latestReliableAssistantMessage` recuar até uma availability
+  `SENT` anterior à invalidação, selecionar a viagem antiga e limpar o marker.
+
+Raiz confirmada: o marker era booleano e não definia qual inbound separava os
+facts invalidados de uma nova evidência entregue. RED real:
+`TestPreInvalidationAvailabilityHistoryBoundaryDoesNotReachRouter` retornou
+`SELECT_AVAILABILITY_OPTION` para a availability pré-boundary antes do patch.
+
+Correção local estrita do P1:
+
+- o marker persiste também
+  `canonical_availability_facts_invalidated_after_message_id` com o ID do
+  inbound causal e timestamp somente como fallback;
+- um overlay read-only oculta `availability_search`, índice, snapshot, prompt
+  de escolha e mirror `BOT_AUTO_REPLY` pré-boundary sem alterar o transcript;
+- o mesmo overlay alimenta estado canônico, active prompt, router, booking
+  draft, interpreters e todos os helpers de seleção do `Reprocess`;
+- DRAFT, BLOCKED, MANUAL_PENDING, SEND_FAILED, mirror sem fonte e item
+  incompleto posteriores à boundary não reabrem seleção;
+- somente prompt posterior, confiavelmente enviado, visível e com
+  `trip_id`/`board_stop_id`/`alight_stop_id` completos permite seleção atômica
+  e remove marker + boundary;
+- marker legado sem boundary recebe fronteira conservadora no primeiro turno;
+  se o message ID saiu do `LIMIT 50`, o timestamp mantém toda evidência antiga
+  fechada;
+- contexto independente de passageiro, documento, booking, payment, handoff,
+  cancelamento e endpoints permanece disponível. Não houve regex ou
+  vocabulário novo, nem alteração de reducer, repository, Travel V2 ou B2.
+
+O review anterior encontrou um novo bloqueador de ordenação:
+
+- **P1:** quando `canonical_availability_facts_invalidated=true` já está
+  persistido, `InferActivePromptContext` e `routeDeterministicIntent` ainda
+  recebem o estado reconstruído do histórico antes da invalidação; o router
+  pode observar índice, IDs de rota e `LastToolFacts.availability_search`
+  antigos.
+
+O **P1 anterior permanece corrigido**: a limpeza estrutural continua
+persistida, preserva fatos independentes e mantém a materialização atômica da
+seleção atual completa. Esta rodada altera somente a ordem da limpeza antes dos
+consumidores; reducer, repository pós-booking, parser, regex, Travel V2 e B2
+permanecem fora de escopo.
+
+RED real: `TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState`
+capturou rota/facts stale no input do router para stale, blocker posterior e
+item incompleto; o controle positivo também capturou o estado antigo antes de
+o router avaliar a nova availability.
+
+Correção local: o marcador agora é lido imediatamente depois do reload e da
+derivação pós-`ApplyPassengerClarificationEventsV1`; a invalidação sincroniza
+`structuredCanonicalState`, `structuredInput.State`, `canonicalState`, `agent`
+e `memory` antes de active prompt e router. Depois do router, somente uma
+seleção atual, visível e completa materializa availability e limpa o marcador.
+
+Um review intermediário, então o mais recente, encontrou um bloqueador
+restante:
+
+- **P1:** quando o estado de passageiros é inseguro e a seleção atual é stale,
+  invisível, bloqueada ou incompleta, o fail-closed não materializa a seleção,
+  mas ainda persiste em `metadata.agent.canonical_state` rota e
+  `LastToolFacts.availability_search` derivados do histórico antigo.
+
+Os **três P1 anteriores permaneciam corrigidos naquela rodada**: a
+materialização continuava atômica e exigia os três IDs, a matriz adversarial
+continuava sem autoridade 1/0 pré-semeada e a autoridade `POST_BOOKING`
+continuava atualizada pela composição ativa. A correção daquela rodada deveria
+invalidar somente fatos derivados da availability não confiável, preservar
+origem/destino independentes e manter o controle positivo completo. O status
+histórico daquela rodada, posteriormente superseded pelo review final de B1,
+era: H-B permanecia aberto/em andamento e ainda não liberava os sucessores; B2
+estava bloqueada por B1, B3 por B2 e 3.6F-D pelo umbrella H-B.
+
+O review anterior encontrou três bloqueadores:
+
+- **P1-A:** o writer fail-closed ainda materializa índice e snapshot quando o
+  item visível não possui `trip_id`, `board_stop_id` ou `alight_stop_id`;
+- **P1-B:** a cobertura stale/invisível/blocker usa autoridade 1/0 pré-semeada
+  e não exercita o ramo fail-closed sem `PassengerClarificationStateV1`;
+- **P1-C:** depois de persistir autoridade `POST_BOOKING`, o reload descarta a
+  consulta ativa mais recente e reutiliza o snapshot antigo, inclusive quando
+  todos os passageiros são desativados.
+
+Os **7 P1 anteriores e o filtro inicial de `is_active=true` permaneciam
+corrigidos naquela rodada**. Aquele review não reabria bootstrap estruturado,
+entrega do prompt, limpeza de derivados, serialização, race, fake, precedência
+`STRONG` ou o filtro SQL inicial; exigia completar a atomicidade, a matriz
+adversarial e o refresh da autoridade pós-booking. O status histórico daquela
+rodada, posteriormente superseded pelo review final de B1, era: H-B permanecia
+aberto/em andamento e ainda não liberava os sucessores; B2 estava bloqueada por
+B1, B3 por B2 e 3.6F-D pelo umbrella H-B.
+
+RED real daquele review intermediário: snapshot incompleto ainda podia ser
+persistido; os casos stale/invisível/blocker não comprovavam fail-closed sem
+autoridade; e uma desativação posterior não atualizava nem removia autoridade
+`POST_BOOKING` stale.
+As reproduções locais confirmaram antes do patch o vazamento de índice/snapshot
+nos casos stale e incompleto e, no PostgreSQL 16, o reload 4/2 permaneceu 4/2
+depois da desativação parcial.
+
+Correção local dos três P1 em 2026-07-21:
+
+- uma única política de materialização exige `trip_id`, `board_stop_id` e
+  `alight_stop_id` do item atual antes de expor índice, snapshot ou rota; o
+  índice e o snapshot são anexados atomicamente por todos os writers revisados;
+- stale, outbound invisível, blocker posterior e item atual incompleto percorrem
+  o fail-closed sem snapshot/eventos nem autoridade 1/0, retornam
+  `ASK_PASSENGER_COUNT` sem fatos de seleção e não acionam LLM, shadows,
+  document extraction ou tools; o controle positivo completo permanece
+  recuperável depois do `LIMIT 50`;
+- o reload sob `FOR UPDATE` consulta sempre booking e passageiros ativos,
+  substitui e persiste 4/2 -> 2/1, limpa 0 ativo para UNKNOWN e propaga erro de
+  consulta sem reutilizar snapshot stale.
+
+O novo review de 2026-07-21 encontrou dois bloqueadores restantes:
+
+- **P1:** no fail-closed de uma sessão sem snapshot/eventos de passageiros, a
+  seleção válida podia gerar `ASK_PASSENGER_COUNT` sem persistir atomicamente
+  `selected_option_index`, `selected_availability_result` e os facts completos
+  de rota; após a mensagem sair do `LIMIT 50`, a seleção era perdida;
+- **P2:** a autoridade pós-booking incluía `booking_passengers.is_active=false`
+  no total e em lap children, inflando também a projeção documental.
+
+Os **7 P1 do sétimo review permaneciam corrigidos naquela rodada**. Aquele novo
+RED não reabria bootstrap, confirmação de entrega, limpeza de `adds_traveler`,
+serialização dos writers, race da fixture, autoridade do fake nem precedência
+dos guardrails `STRONG`. O status histórico daquela rodada, posteriormente
+superseded pelo review final de B1, era: H-B permanecia aberto/em andamento e
+ainda não liberava os sucessores; B2 estava bloqueada por B1, B3 por B2 e
+3.6F-D pelo umbrella H-B.
+
+RED real do novo review: as reproduções adversariais confirmaram perda da
+seleção após truncamento da janela e contagem de passageiros pós-booking
+inativos. As novas regressões reproduziram os dois defeitos antes do patch:
+`TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWindow`
+encontrou `selected_option_index=0`, e
+`TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres` encontrou
+`PassengerCount=4`/`ChildUnder5Count=2` quando a autoridade ativa era `2/1`.
+
+Correção local dos dois achados em 2026-07-21:
+
+- o ramo fail-closed reutiliza `attachCurrentAvailabilitySelectionContext` e
+  `attachSelectedAvailabilityResultToTemplateRun`; somente uma lista atual,
+  visível e completa materializa, no mesmo draft, índice, snapshot selecionado,
+  IDs de rota e facts de availability, sem novo caminho metadata-only;
+- a consulta da autoridade pós-booking aplica
+  `booking_passengers.is_active = true` ao conjunto agregado; o mesmo conjunto
+  controla total, lap children e `ExpectedDocumentCount`, e total ativo zero
+  retorna ausência de autoridade pós-booking;
+- a regressão de seleção não pré-semeia snapshot/eventos de passageiros,
+  remove o inbound da janela de 50 e comprova a projeção pelo draft persistido,
+  com zero LLM, JSON, shadows e tools;
+- a integração PostgreSQL cobre adulto/criança ativos e inativos, além de
+  booking sem passageiro ativo. O teste de serialização existente recebeu o
+  sufixo `Postgres` para ser selecionado pela regexp obrigatória sem mudar sua
+  lógica.
+
+Arquivos desta correção do novo review:
+
+```text
+apps/api/internal/chat/service.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/passenger_clarification_repository_test.go
+docs/EXECUTION_TRACKER.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+plans/h-2026-07-16b-passenger-child-state.md
+```
+
+O sétimo review histórico encontrou sete bloqueadores: bootstrap dependente do
+`LIMIT 50`; replay de prompt sem entrega confirmada; `adds_traveler` stale após
+correção não solo; lost update em escritores de metadata; corrida na fixture
+concorrente; fake que reparsa/fabrica autoridade; e precedência incorreta do
+gate de passageiros sobre guardrails `STRONG`. Naquela rodada histórica, H-B
+permanecia aberto/em andamento e ainda não liberava os sucessores; B2 estava
+bloqueada por B1, B3 por B2 e 3.6F-D pelo fechamento integral do umbrella H-B.
+Esse estado foi posteriormente superseded pelo review final de B1. As evidências
+de execução abaixo registram aquela rodada e ficam superseded pelo fechamento
+posterior.
+
+RED real do sétimo review: as reproduções adversariais confirmaram dependência
+da janela, replay de prompt não entregue, derivado stale após correção,
+lost update de metadata, corrida na fixture, autoridade inventada/reparseada no
+fake e precedência incorreta do gate sobre decisões locais seguras/`STRONG`.
+
+Antes, composição e época ainda podiam ser reconstruídas por transcript/body,
+`ActivePrompt` textual ou `tool_context.booking_create`; o evento do prompt
+ficava associado ao draft; snapshot concorrente podia sobrescrever atualização
+mais recente; e slots inseguros ainda alcançavam shadow ou tools.
+
+Depois:
+
+- `PassengerClarificationStateV1` versionado é a autoridade pré-booking, com
+  validator, proveniência, épocas, reasons e ledgers idempotentes;
+- bootstrap usa somente eventos canônicos em `normalized_payload` ou
+  booking/passengers persistidos; ausência de evidência e artefato estrutural
+  malformado falham fechados;
+- reducer recebe somente estado e eventos tipados, sem texto, transcript,
+  regex, tokens ou `ActivePromptContext`;
+- atualização usa transação curta com `SELECT ... FOR UPDATE`, reload do estado
+  mais recente, redução/validação e persistência; `SaveReprocessSnapshot`
+  preserva o snapshot concorrente mais novo;
+- draft guarda `pending_prompt_event`; auto-send e review aprovado copiam o
+  evento para o outbound efetivo, e `MarkReplyDeliverySent` aplica a época na
+  mesma transação curta que registra o envio;
+- estado desconhecido, conflitante, corrompido ou inválido bloqueia OpenAI
+  shadow, Travel V2, document extraction e qualquer tool antes do dispatch;
+- `BookingDraftContext` apenas projeta o snapshot para composição/época, sem
+  recuperar passenger count histórico nem inferir lap child para preencher
+  slot desconhecido;
+- booking/payment continuam bloqueados até os slots obrigatórios válidos; após
+  booking, booking e passageiros persistidos têm precedência.
+
+Correções adicionais após o sétimo review:
+
+- bootstrap dedicado lê a sessão inteira somente por colunas estruturadas e
+  nunca seleciona `body`;
+- `delivery_recorded_at` junto de status canônico de envio é obrigatório para
+  aplicar ou reexecutar `passenger_prompt_event`;
+- correção não solo limpa `adds_traveler` e origem para qualquer proveniência
+  diferente de `SOLO_SPEAKER`;
+- `UpdateDraftAutoSendState`, falha/retry e demais substituições de metadata
+  relêem a linha sob `FOR UPDATE`; updates por caminho JSONB não substituem
+  snapshot concorrente;
+- fake de `Reprocess` sem evidência retorna `UNKNOWN`, com autoridade de cada
+  cenário semeada explicitamente; clones concorrentes ficam sob o mutex;
+- humano/cancelamento e decisões `STRONG` aplicáveis precedem o fail-closed;
+  dúvida paralela segura usa template local e preserva o prompt pendente sem
+  disparar LLM, shadow, document extraction ou tool.
+
+Arquivos de produção e contrato alterados:
+
+```text
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/availability_invalidation_history.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/model.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+apps/api/internal/chat/passenger_clarification_evidence.go
+apps/api/internal/chat/passenger_clarification_reducer.go
+```
+
+Testes e fixtures alterados/adicionados:
+
+```text
+apps/api/internal/chat/agent_rollout_test.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/availability_draft_test.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/cargo_router_test.go
+apps/api/internal/chat/chat_flow_guardrails_test.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/interpreter_shadow_report_endpoint_test.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+apps/api/internal/chat/openai_travel_query_v2_test.go
+apps/api/internal/chat/tool_router_test.go
+apps/api/internal/chat/passenger_clarification_evidence_test.go
+apps/api/internal/chat/passenger_clarification_reducer_test.go
+apps/api/internal/chat/passenger_clarification_repository_test.go
+apps/api/internal/chat/passenger_clarification_state_v1_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+```
+
+Documentação atualizada neste slice:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/adr/ADR-2026-07-passenger-authority-and-serialization.md
+docs/adr/ADR-2026-07-passenger-clarification-state.md
+docs/adr/ADR-2026-07-passenger-state-durable-events.md
+plans/00-plano-mestre-travel-semantic-v2.md
+plans/README.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+plans/h-2026-07-16b3-passenger-meaning-runtime.md
+plans/p-2026-07-passenger-clarification-meaning-v1.md
+```
+
+Validação da correção anterior — superseded pelo review de 3 P1:
+
+```text
+RED confirmado pelo novo review — seleção fail-closed perde snapshot após LIMIT 50; autoridade pós-booking conta passageiros inativos
+PASS PRESERVADO — os 7 P1 do sétimo review permanecem corrigidos
+RED — TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWindow: selected_option_index=0 antes do patch
+RED PostgreSQL — TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres: PassengerCount=4 e ChildUnder5Count=2 antes do filtro
+PASS — GOCACHE=/tmp/schumacher-b1-go-build CHAT_PASSENGER_STATE_POSTGRES_TEST_URL=<PostgreSQL 16 efêmero> go test -count=20 ./internal/chat -run 'Test.*Selection.*Passenger|Test.*Selected.*Availability|Test.*PostBooking.*Authority|Test.*Inactive.*Passenger'
+PASS — GOCACHE=/tmp/schumacher-b1-go-build go test -race -count=1 ./internal/chat
+PASS SEM SKIP — GOCACHE=/tmp/schumacher-b1-go-build CHAT_PASSENGER_STATE_POSTGRES_TEST_URL=<PostgreSQL 16 efêmero> go test -count=1 ./internal/chat -run 'Test.*Passenger.*Postgres|Test.*PostBooking.*Authority|Test.*Concurrent'
+PASS PostgreSQL — TestPassengerStateApplyEventsSerializesSessionPostgres e TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres executados em PostgreSQL 16 real
+PASS — GOCACHE=/tmp/schumacher-b1-go-build go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Document|Test.*LapChild|Test.*Payment|Test.*HumanSupport|Test.*OutOfTurn'
+PASS — GOCACHE=/tmp/schumacher-b1-go-build go test -count=1 ./internal/chat
+PASS — GOCACHE=/tmp/schumacher-b1-go-build go test -count=1 ./...
+PASS — inventário de produção confirmado em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Registro histórico daquela rodada. Este bloco foi superseded pelo review final
+sem P1/P2 e não define o status vigente de B1. Resultado daquele review
+intermediário: **1 P1 + 1 P2**. Os 7 P1 anteriores permaneciam corrigidos; os
+dois achados daquela rodada foram corrigidos e a matriz local, inclusive
+PostgreSQL real sem `SKIP`, passou. **Naquele momento, nenhum novo review havia
+sido executado depois do patch e a rodada ainda não declarava review limpo.
+Esse estado foi posteriormente superseded pelo review final sem P1/P2**.
+
+Matriz exigida naquela rodada para os três P1:
+
+```text
+RED reproduzido — stale e item incompleto vazavam índice/snapshot; PostgreSQL mantinha 4/2 após desativar dois passageiros
+PASS PRESERVADO — os 7 P1 anteriores e o filtro SQL inicial is_active=true permanecem corrigidos
+PASS — count=20 das reproduções de seleção, controle LIMIT 50, serialização PostgreSQL e refresh pós-booking
+PASS — go test -race -count=1 ./internal/chat
+PASS SEM SKIP — PostgreSQL 16 real: serialização e 4 ativos -> 2 ativos -> 0 ativo, incluindo erro de consulta sem fallback
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — inventário de produção em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Registro histórico daquela rodada. Este bloco foi superseded pelo review final
+sem P1/P2 e não define o status vigente de B1. Resultado daquele review
+intermediário: **3 P1**. Os três achados foram corrigidos localmente e a matriz
+obrigatória passou. Naquele momento, nenhum novo review havia sido executado e
+a rodada ainda não declarava review limpo. Esse estado foi posteriormente
+superseded pelo review final sem P1/P2.
+
+Matriz exigida naquela rodada para o P1:
+
+A correção local centraliza a invalidação de seleção/availability não
+materializável: limpa índice, IDs de rota, data, horário, preço, moeda, pacote e
+`LastToolFacts.availability_search`, preservando origem/destino independentes e
+outros fatos de tools. O estado sanitizado é sincronizado antes da persistência
+em `structuredCanonicalState`, `structuredInput.State`, `agent`, `memory` e no
+draft; um marcador estrutural impede que o histórico limitado reintroduza os
+fatos antigos em turnos posteriores até existir nova availability atual,
+visível e completa. A matriz A-D recarrega a sessão e a segunda passagem
+confirma que os interpreters recebem o estado limpo; o controle positivo
+continua persistindo seleção completa e sobrevivendo ao `LIMIT 50`.
+
+```text
+RED confirmado pelo review — canonical_state persistido conserva rota e availability facts stale no fail-closed
+PASS PRESERVADO — os três P1 anteriores permanecem corrigidos
+PASS — count=20 de fail-closed availability, controle positivo LIMIT 50 e canonical state stale
+PASS — go test -race -count=1 ./internal/chat
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — inventário de produção em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Registro histórico daquela rodada. Este bloco foi superseded pelo review final
+sem P1/P2 e não define o status vigente de B1. Resultado daquele review
+intermediário: **1 P1**. O achado foi corrigido localmente e a matriz obrigatória
+passou. Naquele momento, nenhum novo review havia sido executado e a rodada
+ainda não declarava review limpo. Esse estado foi posteriormente superseded
+pelo review final sem P1/P2.
+
+Matriz exigida para o P1 de ordenação antes do router:
+
+```text
+RED reproduzido — router recebe rota/facts stale antes da invalidação marcada
+PASS PRESERVADO — limpeza persistida, fatos independentes e seleção completa permanecem corrigidos
+PASS — count=20 das regressões BeforeRouter/InvalidatedRouter/FreshAvailability
+PASS — go test -race -count=1 ./internal/chat
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — inventário de produção em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Registro histórico daquela rodada. Este bloco foi superseded pelo review final
+sem P1/P2 e não define o status vigente de B1. Resultado daquele review
+intermediário: **1 P1**. O RED foi reproduzido, o achado foi corrigido localmente
+e a matriz obrigatória passou. Naquele momento, nenhum novo review havia sido
+executado e a rodada ainda não declarava review limpo. Esse estado foi
+posteriormente superseded pelo review final sem P1/P2.
+
+Matriz exigida para o P1 da fronteira causal do histórico:
+
+```text
+RED reproduzido — availability antiga SENT + boundary + DRAFT posterior + "essa msm" produzia SELECT_AVAILABILITY_OPTION sobre a viagem antiga
+PASS — go test -count=20 ./internal/chat -run 'Test.*AvailabilityInvalidation.*HistoryBoundary|Test.*PreInvalidation.*Router|Test.*PostInvalidation.*FreshAvailability'
+PASS — matriz DRAFT/BLOCKED/MANUAL_PENDING/SEND_FAILED/item incompleto/BOT_AUTO_REPLY sem fonte mantém marker + boundary, sem índice/snapshot/trip/stops e com zero LLM/shadow/tools
+PASS — controle positivo seleciona somente a availability posterior, enviada e completa, persiste índice + snapshot atomicamente e remove marker + boundary
+PASS — boundary fora do LIMIT 50 usa timestamp conservador sem reautorizar availability antiga
+PASS — overlay não muta o histórico e preserva passageiro, booking, payment, handoff, humano/cancelamento STRONG e endpoints independentes
+PASS — go test -race -count=1 ./internal/chat
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Document|Test.*LapChild|Test.*Payment|Test.*HumanSupport|Test.*OutOfTurn'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — inventário de produção confirmado em 54 regexp.MustCompile
+PASS — git diff --check
+```
+
+Correção local da lacuna de prova do review anterior:
+
+```text
+PASS — fixture principal sem outbound posterior confiável: availability antiga SENT, completa e confiável + marker legado sem boundary + passageiro seguro + turno atual "1"
+PASS — router recebe history sem availability_search, selected_option_index, selected_availability_result ou prompt de escolha antigos e canonical state sem trip/stops antigos
+PASS — intent diferente de SELECT_AVAILABILITY_OPTION; draft sem índice/snapshot; marker preservado; boundary conservadora persistida usando o inbound atual
+PASS — zero LLM, JSON runner, shadows V1/V2, availability_search, booking, payment, payment_status e tools
+PASS — go test -count=1 ./internal/chat -run 'Test.*Legacy.*Availability.*Invalidation|TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState'
+PASS — go test -count=20 ./internal/chat -run 'Test.*AvailabilityInvalidation.*HistoryBoundary|Test.*PreInvalidation.*Router|Test.*FreshAvailability'
+PASS — go test -race -count=1 ./internal/chat
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Document|Test.*LapChild|Test.*Payment|Test.*HumanSupport|Test.*OutOfTurn'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — inventário de produção confirmado em 54 regexp.MustCompile
+PASS — git diff --check
+PASS — nenhuma alteração em arquivo de produção nesta correção
+```
+
+Correção local dos 2 P1 de prova do review anterior:
+
+```text
+PASS — marker legado sem boundary falha fechado com "1" e "essa msm", sem outbound posterior confiável
+PASS — history, canonical state, active prompt e IntentDecision capturados diretamente no router para ambos os caminhos
+PASS — helper recursivo rejeita trip_id, board_stop_id e alight_stop_id em qualquer profundidade dos maps/slices do history e do draft
+PASS — controle positivo numérico preservado; controle contextual seleciona somente a availability nova pós-boundary, com IDs distintos dos antigos
+PASS — fixture executável usa base fakeStore para semeadura/consulta e fakeTravelQueryV2ShadowClaimStore no Service, com shadows V1/V2 habilitados
+PASS — nos casos legados "1" e "essa msm": openAI.calls=0 e travel.calls=0 antes da janela, e nenhum claimAttempts durante a espera negativa limitada; runner, JSON runner, availability, booking, payment, payment_status e tools também permanecem em zero
+PASS — go test -count=20 ./internal/chat -run '^TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState$'
+PASS — go test -count=20 ./internal/chat -run 'TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState|Test.*AvailabilityInvalidation.*HistoryBoundary|Test.*PreInvalidation.*Router|Test.*FreshAvailability'
+PASS — go test -race -count=1 ./internal/chat
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Document|Test.*LapChild|Test.*Payment|Test.*HumanSupport|Test.*OutOfTurn'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
+PASS — git diff --check
+PASS — nenhuma alteração em arquivo de produção nesta correção
+```
+
+Correção local do P1 de prova restante naquele review intermediário:
+
+```text
+PASS — shadows V1/V2 e fakeTravelQueryV2ShadowClaimStore permanecem habilitados nos casos legados "1" e "essa msm"
+PASS — espera negativa limitada em store.claimAttempts preservada; imediatamente após a janela, travel.calls=0 e openAI.calls=0 são verificados novamente
+PASS — zero runner, JSON runner, availability, booking, payment, payment_status e ToolCalls preservado
+PASS — go test -count=20 ./internal/chat -run '^TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState$'
+PASS — go test -count=20 ./internal/chat -run 'TestCanonicalAvailabilityInvalidatedBeforeRouterForMarkedPassengerState|Test.*AvailabilityInvalidation.*HistoryBoundary|Test.*PreInvalidation.*Router|Test.*FreshAvailability'
+PASS — go test -race -count=1 ./internal/chat
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Document|Test.*LapChild|Test.*Payment|Test.*HumanSupport|Test.*OutOfTurn'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
+PASS — git diff --check
+PASS — nenhuma alteração em arquivo de produção nesta correção
+```
+
+Resultado do review final: **sem P1/P2; H-B1 concluída e segura para commit**.
+H-2026-07-16B permanece **EM ANDAMENTO**, H-B2 passa a **PRÓXIMA**, H-B3
+permanece **BLOQUEADA por H-B2** e 3.6F-D continua **BLOQUEADA pelo fechamento
+integral de H-B**.
+
+Teste em produção/smoke: **não executado e não autorizado nesta rodada**.
+Commit, push e deploy: **não executados**. Próxima ação recomendada: preparar o
+commit de B1 a partir do manifesto auditado; executar B2 somente em outro
+`/goal` explícito.
+
+#### Manifesto completo do commit de B1
+
+**1. Produção B1**
+
+```text
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/availability_invalidation_history.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/model.go
+apps/api/internal/chat/passenger_clarification_evidence.go
+apps/api/internal/chat/passenger_clarification_reducer.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+```
+
+**2. Testes B1**
+
+```text
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/agent_rollout_test.go
+apps/api/internal/chat/availability_draft_test.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/cargo_router_test.go
+apps/api/internal/chat/chat_flow_guardrails_test.go
+apps/api/internal/chat/conversation_state_machine_test.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/interpreter_shadow_report_endpoint_test.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+apps/api/internal/chat/openai_travel_query_v2_test.go
+apps/api/internal/chat/passenger_clarification_evidence_test.go
+apps/api/internal/chat/passenger_clarification_reducer_test.go
+apps/api/internal/chat/passenger_clarification_repository_test.go
+apps/api/internal/chat/passenger_clarification_state_v1_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+apps/api/internal/chat/tool_router_test.go
+```
+
+**3. Documentação/ADR B1**
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/adr/ADR-2026-07-passenger-authority-and-serialization.md
+docs/adr/ADR-2026-07-passenger-clarification-state.md
+docs/adr/ADR-2026-07-passenger-state-durable-events.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+```
+
+**4. Planejamento futuro B2/B3**
+
+```text
+plans/00-plano-mestre-travel-semantic-v2.md
+plans/README.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+plans/h-2026-07-16b3-passenger-meaning-runtime.md
+plans/p-2026-07-passenger-clarification-meaning-v1.md
+```
+
+**5. Fora de escopo**
+
+```text
+nenhum arquivo identificado na auditoria do working tree
+```
+
+#### Histórico das cinco rodadas anteriores — superseded pelo sexto review
 
 #### Reprodução
 
@@ -1654,6 +2378,302 @@ esperado: child_under_5_count=1, estado conhecido e avanço do fluxo
 
 Este bug pertence ao estado determinístico de passageiros, não ao contrato `TravelQueryMeaningV2`.
 
+#### Primeiro review — 4 P1
+
+| Prioridade | Achado | Impacto |
+|---|---|---|
+| P1 | total da viagem e subgrupo familiar não são reconciliados por significado/força | em `somos 3, meus 2 filhos vão viajar comigo`, o subgrupo 2 podia vencer o total explícito 3 e reduzir `expected_document_count`. |
+| P1 | incerteza não está limitada ao slot qualificado | em `somos 3, mas não sei se alguma criança tem até 5 anos`, a incerteza infantil podia apagar o total inequívoco e repetir a pergunta de passageiros. |
+| P1 | idade sem unidade preservada interpreta meses como anos | em `meu filho de 10 meses`, o valor 10 podia ser tratado como anos e excluir indevidamente a criança de colo. |
+| P1 | menções de idade são contadas como pessoas sem preservar a força/identidade da evidência | referências repetidas podiam somar a mesma criança ou uma referência singular posterior podia reduzir uma contagem exata anterior. |
+
+Os quatro achados bloqueiam o fechamento de H-2026-07-16B. O 3.6F-D
+permanece **BLOQUEADA por H-2026-07-16B** até correção, validação e novo review
+sem P1/P2. Nenhum smoke está autorizado neste ciclo.
+
+#### Correção local após o review
+
+- candidatos de total explícito, composição com interlocutor e subgrupo familiar
+  são extraídos separadamente e reconciliados por significado; total explícito
+  compatível prevalece e contradição mantém o total desconhecido com marcador
+  explícito, sem reutilizar silenciosamente total histórico;
+- a incerteza é limitada ao primeiro slot qualificado depois do marcador,
+  inclusive quando a informação certa e a incerta estão na mesma cláusula;
+- menções de idade preservam `anos` ou `meses`; meses são comparados como meses,
+  e números sem unidade só são aceitos com contexto infantil inequívoco;
+- evidência infantil distingue contagem exata, confirmação de ao menos uma
+  criança, referência a criança já mencionada e desconhecido; o merge histórico
+  compara força da evidência, não quantidade de menções;
+- referências repetidas não somam pessoas, referência singular não reduz
+  contagem exata anterior e o mesmo histórico produz o mesmo estado no replay.
+
+#### Segundo review — 4 P1
+
+| Prioridade | Achado | Impacto |
+|---|---|---|
+| P1 | conflito histórico antigo vence correção explícita posterior | `somos 2, meus 3 filhos vão viajar comigo` seguido de `somos 3` podia reconstruir `PassengerCount=0`, conhecido falso e conflito verdadeiro. |
+| P1 | total de viajantes e contagem infantil não possuem reconciliação cruzada | `somos 1, duas têm 3 e 4 anos` podia manter total 1 e duas crianças conhecidas, pedir somente um documento e avançar para estado impossível. |
+| P1 | referências infantis explicitamente distintas são colapsadas | `meu filho tem 3 anos e minha filha tem 4 anos` podia produzir somente uma criança menor de 5 e permitir cobrança indevida da outra. |
+| P1 | o active prompt não é propagado até o cálculo de documentos | após `só pra mim` e `ASK_CHILD_UNDER_5`, `uma tem 4` podia ser reconhecida no parser contextual e depois reinterpretada sem contexto, deixando `expected_document_count=1`. |
+
+As alegações anteriores de precedência, replay e documentos esperados deixaram
+de ser suficientes diante deste review. A rodada foi aberta como **EM CORREÇÃO
+APÓS SEGUNDO REVIEW — 4 P1**; após o RED/PASS abaixo, o status atual é
+**CORREÇÕES DOS 4 P1 IMPLEMENTADAS — MATRIZ LOCAL VERDE; AGUARDANDO NOVO
+REVIEW**. O 3.6F-D continua **BLOQUEADA por H-2026-07-16B**. Não há autorização
+para commit, push, deploy ou smoke.
+
+#### Correção após o segundo review
+
+- `passenger_clarification_evidence.go` concentra tipos, extração contextual,
+  origem/recência da evidência e política explícita de reconciliação;
+- conflito antigo não possui mais precedência por causa do valor numérico do
+  enum: `somos 3` posterior restaura `PassengerCount=3`, conhecido verdadeiro e
+  conflito falso;
+- a reconciliação cruzada fecha o conjunto quando
+  `ChildUnder5Count > PassengerCount`, mantém os slots não acionáveis e direciona
+  para `ASK_PASSENGER_CLARIFICATION`, sem documentos ou booking;
+- referências explicitamente distintas `meu filho` e `minha filha` produzem
+  duas identidades; repetição ou possível correferência não incrementa;
+- `Service.Reprocess` extrai o turno uma vez com `ActivePromptContext` e propaga
+  a mesma evidência para `collectBookingDraftContextWithCurrentEvidence` e para
+  o cálculo de documentos, sem reparse contextual em helper posterior;
+- depois de `só pra mim` + `ASK_CHILD_UNDER_5` + `uma tem 4`, o estado preserva
+  `ChildUnder5AddsTraveler=true` e `ExpectedDocumentCount=2`.
+
+Os quatro cenários também foram reconstruídos a partir do evento persistido no
+histórico com `currentTurn="ok"`, sem alteração dos valores no replay.
+
+O teste incremental
+`TestPassengerCountChildUnder5SecondReviewP1ServiceOutcomesAndReplay`, incluído
+nos filtros `count=20` e `-race`, percorre `Service.Reprocess` para os quatro P1
+e confirma estado, `expected_document_count`, template final, zero chamada ao
+LLM, zero chamada a `booking_create`, zero tool call e replay do mesmo draft.
+
+#### Terceiro review — 3 P1 e reavaliação arquitetural
+
+| Prioridade | Achado | Impacto |
+|---|---|---|
+| P1 | conflito cross-turn entre total e crianças não passa por validação após a redução completa | `somos 1` seguido de `ASK_CHILD_UNDER_5` e `duas têm 3 e 4 anos` mantinha total 1 e duas crianças conhecidos, calculava três documentos e avançava um estado impossível. |
+| P1 | correção infantil explícita recente perde para evidência antiga | `não tem criança menor de 5` seguido de `na verdade, uma tem 4` preservava o zero antigo apenas porque era `EXACT`, omitindo a criança corrigida. |
+| P1 | marcador explícito `outro filho` colapsa na mesma identidade | `meu filho tem 3 anos e meu outro filho tem 4 anos` retornava somente uma criança menor de 5 e podia cobrar indevidamente a segunda. |
+
+Na terceira rodada histórica, os três achados tornavam o patch inseguro para
+commit, deploy e smoke. A rodada não continuaria empilhando regras de
+precedência no merge então vigente. A decisão
+registrada em `docs/adr/ADR-2026-07-passenger-clarification-state.md` separa:
+
+```text
+extração por turno
+-> redução temporal pura em ordem cronológica
+-> validação cruzada do estado completo
+-> aplicação do estado validado ao BookingDraftContext
+```
+
+`passenger_clarification_evidence.go` ficou restrito à extração de evidências.
+`passenger_clarification_reducer.go` produz um único
+`PassengerClarificationState`, e `BookingDraftContext` não reparsa texto nem
+reabre histórico para calcular `ChildUnder5AddsTraveler` ou documentos.
+
+#### RED/PASS após o terceiro review
+
+```text
+RED — TestPassengerReducerThirdReviewServiceOutcomesAndReplay/cross_turn_children_above_total_are_not_actionable: passenger_count=1, child_under_5_count=2 e expected_document_count=3
+RED — TestPassengerReducerThirdReviewServiceOutcomesAndReplay/explicit_child_correction_replaces_old_zero: child_under_5_count=0 e expected_document_count=1
+RED — TestPassengerReducerThirdReviewServiceOutcomesAndReplay/explicit_other_son_preserves_two_identities: child_under_5_count=1
+RED — TestPassengerReducerCrossTurnChildConflict com documentos antigos: expected_document_count=2 no estado conflitante
+RED — TestBookingDraftConflictingPassengerCountDoesNotReuseHistoricalBookingTotal: ação ask_booking_payment_preference no estado conflitante
+PASS — go test -count=20 ./internal/chat -run 'Test.*Passenger.*Reducer|Test.*Passenger.*Correction|Test.*Child.*Identity|Test.*Child.*Conflict'
+PASS — go test -race -count=1 ./internal/chat -run 'Test.*Passenger.*Reducer|Test.*Passenger.*Correction|Test.*Child.*Identity'
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Payment|Test.*LapChild|Test.*Passenger.*Document'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — git diff --check
+```
+
+`TestPassengerReducerThirdReviewServiceOutcomesAndReplay` confirma os quatro
+resultados user-visible, zero chamada a LLM, `booking_create`, payment ou tools
+e replay idempotente. Os testes puros confirmam redução cronológica, fronteira
+de correção por slot, identidade explícita e repetição sem duplicação.
+
+#### Quarto review — 3 P1 temporais
+
+| Prioridade | Achado | Impacto |
+|---|---|---|
+| P1 | um novo `ASK_CHILD_UNDER_5` não abre uma nova época do slot | zero exato antigo continua vencendo `uma tem 4` respondido ao prompt mais recente quando não há `CorrectionCue` lexical. |
+| P1 | identidades infantis não participam da redução entre turnos | `meu filho tem 3 anos` seguido de `meu outro filho tem 4 anos` substitui a contagem anterior e termina com somente uma criança. |
+| P1 | total absoluto igual a 1 é confundido com declaração solo | `somos 1` pode habilitar `ChildUnder5AddsTraveler` como se fosse `só pra mim`, produzindo dois documentos em vez de composição conflitante. |
+
+Esta rodada corrige somente a perda de informação entre evidência, reducer e
+`BookingDraftContext`. É proibido adicionar ou ampliar regex, listas de
+expressões, `containsAnyFolded` ou parsing linguístico. A evidência deve
+preservar a época do active prompt pela posição no histórico, a proveniência
+tipada do total e as referências infantis necessárias para redução temporal.
+
+Precedência por slot:
+
+```text
+época mais recente do prompt
+-> turno mais recente dentro da época
+-> força somente entre evidências da mesma época
+```
+
+Somente proveniência `SOLO_SPEAKER` pode habilitar
+`ChildUnder5AddsTraveler=true`. `ABSOLUTE_TOTAL` com uma criança adicional deve
+produzir estado conflitante, `ExpectedDocumentCount=0`, clarification segura e
+zero LLM, tools, `booking_create` ou payment.
+
+RED real antes da correção:
+
+```text
+TestPassengerPromptEpochRecentChildAnswerWinsOlderExactZero -> ChildUnder5Count=0 e ExpectedDocumentCount=1
+TestChildIdentityReducerAccumulatesDistinctReferencesAcrossTurns -> ChildUnder5Count=1
+TestPassengerProvenanceAbsoluteTotalOneWithContextualChildConflicts -> PassengerCount=1, ChildUnder5AddsTraveler=true e ExpectedDocumentCount=2
+TestPassengerTemporalFourthReviewServiceOutcomesAndReplay/absolute_total_one_with_child_is_closed_conflict -> passenger_count_known=true e expected_document_count=2
+TestChildIdentityReducerScalarEvidenceDoesNotReplaceReferenceSet -> ChildReferences preservava 2 identidades, mas ChildUnder5Count regredia de 2 para 1
+```
+
+O controle sem novo prompt e os cenários solo/repetição permaneceram verdes no
+mesmo comando focado.
+
+PASS real após a correção:
+
+```text
+PASS — go test -count=20 ./internal/chat -run 'Test.*Passenger.*Reducer|Test.*Prompt.*Epoch|Test.*Passenger.*Provenance|Test.*Child.*Identity|Test.*Temporal'
+PASS — go test -race -count=1 ./internal/chat -run 'Test.*Passenger.*Reducer|Test.*Prompt.*Epoch|Test.*Passenger.*Provenance|Test.*Child.*Identity|Test.*Temporal'
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Payment|Test.*LapChild|Test.*Passenger.*Document'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — git diff --check
+```
+
+Auditoria do patch do quarto review: nenhuma regex, lista de expressões ou uso
+de `containsAnyFolded` foi adicionado ou ampliado. A época do prompt, a
+proveniência tipada e `ChildReferences` atravessam evidência, reducer e
+`BookingDraftContext`; uma contagem escalar posterior na mesma época não apaga
+o conjunto de identidades já reduzido. H-2026-07-16B permanece aberta até novo
+review sem P1/P2 e 3.6F-D continua **BLOQUEADA por H-2026-07-16B**.
+
+#### Quinto review — 5 P1 e reestruturação final
+
+| Prioridade | Achado | Impacto |
+|---|---|---|
+| P1 | identidades infantis continuam derivadas de regex e chaves lexicais | variações semanticamente equivalentes ficam ignoradas ou colapsadas; a correção não é estrutural. |
+| P1 | `BookingDraftContext` reconstrói o estado reparseando todo o histórico disponível | `Service.Reprocess` carrega somente uma janela limitada; proveniência e referências somem quando mensagens antigas saem do `LIMIT 50`, e mudanças no parser alteram o replay. |
+| P1 | `ChildUnder5AddsTraveler` é recalculado usando o prompt ativo da evidência infantil mais recente | uma menção posterior da mesma criança, já fora do prompt infantil original, pode reduzir `expected_document_count` de dois para um. |
+| P1 | um prompt novo só abre época quando o mesmo turno também contém evidência infantil reconhecida | prompt sem resposta reconhecida mantém zero antigo como conhecido e permite avanço com slot stale. |
+| P1 | correção para zero não limpa o agregado infantil anterior | referências antigas elevam novamente a contagem após `CHILD_COUNT_SET=0`, preservando documento ou lap child incorreto. |
+
+Na quinta rodada histórica, os cinco achados invalidavam a reconstrução textual
+como fonte canônica e tornavam o patch inseguro para commit, deploy ou smoke. A
+decisão final daquela rodada está em
+`docs/adr/ADR-2026-07-passenger-state-durable-events.md`; a ADR anterior fica
+parcialmente superseded. O H-B passa a persistir um
+`PassengerClarificationStateV1` versionado em metadata já salva atomicamente
+pelo `Reprocess`, com eventos estruturais, slots por época, proveniência e
+ledger de mensagens aplicadas.
+
+Restrições desta reestruturação:
+
+- remover regex e chaves lexicais de identidade infantil adicionadas pelo H-B;
+- não adicionar regex, `containsAnyFolded`, sinônimos ou listas de frases;
+- reducer recebe somente estado e eventos estruturais, nunca texto;
+- `BookingDraftContext` recebe o estado pronto e não percorre histórico para
+  extrair passageiros;
+- linguagem familiar aberta sem contrato estruturado bloqueia avanço com
+  clarification segura;
+- sessões sem V1 fazem no máximo um bootstrap conservador, marcado no snapshot;
+- `PassengerClarificationMeaningV1` permanece **FUTURO CONDICIONAL**, conforme
+  `plans/p-2026-07-passenger-clarification-meaning-v1.md`.
+
+O 3.6F-D continua **BLOQUEADA por H-2026-07-16B**. Não há autorização para
+commit, push, deploy ou smoke, e esta rodada não deve declarar review limpo.
+
+#### Implementação local após o quinto review
+
+- criado `PassengerClarificationStateV1` versionado em
+  `metadata.memory.passenger_clarification_state_v1`, com slots, proveniência,
+  origem imutável de `ChildUnder5AddsTraveler`, reason codes e ledger
+  idempotente;
+- reducer limitado a `PASSENGER_PROMPT_OPENED`, `CHILD_PROMPT_OPENED`,
+  `PASSENGER_COUNT_SET`, `CHILD_COUNT_SET`, `SLOT_CORRECTED` e
+  `SLOT_INVALIDATED`, sem texto como entrada;
+- prompt estrutural é anexado ao draft, mas só outbound confiável/enviado abre
+  a época no `Reprocess` seguinte; draft bloqueado não reseta estado;
+- estado do turno é persistido por `SaveReprocessSnapshot` na mesma transação
+  que marca as mensagens processadas;
+- `BookingDraftContext` recebe o estado pronto; sua varredura histórica continua
+  apenas para disponibilidade, documentos e tools;
+- correção infantil para zero substitui o slot e limpa referências,
+  `ChildUnder5AddsTraveler` e sua origem;
+- linguagem familiar aberta sem representação estrutural produz
+  `UNSUPPORTED_FAMILY_IDENTITY` e clarification segura, sem LLM,
+  `booking_create`, payment ou tools;
+- bootstrap legado é único e conservador; replay/restart usa o snapshot V1 e
+  não recompõe o agregado a partir da janela textual.
+
+O resultado local não conclui H-B: novo review ainda não foi executado e não há
+declaração de review limpo. O 3.6F-D permanece bloqueado.
+
+#### Arquivos desta reestruturação final
+
+```text
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/interpreter.go
+apps/api/internal/chat/interpreter_test.go
+apps/api/internal/chat/interpreter_validation.go
+apps/api/internal/chat/interpreter_validation_test.go
+apps/api/internal/chat/model.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+apps/api/internal/chat/tool_router_test.go
+apps/api/internal/chat/passenger_clarification_evidence.go
+apps/api/internal/chat/passenger_clarification_evidence_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+apps/api/internal/chat/passenger_clarification_reducer.go
+apps/api/internal/chat/passenger_clarification_reducer_test.go
+apps/api/internal/chat/passenger_clarification_state_v1_test.go
+docs/adr/ADR-2026-07-passenger-clarification-state.md
+docs/adr/ADR-2026-07-passenger-state-durable-events.md
+docs/EXECUTION_TRACKER.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/p-2026-07-passenger-clarification-meaning-v1.md
+```
+
+#### Validação final desta reestruturação
+
+```text
+PASS — testes focados de estado/eventos, cinco P1, truncamento, replay, restart e linguagem aberta
+PASS — go test -count=20 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Family|Test.*Booking.*Draft|Test.*Correction|Test.*Conflict|TestPassengerClarificationStateV1'
+PASS — go test -race -count=1 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Booking.*Draft|Test.*Correction|Test.*Conflict|TestPassengerClarificationStateV1'
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Payment|Test.*LapChild|Test.*Passenger.*Document|Test.*Document.*Passenger|Test.*Booking.*Document'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — git diff --check
+```
+
+Resultado do review: o quinto review é a entrada desta correção; nenhum novo
+review foi executado depois do patch. Teste em produção/smoke: não executado nem
+autorizado. Próxima ação recomendada: executar novo review local do diff; manter
+H-B aberta e 3.6F-D bloqueada até um resultado sem P1/P2 e autorização posterior
+específica para qualquer operação externa.
+
+#### Histórico superseded das quatro rodadas anteriores
+
+As seções abaixo permanecem somente como registro das tentativas anteriores à
+arquitetura de snapshot/eventos duráveis e não descrevem mais o call path
+canônico.
+
 #### Gate de fechamento
 
 ```text
@@ -1666,7 +2686,187 @@ cobrança somente de passageiros pagantes
 H-012 verde
 ```
 
+#### Causa raiz comprovada
+
+O parser aceitava a forma relativa `eu|pra mim|para mim e mais N pessoas`,
+mas não possuía uma forma semântica para grupos familiares quantificados.
+Por isso, `eu e meus 2 filhos` caía no atalho genérico `eu e meu`, que fixava
+`passenger_count=2`; `meus 2 filhos` sem interlocutor e `somos 3` também não
+tinham reconhecimento próprio.
+
+Para criança, o padrão de idade exigia um substantivo imediato como
+`filho|filha|criança` e não consumia referências como `o mais novo` nem a
+composição `uma tem 4 e outra 6`. Além disso, o `sim` contextual existia apenas
+na reconstrução de `BookingDraftContext`: `InterpretStructuredTurn`, validator
+e intent router consultavam o parser puro, retornavam estado desconhecido e
+permitiam a repetição de `ASK_CHILD_UNDER_5`.
+
+#### Caminho determinístico reconciliado
+
+```text
+InferActivePromptContext
+  -> ActivePromptLapChildQuestion para ASK_CHILD_UNDER_5
+  -> InterpretStructuredTurn / ValidateStructuredInterpretation
+  -> routeActivePromptAnswer
+  -> Service.Reprocess
+  -> extractPassengerClarificationTurnEvidence(activePrompt)
+  -> collectBookingDraftContextWithCurrentEvidence
+  -> passengerClarificationEvidenceTimeline (histórico antigo -> novo -> atual)
+  -> ReducePassengerClarificationEvidence
+  -> applyPassengerClarificationStateToBookingDraft
+  -> expectedPassengerDocumentCount
+  -> decideNextBookingStep
+  -> bookingContinuationTemplateName
+```
+
+A normalização agora distingue total absoluto de composição relativa:
+
+- `eu|pra mim|para mim + meus/minhas N filhos/filhas` soma o interlocutor uma única vez;
+- `meus/minhas N filhos/filhas` preserva somente o grupo informado;
+- `somos N` representa total, sem nova soma;
+- idades com referente explícito preservam unidade; pares sem unidade como `uma tem 4 e outra 6` só são consumidos em contexto infantil inequívoco;
+- marcadores de incerteza invalidam somente o slot que qualificam;
+- `sim` só confirma ao menos uma criança quando o active prompt é o de criança.
+
+O reducer atribui valores absolutos, sem incrementos. Correção explícita recente
+abre uma nova fronteira para o slot corrigido; sem correção, referência singular
+continua sem reduzir contagem exata. A validação cruzada só ocorre depois da
+redução completa. Reprocessar o mesmo histórico não aumenta `PassengerCount`
+nem `ChildUnder5Count`.
+
+#### Invariantes preservados
+
+```text
+"eu e meus 2 filhos" -> passenger_count=3
+"para mim e meu filho de 4 anos" -> passenger_count=2; child_under_5_count=1
+"meus 2 filhos vão viajar" -> passenger_count=2
+"somos 3" -> passenger_count=3
+"sim, o mais novo tem 4 anos" em ASK_CHILD_UNDER_5 -> child_under_5_count=1; known=true
+"uma tem 4 e outra 6" em contexto infantil inequívoco -> child_under_5_count=1
+"duas têm 3 e 4 anos" + "a mais nova tem 3" -> child_under_5_count=2
+"meu filho de 10 meses" -> child_under_5_count=1
+"não tem criança menor de 5" -> child_under_5_count=0; known=true
+expected_document_count = total real de viajantes
+criança não pagante continua exigindo documento
+atribuição de qual passageiro é a criança continua posterior quando necessária
+cobrança continua excluindo passageiros com IsLapChild
+```
+
+O fluxo combinado de 3 viajantes e 1 criança avança para
+`ASK_PASSENGER_DOCUMENTS`, solicita 3 documentos e não repete
+`ASK_CHILD_UNDER_5`. Nenhum código de payment foi alterado; a regra existente
+`countChargeableBookingPassengers` continua ignorando `IsLapChild`.
+
+#### Arquivos alterados no H-2026-07-16B
+
+- `apps/api/internal/chat/booking_create_router.go`
+- `apps/api/internal/chat/booking_create_router_test.go`
+- `apps/api/internal/chat/passenger_clarification_evidence.go`
+- `apps/api/internal/chat/passenger_clarification_evidence_test.go`
+- `apps/api/internal/chat/passenger_clarification_reducer.go`
+- `apps/api/internal/chat/passenger_clarification_reducer_test.go`
+- `apps/api/internal/chat/booking_draft_context.go`
+- `apps/api/internal/chat/booking_draft_context_test.go`
+- `apps/api/internal/chat/interpreter.go`
+- `apps/api/internal/chat/interpreter_test.go`
+- `apps/api/internal/chat/interpreter_validation.go`
+- `apps/api/internal/chat/interpreter_validation_test.go`
+- `apps/api/internal/chat/intent_router.go`
+- `apps/api/internal/chat/intent_router_test.go`
+- `apps/api/internal/chat/service.go`
+- `apps/api/internal/chat/incremental_flow_test.go`
+- `docs/adr/ADR-2026-07-passenger-clarification-state.md`
+- `docs/EXECUTION_TRACKER.md`
+- `plans/h-2026-07-16b-passenger-child-state.md`
+
+#### Validação local
+
+```text
+RED comprovado antes da correção — total/subgrupo retornou 2 em vez de 3; incerteza infantil apagou total 3; 10 meses retornou child_under_5_count=0; referência singular reduziu contagem exata 2 para 1
+PASS — go test -count=20 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Family|Test.*Booking.*Draft'
+PASS — go test -race -count=1 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Booking.*Draft'
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Payment|Test.*LapChild'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — git diff --check
+```
+
+Os resultados acima pertencem à correção do primeiro review. O segundo review
+comprovou quatro P1 adicionais, portanto eles não demonstram invariantes
+completos, patch seguro ou review limpo.
+
+#### RED/PASS após o segundo review
+
+```text
+RED — TestPassengerCorrectionLatestExactTotalClearsOlderConflict: PassengerCount=0, known=false, conflicting=true
+RED — TestPassengerChildConflictRejectsChildrenAboveKnownTripTotal: PassengerCount=1 e ChildUnder5Count=2 conhecidos
+RED — TestPassengerChildUnder5DistinctNamedChildrenAreCountedSeparately: ChildUnder5Count=1
+RED — TestPassengerChildUnder5ActivePromptEvidenceAddsStandaloneTravelerDocument: ChildUnder5AddsTraveler=false e ExpectedDocumentCount=1
+PASS — go test -count=20 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Family|Test.*Booking.*Draft|Test.*Correction|Test.*Conflict'
+PASS — go test -race -count=1 ./internal/chat -run 'Test.*Passenger.*Count|Test.*Child.*Under.*5|Test.*Booking.*Draft'
+PASS — go test -count=1 ./internal/chat -run 'Test.*H012|Test.*Payment|Test.*LapChild'
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — git diff --check
+```
+
+Riscos restantes: a reestruturação durável motivada pelos cinco P1 está em
+execução; linguagem familiar aberta permanece bloqueada e pertence ao plano
+**FUTURO CONDICIONAL** de `PassengerClarificationMeaningV1`; não houve smoke nem
+teste em produção. Esses riscos mantêm H-2026-07-16B aberta e 3.6F-D bloqueada.
+
+#### Gate operacional
+
+```text
+commit/push/deploy: não executados
+smoke/teste em produção: não executado nem autorizado neste ciclo; não classificado como pendente antes de novo review sem P1/P2
+3.6F-D: permanece bloqueada por H-2026-07-16B
+próxima ação recomendada: concluir estado/eventos duráveis, executar a matriz local e então solicitar novo /review sem executar commit, push, deploy ou smoke
+```
+
 ---
+
+## H-2026-07-16A — Travel V2 Shadow operacional
+
+**Status:** CONCLUÍDO
+
+### Causa raiz comprovada
+
+O repository serializava os payloads JSON do claim, completion e recovery
+como `[]byte`. Em produção, o pool usa `pgx.QueryExecModeExec`, fazendo os
+parâmetros serem inferidos como binários antes do cast `$n::jsonb`.
+
+O PostgreSQL retornava SQLSTATE `22P02` (`invalid_text_representation`) nos
+caminhos de claim e recovery.
+
+A correção passou os payloads JSON como texto, preservando os casts `::jsonb`,
+e adicionou cobertura PostgreSQL usando o mesmo QueryExecMode da produção.
+
+### Smoke operacional
+
+Em 2026-07-17, mensagens reais produziram:
+
+- scheduler `scheduled`;
+- job `started`;
+- claim `claim_acquired`;
+- provider `provider_started` e `provider_completed`;
+- completion `completion_completed`;
+- claims persistidos como `COMPLETED`;
+- `travel_query_v2_shadow_recovery_due_at = NULL`;
+- recovery `sweep_done 0/0/0`;
+- nenhuma nova ocorrência de `sweep_failed`;
+- nenhum efeito adicional user-visible causado pelo shadow.
+
+Foram verificados 8 claims reais, todos terminalizados em `COMPLETED`.
+
+Um request atingiu o timeout de 10 segundos, mas foi persistido como erro
+terminal e não deixou claim órfão. O acompanhamento de latência fica fora
+do escopo deste hotfix.
+
+### Próximo gate
+
+H-2026-07-16B — estado de passageiro/criança.
+3.6F-D continua bloqueado até a conclusão de H-B.
 
 ## 9. Fases posteriores condicionais
 

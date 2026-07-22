@@ -25,8 +25,9 @@ func TestGuardrailHowToReserveAfterAvailabilityDoesNotUseUnsupportedOrLLM(t *tes
 	if strings.Contains(strings.ToLower(body), "fora") || strings.Contains(strings.ToLower(body), "outras rotas") {
 		t.Fatalf("expected no out-of-scope reply, got %q", body)
 	}
-	if !strings.Contains(foldChatText(body), "opcao") && !strings.Contains(foldChatText(body), "opcoes") && !strings.Contains(foldChatText(body), "passagem e so para voce") {
-		t.Fatalf("expected option selection or passenger-count next step, got %q", body)
+	if !strings.Contains(foldChatText(body), "opcao") && !strings.Contains(foldChatText(body), "opcoes") &&
+		!strings.Contains(foldChatText(body), "passagem e so para voce") && !strings.Contains(foldChatText(body), "documento") {
+		t.Fatalf("expected option selection or booking continuation, got %q", body)
 	}
 	if runner.calls != 0 {
 		t.Fatalf("expected deterministic reservation reply to avoid LLM, got %d calls", runner.calls)
@@ -37,7 +38,7 @@ func TestGuardrailHowToReserveAfterAvailabilityDoesNotUseUnsupportedOrLLM(t *tes
 }
 
 func TestGuardrailAgendarCadeiraDoesNotAdvanceToPassengers(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -78,7 +79,7 @@ func TestGuardrailAgendarCadeiraDoesNotAdvanceToPassengers(t *testing.T) {
 }
 
 func TestGuardrailVerifyAllOptionsWithCompleteContextCallsAvailability(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "vou verificar", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{
 		enabled: true,
@@ -132,7 +133,7 @@ func TestGuardrailVerifyAllOptionsWithCompleteContextCallsAvailability(t *testin
 }
 
 func TestGuardrailVerifyAllOptionsWithMissingOriginAsksOnlyMissingField(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "vou verificar", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -173,7 +174,7 @@ func TestGuardrailVerifyAllOptionsWithMissingOriginAsksOnlyMissingField(t *testi
 }
 
 func TestGuardrailAntiLoopBlocksRepeatedFreeFormQuestion(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{enabled: true, result: SendReplyResult{ProviderMessageID: "provider-loop-1", ProviderStatus: "SENT"}}
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -225,7 +226,7 @@ func TestGuardrailAdvancedPhasesUseSafeFallbackInsteadOfFreeFormLLM(t *testing.T
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 			session := tc.seed(t, store)
@@ -260,7 +261,7 @@ func TestGuardrailAdvancedPhasesUseSafeFallbackInsteadOfFreeFormLLM(t *testing.T
 	}
 }
 
-func TestGuardrailHumanSupportIntentBypassesSafeFallbackInAdvancedPhase(t *testing.T) {
+func TestPassengerStrongGuardrailHumanSupportWinsUnsafeState(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
@@ -288,18 +289,57 @@ func TestGuardrailHumanSupportIntentBypassesSafeFallbackInAdvancedPhase(t *testi
 	if out.Draft == nil {
 		t.Fatal("expected draft")
 	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateHumanHandoff) {
+		t.Fatalf("explicit STRONG human-support guardrail must win unsafe passenger gate, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+	}
 	body := strings.TrimSpace(out.Draft.Body)
 	folded := foldChatText(body)
-	if !strings.Contains(folded, "atendente") {
-		t.Fatalf("expected human handoff reply, got %q", body)
+	if !strings.Contains(folded, "atendente") || strings.Contains(folded, "passagem e so para voce") {
+		t.Fatalf("expected only local human-support guardrail, got %q", body)
 	}
-	if strings.Contains(folded, "passagem e so para voce") || strings.Contains(folded, "opcao de viagem") {
-		t.Fatalf("expected no booking prompt after human support request, got %q", body)
+}
+
+func TestPassengerStateSafeParallelQuestionPreservesPendingPrompt(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run", Model: "gpt-test"}}
+	openAI := &fakeOpenAIInterpreter{enabled: true}
+	searcher := &fakeAvailabilitySearcher{enabled: true}
+	svc := NewService(store, config.Config{
+		ChatDebounceWindowMS:               1500,
+		ChatOpenAIInterpreterShadowEnabled: true,
+	}, runner, openAI, searcher)
+	session := seedPassengerCollectionPhase(t, store)
+
+	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: session.ContactKey,
+		Message: IngestMessagePayload{
+			Direction: "INBOUND", ProviderMessageID: "passenger-safe-parallel", IdempotencyKey: "passenger-safe-parallel",
+			Body: "paga agora?",
+		},
+	}); err != nil {
+		t.Fatalf("ingest safe parallel question: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("reprocess safe parallel question: %v", err)
+	}
+	if out.Draft == nil {
+		t.Fatal("expected local informational draft")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplatePaymentOptionsInfo) {
+		t.Fatalf("safe parallel question must use local info template, got %q payload=%+v body=%q", got, out.Draft.NormalizedPayload, out.Draft.Body)
+	}
+	folded := foldChatText(out.Draft.Body)
+	if !strings.Contains(folded, "pagamento") || !strings.Contains(folded, "passagem e so para voce") {
+		t.Fatalf("safe answer must preserve the pending passenger prompt, got %q", out.Draft.Body)
+	}
+	if runner.calls != 0 || openAI.calls != 0 || searcher.calls != 0 || len(out.ToolCalls) != 0 {
+		t.Fatalf("safe parallel question dispatched external work: runner=%d shadow=%d search=%d tools=%+v", runner.calls, openAI.calls, searcher.calls, out.ToolCalls)
 	}
 }
 
 func TestGuardrailHumanSupportAlguemBypassesSafeFallbackInRouteSelection(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedRouteSelectionPhase(t, store)
@@ -355,7 +395,7 @@ func TestGuardrailHumanSupportAlguemIntentInPassengerCollection(t *testing.T) {
 }
 
 func TestGuardrailHumanSupportPessoaInBookedDoesNotAskPayment(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedBookedPhase(t, store)
@@ -435,7 +475,7 @@ func TestGuardrailForbiddenSchedulingVocabularyIsNormalized(t *testing.T) {
 }
 
 func TestGuardrailOutOfDomainVocabularyDraftIsReplacedWithoutLoop(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "Voce prefere que eu mostre as opcoes por assento, por classe ou por horário?", Model: "gpt-test"},
@@ -474,7 +514,7 @@ func TestGuardrailOutOfDomainVocabularyDraftIsReplacedWithoutLoop(t *testing.T) 
 }
 
 func TestGuardrailVagueAgendarStillUsesSafeFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -522,7 +562,7 @@ func TestGuardrailExplicitAgendarRouteUsesAvailabilitySearch(t *testing.T) {
 	}
 	for _, body := range tests {
 		t.Run(body, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "resultado da disponibilidade", Model: "gpt-test"}}
 			searcher := &fakeAvailabilitySearcher{
 				enabled: true,
@@ -576,7 +616,7 @@ func TestGuardrailPaymentMethodQuestionsUsePixSupportTemplate(t *testing.T) {
 		"posso parcelar?",
 	} {
 		t.Run(body, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			paymentCreator := &fakePaymentCreator{enabled: true}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, paymentCreator)
@@ -618,7 +658,7 @@ func TestGuardrailPaymentMethodQuestionsUsePixSupportTemplate(t *testing.T) {
 }
 
 func TestGuardrailPixPaymentStillAllowsPaymentCreate(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	paymentCreator := &fakePaymentCreator{
 		enabled: true,
@@ -679,7 +719,7 @@ func TestGuardrailPaymentAmountChoiceStillAllowsPaymentCreate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			paymentCreator := &fakePaymentCreator{
 				enabled: true,
@@ -838,9 +878,58 @@ func seedPassengerCollectionPhase(t *testing.T, store *fakeStore) Session {
 	t.Helper()
 	now := time.Now().UTC()
 	session := seedSessionOnly(t, store, now)
+	unknown := newPassengerClarificationStateV1()
+	unknown.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 	seedAvailabilityOutbound(t, store, session.ID, now.Add(-3*time.Minute))
 	seedInboundSent(t, store, session.ID, "opcao 1", now.Add(-2*time.Minute))
-	seedOutboundSent(t, store, session.ID, askPassengerCountReply, now.Add(-1*time.Minute))
+	selected := map[string]interface{}{
+		"selected_option_index":    1,
+		"trip_id":                  "trip-jul-1",
+		"board_stop_id":            "board-jul-1",
+		"alight_stop_id":           "alight-jul-1",
+		"origin":                   "Santa Ines/MA",
+		"destination":              "Videira/SC",
+		"origin_display_name":      "Santa Ines/MA",
+		"destination_display_name": "Videira/SC",
+		"origin_depart_time":       "08:00",
+		"trip_date":                "2026-07-10",
+		"price":                    950,
+		"currency":                 "BRL",
+	}
+	prompt, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-1 * time.Minute),
+		Payload: map[string]interface{}{
+			"intent": string(IntentSelectAvailabilityOption), "template_name": string(TemplateAskPassengerCount),
+			"selected_option_index": 1, selectedAvailabilityResultPayloadKey: cloneMap(selected),
+		},
+		NormalizedPayload: map[string]interface{}{
+			"intent": string(IntentSelectAvailabilityOption), "template_name": string(TemplateAskPassengerCount),
+			"selected_option_index": 1, selectedAvailabilityResultPayloadKey: cloneMap(selected),
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed selected passenger prompt: %v", err)
+	}
+	if _, err := store.UpdateMessage(context.Background(), UpdateMessageInput{
+		MessageID: prompt.ID, ProcessingStatus: messageStatusAutomationSent,
+		NormalizedPayload: map[string]interface{}{
+			"delivery_recorded_at": now.Add(-time.Minute).Format(time.RFC3339Nano),
+			passengerPromptEventV1MessageKey: PassengerClarificationEventV1{
+				Type: PassengerClarificationEventPassengerPromptOpened, Slot: PassengerClarificationSlotPassenger,
+				MessageID: prompt.ID,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("confirm selected passenger prompt delivery: %v", err)
+	}
+	opened := ReducePassengerClarificationEventsV1(unknown, []PassengerClarificationEventV1{{
+		Type: PassengerClarificationEventPassengerPromptOpened, Slot: PassengerClarificationSlotPassenger,
+		MessageID: prompt.ID,
+	}})
+	opened.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, opened)
 	return session
 }
 

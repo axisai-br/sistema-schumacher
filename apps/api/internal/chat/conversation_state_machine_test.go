@@ -206,3 +206,29 @@ func TestDeriveCanonicalConversationStateInvisibleSingleOptionAvailabilityDoesNo
 		})
 	}
 }
+
+func TestCanonicalStateStaleAvailabilityInvalidationPreservesIndependentEndpoints(t *testing.T) {
+	state := CanonicalConversationState{
+		Route: CanonicalRouteState{
+			Origin: "Origem independente", Destination: "Destino independente", PackageName: "pacote stale",
+			SelectedOptionIndex: 2, TripID: "trip-stale", BoardStopID: "board-stale", AlightStopID: "alight-stale",
+			TripDate: "2030-07-20", DepartureTime: "08:00", Price: 420, Currency: "BRL",
+		},
+		LastToolFacts: map[string]interface{}{
+			toolNameAvailabilitySearch: map[string]interface{}{"results": []interface{}{map[string]interface{}{"trip_id": "trip-stale"}}},
+			toolNameBookingCreate:      map[string]interface{}{"booking_id": "booking-independent"},
+		},
+	}
+
+	got := invalidateCanonicalAvailabilityFacts(state)
+	if got.Route.Origin != state.Route.Origin || got.Route.Destination != state.Route.Destination {
+		t.Fatalf("independent endpoints must survive availability invalidation: before=%+v after=%+v", state.Route, got.Route)
+	}
+	assertCanonicalAvailabilityInvalidatedForTest(t, got, "pure canonical invalidation")
+	if booking := asMap(got.LastToolFacts[toolNameBookingCreate]); asString(booking["booking_id"]) != "booking-independent" {
+		t.Fatalf("non-availability facts must survive invalidation: %+v", got.LastToolFacts)
+	}
+	if availability := asMap(state.LastToolFacts[toolNameAvailabilitySearch]); len(availability) == 0 {
+		t.Fatal("invalidation mutated the source state's availability facts")
+	}
+}

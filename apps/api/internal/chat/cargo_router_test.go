@@ -31,7 +31,7 @@ func TestInferUnsupportedCargoQuery(t *testing.T) {
 }
 
 func TestReprocessGeneratesSupportDraftForUnsupportedCargo(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
