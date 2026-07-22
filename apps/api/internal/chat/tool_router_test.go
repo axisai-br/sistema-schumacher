@@ -19,7 +19,7 @@ func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) 
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{
 				enabled: true,
 				result: RunAgentResult{
@@ -84,7 +84,7 @@ func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) 
 }
 
 func TestExecuteAvailabilitySearchEnrichesCanonicalRouteIDs(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{}, searcher)
 	session, _ := store.seedSessionWithMessage("5511999999998", "oi")
@@ -412,7 +412,7 @@ func TestParseAvailabilitySearchInputSupportedCityPairReverseDirection(t *testin
 }
 
 func TestReprocessUsesAvailabilityToolForSupportedCityPairWithoutUF(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -470,7 +470,7 @@ func TestReprocessUsesAvailabilityToolForSupportedCityPairWithoutUF(t *testing.T
 }
 
 func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true}
 	creator := &fakeBookingCreator{
 		enabled: true,
@@ -490,6 +490,7 @@ func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *
 		CustomerName:  "Messias",
 	}
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 
 	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "Sim, tá certo.", agentToolContext{})
 	if err != nil {
@@ -519,7 +520,7 @@ func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *
 }
 
 func TestResolveContextualActionToolsDoesNotCreateBookingFromLapChildAssignment(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true}
 	creator := &fakeBookingCreator{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)

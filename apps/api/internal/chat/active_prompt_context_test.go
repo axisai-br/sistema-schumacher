@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -97,6 +98,147 @@ func TestInferActivePromptContextKindsFromLatestReliablePrompt(t *testing.T) {
 			}
 			if got.SourceMessageID != "current" {
 				t.Fatalf("expected current source message, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestAvailabilityInvalidationHistoryBoundaryOverlayPreservesIndependentContext(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	availability := availabilityOptionPromptFutureResultAt(now)
+	oldAvailability := Message{
+		ID: "old-availability", Direction: "OUTBOUND", Body: buildAvailabilityListReply(availability),
+		ProcessingStatus: messageStatusAutomationSent, CreatedAt: now.Add(-4 * time.Minute),
+		Payload: map[string]interface{}{
+			"selected_option_index":              1,
+			selectedAvailabilityResultPayloadKey: selectedAvailabilityResultPayloadFromAvailability(&availability, 1),
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+				toolNameBookingCreate:      map[string]interface{}{"booking_id": "booking-independent"},
+				toolNameDocumentExtract:    map[string]interface{}{"status": "document-independent"},
+				toolNamePaymentStatus:      map[string]interface{}{"payment_status": "PENDING"},
+			},
+		},
+	}
+	passengerPrompt := Message{
+		ID: "passenger-prompt", Direction: "OUTBOUND", Body: askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent, CreatedAt: now.Add(-3 * time.Minute),
+		Payload: map[string]interface{}{"handoff_status": "BOT"},
+	}
+	boundaryMessage := Message{
+		ID: "boundary", Direction: "INBOUND", Body: "essa msm",
+		ProcessingStatus: "AUTOMATION_PROCESSED", CreatedAt: now.Add(-2 * time.Minute),
+	}
+	history := []Message{oldAvailability, passengerPrompt, boundaryMessage}
+	original, err := json.Marshal(history)
+	if err != nil {
+		t.Fatalf("marshal original history: %v", err)
+	}
+	boundary := canonicalAvailabilityFactsInvalidationBoundary{
+		AfterMessageID: boundaryMessage.ID,
+		AfterCreatedAt: boundaryMessage.CreatedAt,
+	}
+
+	overlay := availabilityInferenceHistory(history, boundary)
+	after, err := json.Marshal(history)
+	if err != nil {
+		t.Fatalf("marshal history after overlay: %v", err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("read-only overlay mutated persisted history:\n got=%s\nwant=%s", after, original)
+	}
+	if latest := findLatestAvailabilityContext(overlay); latest != nil {
+		t.Fatalf("overlay exposed pre-boundary availability: %+v", latest)
+	}
+	if index := findLatestSelectedOptionIndex(overlay); index != 0 {
+		t.Fatalf("overlay exposed pre-boundary selected_option_index=%d", index)
+	}
+	if snapshot := selectedAvailabilityResultFromMessage(overlay[0]); len(snapshot) != 0 {
+		t.Fatalf("overlay exposed pre-boundary selected snapshot: %+v", snapshot)
+	}
+	toolContext := asMap(overlay[0].Payload["tool_context"])
+	if availabilityFacts := asMap(toolContext[toolNameAvailabilitySearch]); len(availabilityFacts) != 0 {
+		t.Fatalf("overlay retained availability_search: %+v", availabilityFacts)
+	}
+	if booking := asMap(toolContext[toolNameBookingCreate]); asString(booking["booking_id"]) != "booking-independent" {
+		t.Fatalf("overlay removed independent booking facts: %+v", toolContext)
+	}
+	if document := asMap(toolContext[toolNameDocumentExtract]); asString(document["status"]) != "document-independent" {
+		t.Fatalf("overlay removed independent document facts: %+v", toolContext)
+	}
+	if payment := asMap(toolContext[toolNamePaymentStatus]); asString(payment["payment_status"]) != "PENDING" {
+		t.Fatalf("overlay removed independent payment facts: %+v", toolContext)
+	}
+	activePrompt := InferActivePromptContext(overlay, CanonicalConversationState{Phase: ConversationPhasePassengerCollection})
+	if activePrompt.Kind != ActivePromptPassengerCount || activePrompt.SourceMessageID != passengerPrompt.ID {
+		t.Fatalf("overlay erased independent passenger prompt: %+v", activePrompt)
+	}
+	if got := asString(overlay[1].Payload["handoff_status"]); got != "BOT" {
+		t.Fatalf("overlay removed independent handoff metadata: %+v", overlay[1].Payload)
+	}
+}
+
+func TestAvailabilityInvalidationHistoryBoundaryOutsideWindowUsesTimestampFallback(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	availability := availabilityOptionPromptFutureResultAt(now)
+	history := []Message{
+		{
+			ID: "old-availability", Direction: "OUTBOUND", Body: buildAvailabilityListReply(availability),
+			ProcessingStatus: messageStatusAutomationSent, CreatedAt: now.Add(-10 * time.Minute),
+			Payload: map[string]interface{}{"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			}},
+		},
+		{
+			ID: "passenger-prompt", Direction: "OUTBOUND", Body: askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent, CreatedAt: now.Add(-9 * time.Minute),
+		},
+	}
+	boundary := canonicalAvailabilityFactsInvalidationBoundary{
+		AfterMessageID: "boundary-outside-limit-50",
+		AfterCreatedAt: now.Add(-5 * time.Minute),
+	}
+
+	overlay := availabilityInferenceHistory(history, boundary)
+	if current := currentAvailabilitySelectionPromptAvailabilityContextAt(overlay, now); current != nil {
+		t.Fatalf("timestamp fallback reauthorized pre-boundary availability: %+v", current)
+	}
+	activePrompt := InferActivePromptContext(overlay, CanonicalConversationState{Phase: ConversationPhasePassengerCollection})
+	if activePrompt.Kind != ActivePromptPassengerCount || activePrompt.SourceMessageID != "passenger-prompt" {
+		t.Fatalf("timestamp fallback removed independent passenger prompt: %+v", activePrompt)
+	}
+}
+
+func TestAvailabilityInvalidationHistoryBoundaryPreservesStrongHumanAndCancellation(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	availability := availabilityOptionPromptFutureResultAt(now)
+	history := []Message{
+		{
+			ID: "old-availability", Direction: "OUTBOUND", Body: buildAvailabilityListReply(availability),
+			ProcessingStatus: messageStatusAutomationSent, CreatedAt: now.Add(-3 * time.Minute),
+			Payload: map[string]interface{}{"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			}},
+		},
+		{ID: "boundary", Direction: "INBOUND", Body: "invalidar", CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	overlay := availabilityInferenceHistory(history, canonicalAvailabilityFactsInvalidationBoundary{
+		AfterMessageID: "boundary",
+		AfterCreatedAt: now.Add(-2 * time.Minute),
+	})
+	state := CanonicalConversationState{Booking: CanonicalBookingState{BookingID: "booking-1"}}
+	for _, testCase := range []struct {
+		name string
+		body string
+		want Intent
+	}{
+		{name: "human", body: "quero falar com um atendente", want: IntentHumanSupport},
+		{name: "cancellation", body: "quero cancelar minha reserva", want: IntentBookingCancel},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			decision := routeDeterministicIntent(overlay, testCase.body, state, now)
+			if decision.Intent != testCase.want {
+				t.Fatalf("strong decision lost after availability overlay: got=%+v want=%s", decision, testCase.want)
 			}
 		})
 	}

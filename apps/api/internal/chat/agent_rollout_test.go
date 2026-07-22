@@ -10,7 +10,7 @@ import (
 )
 
 func TestChatAgentModeLegacyPreservesCurrentFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "Resposta legado", Model: "gpt-test"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true, decision: validAvailabilityJSONDecision()}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, jsonRunner)
@@ -35,7 +35,7 @@ func TestChatAgentModeLegacyPreservesCurrentFallback(t *testing.T) {
 }
 
 func TestChatAgentModeHybridUsesJSONAfterDeterministicMiss(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true, decision: validAvailabilityJSONDecision()}
 	searcher := &fakeAvailabilitySearcher{
@@ -64,7 +64,7 @@ func TestChatAgentModeHybridUsesJSONAfterDeterministicMiss(t *testing.T) {
 }
 
 func TestChatAgentModeHybridSkipsJSONWhenDeterministicHandles(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true, decision: validAvailabilityJSONDecision()}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
@@ -84,7 +84,7 @@ func TestChatAgentModeHybridSkipsJSONWhenDeterministicHandles(t *testing.T) {
 }
 
 func TestChatAgentModeJSONOnlyNeverCallsFreeFormLLMForOperationalDecision(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true, decision: validAvailabilityJSONDecision()}
 	searcher := &fakeAvailabilitySearcher{
@@ -110,7 +110,7 @@ func TestChatAgentModeJSONOnlyNeverCallsFreeFormLLMForOperationalDecision(t *tes
 }
 
 func TestChatAgentModeJSONOnlyInvalidDecisionProducesClarification(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	decision := validAvailabilityJSONDecision()
 	decision.Confidence = 0.20
@@ -135,7 +135,7 @@ func TestChatAgentModeJSONOnlyInvalidDecisionProducesClarification(t *testing.T)
 }
 
 func TestChatAgentModePersistsOpenAIContinuityMetadata(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test", ProviderResponseID: "resp_freeform_1"}}
 	jsonRunner := &fakeJSONDecisionRunner{
 		enabled:  true,
@@ -162,7 +162,7 @@ func TestChatAgentModePersistsOpenAIContinuityMetadata(t *testing.T) {
 }
 
 func TestChatAgentModeMetadataPersistsOnDraftAndToolCalls(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true, decision: validAvailabilityJSONDecision()}
 	searcher := &fakeAvailabilitySearcher{

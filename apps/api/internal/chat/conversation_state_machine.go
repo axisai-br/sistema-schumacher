@@ -61,7 +61,7 @@ type CanonicalPaymentState struct {
 }
 
 func deriveCanonicalConversationState(session Session, history []Message, currentTurn string) CanonicalConversationState {
-	draft := collectBookingDraftContext(session, history, currentTurn)
+	draft := collectBookingDraftContextFromState(session, history, currentTurn)
 	state := CanonicalConversationState{
 		SessionID:          strings.TrimSpace(session.ID),
 		Phase:              ConversationPhaseDiscovery,
@@ -163,6 +163,30 @@ func mergeToolFactsIntoCanonicalState(state *CanonicalConversationState, toolCon
 	}
 }
 
+func invalidateCanonicalAvailabilityFacts(state CanonicalConversationState) CanonicalConversationState {
+	state.Route.SelectedOptionIndex = 0
+	state.Route.TripID = ""
+	state.Route.BoardStopID = ""
+	state.Route.AlightStopID = ""
+	state.Route.TripDate = ""
+	state.Route.DepartureTime = ""
+	state.Route.Price = 0
+	state.Route.Currency = ""
+	state.Route.PackageName = ""
+
+	if len(state.LastToolFacts) > 0 {
+		facts := make(map[string]interface{}, len(state.LastToolFacts))
+		for name, value := range state.LastToolFacts {
+			if name == toolNameAvailabilitySearch {
+				continue
+			}
+			facts[name] = value
+		}
+		state.LastToolFacts = facts
+	}
+	return state
+}
+
 func inferConversationPhase(state CanonicalConversationState, draft BookingDraftContext) ConversationPhase {
 	if state.Phase == ConversationPhaseHandoffHuman {
 		return state.Phase
@@ -184,7 +208,7 @@ func inferConversationPhase(state CanonicalConversationState, draft BookingDraft
 		return ConversationPhaseBookingPending
 	}
 	if (draft.AskedPassengerQuestion || state.Passengers.ExpectedCount > 0) &&
-		(draft.HasAvailabilityShown || strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0) {
+		(strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0) {
 		return ConversationPhasePassengerCollection
 	}
 	if strings.TrimSpace(state.Route.TripID) != "" || state.Route.SelectedOptionIndex > 0 {

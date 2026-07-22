@@ -23,7 +23,7 @@ import (
 )
 
 func TestIngestMessageCreatesSessionAndMessage(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
 	r := chi.NewRouter()
@@ -86,7 +86,7 @@ func TestIngestMessageCreatesSessionAndMessage(t *testing.T) {
 }
 
 func TestIngestMessageReturnsExistingOnIdempotency(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
 	r := chi.NewRouter()
@@ -126,7 +126,7 @@ func TestIngestMessageReturnsExistingOnIdempotency(t *testing.T) {
 }
 
 func TestListAndGetSessionAndMessages(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, message := store.seedSessionWithMessage("5511888888888", "ola")
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
@@ -173,7 +173,7 @@ func TestListAndGetSessionAndMessages(t *testing.T) {
 }
 
 func TestGetCurrentDraftReturnsNotFoundWhenSessionHasNoDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511999999999", "oi")
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
@@ -190,7 +190,7 @@ func TestGetCurrentDraftReturnsNotFoundWhenSessionHasNoDraft(t *testing.T) {
 }
 
 func TestGetCurrentDraftReturnsObservabilityForGeneratedDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -300,7 +300,7 @@ func TestGetCurrentDraftReturnsObservabilityForGeneratedDraft(t *testing.T) {
 }
 
 func TestBlockAutoSendOperationalTimePreferenceWithoutAvailabilityTool(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -343,7 +343,7 @@ func TestBlockAutoSendOperationalTimePreferenceWithoutAvailabilityTool(t *testin
 }
 
 func TestGetCurrentDraftReturnsLinkedReplyForReviewedDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	ownerUserID := uuid.NewString()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -442,7 +442,7 @@ func TestGetCurrentDraftReturnsLinkedReplyForReviewedDraft(t *testing.T) {
 }
 
 func TestGetCurrentDraftReturnsReviewRequiredForDocumentTurn(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -502,7 +502,7 @@ func TestGetCurrentDraftReturnsReviewRequiredForDocumentTurn(t *testing.T) {
 }
 
 func TestGetCurrentDraftAllowsAutoSendForImageTurn(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -561,7 +561,7 @@ func TestGetCurrentDraftAllowsAutoSendForImageTurn(t *testing.T) {
 	}
 }
 
-func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
+func TestReprocessGatesDocumentImageWhenPassengerAuthorityIsUnknown(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -607,27 +607,24 @@ func TestReprocessExtractsDocumentImageBeforeGenericReply(t *testing.T) {
 	if reprocessed.Draft == nil {
 		t.Fatalf("expected draft to be generated")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("unsafe passenger state must block document extraction, got %d calls", runner.calls)
 	}
-	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].Kind != "IMAGE" {
-		t.Fatalf("expected one image media item for document extraction, got %+v", runner.lastInput.CurrentTurnMedia)
-	}
-	if !strings.Contains(reprocessed.Draft.Body, "so para voce ou vai mais alguem") {
-		t.Fatalf("expected passenger quantity clarification after extracting the CPF, got %q", reprocessed.Draft.Body)
+	if !strings.Contains(foldChatText(reprocessed.Draft.Body), "passagem e so para voce") {
+		t.Fatalf("expected fail-closed passenger clarification, got %q", reprocessed.Draft.Body)
 	}
 	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
 		t.Fatalf("unknown passenger quantity must not emit document confirmation, got %q", reprocessed.Draft.Body)
 	}
-	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
-		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("unsafe passenger state must block all tools, got %+v", reprocessed.ToolCalls)
 	}
 	if readDraftAutoSendStatus(*reprocessed.Draft) != draftAutoSendStatusEligible {
 		t.Fatalf("expected image document confirmation to be auto-send eligible, got %s", readDraftAutoSendStatus(*reprocessed.Draft))
 	}
 }
 
-func TestReprocessExtractsDocumentImageDataURLBeforeGenericReply(t *testing.T) {
+func TestReprocessGatesDocumentImageDataURLWhenPassengerAuthorityIsUnknown(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -673,23 +670,20 @@ func TestReprocessExtractsDocumentImageDataURLBeforeGenericReply(t *testing.T) {
 	if reprocessed.Draft == nil {
 		t.Fatalf("expected draft to be generated")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("expected only document extraction run, got %d calls", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("unsafe passenger state must block document extraction, got %d calls", runner.calls)
 	}
-	if len(runner.lastInput.CurrentTurnMedia) != 1 || runner.lastInput.CurrentTurnMedia[0].URL != "data:image/jpeg;base64,/9j/2Q==" {
-		t.Fatalf("expected one image data URL media item, got %+v", runner.lastInput.CurrentTurnMedia)
+	if len(reprocessed.ToolCalls) != 0 {
+		t.Fatalf("unsafe passenger state must block all tools, got %+v", reprocessed.ToolCalls)
 	}
-	if len(reprocessed.ToolCalls) != 1 || reprocessed.ToolCalls[0].ToolName != toolNameDocumentExtract {
-		t.Fatalf("expected document_extract tool call, got %+v", reprocessed.ToolCalls)
-	}
-	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 1 {
-		t.Fatalf("expected tool_call_count=1, got %d", got)
+	if got := readInt(reprocessed.Draft.NormalizedPayload["tool_call_count"]); got != 0 {
+		t.Fatalf("expected tool_call_count=0, got %d", got)
 	}
 	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateAskDocuments) {
 		t.Fatalf("did not expect generic document request template, got %q", got)
 	}
-	if !strings.Contains(reprocessed.Draft.Body, "so para voce ou vai mais alguem") {
-		t.Fatalf("expected passenger quantity clarification after extracting the RG, got %q", reprocessed.Draft.Body)
+	if !strings.Contains(foldChatText(reprocessed.Draft.Body), "passagem e so para voce") {
+		t.Fatalf("expected fail-closed passenger clarification, got %q", reprocessed.Draft.Body)
 	}
 	if got := strings.TrimSpace(asString(reprocessed.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
 		t.Fatalf("unknown passenger quantity must not emit document confirmation, got %q", reprocessed.Draft.Body)
@@ -697,7 +691,7 @@ func TestReprocessExtractsDocumentImageDataURLBeforeGenericReply(t *testing.T) {
 }
 
 func TestReprocessExtractsDocumentImageDataURLDuringBookingDocumentCollection(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -763,7 +757,7 @@ func TestReprocessExtractsDocumentImageDataURLDuringBookingDocumentCollection(t 
 }
 
 func TestReprocessDocumentImageWithoutExtractableMediaReturnsObjectiveFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "generic LLM fallback", Model: "gpt-test"},
@@ -832,7 +826,7 @@ func TestReprocessDocumentImageWithoutExtractableMediaReturnsObjectiveFallback(t
 }
 
 func TestReprocessImageAfterNewRouteQuestionDoesNotUseOldDocumentFallback(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "Me diga a cidade de destino para eu verificar as opcoes.", Model: "gpt-test"},
@@ -905,7 +899,7 @@ func TestReprocessImageAfterNewRouteQuestionDoesNotUseOldDocumentFallback(t *tes
 }
 
 func TestReprocessRejectsPDFDocumentInsteadOfExtracting(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -984,7 +978,7 @@ func TestReprocessRejectsPDFDocumentInsteadOfExtracting(t *testing.T) {
 }
 
 func TestReprocessRejectsPDFDocumentWithoutExtractableMedia(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1052,7 +1046,7 @@ func TestReprocessRejectsPDFDocumentWithoutExtractableMedia(t *testing.T) {
 }
 
 func TestReprocessConfirmsTextPassengerDocumentBeforeGenericRunner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1114,7 +1108,7 @@ func TestReprocessAdministrativeNotesDuringPassengerDocumentsRoutesSupport(t *te
 	}
 	for i, body := range cases {
 		t.Run(body, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{
 				enabled: true,
 				result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1164,7 +1158,7 @@ func TestReprocessAdministrativeNotesDuringPassengerDocumentsRoutesSupport(t *te
 }
 
 func TestReprocessAdministrativeNotesInCleanSessionRoutesSupportWithoutRunner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	logger := &fakeChatLogger{}
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -1237,7 +1231,7 @@ func TestReprocessAdministrativeNotesInCleanSessionRoutesSupportWithoutRunner(t 
 }
 
 func TestReprocessAdministrativeNotesDuringBookingPendingRoutesSupport(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1277,7 +1271,7 @@ func TestReprocessAdministrativeNotesDuringBookingPendingRoutesSupport(t *testin
 }
 
 func TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGate(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1321,7 +1315,7 @@ func TestReprocessPassengerDocumentTextStillUsesDocumentFlowWithAdministrativeGa
 }
 
 func TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativeGate(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1362,7 +1356,7 @@ func TestReprocessAlreadySentStillUsesPassengerDocumentFallbackWithAdministrativ
 }
 
 func TestReprocessAdministrativeNotesMediaDuringPassengerDocumentsRunsDocumentExtract(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1447,7 +1441,7 @@ func assertAdministrativeNotesSupportDraft(t *testing.T, out ReprocessResult) {
 }
 
 func TestReprocessInlinePassengerDocumentsWithIncompleteSecondNameAsksResendWithNameAndCPF(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1497,7 +1491,7 @@ func TestReprocessInlinePassengerDocumentsWithIncompleteSecondNameAsksResendWith
 }
 
 func TestReprocessInlinePassengerDocumentsWithOnlyOneOfTwoAsksMissingBeforeConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1545,7 +1539,7 @@ func TestReprocessInlinePassengerDocumentsWithOnlyOneOfTwoAsksMissingBeforeConfi
 }
 
 func TestReprocessInlinePassengerDocumentsWithLapChildPendingAsksAssignmentBeforeConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1594,7 +1588,7 @@ func TestReprocessInlinePassengerDocumentsWithLapChildPendingAsksAssignmentBefor
 }
 
 func TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreate(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1738,7 +1732,7 @@ func TestReprocessLapChildAssignmentDraftsDocumentConfirmationBeforeBookingCreat
 }
 
 func TestReprocessInlinePassengerDocumentsWithIncompleteFirstNameDoesNotUseWrongOrdinal(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1787,7 +1781,7 @@ func TestReprocessInlinePassengerDocumentsWithIncompleteFirstNameDoesNotUseWrong
 }
 
 func TestReprocessInlinePassengerDocumentsAfterPartialResendDraftsConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1867,7 +1861,7 @@ func TestReprocessInlinePassengerDocumentsAfterPartialResendDraftsConfirmation(t
 }
 
 func TestReprocessAlreadySentReevaluatesPreviousInlinePassengerDocuments(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -1938,7 +1932,7 @@ func TestReprocessAlreadySentReevaluatesPreviousInlinePassengerDocuments(t *test
 }
 
 func TestReprocessCPFOnlyPassengerDocumentAsksNameBeforeGenericRunner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -1982,7 +1976,7 @@ func TestReprocessCPFOnlyPassengerDocumentAsksNameBeforeGenericRunner(t *testing
 }
 
 func TestReprocessConfirmsCorrectedCPFBeforeGenericRunner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -2026,7 +2020,7 @@ func TestReprocessConfirmsCorrectedCPFBeforeGenericRunner(t *testing.T) {
 }
 
 func TestReprocessInvalidCorrectedCPFAsksCorrectionBeforeGenericRunner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -2075,7 +2069,7 @@ func TestReprocessInvalidCorrectedCPFAsksCorrectionBeforeGenericRunner(t *testin
 }
 
 func TestReprocessCreatesBookingAfterCorrectedDocumentConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -2152,7 +2146,7 @@ func TestReprocessCreatesBookingAfterCorrectedDocumentConfirmation(t *testing.T)
 }
 
 func TestReprocessCreatesBookingAfterPartialDocumentConfirmationWithVisibleCPF(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -2276,7 +2270,7 @@ func TestReprocessCreatesBookingAfterPartialDocumentConfirmationWithVisibleCPF(t
 }
 
 func TestReprocessPartialDocumentConfirmationWithoutUsableDocumentAsksObjectiveDocument(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"},
@@ -2354,7 +2348,7 @@ func TestReprocessPartialDocumentConfirmationWithoutUsableDocumentAsksObjectiveD
 }
 
 func TestReprocessCreatesBookingAfterTranscribedAudioDocumentConfirmation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -2433,7 +2427,7 @@ func TestReprocessCreatesBookingAfterTranscribedAudioDocumentConfirmation(t *tes
 }
 
 func TestReprocessBookingPendingAlreadySentStaysInDocumentFlow(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result:  RunAgentResult{ReplyText: buildUnsupportedPackageReply(), Model: "gpt-test"},
@@ -2512,6 +2506,7 @@ func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contac
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
 
 	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
@@ -2593,15 +2588,21 @@ func seedSentOutboundFromDraft(t *testing.T, store *fakeStore, sessionID string,
 
 func seedInlinePassengerDocumentBookingHistory(t *testing.T, store *fakeStore, contactKey string) Session {
 	t.Helper()
-	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "eu e minha filha de 4 anos")
+	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "eu e minha filha de 4 anos", completePassengerStateForTest(2, 1))
 }
 
 func seedInlinePassengerDocumentBookingHistoryNoChild(t *testing.T, store *fakeStore, contactKey string) Session {
 	t.Helper()
-	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "2 pessoas e nenhuma crianca")
+	return seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t, store, contactKey, "2 pessoas e nenhuma crianca", completePassengerStateForTest(2, 0))
 }
 
-func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t *testing.T, store *fakeStore, contactKey string, passengerReply string) Session {
+func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(
+	t *testing.T,
+	store *fakeStore,
+	contactKey string,
+	passengerReply string,
+	passengerState PassengerClarificationStateV1,
+) Session {
 	t.Helper()
 	now := time.Now().UTC()
 	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
@@ -2615,6 +2616,7 @@ func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(t *testing.T, s
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	seedPassengerClarificationStateV1ForTest(store, session.ID, passengerState)
 
 	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
@@ -2699,6 +2701,9 @@ func seedSequentialSoloChildDocumentBookingHistory(t *testing.T, store *fakeStor
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	passengerState := soloPlusChildPassengerStateForTest()
+	seedPassengerClarificationStateV1ForTest(store, session.ID, passengerState)
+	session = sessionWithPassengerClarificationStateForTest(session, passengerState)
 
 	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
@@ -2852,7 +2857,12 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 	messages := []IngestMessagePayload{
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-availability", IdempotencyKey: "idem-missing-availability", Body: "Encontrei uma opcao para Santa Ines/MA -> Fraiburgo/SC.", Payload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}, NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}},
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-1", IdempotencyKey: "idem-missing-out-1", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
-		{Direction: "INBOUND", ProviderMessageID: "msg-missing-in-1", IdempotencyKey: "idem-missing-in-1", Body: "eu e minha filha de 4 anos"},
+		{Direction: "INBOUND", ProviderMessageID: "msg-missing-in-1", IdempotencyKey: "idem-missing-in-1", Body: "eu e minha filha de 4 anos", NormalizedPayload: map[string]interface{}{
+			passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{
+				{Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger, Value: 2, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceIncludesSpeakerComposition},
+				{Type: PassengerClarificationEventChildCountSet, Slot: PassengerClarificationSlotChild, Value: 1, ValueKnown: true},
+			},
+		}},
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-2", IdempotencyKey: "idem-missing-out-2", Body: "Pode enviar os nomes completos e os documentos dos dois. Se preferir, pode mandar foto legivel do documento."},
 	}
 	for _, message := range messages {
@@ -2897,7 +2907,7 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 }
 
 func TestReprocessSequentialTextThenDocumentExtractMergesPassengers(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -2999,7 +3009,7 @@ func TestReprocessSequentialTextThenDocumentExtractMergesPassengers(t *testing.T
 }
 
 func TestReprocessSequentialDocumentImageThenTextUsesMergedPassengers(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3096,7 +3106,7 @@ func TestReprocessSequentialDocumentImageThenTextUsesMergedPassengers(t *testing
 }
 
 func TestReprocessSequentialDocumentExtractsMergePassengers(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3117,7 +3127,7 @@ func TestReprocessSequentialDocumentExtractsMergePassengers(t *testing.T) {
 }
 
 func TestReprocessSequentialChildThenAdultDocumentExtractMergesPassengers(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"RG","document":"1234567","birth_date":"2022-03-04","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3195,7 +3205,7 @@ func TestReprocessSequentialChildThenAdultDocumentExtractMergesPassengers(t *tes
 }
 
 func TestReprocessSequentialDuplicateDocumentDoesNotIncreaseCount(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3214,7 +3224,7 @@ func TestReprocessSequentialDuplicateDocumentDoesNotIncreaseCount(t *testing.T) 
 }
 
 func TestReprocessLatestDocumentExtractionWinsOverAccumulatedSnapshot(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Nome Antigo","document_type":"CPF","document":"52998224725","birth_date":"1990-01-01","birth_city":"Cidade Antiga","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3242,7 +3252,7 @@ func TestReprocessLatestDocumentExtractionWinsOverAccumulatedSnapshot(t *testing
 }
 
 func TestReprocessDocumentReextractReplacesUniquePassengerWhenIdentifierChanges(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3279,7 +3289,7 @@ func TestReprocessDocumentReextractReplacesUniquePassengerWhenIdentifierChanges(
 }
 
 func TestReprocessDocumentMergeKeepsTwoPassengersFromSameExtraction(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3295,7 +3305,7 @@ func TestReprocessDocumentMergeKeepsTwoPassengersFromSameExtraction(t *testing.T
 }
 
 func TestReprocessLapChildMismatchDoesNotConfirmDocument(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Joao Vitor Messias","document_type":"CPF","document":"52998224725","is_lap_child":true,"confidence":0.93},{"name":"Maria Messias","document_type":"RG","document":"1234567","is_lap_child":true,"confidence":0.93}]}`,
 		Model:     "gpt-vision-test",
@@ -3317,7 +3327,7 @@ func TestReprocessLapChildMismatchDoesNotConfirmDocument(t *testing.T) {
 }
 
 func TestReprocessLatestLapChildAgeAdultExtractDoesNotAskAssignment(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CPF","document":"52998224725","cpf":"52998224725","birth_date":"1990-03-12","confidence":0.98}]}`,
 		Model:     "gpt-vision-test",
@@ -3355,7 +3365,7 @@ func TestReprocessLatestLapChildAgeAdultExtractDoesNotAskAssignment(t *testing.T
 }
 
 func TestReprocessLapChildNameFallbackPreservesOldMarker(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CNH","document":"12345678901","cnh":"12345678901","birth_date":"1990-03-12","confidence":0.98}]}`,
 		Model:     "gpt-vision-test",
@@ -3401,7 +3411,7 @@ func TestReprocessLapChildNameFallbackPreservesOldMarker(t *testing.T) {
 }
 
 func TestReprocessLapChildNameFallbackAdultToChildSnapshotReplayPreservesAdult(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{
 		ReplyText: `{"mode":"EXTRACTED","passengers":[{"name":"Maria Messias","document_type":"CNH","document":"12345678901","cnh":"12345678901","birth_date":"2022-05-10","confidence":0.98}]}`,
 		Model:     "gpt-vision-test",
@@ -3494,7 +3504,7 @@ func TestUnknownAvailabilityQtyServiceDoesNotConfirmDocument(t *testing.T) {
 }
 
 func TestGetCurrentDraftReturnsAutoSendRetryDetails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	now := time.Now().UTC()
 	session, _ := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:       "WHATSAPP",
@@ -3587,7 +3597,7 @@ func TestGetCurrentDraftReturnsAutoSendRetryDetails(t *testing.T) {
 }
 
 func TestListSessionsIncludesDraftReviewSummary(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -3705,7 +3715,7 @@ func TestListSessionsIncludesDraftReviewSummary(t *testing.T) {
 }
 
 func TestGetSessionIncludesReviewedDraftSummary(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	ownerUserID := uuid.NewString()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -3791,7 +3801,7 @@ func TestGetSessionIncludesReviewedDraftSummary(t *testing.T) {
 }
 
 func TestListSessionsFiltersByDraftReviewStatus(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	ownerUserID := uuid.NewString()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -3879,7 +3889,7 @@ func TestListSessionsFiltersByDraftReviewStatus(t *testing.T) {
 }
 
 func TestListSessionsFiltersByDraftAutoSendStatus(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	now := time.Now().UTC()
 
 	retryPending, _ := store.UpsertSession(context.Background(), UpsertSessionInput{
@@ -3939,7 +3949,7 @@ func TestListSessionsFiltersByDraftAutoSendStatus(t *testing.T) {
 }
 
 func TestListSessionsOrdersByReviewPriority(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	now := time.Now().UTC()
 	overdue, _ := store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:       "WHATSAPP",
@@ -4032,7 +4042,7 @@ func TestListSessionsOrdersByReviewPriority(t *testing.T) {
 }
 
 func TestGetSessionsSummaryReturnsReviewCounters(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	ownerUserID := uuid.NewString()
 	now := time.Now().UTC()
 
@@ -4170,7 +4180,7 @@ func TestGetSessionsSummaryReturnsReviewCounters(t *testing.T) {
 }
 
 func TestGetSessionsSummaryReturnsWarningAlertForDueSoonQueue(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	now := time.Now().UTC()
 
 	_, _ = store.UpsertSession(context.Background(), UpsertSessionInput{
@@ -4217,7 +4227,7 @@ func TestGetSessionsSummaryReturnsWarningAlertForDueSoonQueue(t *testing.T) {
 }
 
 func TestListSessionsAndSummaryExposeReviewAging(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	now := time.Now().UTC()
 	_, _ = store.UpsertSession(context.Background(), UpsertSessionInput{
 		Channel:       "WHATSAPP",
@@ -4377,7 +4387,7 @@ func TestListSessionsAndSummaryExposeReviewAging(t *testing.T) {
 }
 
 func TestReplyCreatesOutboundRecordForHumanOwner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4439,7 +4449,7 @@ func TestReplyCreatesOutboundRecordForHumanOwner(t *testing.T) {
 }
 
 func TestReplyDeliversImmediatelyWhenSenderIsEnabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888@s.whatsapp.net", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4493,7 +4503,7 @@ func TestReplyDeliversImmediatelyWhenSenderIsEnabled(t *testing.T) {
 }
 
 func TestReplyRejectsWhenHumanOwnerMismatch(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	item := store.sessions[session.ID]
 	item.HandoffStatus = "HUMAN"
@@ -4518,7 +4528,7 @@ func TestReplyRejectsWhenHumanOwnerMismatch(t *testing.T) {
 }
 
 func TestReplyRejectsWhenSessionHasNoActiveHumanOwner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
@@ -4539,7 +4549,7 @@ func TestReplyRejectsWhenSessionHasNoActiveHumanOwner(t *testing.T) {
 }
 
 func TestReplyReturnsExistingOnIdempotency(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4584,7 +4594,7 @@ func TestReplyReturnsExistingOnIdempotency(t *testing.T) {
 }
 
 func TestReplyRetriesDeliveryOnSameIdempotencyKeyAfterFailure(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888@s.whatsapp.net", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4651,7 +4661,7 @@ func TestReplyRetriesDeliveryOnSameIdempotencyKeyAfterFailure(t *testing.T) {
 }
 
 func TestReplyApprovesAutomationDraftWhenDraftMessageIDIsProvided(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -4730,7 +4740,7 @@ func TestReplyApprovesAutomationDraftWhenDraftMessageIDIsProvided(t *testing.T) 
 }
 
 func TestReplyCanEditAutomationDraftBeforeSending(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -4800,7 +4810,7 @@ func TestReplyCanEditAutomationDraftBeforeSending(t *testing.T) {
 }
 
 func TestReplyRejectsDraftReviewWhenDraftIsNotActiveAutomationDraft(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -4866,7 +4876,7 @@ func TestReplyRejectsDraftReviewWhenDraftIsNotActiveAutomationDraft(t *testing.T
 }
 
 func TestReplyRejectsInvalidDraftMessageID(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4891,7 +4901,7 @@ func TestReplyRejectsInvalidDraftMessageID(t *testing.T) {
 }
 
 func TestReplyMediaCreatesOutboundRecordForHumanOwner(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -4953,7 +4963,7 @@ func TestReplyMediaCreatesOutboundRecordForHumanOwner(t *testing.T) {
 }
 
 func TestIngestMessageWithHumanOwnerBlocksAgentProcessing(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	item := store.sessions[session.ID]
@@ -5003,7 +5013,7 @@ func TestIngestMessageWithHumanOwnerBlocksAgentProcessing(t *testing.T) {
 }
 
 func TestPresenceSignalIsSkippedWhenHumanOwnerIsActive(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
@@ -5033,7 +5043,7 @@ func TestPresenceSignalIsSkippedWhenHumanOwnerIsActive(t *testing.T) {
 }
 
 func TestRequestHandoffCreatesRecordAndUpdatesSession(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	profiles := &fakeProfileEnsurer{}
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
@@ -5084,7 +5094,7 @@ func TestRequestHandoffCreatesRecordAndUpdatesSession(t *testing.T) {
 }
 
 func TestRequestHandoffIgnoresBodyAssignedUserID(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	profiles := &fakeProfileEnsurer{}
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
@@ -5124,7 +5134,7 @@ func TestRequestHandoffIgnoresBodyAssignedUserID(t *testing.T) {
 }
 
 func TestRequestHandoffRequiresAuthenticatedUser(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
@@ -5144,7 +5154,7 @@ func TestRequestHandoffRequiresAuthenticatedUser(t *testing.T) {
 }
 
 func TestRequestHandoffRejectsWhenAlreadyActive(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	item := store.sessions[session.ID]
 	item.HandoffStatus = "HUMAN_REQUESTED"
@@ -5166,7 +5176,7 @@ func TestRequestHandoffRejectsWhenAlreadyActive(t *testing.T) {
 }
 
 func TestRequestHandoffProfileFailureReturnsForbidden(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	profiles := &fakeProfileEnsurer{err: ErrUserProfileNotConfigured}
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}, profiles))
@@ -5189,7 +5199,7 @@ func TestRequestHandoffProfileFailureReturnsForbidden(t *testing.T) {
 }
 
 func TestRequestHandoffForeignKeyFailureReturnsForbidden(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	store.requestHandoffErr = &pgconn.PgError{Code: "23503", ConstraintName: "chat_handoffs_assigned_user_id_fkey"}
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
@@ -5212,7 +5222,7 @@ func TestRequestHandoffForeignKeyFailureReturnsForbidden(t *testing.T) {
 }
 
 func TestResumeSessionResolvesActiveHandoff(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	ownerID := uuid.NewString()
 	_, err := store.RequestHandoff(context.Background(), RequestHandoffInput{
@@ -5268,7 +5278,7 @@ func TestResumeSessionResolvesActiveHandoff(t *testing.T) {
 }
 
 func TestResumeSessionRejectsWhenNoActiveHandoff(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511888888888", "ola")
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
@@ -5286,7 +5296,7 @@ func TestResumeSessionRejectsWhenNoActiveHandoff(t *testing.T) {
 }
 
 func TestIngestMessageAggregatesWithinDebounceWindow(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 2000}))
 
 	r := chi.NewRouter()
@@ -5332,7 +5342,7 @@ func TestIngestMessageAggregatesWithinDebounceWindow(t *testing.T) {
 }
 
 func TestOutboundMessageClearsPendingBuffer(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	handler := NewHandler(NewService(store, config.Config{ChatDebounceWindowMS: 1500}))
 
 	r := chi.NewRouter()
@@ -5376,7 +5386,7 @@ func TestOutboundMessageClearsPendingBuffer(t *testing.T) {
 }
 
 func TestPresenceTypingExtendsPendingBuffer(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 2000})
 
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -5417,7 +5427,7 @@ func TestPresenceTypingExtendsPendingBuffer(t *testing.T) {
 }
 
 func TestPresencePausedShortensPendingBuffer(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 2000})
 
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -5455,7 +5465,7 @@ func TestPresencePausedShortensPendingBuffer(t *testing.T) {
 }
 
 func TestPresenceWithoutPendingBufferIsSkipped(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 
 	_, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -5487,7 +5497,7 @@ func TestPresenceWithoutPendingBufferIsSkipped(t *testing.T) {
 }
 
 func TestReprocessBuildsMemoryAndMarksMessagesAutomationPending(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 
 	first, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -5570,7 +5580,7 @@ func TestReprocessBuildsMemoryAndMarksMessagesAutomationPending(t *testing.T) {
 }
 
 func TestReprocessRejectsWhenHumanOwnerIsActive(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -5606,7 +5616,7 @@ func TestReprocessRejectsWhenHumanOwnerIsActive(t *testing.T) {
 }
 
 func TestReprocessGeneratesAgentDraftWhenRunnerIsEnabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5663,7 +5673,7 @@ func TestReprocessGeneratesAgentDraftWhenRunnerIsEnabled(t *testing.T) {
 }
 
 func TestReprocessStructuredInterpreterShadowDisabledDoesNotCallOpenAI(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5708,7 +5718,7 @@ func TestReprocessStructuredInterpreterShadowDisabledDoesNotCallOpenAI(t *testin
 }
 
 func TestReprocessStructuredInterpreterShadowEnabledRunnerDisabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5739,7 +5749,7 @@ func TestReprocessStructuredInterpreterShadowEnabledRunnerDisabled(t *testing.T)
 }
 
 func TestReprocessStructuredInterpreterShadowEnabledValidDoesNotChangeDraftOrTools(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5816,7 +5826,7 @@ func TestReprocessStructuredInterpreterShadowEnabledValidDoesNotChangeDraftOrToo
 }
 
 func TestReprocessStructuredInterpreterShadowValidationDoesNotChangeDraftToolsOrCanonicalState(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5889,7 +5899,7 @@ func TestReprocessStructuredInterpreterShadowValidationDoesNotChangeDraftToolsOr
 }
 
 func TestReprocessStructuredInterpreterShadowEnabledErrorContinues(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5936,7 +5946,7 @@ func TestReprocessStructuredInterpreterShadowEnabledErrorContinues(t *testing.T)
 }
 
 func TestReprocessStructuredInterpreterShadowDoesNotPersistSensitiveData(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -5990,7 +6000,7 @@ func TestReprocessStructuredInterpreterShadowDoesNotPersistSensitiveData(t *test
 }
 
 func TestReprocessAutoSendsEligibleDraftWhenSenderIsEnabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		result: SendReplyResult{
@@ -6071,7 +6081,7 @@ func TestReprocessAutoSendsEligibleDraftWhenSenderIsEnabled(t *testing.T) {
 }
 
 func TestReprocessAutoSendsPricingQuoteDraftWhenSenderIsEnabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		result: SendReplyResult{
@@ -6186,7 +6196,7 @@ func TestReprocessAutoSendsPricingQuoteDraftWhenSenderIsEnabled(t *testing.T) {
 }
 
 func TestReprocessAutoSendsAvailabilitySearchDraftWhenSenderIsEnabled(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		result: SendReplyResult{
@@ -6294,7 +6304,7 @@ func TestReprocessAutoSendsAvailabilitySearchDraftWhenSenderIsEnabled(t *testing
 }
 
 func TestReprocessRetriesAutoSendOnSameDraftAfterFailure(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		errs:    []error{errors.New("gateway timeout"), nil},
@@ -6384,7 +6394,7 @@ func TestReprocessRetriesAutoSendOnSameDraftAfterFailure(t *testing.T) {
 }
 
 func TestMaybeAutoSendDraftBlocksWhenSessionMovesToHuman(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, sender)
 
@@ -6459,7 +6469,7 @@ func TestMaybeAutoSendDraftBlocksWhenSessionMovesToHuman(t *testing.T) {
 }
 
 func TestRetryDraftAutoSendRetriesFailedDraftWithoutRerun(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		errs: []error{
@@ -6566,7 +6576,7 @@ func TestRetryDraftAutoSendRetriesFailedDraftWithoutRerun(t *testing.T) {
 }
 
 func TestRetryDraftAutoSendBlocksWhenSessionMovesToHuman(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		errs:    []error{errors.New("gateway timeout")},
@@ -6641,7 +6651,7 @@ func TestRetryDraftAutoSendBlocksWhenSessionMovesToHuman(t *testing.T) {
 }
 
 func TestRetryDraftAutoSendRejectsDraftOutsideRetryQueue(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	sender := &fakeReplySender{
 		enabled: true,
 		result: SendReplyResult{
@@ -6692,7 +6702,7 @@ func TestRetryDraftAutoSendRejectsDraftOutsideRetryQueue(t *testing.T) {
 }
 
 func TestReprocessUsesAvailabilityToolWhenTurnHasStructuredRoute(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -6784,7 +6794,7 @@ func TestReprocessUsesAvailabilityToolWhenTurnHasStructuredRoute(t *testing.T) {
 }
 
 func TestReprocessSkipsAvailabilityToolWhenTurnIsBroad(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -6852,7 +6862,7 @@ func TestReprocessSkipsAvailabilityToolWhenTurnIsBroad(t *testing.T) {
 }
 
 func TestReprocessUsesPackageAvailabilityForBroadStateDateLookup(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -6948,7 +6958,7 @@ func TestReprocessGeneratesSupportDraftForUnsupportedExplicitDestinations(t *tes
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{
 				enabled: true,
 				result: RunAgentResult{
@@ -7043,7 +7053,7 @@ func TestInferUnsupportedPackageQueryAllowsGenericAndSupportedDestinations(t *te
 }
 
 func TestReprocessDoesNotFallbackUnsupportedForNormalizedSupportedCity(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7102,7 +7112,7 @@ func TestReprocessDoesNotFallbackUnsupportedForNormalizedSupportedCity(t *testin
 }
 
 func TestReprocessAsksOriginAfterBroadStateCitySelection(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7191,7 +7201,7 @@ func TestReprocessAsksOriginAfterBroadStateCitySelection(t *testing.T) {
 }
 
 func TestReprocessStillAsksOriginWhenDateArrivesBeforeOrigin(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7303,7 +7313,7 @@ func TestReprocessStillAsksOriginWhenDateArrivesBeforeOrigin(t *testing.T) {
 }
 
 func TestReprocessUsesTranscribedAudioAsText(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7363,7 +7373,7 @@ func TestReprocessUsesTranscribedAudioAsText(t *testing.T) {
 }
 
 func TestReprocessIgnoresOlderFailedAudioWhenNewAudioIsTranscribed(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7444,7 +7454,7 @@ func TestReprocessIgnoresOlderFailedAudioWhenNewAudioIsTranscribed(t *testing.T)
 }
 
 func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7464,6 +7474,9 @@ func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert session: %v", err)
 	}
+	unknown := newPassengerClarificationStateV1()
+	unknown.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 	now := time.Now().UTC()
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,
@@ -7483,6 +7496,10 @@ func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
 		NormalizedPayload: map[string]interface{}{
 			"transcription_status": "COMPLETED",
 			"transcription_text":   "é só para mim",
+			passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+				Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+				Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+			}},
 		},
 		ProcessingStatus: "READY_FOR_AUTOMATION",
 		ReceivedAt:       now.Add(-1 * time.Minute),
@@ -7514,7 +7531,7 @@ func TestReprocessPassengerReplyContinuesBookingFlow(t *testing.T) {
 }
 
 func TestPassengerCountContextDoesNotCallLLMForPraMim(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
@@ -7526,6 +7543,12 @@ func TestPassengerCountContextDoesNotCallLLMForPraMim(t *testing.T) {
 			ProviderMessageID: "msg-pra-mim",
 			IdempotencyKey:    "idem-pra-mim",
 			Body:              "pra mim",
+			NormalizedPayload: map[string]interface{}{
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+					Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+				}},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("ingest passenger reply: %v", err)
@@ -7544,7 +7567,7 @@ func TestPassengerCountContextDoesNotCallLLMForPraMim(t *testing.T) {
 }
 
 func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
@@ -7556,6 +7579,12 @@ func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *te
 			ProviderMessageID: "msg-so-eu",
 			IdempotencyKey:    "idem-so-eu",
 			Body:              "so eu",
+			NormalizedPayload: map[string]interface{}{
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+					Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+				}},
+			},
 		},
 	}); err != nil {
 		t.Fatalf("ingest passenger reply: %v", err)
@@ -7576,8 +7605,8 @@ func TestPassengerCountContextDoesNotRepeatComboQuestionWhenPassengerKnown(t *te
 	}
 }
 
-func TestPassengerCountContextParsesTranscribedAudioSoloEle(t *testing.T) {
-	store := newFakeStore()
+func TestPassengerCountContextUsesStructuredEventForTranscribedAudioSoloEle(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
@@ -7593,6 +7622,10 @@ func TestPassengerCountContextParsesTranscribedAudioSoloEle(t *testing.T) {
 			NormalizedPayload: map[string]interface{}{
 				"transcription_status": "COMPLETED",
 				"transcription_text":   "A passagem é só para ele mesmo.",
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+					Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+				}},
 			},
 		},
 	}); err != nil {
@@ -7614,8 +7647,8 @@ func TestPassengerCountContextParsesTranscribedAudioSoloEle(t *testing.T) {
 	}
 }
 
-func TestPassengerCountContextParsesTranscribedAudioSoloMim(t *testing.T) {
-	store := newFakeStore()
+func TestPassengerCountContextUsesStructuredEventForTranscribedAudioSoloMim(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
@@ -7632,6 +7665,10 @@ func TestPassengerCountContextParsesTranscribedAudioSoloMim(t *testing.T) {
 				"transcription_status": "COMPLETED",
 				"transcription_text":   "A passagem é só pra mim.",
 				"message_text":         "A passagem é só pra mim.",
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{{
+					Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+					Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+				}},
 			},
 			ProcessingStatus: "READY_FOR_AUTOMATION",
 		},
@@ -7658,10 +7695,13 @@ func TestPassengerCountContextParsesTranscribedAudioSoloMim(t *testing.T) {
 }
 
 func TestPassengerCountContextParsesTranscribedAudioSoloNoChildAsksDocuments(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 	session := seedPassengerCountContextWithAvailability(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+	unknown := newPassengerClarificationStateV1()
+	unknown.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 
 	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: session.ContactKey,
@@ -7675,6 +7715,16 @@ func TestPassengerCountContextParsesTranscribedAudioSoloNoChildAsksDocuments(t *
 				"transcription_status": "COMPLETED",
 				"transcription_text":   "A passagem é só pra mim, não tem criança.",
 				"message_text":         "A passagem é só pra mim, não tem criança.",
+				passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{
+					{
+						Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+						Value: 1, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceSoloSpeaker,
+					},
+					{
+						Type: PassengerClarificationEventChildCountSet, Slot: PassengerClarificationSlotChild,
+						Value: 0, ValueKnown: true,
+					},
+				},
 			},
 			ProcessingStatus: "READY_FOR_AUTOMATION",
 		},
@@ -7708,10 +7758,13 @@ func TestPassengerCountContextTranscribedAudioAmbiguousUsesFallback(t *testing.T
 
 	for _, text := range cases {
 		t.Run(text, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 			svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
 			session := seedPassengerCountContext(t, store, "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?")
+			unknown := newPassengerClarificationStateV1()
+			unknown.BootstrapCompleted = true
+			seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 
 			if _, err := svc.Ingest(context.Background(), IngestMessageInput{
 				ContactKey: session.ContactKey,
@@ -7745,8 +7798,11 @@ func TestPassengerCountContextTranscribedAudioAmbiguousUsesFallback(t *testing.T
 			if got, _ := out.Memory["child_under_5_count_known"].(bool); got {
 				t.Fatalf("expected not to infer child_under_5_count from ambiguous audio")
 			}
-			if got := strings.TrimSpace(out.Draft.Body); !strings.Contains(got, "Nao consegui entender o audio com seguranca") || !strings.Contains(got, "Exemplo: so eu ou eu e mais uma pessoa") {
-				t.Fatalf("expected audio clarification fallback, got %q", got)
+			if got := foldChatText(strings.TrimSpace(out.Draft.Body)); !strings.Contains(got, "passagem e so para voce") {
+				t.Fatalf("expected fail-closed passenger clarification, got %q", out.Draft.Body)
+			}
+			if got := strings.TrimSpace(out.Draft.Body); strings.Contains(got, "Nao consegui entender o audio com seguranca") {
+				t.Fatalf("passenger foundation must not infer from transcript text, got %q", got)
 			}
 			if got := strings.TrimSpace(out.Draft.Body); got == "Perfeito. A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?" {
 				t.Fatalf("expected not to repeat exact passenger question, got %q", got)
@@ -7756,7 +7812,7 @@ func TestPassengerCountContextTranscribedAudioAmbiguousUsesFallback(t *testing.T
 }
 
 func TestSCDestinationFollowUpAsksMAOrigin(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -7790,7 +7846,7 @@ func TestSCDestinationFollowUpAsksMAOrigin(t *testing.T) {
 }
 
 func TestSCDestinationFollowUpDoesNotCallAvailabilityYet(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	searcher := &fakeAvailabilitySearcher{enabled: true}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, searcher)
@@ -7824,7 +7880,7 @@ func TestSCDestinationFollowUpDoesNotCallAvailabilityYet(t *testing.T) {
 }
 
 func TestOperationalUnsupportedLLMDraftStillBlocked(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -7884,6 +7940,9 @@ func seedPassengerCountContext(t *testing.T, store *fakeStore, question string) 
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	unknown := newPassengerClarificationStateV1()
+	unknown.BootstrapCompleted = true
+	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,
 		Direction:        "OUTBOUND",
@@ -8012,7 +8071,7 @@ func latestAutomationDraftForSession(t *testing.T, store *fakeStore, sessionID s
 }
 
 func TestReprocessSkipsRunnerForUntranscribedAudio(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8080,7 +8139,7 @@ func TestReprocessSkipsRunnerForUntranscribedAudio(t *testing.T) {
 }
 
 func TestReprocessReturnsBadGatewayWhenAvailabilityToolFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8128,7 +8187,7 @@ func TestReprocessReturnsBadGatewayWhenAvailabilityToolFails(t *testing.T) {
 }
 
 func TestReprocessUsesPricingQuoteToolAfterAvailabilityForPriceIntent(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8249,7 +8308,7 @@ func TestReprocessUsesPricingQuoteToolAfterAvailabilityForPriceIntent(t *testing
 }
 
 func TestReprocessReturnsBadGatewayWhenPricingQuoteToolFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8324,7 +8383,7 @@ func TestReprocessReturnsBadGatewayWhenPricingQuoteToolFails(t *testing.T) {
 }
 
 func TestReprocessUsesBookingLookupToolWhenTurnHasReservationCode(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8405,7 +8464,7 @@ func TestReprocessUsesBookingLookupToolWhenTurnHasReservationCode(t *testing.T) 
 }
 
 func TestReprocessReturnsBadGatewayWhenBookingLookupToolFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8453,7 +8512,7 @@ func TestReprocessReturnsBadGatewayWhenBookingLookupToolFails(t *testing.T) {
 }
 
 func TestReprocessUsesRescheduleLookupToolWhenTurnRequestsReschedule(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8560,7 +8619,7 @@ func TestReprocessUsesRescheduleLookupToolWhenTurnRequestsReschedule(t *testing.
 }
 
 func TestReprocessReturnsBadGatewayWhenRescheduleLookupToolFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8611,7 +8670,7 @@ func TestReprocessReturnsBadGatewayWhenRescheduleLookupToolFails(t *testing.T) {
 }
 
 func TestReprocessUsesPaymentStatusToolWhenTurnAsksAboutPix(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8718,7 +8777,7 @@ func TestReprocessUsesPaymentStatusToolWhenTurnAsksAboutPix(t *testing.T) {
 }
 
 func TestReprocessReturnsBadGatewayWhenPaymentStatusToolFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8781,8 +8840,8 @@ func TestReprocessReturnsBadGatewayWhenPaymentStatusToolFails(t *testing.T) {
 	}
 }
 
-func TestReprocessAsksPassengerCountWhenCustomerChoosesPreviousOption(t *testing.T) {
-	store := newFakeStore()
+func TestReprocessAsksDocumentsWhenCustomerChoosesPreviousOptionWithKnownPassengerState(t *testing.T) {
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -8906,7 +8965,7 @@ func TestReprocessAsksPassengerCountWhenCustomerChoosesPreviousOption(t *testing
 			Direction:         "INBOUND",
 			ProviderMessageID: "msg-booking-create-1",
 			IdempotencyKey:    "idem-booking-create-1",
-			Body:              "quero reservar a opcao 1. nome: Joao Vitor Messias da Cruz Damasio cpf: 06645648105",
+			Body:              "quero reservar a opcao 1",
 		},
 	})
 	if err != nil {
@@ -8936,18 +8995,18 @@ func TestReprocessAsksPassengerCountWhenCustomerChoosesPreviousOption(t *testing
 		t.Fatalf("expected booking create not to be called before passenger flow, got %d", creator.calls)
 	}
 	if runner.calls != 0 {
-		t.Fatalf("expected passenger-count template to avoid LLM, got %d calls", runner.calls)
+		t.Fatalf("expected document template to avoid LLM, got %d calls", runner.calls)
 	}
-	if out.Draft == nil || strings.TrimSpace(out.Draft.Body) != askPassengerCountReply {
-		t.Fatalf("expected passenger-count template, got %+v", out.Draft)
+	if out.Draft == nil || !strings.Contains(strings.TrimSpace(out.Draft.Body), "documento de 1 passageiro") {
+		t.Fatalf("expected document request after selection, got %+v", out.Draft)
 	}
-	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-		t.Fatalf("expected template %s, got %q", TemplateAskPassengerCount, got)
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskDocuments) {
+		t.Fatalf("expected template %s, got %q", TemplateAskDocuments, got)
 	}
 }
 
 func TestReprocessUsesPaymentCreateToolWhenCustomerAsksToGeneratePix(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -9051,7 +9110,7 @@ func TestReprocessUsesPaymentCreateToolWhenCustomerAsksToGeneratePix(t *testing.
 }
 
 func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -9198,7 +9257,7 @@ func TestReprocessUsesPaymentCreateToolFromPreviousBookingCreateContext(t *testi
 }
 
 func TestReprocessUsesBookingCancelToolWhenCustomerAsksToCancelReservation(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -9296,7 +9355,7 @@ func TestReprocessUsesBookingCancelToolWhenCustomerAsksToCancelReservation(t *te
 }
 
 func TestReprocessUsesBookingCancelToolFromPreviousBookingCreateContext(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -9404,7 +9463,7 @@ func TestReprocessUsesBookingCancelToolFromPreviousBookingCreateContext(t *testi
 }
 
 func TestReprocessDraftIsIdempotentPerTurn(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{
 		enabled: true,
 		result: RunAgentResult{
@@ -9462,7 +9521,7 @@ func TestReprocessDraftIsIdempotentPerTurn(t *testing.T) {
 }
 
 func TestReprocessReturnsBadGatewayWhenAgentRunnerFails(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, &fakeAgentRunner{
 		enabled: true,
 		err:     errors.New("upstream timeout"),
@@ -9495,7 +9554,7 @@ func TestReprocessReturnsBadGatewayWhenAgentRunnerFails(t *testing.T) {
 }
 
 func TestReprocessRejectsWhenNoPendingMessagesExist(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511999999999", "oi")
 	_, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,
@@ -9524,7 +9583,7 @@ func TestReprocessRejectsWhenNoPendingMessagesExist(t *testing.T) {
 }
 
 func TestResolveSessionSuccess(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511991111111", "ola")
 	ownerUserID := uuid.NewString()
 	if _, err := store.RequestHandoff(context.Background(), RequestHandoffInput{
@@ -9572,7 +9631,7 @@ func TestResolveSessionSuccess(t *testing.T) {
 }
 
 func TestResolveSessionRejectsWithoutHumanOwnership(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	session, _ := store.seedSessionWithMessage("5511992222222", "oi")
 	ownerUserID := uuid.NewString()
 
@@ -9594,7 +9653,7 @@ func TestResolveSessionRejectsWithoutHumanOwnership(t *testing.T) {
 }
 
 func TestIngestReopensResolvedSessionAfterInbound(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 	session, _ := store.seedSessionWithMessage("5511993333333", "bom dia")
 	ownerUserID := uuid.NewString()
@@ -9640,7 +9699,7 @@ func TestIngestReopensResolvedSessionAfterInbound(t *testing.T) {
 }
 
 func TestListSessionsSupportsOperationalTabs(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500})
 
 	naoAtendido, _ := store.seedSessionWithMessage("5511980000001", "oi")
@@ -9729,6 +9788,7 @@ type fakeStore struct {
 	assistReportErr      error
 	assistReportCalls    int
 	assistReportFilter   StructuredInterpreterShadowReportFilter
+	passengerAuthority   *PassengerClarificationStateV1
 }
 
 type fakeProfileEnsurer struct {
@@ -9923,6 +9983,24 @@ func newFakeStore() *fakeStore {
 		toolCalls:        map[string]ToolCall{},
 		toolCallOrder:    []string{},
 	}
+}
+
+func newFakeStoreWithPassengerAuthority() *fakeStore {
+	store := newFakeStore()
+	state := ReducePassengerClarificationEventsV1(newPassengerClarificationStateV1(), []PassengerClarificationEventV1{
+		{
+			Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
+			MessageID: "explicit-fixture-passenger", Value: 1, ValueKnown: true,
+			PassengerProvenance: PassengerCountProvenanceAbsoluteTotal,
+		},
+		{
+			Type: PassengerClarificationEventChildCountSet, Slot: PassengerClarificationSlotChild,
+			MessageID: "explicit-fixture-child", Value: 0, ValueKnown: true,
+		},
+	})
+	state.BootstrapCompleted = true
+	store.passengerAuthority = &state
+	return store
 }
 
 func (f *fakeReplySender) Enabled() bool {
@@ -10261,6 +10339,11 @@ func (s *fakeStore) UpsertSession(_ context.Context, input UpsertSessionInput) (
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	if s.passengerAuthority != nil {
+		item.Metadata["memory"] = map[string]interface{}{
+			passengerClarificationStateV1MemoryKey: *s.passengerAuthority,
+		}
+	}
 	for k, v := range input.Metadata {
 		item.Metadata[k] = v
 	}
@@ -10364,6 +10447,59 @@ func (s *fakeStore) UpdateSessionMetadata(_ context.Context, input UpdateSession
 	item.UpdatedAt = time.Now().UTC()
 	s.sessions[item.ID] = item
 	return item, nil
+}
+
+func (s *fakeStore) ApplyPassengerClarificationEventsV1(
+	_ context.Context,
+	input ApplyPassengerClarificationEventsV1Input,
+) (ApplyPassengerClarificationEventsV1Result, error) {
+	session, ok := s.sessions[input.SessionID]
+	if !ok {
+		return ApplyPassengerClarificationEventsV1Result{}, ErrSessionNotFound
+	}
+	var existing *PassengerClarificationStateV1
+	if value, present := passengerClarificationStateV1ValueFromSession(session); present {
+		state, valid := decodePassengerClarificationStateV1(value)
+		if !valid {
+			state = invalidPassengerClarificationStateV1()
+			existing = &state
+		} else {
+			existing = &state
+		}
+	}
+	if existing == nil {
+		structuredHistory := make([]Message, 0, len(s.messageOrder))
+		for _, messageID := range s.messageOrder {
+			message := s.messages[messageID]
+			if message.SessionID == session.ID {
+				structuredHistory = append(structuredHistory, Message{
+					ID:                message.ID,
+					SessionID:         message.SessionID,
+					Direction:         message.Direction,
+					NormalizedPayload: cloneMap(message.NormalizedPayload),
+					ProcessingStatus:  message.ProcessingStatus,
+					SentAt:            message.SentAt,
+					ReceivedAt:        message.ReceivedAt,
+					CreatedAt:         message.CreatedAt,
+				})
+			}
+		}
+		state := bootstrapPassengerClarificationStateV1(nil, nil, passengerClarificationStructuredEventsV1(structuredHistory))
+		existing = &state
+	}
+	state := bootstrapPassengerClarificationStateV1(existing, nil, nil)
+	state = ReducePassengerClarificationEventsV1(state, input.Events)
+	if err := validatePassengerClarificationStateV1(state); err != nil {
+		state = invalidPassengerClarificationStateV1()
+	}
+	metadata := cloneMap(session.Metadata)
+	memory := cloneMap(asMap(metadata["memory"]))
+	memory[passengerClarificationStateV1MemoryKey] = state
+	metadata["memory"] = memory
+	session.Metadata = metadata
+	session.UpdatedAt = time.Now().UTC()
+	s.sessions[session.ID] = session
+	return ApplyPassengerClarificationEventsV1Result{Session: session, State: state}, nil
 }
 
 func (s *fakeStore) RequestHandoff(_ context.Context, input RequestHandoffInput) (RequestHandoffResult, error) {
@@ -10606,6 +10742,12 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 		message.NormalizedPayload["review_mode"] = "CONTROLLED"
 		message.NormalizedPayload["review_action"] = reviewAction
 		message.NormalizedPayload["draft_reviewed"] = true
+		if reviewAction == "APPROVED_AS_IS" {
+			if event, eventOK := passengerPromptEventForOutboundV1(*reviewedDraft, message.ID, true); eventOK {
+				message.Payload[passengerPromptEventV1MessageKey] = event
+				message.NormalizedPayload[passengerPromptEventV1MessageKey] = event
+			}
+		}
 	}
 	for key, value := range input.Metadata {
 		message.Payload[key] = value
@@ -10644,6 +10786,9 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 		outbound.Payload["review_mode"] = "CONTROLLED"
 		outbound.Payload["review_action"] = reviewAction
 		outbound.Payload["draft_reviewed"] = true
+	}
+	if event, eventOK := message.Payload[passengerPromptEventV1MessageKey]; eventOK {
+		outbound.Payload[passengerPromptEventV1MessageKey] = event
 	}
 	for key, value := range input.Metadata {
 		outbound.Payload[key] = value
@@ -10708,6 +10853,10 @@ func (s *fakeStore) CreateAutomationReply(_ context.Context, input CreateAutomat
 		message.Payload["auto_send_reasons"] = reasons
 		message.NormalizedPayload["auto_send_reasons"] = reasons
 	}
+	if event, eventOK := passengerPromptEventForOutboundV1(draft, message.ID, true); eventOK {
+		message.Payload[passengerPromptEventV1MessageKey] = event
+		message.NormalizedPayload[passengerPromptEventV1MessageKey] = event
+	}
 	for key, value := range input.Metadata {
 		message.Payload[key] = value
 		message.NormalizedPayload[key] = value
@@ -10739,6 +10888,9 @@ func (s *fakeStore) CreateAutomationReply(_ context.Context, input CreateAutomat
 	}
 	if reasons, ok := message.Payload["auto_send_reasons"]; ok {
 		outbound.Payload["auto_send_reasons"] = reasons
+	}
+	if event, eventOK := message.Payload[passengerPromptEventV1MessageKey]; eventOK {
+		outbound.Payload[passengerPromptEventV1MessageKey] = event
 	}
 	for key, value := range input.Metadata {
 		outbound.Payload[key] = value
@@ -10826,6 +10978,8 @@ func (s *fakeStore) MarkReplyDeliverySent(_ context.Context, input MarkReplyDeli
 	message.ProviderMessageID = input.ProviderMessageID
 	message.ProcessingStatus = input.ProviderStatus
 	message.SentAt = timePointer(input.SentAt)
+	message.NormalizedPayload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
+	message.NormalizedPayload["provider_status"] = input.ProviderStatus
 	s.messages[message.ID] = message
 	if input.ProviderMessageID != "" {
 		s.byProviderID[input.ProviderMessageID] = message.ID
@@ -10842,6 +10996,29 @@ func (s *fakeStore) MarkReplyDeliverySent(_ context.Context, input MarkReplyDeli
 	outbound.SentAt = timePointer(input.SentAt)
 	outbound.UpdatedAt = time.Now().UTC()
 	s.outbounds[outbound.ID] = outbound
+
+	if rawPromptEvent := message.NormalizedPayload[passengerPromptEventV1MessageKey]; rawPromptEvent != nil && passengerPromptDeliveryConfirmedV1(message) {
+		event, eventOK := decodePassengerClarificationEventV1(rawPromptEvent)
+		if !eventOK {
+			return ReplyResult{}, ErrPassengerClarificationStateInvalid
+		}
+		event, eventOK = passengerClarificationEventForMessageV1(event, message.ID)
+		if !eventOK || !passengerClarificationEventIsPromptV1(event) {
+			return ReplyResult{}, ErrPassengerClarificationStateInvalid
+		}
+		var existing *PassengerClarificationStateV1
+		if current, found := passengerClarificationStateV1FromSession(session); found {
+			existing = &current
+		}
+		state := bootstrapPassengerClarificationStateV1(existing, nil, nil)
+		state = ReducePassengerClarificationEventsV1(state, []PassengerClarificationEventV1{event})
+		metadata := cloneMap(session.Metadata)
+		memory := cloneMap(asMap(metadata["memory"]))
+		memory[passengerClarificationStateV1MemoryKey] = state
+		metadata["memory"] = memory
+		session.Metadata = metadata
+		s.sessions[session.ID] = session
+	}
 
 	var draft *Message
 	if strings.EqualFold(asString(message.Payload["mode"]), "BOT_AUTO_REPLY") {
@@ -10959,7 +11136,11 @@ func (s *fakeStore) SaveReprocessSnapshot(_ context.Context, input SaveReprocess
 	if session.Metadata == nil {
 		session.Metadata = map[string]interface{}{}
 	}
-	session.Metadata["memory"] = input.Memory
+	memory := cloneMap(input.Memory)
+	if value, ok := passengerClarificationStateV1ValueFromSession(session); ok {
+		memory[passengerClarificationStateV1MemoryKey] = value
+	}
+	session.Metadata["memory"] = memory
 	session.Metadata["agent"] = input.Agent
 	session.Metadata["buffer"] = input.Buffer
 	session.UpdatedAt = time.Now().UTC()
@@ -10996,7 +11177,7 @@ func (s *fakeStore) SaveAgentDraft(_ context.Context, input SaveAgentDraftInput)
 	s.sessions[session.ID] = session
 
 	message := Message{
-		ID:                uuid.NewString(),
+		ID:                firstNonEmpty(strings.TrimSpace(input.MessageID), uuid.NewString()),
 		SessionID:         input.SessionID,
 		Direction:         "OUTBOUND",
 		Kind:              "TEXT",

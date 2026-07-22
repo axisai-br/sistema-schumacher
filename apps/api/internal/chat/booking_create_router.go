@@ -144,7 +144,13 @@ type inlinePassengerCPFMatch struct {
 	Document string
 }
 
-func parseBookingCreateInput(session Session, history []Message, text string, currentAvailability *AvailabilitySearchResult) (BookingCreateInput, bool) {
+func parseBookingCreateInputWithPassengerState(
+	session Session,
+	history []Message,
+	text string,
+	currentAvailability *AvailabilitySearchResult,
+	passengerState PassengerClarificationStateV1,
+) (BookingCreateInput, bool) {
 	body := strings.TrimSpace(text)
 	if body == "" {
 		return BookingCreateInput{}, false
@@ -162,7 +168,7 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 		return BookingCreateInput{}, false
 	}
 
-	context := collectBookingDraftContext(session, history, body)
+	context := collectBookingDraftContextWithPassengerState(session, history, body, passengerState)
 	readiness := evaluateCanonicalBookingCreateReadiness(context)
 	if !readiness.Ready {
 		return BookingCreateInput{}, false
@@ -186,14 +192,19 @@ func parseBookingCreateInput(session Session, history []Message, text string, cu
 	return input, true
 }
 
-func parseBookingCreateFromDocumentConfirmation(session Session, history []Message, currentTurn string) (BookingCreateInput, bool) {
+func parseBookingCreateFromDocumentConfirmationWithPassengerState(
+	session Session,
+	history []Message,
+	currentTurn string,
+	passengerState PassengerClarificationStateV1,
+) (BookingCreateInput, bool) {
 	documentConfirmationContext := lastAssistantAskedDocumentConfirmation(history)
 	if (!documentConfirmationContext && !lastAssistantAskedBookingProceedConfirmation(history)) ||
 		!looksLikeDocumentConfirmation(currentTurn) {
 		return BookingCreateInput{}, false
 	}
 
-	context := collectBookingDraftContext(session, history, currentTurn)
+	context := collectBookingDraftContextWithPassengerState(session, history, currentTurn, passengerState)
 
 	if strings.TrimSpace(context.TripID) == "" ||
 		strings.TrimSpace(context.BoardStopID) == "" ||
@@ -1826,6 +1837,9 @@ func parsePassengerCountReply(currentTurn string) (int, int, bool) {
 	return 0, 0, false
 }
 
+// parsePassengerClarificationSlots is the pre-existing deterministic fast
+// path. H-B1 intentionally preserves it without adding family vocabulary or
+// using it to rebuild PassengerClarificationStateV1.
 func parsePassengerClarificationSlots(currentTurn string) PassengerClarificationSlots {
 	folded := strings.Join(strings.Fields(foldChatText(NormalizeIncomingCustomerText(currentTurn))), " ")
 	if folded == "" {
@@ -1868,8 +1882,6 @@ func parsePassengerClarificationSlots(currentTurn string) PassengerClarification
 			"eu e meu filho",
 			"eu e minha mulher",
 			"eu e meu marido",
-
-			// novos casos
 			"pra mim e pra minha",
 			"pra mim e pro meu",
 			"pra mim e para minha",

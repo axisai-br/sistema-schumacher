@@ -377,12 +377,8 @@ func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, conte
 }
 
 func hasCanonicalSelectedTrip(state CanonicalConversationState, selectedIndex int) bool {
-	if selectedIndex <= 0 {
-		return false
-	}
-	availability := asMap(state.LastToolFacts[toolNameAvailabilitySearch])
-	results := asInterfaceSliceMaps(availability["results"])
-	return selectedIndex <= len(results)
+	_, ok := canonicalSelectedAvailabilityForMaterialization(state, selectedIndex)
+	return ok
 }
 
 func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decision IntentDecision) CanonicalConversationState {
@@ -395,15 +391,11 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 		state.Route.PackageName = firstNonEmpty(state.Route.PackageName, strings.TrimSpace(decision.AvailabilityInput.PackageName))
 	}
 	if decision.SelectedOptionIndex > 0 {
-		state.Route.SelectedOptionIndex = decision.SelectedOptionIndex
-		availability := asMap(state.LastToolFacts[toolNameAvailabilitySearch])
-		results := asInterfaceSliceMaps(availability["results"])
-		index := decision.SelectedOptionIndex - 1
-		if index >= 0 && index < len(results) {
-			replaceCanonicalRouteFromSelectedAvailability(&state, results[index], decision.SelectedOptionIndex)
+		if selected, ok := canonicalSelectedAvailabilityForMaterialization(state, decision.SelectedOptionIndex); ok {
+			replaceCanonicalRouteFromSelectedAvailability(&state, selected, decision.SelectedOptionIndex)
+			state.Phase = ConversationPhasePassengerCollection
+			state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 		}
-		state.Phase = ConversationPhasePassengerCollection
-		state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 	} else if hasCanonicalRoute(state) {
 		state.Phase = ConversationPhaseRouteSelection
 		state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
@@ -412,7 +404,7 @@ func applyIntentDecisionToCanonicalState(state CanonicalConversationState, decis
 }
 
 func replaceCanonicalRouteFromSelectedAvailability(state *CanonicalConversationState, selected map[string]interface{}, selectedOptionIndex int) {
-	if state == nil || selectedOptionIndex <= 0 || len(selected) == 0 {
+	if state == nil || !selectedAvailabilitySnapshotMaterializesIndex(selected, selectedOptionIndex) {
 		return
 	}
 	state.Route.SelectedOptionIndex = selectedOptionIndex
@@ -438,6 +430,18 @@ func replaceCanonicalRouteFromSelectedAvailability(state *CanonicalConversationS
 	state.Route.AlightStopID = strings.TrimSpace(asString(selected["alight_stop_id"]))
 	state.Route.Price = asFloat64(selected["price"])
 	state.Route.Currency = strings.TrimSpace(asString(selected["currency"]))
+}
+
+func canonicalSelectedAvailabilityForMaterialization(
+	state CanonicalConversationState,
+	selectedOptionIndex int,
+) (map[string]interface{}, bool) {
+	availability := asMap(state.LastToolFacts[toolNameAvailabilitySearch])
+	selected, ok := selectedAvailabilityPayloadItem(availability, selectedOptionIndex)
+	if !ok || !selectedAvailabilitySnapshotMaterializesIndex(selected, selectedOptionIndex) {
+		return nil, false
+	}
+	return selected, true
 }
 
 func realizeIntentResponseTemplate(decision IntentDecision) (string, bool) {

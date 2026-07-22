@@ -1272,7 +1272,7 @@ func shouldUseReservationStartTemplate(state CanonicalConversationState, history
 		strings.TrimSpace(state.Route.TripDate) != "" {
 		return false
 	}
-	if state.Passengers.ExpectedCount > 0 || state.Passengers.DocumentsCollected {
+	if state.Passengers.DocumentsCollected {
 		return false
 	}
 	if strings.TrimSpace(state.Booking.BookingID) != "" ||

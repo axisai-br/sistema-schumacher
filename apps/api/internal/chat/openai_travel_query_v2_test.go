@@ -55,7 +55,7 @@ type fakeTravelQueryV2ShadowClaimStore struct {
 
 func newFakeTravelQueryV2ShadowClaimStore() *fakeTravelQueryV2ShadowClaimStore {
 	return &fakeTravelQueryV2ShadowClaimStore{
-		fakeStore:      newFakeStore(),
+		fakeStore:      newFakeStoreWithPassengerAuthority(),
 		claims:         map[string]travelQueryV2ShadowClaimRecord{},
 		recoveryDueAt:  map[string]time.Time{},
 		claimAttempts:  make(chan struct{}, 32),
@@ -455,7 +455,7 @@ func TestTravelQueryV2ShadowSchedulerLogsEveryClosedReason(t *testing.T) {
 		t.Fatal("scheduler must reject an empty idempotency key")
 	}
 
-	incompatible := NewService(newFakeStore(), config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
+	incompatible := NewService(newFakeStoreWithPassengerAuthority(), config.Config{ChatOpenAITravelV2ShadowEnabled: true}, logger, provider)
 	if incompatible.scheduleTravelQueryV2Shadow(job) {
 		t.Fatal("scheduler must reject an incompatible store")
 	}

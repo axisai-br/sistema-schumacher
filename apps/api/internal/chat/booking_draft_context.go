@@ -19,38 +19,48 @@ const (
 )
 
 type BookingDraftContext struct {
-	Origin                       string
-	Destination                  string
-	SelectedOptionIndex          int
-	TripID                       string
-	BoardStopID                  string
-	AlightStopID                 string
-	TripDate                     string
-	DepartureTime                string
-	Price                        float64
-	Currency                     string
-	PassengerCount               int
-	ExpectedDocumentCount        int
-	ChildUnder5Count             int
-	PassengerCountKnown          bool
-	ChildUnder5CountKnown        bool
-	ChildUnder5AddsTraveler      bool
-	LapChildAssignmentKnown      bool
-	LapChildPassengerIndexes     []int
-	NeedsLapChildAssignment      bool
-	HasPassengerDetails          bool
-	PassengerDetailsCount        int
-	PassengerDetailsText         string
-	PassengerDetails             []BookingCreatePassengerInput
-	PassengerSnapshot            bookingPassengerSnapshot
-	PartialPassengerDetails      []BookingPassengerDocumentPartial
-	PartialPassengerDetailsCount int
-	HasAvailabilityShown         bool
-	AskedPassengerQuestion       bool
-	PassengerCountContextActive  bool
-	RequestedPassengerDocuments  bool
-	BookingCreated               bool
-	AskedPaymentPreference       bool
+	Origin                        string
+	Destination                   string
+	SelectedOptionIndex           int
+	TripID                        string
+	BoardStopID                   string
+	AlightStopID                  string
+	TripDate                      string
+	DepartureTime                 string
+	Price                         float64
+	Currency                      string
+	PassengerCount                int
+	PassengerCountProvenance      PassengerCountProvenance
+	ExpectedDocumentCount         int
+	ChildUnder5Count              int
+	PassengerCountKnown           bool
+	PassengerCountConflicting     bool
+	ChildUnder5CountKnown         bool
+	ChildUnder5AddsTraveler       bool
+	PassengerSlotStatus           PassengerClarificationSlotStatusV1
+	ChildSlotStatus               PassengerClarificationSlotStatusV1
+	PassengerPromptMessageID      string
+	ChildPromptMessageID          string
+	PassengerReasonCodes          []string
+	ChildReasonCodes              []string
+	ChildUnder5AddsTravelerOrigin PassengerClarificationAddsTravelerOriginV1
+	ChildReferences               []PassengerClarificationChildReferenceV1
+	LapChildAssignmentKnown       bool
+	LapChildPassengerIndexes      []int
+	NeedsLapChildAssignment       bool
+	HasPassengerDetails           bool
+	PassengerDetailsCount         int
+	PassengerDetailsText          string
+	PassengerDetails              []BookingCreatePassengerInput
+	PassengerSnapshot             bookingPassengerSnapshot
+	PartialPassengerDetails       []BookingPassengerDocumentPartial
+	PartialPassengerDetailsCount  int
+	HasAvailabilityShown          bool
+	AskedPassengerQuestion        bool
+	PassengerCountContextActive   bool
+	RequestedPassengerDocuments   bool
+	BookingCreated                bool
+	AskedPaymentPreference        bool
 }
 
 type availabilitySelectionStatus string
@@ -143,29 +153,41 @@ func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
 		strings.TrimSpace(c.TripID) != ""
 }
 
-func collectBookingDraftContext(session Session, history []Message, currentTurn string) BookingDraftContext {
+func collectBookingDraftContextFromState(session Session, history []Message, currentTurn string) BookingDraftContext {
+	state, ok := passengerClarificationStateV1FromSession(session)
+	if !ok {
+		state = newPassengerClarificationStateV1()
+	}
+	return collectBookingDraftContextWithPassengerState(session, history, currentTurn, state)
+}
+
+func collectBookingDraftContextWithPassengerState(
+	session Session,
+	history []Message,
+	currentTurn string,
+	passengerState PassengerClarificationStateV1,
+) BookingDraftContext {
 	selectionEvidence := latestAvailabilitySelectionEvidence(history)
 	selectedOptionIndex := 0
 	if selectionEvidence.bookable() {
 		selectedOptionIndex = selectionEvidence.SelectedOptionIndex
 	}
 	if !selectionEvidence.found() {
-		selectedOptionIndex = findLatestSelectedOptionIndex(history)
+		candidateIndex := findLatestSelectedOptionIndex(history)
+		foldedCurrentTurn := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
+		selectingNow := extractSelectedOptionIndex(currentTurn) > 0 ||
+			looksLikeContextualAvailabilitySelection(foldedCurrentTurn)
+		if !selectingNow {
+			selectedOptionIndex = candidateIndex
+		} else {
+			currentAvailability := currentAvailabilitySelectionPromptAvailabilityContext(history)
+			if _, ok := selectedAvailabilityItemForMaterialization(currentAvailability, candidateIndex); ok {
+				selectedOptionIndex = candidateIndex
+			}
+		}
 	}
-	context := BookingDraftContext{
-		SelectedOptionIndex:         selectedOptionIndex,
-		PassengerCountContextActive: lastBotAskedPassengerCount(history),
-	}
-
-	currentSlots := parsePassengerClarificationSlots(currentTurn)
-	if !currentSlots.ChildUnder5CountKnown &&
-		isShortYesReply(currentTurn) &&
-		lastAssistantAskedChildUnder5(history) &&
-		!lastAssistantAskedPassengerAndChildCombined(history) {
-		currentSlots.ChildUnder5Count = 1
-		currentSlots.ChildUnder5CountKnown = true
-	}
-	context = mergePassengerClarificationSlotsIntoBookingDraft(context, currentSlots)
+	context := BookingDraftContext{SelectedOptionIndex: selectedOptionIndex}
+	context = applyPassengerClarificationStateToBookingDraft(context, passengerState)
 
 	for i := len(history) - 1; i >= 0; i-- {
 		message := history[i]
@@ -173,28 +195,12 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		folded := strings.Join(strings.Fields(foldChatText(body)), " ")
 
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
-			if !context.AskedPassengerQuestion && looksLikePassengerCountQuestion(body) {
-				context.AskedPassengerQuestion = true
-			}
 			if !context.RequestedPassengerDocuments && looksLikePassengerDocumentRequest(folded) {
 				context.RequestedPassengerDocuments = true
 			}
 			if !context.AskedPaymentPreference && looksLikePaymentPreferencePrompt(folded) {
 				context.AskedPaymentPreference = true
 			}
-		}
-
-		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") &&
-			(!context.PassengerCountKnown || !context.ChildUnder5CountKnown) {
-			slots := parsePassengerClarificationSlots(body)
-			if !slots.ChildUnder5CountKnown &&
-				isShortYesReply(body) &&
-				previousAssistantAskedChildUnder5(history, i) &&
-				!previousAssistantAskedPassengerAndChildCombined(history, i) {
-				slots.ChildUnder5Count = 1
-				slots.ChildUnder5CountKnown = true
-			}
-			context = mergePassengerClarificationSlotsIntoBookingDraft(context, slots)
 		}
 
 		if snapshot := selectedAvailabilityResultFromMessage(message); len(snapshot) > 0 {
@@ -211,17 +217,9 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 					mergeAvailabilityPayloadIntoBookingDraft(&context, availability)
 				}
 			}
-			if booking := asMap(toolContext[toolNameBookingCreate]); booking != nil {
-				context.BookingCreated = true
-				if context.PassengerCount == 0 {
-					context.PassengerCount = readInt(booking["passenger_count"])
-					context.PassengerCountKnown = context.PassengerCount > 0
-				}
-			}
 		}
 	}
 
-	context.ChildUnder5AddsTraveler = childUnder5AnswerAddsStandaloneTraveler(history, currentTurn, context)
 	expectedForReconstruction := 0
 	if context.PassengerCountKnown && context.PassengerCount > 0 {
 		expectedForReconstruction = expectedPassengerDocumentCount(context)
@@ -241,11 +239,8 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		context.PassengerDetails = passengers
 		context.LapChildPassengerIndexes = lapChildIndexesFromPassengers(passengers)
 		if len(context.LapChildPassengerIndexes) > 0 {
-			if !context.ChildUnder5CountKnown {
-				context.ChildUnder5Count = len(context.LapChildPassengerIndexes)
-				context.ChildUnder5CountKnown = true
-			}
-			context.LapChildAssignmentKnown = len(context.LapChildPassengerIndexes) == context.ChildUnder5Count
+			context.LapChildAssignmentKnown = context.ChildUnder5CountKnown &&
+				len(context.LapChildPassengerIndexes) == context.ChildUnder5Count
 		}
 	}
 	if len(unresolvedPartials) > 0 {
@@ -299,6 +294,33 @@ func collectBookingDraftContext(session Session, history []Message, currentTurn 
 		context.PassengerDetailsCount == context.ExpectedDocumentCount &&
 		!context.LapChildAssignmentKnown
 
+	return context
+}
+
+func applyPassengerClarificationStateToBookingDraft(
+	context BookingDraftContext,
+	state PassengerClarificationStateV1,
+) BookingDraftContext {
+	context.PassengerCount = state.PassengerCount
+	context.PassengerCountProvenance = state.PassengerCountProvenance
+	context.PassengerCountKnown = state.PassengerCountKnown
+	context.PassengerCountConflicting = passengerClarificationStateConflictingV1(state)
+	context.ChildUnder5Count = state.ChildUnder5Count
+	context.ChildUnder5CountKnown = state.ChildUnder5CountKnown
+	context.ChildUnder5AddsTraveler = state.ChildUnder5AddsTraveler
+	context.PassengerSlotStatus = state.PassengerSlotStatus
+	context.ChildSlotStatus = state.ChildSlotStatus
+	context.PassengerPromptMessageID = state.PassengerPromptMessageID
+	context.ChildPromptMessageID = state.ChildPromptMessageID
+	context.PassengerReasonCodes = append([]string(nil), state.PassengerReasonCodes...)
+	context.ChildReasonCodes = append([]string(nil), state.ChildReasonCodes...)
+	context.ChildUnder5AddsTravelerOrigin = state.ChildUnder5AddsTravelerOrigin
+	context.ChildReferences = clonePassengerClarificationChildReferencesV1(state.ChildReferences)
+	context.BookingCreated = state.Authority == PassengerClarificationAuthorityPostBooking
+	if state.HasEvidence {
+		context.AskedPassengerQuestion = true
+		context.PassengerCountContextActive = true
+	}
 	return context
 }
 
@@ -691,32 +713,10 @@ func looksLikeChildUnder5Question(text string) bool {
 		strings.Contains(folded, "ate 5 anos viajando")
 }
 
-func mergePassengerReplyIntoBookingDraft(context BookingDraftContext, passengerCount int, childUnder5Count int) BookingDraftContext {
-	return mergePassengerClarificationSlotsIntoBookingDraft(context, PassengerClarificationSlots{
-		PassengerCount:        passengerCount,
-		PassengerCountKnown:   passengerCount > 0,
-		ChildUnder5Count:      childUnder5Count,
-		ChildUnder5CountKnown: childUnder5Count >= 0,
-	})
-}
-
-func mergePassengerClarificationSlotsIntoBookingDraft(context BookingDraftContext, slots PassengerClarificationSlots) BookingDraftContext {
-	if slots.PassengerCountKnown && slots.PassengerCount > 0 {
-		context.PassengerCount = slots.PassengerCount
-		context.PassengerCountKnown = true
-	}
-	if slots.ChildUnder5CountKnown {
-		context.ChildUnder5Count = slots.ChildUnder5Count
-		context.ChildUnder5CountKnown = true
-	}
-	if slots.PassengerCountKnown || slots.ChildUnder5CountKnown {
-		context.AskedPassengerQuestion = true
-		context.PassengerCountContextActive = true
-	}
-	return context
-}
-
 func expectedPassengerDocumentCount(context BookingDraftContext) int {
+	if context.PassengerCountConflicting {
+		return 0
+	}
 	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
 		return context.PassengerDetailsCount
 	}
@@ -799,81 +799,18 @@ func passengerDocumentCountExceedsExpected(context BookingDraftContext) bool {
 	return expected > 0 && context.PassengerDetailsCount > expected
 }
 
-func childUnder5AnswerAddsStandaloneTraveler(history []Message, currentTurn string, context BookingDraftContext) bool {
-	if !context.PassengerCountKnown ||
-		context.PassengerCount != 1 ||
-		!context.ChildUnder5CountKnown ||
-		context.ChildUnder5Count <= 0 {
-		return false
-	}
-	if childUnder5ReplyConfirmsChild(currentTurn) &&
-		lastAssistantAskedChildUnder5(history) &&
-		!lastAssistantAskedPassengerAndChildCombined(history) {
-		return hasSoloPassengerReplyBeforeHistoryIndex(history, len(history))
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
-			continue
-		}
-		if !childUnder5ReplyConfirmsChild(messageTurnText(message)) {
-			continue
-		}
-		if !previousAssistantAskedChildUnder5(history, i) ||
-			previousAssistantAskedPassengerAndChildCombined(history, i) {
-			continue
-		}
-		return hasSoloPassengerReplyBeforeHistoryIndex(history, i)
-	}
-	return false
-}
-
-func childUnder5ReplyConfirmsChild(text string) bool {
-	if isShortYesReply(text) {
-		return true
-	}
-	slots := parsePassengerClarificationSlots(text)
-	return slots.ChildUnder5CountKnown && slots.ChildUnder5Count > 0
-}
-
-func hasSoloPassengerReplyBeforeHistoryIndex(history []Message, beforeIndex int) bool {
-	if beforeIndex > len(history) {
-		beforeIndex = len(history)
-	}
-	for i := beforeIndex - 1; i >= 0; i-- {
-		message := history[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
-			continue
-		}
-		body := strings.TrimSpace(messageTurnText(message))
-		if body == "" {
-			continue
-		}
-		folded := strings.Join(strings.Fields(foldChatText(body)), " ")
-		if isSoloPassengerReply(folded) {
-			return true
-		}
-		slots := parsePassengerClarificationSlots(body)
-		if slots.PassengerCountKnown {
-			return false
-		}
-	}
-	return false
-}
-
 func decideNextBookingStep(context BookingDraftContext) BookingNextAction {
 	return bookingNextActionFromCanonicalReadiness(context, evaluateCanonicalBookingCreateReadiness(context))
 }
 
 func bookingNextActionFromCanonicalReadiness(context BookingDraftContext, readiness canonicalBookingCreateReadiness) BookingNextAction {
+	if context.PassengerCountConflicting ||
+		!context.PassengerCountKnown || context.PassengerCount <= 0 ||
+		!context.ChildUnder5CountKnown {
+		return BookingNextAskPassengerClarification
+	}
 	if context.BookingCreated {
 		return BookingNextAskBookingPaymentPreference
-	}
-	if !context.PassengerCountKnown || context.PassengerCount <= 0 {
-		return BookingNextAskPassengerClarification
-	}
-	if !context.ChildUnder5CountKnown {
-		return BookingNextAskPassengerClarification
 	}
 	if !context.HasAvailabilityShown ||
 		strings.TrimSpace(context.TripID) == "" ||
@@ -916,6 +853,9 @@ func buildBookingContinuationReply(context BookingDraftContext, action BookingNe
 		}
 		if context.PassengerCountKnown && context.PassengerCount > 0 && !context.ChildUnder5CountKnown {
 			return "Tem crianca de 5 anos ou menos viajando?"
+		}
+		if context.HasAvailabilityShown {
+			return askPassengerCountReply
 		}
 		return "Entendi. A passagem e so para voce ou vai mais alguem junto?"
 	case BookingNextAwaitTripSelection:
@@ -1595,6 +1535,29 @@ func mergeSelectedAvailabilitySnapshotIntoBookingDraft(context *BookingDraftCont
 	}
 }
 
+func applySelectedAvailabilityResultToBookingDraft(
+	context BookingDraftContext,
+	availability *AvailabilitySearchResult,
+	selectedOptionIndex int,
+) BookingDraftContext {
+	item, ok := selectedAvailabilityItemForMaterialization(availability, selectedOptionIndex)
+	if !ok {
+		return context
+	}
+	context.HasAvailabilityShown = true
+	context.SelectedOptionIndex = selectedOptionIndex
+	context.Origin = strings.TrimSpace(item.OriginDisplayName)
+	context.Destination = strings.TrimSpace(item.DestinationDisplayName)
+	context.TripID = strings.TrimSpace(item.TripID)
+	context.BoardStopID = strings.TrimSpace(item.BoardStopID)
+	context.AlightStopID = strings.TrimSpace(item.AlightStopID)
+	context.TripDate = strings.TrimSpace(item.TripDate)
+	context.DepartureTime = strings.TrimSpace(item.OriginDepartTime)
+	context.Price = item.Price
+	context.Currency = strings.TrimSpace(item.Currency)
+	return context
+}
+
 func selectedAvailabilitySnapshotMatchesBookingDraft(context BookingDraftContext, payload map[string]interface{}) bool {
 	currentTripID := strings.TrimSpace(context.TripID)
 	if currentTripID == "" {
@@ -1619,8 +1582,7 @@ func selectedAvailabilitySnapshotIDMatches(current string, snapshot interface{})
 
 func attachSelectedAvailabilityResultToTemplateRun(run RunAgentResult, availability *AvailabilitySearchResult, decision IntentDecision) RunAgentResult {
 	if decision.Intent != IntentSelectAvailabilityOption ||
-		decision.SelectedOptionIndex <= 0 ||
-		decision.TemplateName != TemplateAskPassengerCount {
+		decision.SelectedOptionIndex <= 0 {
 		return run
 	}
 	snapshot := selectedAvailabilityResultPayloadFromAvailability(availability, decision.SelectedOptionIndex)
@@ -1641,14 +1603,19 @@ func attachSelectedAvailabilityResultToTemplateRun(run RunAgentResult, availabil
 }
 
 func selectedAvailabilityResultPayloadFromAvailability(availability *AvailabilitySearchResult, selectedOptionIndex int) map[string]interface{} {
-	if availability == nil || selectedOptionIndex <= 0 || selectedOptionIndex > len(availability.Results) {
+	item, ok := selectedAvailabilityItemForMaterialization(availability, selectedOptionIndex)
+	if !ok {
 		return nil
 	}
-	return selectedAvailabilityResultPayloadFromItem(availability.Results[selectedOptionIndex-1], selectedOptionIndex, availability.Filter)
+	return selectedAvailabilityResultPayloadFromItem(item, selectedOptionIndex, availability.Filter)
 }
 
 func selectedAvailabilityResultPayloadFromBookingDraft(context BookingDraftContext) map[string]interface{} {
-	if context.SelectedOptionIndex <= 0 || strings.TrimSpace(context.TripID) == "" {
+	if context.SelectedOptionIndex <= 0 || !hasCompleteSelectedTripFacts(
+		context.TripID,
+		context.BoardStopID,
+		context.AlightStopID,
+	) {
 		return nil
 	}
 	return map[string]interface{}{
@@ -1665,6 +1632,20 @@ func selectedAvailabilityResultPayloadFromBookingDraft(context BookingDraftConte
 		"price":                    context.Price,
 		"currency":                 strings.TrimSpace(context.Currency),
 	}
+}
+
+func selectedAvailabilityItemForMaterialization(
+	availability *AvailabilitySearchResult,
+	selectedOptionIndex int,
+) (AvailabilitySearchItem, bool) {
+	if availability == nil || selectedOptionIndex <= 0 || selectedOptionIndex > len(availability.Results) {
+		return AvailabilitySearchItem{}, false
+	}
+	item := availability.Results[selectedOptionIndex-1]
+	if !hasCompleteAvailabilitySearchItemFacts(item) {
+		return AvailabilitySearchItem{}, false
+	}
+	return item, true
 }
 
 func selectedAvailabilityResultPayloadFromItem(item AvailabilitySearchItem, selectedOptionIndex int, filter AvailabilitySearchInput) map[string]interface{} {

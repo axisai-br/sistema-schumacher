@@ -676,8 +676,9 @@ func availabilityDraftHasSelectedTrip(session Session, history []Message, curren
 		}
 		return hasCompleteAvailabilitySearchItemFacts(availability.Results[index-1])
 	}
-	draft := collectBookingDraftContext(session, history, currentTurn)
-	return hasCompleteSelectedTripFacts(draft.TripID, draft.BoardStopID, draft.AlightStopID)
+	draft := collectBookingDraftContextFromState(session, history, currentTurn)
+	return draft.SelectedOptionIndex > 0 &&
+		hasCompleteSelectedTripFacts(draft.TripID, draft.BoardStopID, draft.AlightStopID)
 }
 
 func availabilityDraftOptionHasCompleteTripFacts(history []Message, index int) bool {

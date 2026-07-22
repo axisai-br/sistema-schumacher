@@ -19,7 +19,7 @@ import (
 
 func TestGetStructuredInterpreterShadowReportServiceBuildsAggregatedReport(t *testing.T) {
 	sessionID := uuid.NewString()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	store.shadowReportMessages = []Message{
 		structuredInterpreterShadowEndpointMessage(sessionID, string(StructuredIntentGreeting), string(StructuredIntentGreeting), true, nil),
 		{
@@ -82,7 +82,7 @@ func TestGetStructuredInterpreterShadowReportServiceKeepsShadowPaginationSeparat
 	assistMessage := openAIInterpreterAssistEndpointMessage(sessionID, string(OpenAIInterpreterAssistAccepted), string(StructuredIntentPassengerCountReply), "")
 	assistMessage.CreatedAt = base.Add(time.Minute)
 
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	store.shadowReportMessages = []Message{assistMessage, shadowMessage}
 
 	result, err := NewService(store, config.Config{}).GetStructuredInterpreterShadowReport(context.Background(), StructuredInterpreterShadowReportFilter{
@@ -105,7 +105,7 @@ func TestGetStructuredInterpreterShadowReportServiceKeepsShadowPaginationSeparat
 }
 
 func TestGetStructuredInterpreterShadowReportServiceRequiresSessionID(t *testing.T) {
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	_, err := NewService(store, config.Config{}).GetStructuredInterpreterShadowReport(context.Background(), StructuredInterpreterShadowReportFilter{})
 	if !errors.Is(err, ErrShadowReportSessionRequired) {
 		t.Fatalf("expected session required error, got %v", err)
@@ -133,7 +133,7 @@ func TestListOpenAIInterpreterAssistMessagesRequiresSessionID(t *testing.T) {
 
 func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *testing.T) {
 	sessionID := uuid.NewString()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	store.shadowReportMessages = []Message{
 		structuredInterpreterShadowEndpointMessage(sessionID, string(StructuredIntentGreeting), string(StructuredIntentGreeting), true, nil),
 		structuredInterpreterShadowEndpointMessage(sessionID, string(StructuredIntentAvailabilitySearch), string(StructuredIntentPaymentPreference), false, []string{"json_decision_invalid"}),
@@ -271,7 +271,7 @@ func TestGetStructuredInterpreterShadowReportEndpointReturnsAggregatedReport(t *
 
 func TestGetStructuredInterpreterShadowReportEndpointAppliesDefaultLimit(t *testing.T) {
 	sessionID := uuid.NewString()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	store.shadowReportMessages = []Message{}
 
 	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?session_id="+sessionID)
@@ -314,7 +314,7 @@ func TestGetStructuredInterpreterShadowReportEndpointRejectsInvalidQuery(t *test
 		"/chat/reports/structured-interpreter-shadow?session_id=not-a-uuid",
 	} {
 		t.Run(path, func(t *testing.T) {
-			store := newFakeStore()
+			store := newFakeStoreWithPassengerAuthority()
 			rec := serveStructuredInterpreterShadowReportRequest(store, path)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
@@ -328,7 +328,7 @@ func TestGetStructuredInterpreterShadowReportEndpointRejectsInvalidQuery(t *test
 
 func TestGetStructuredInterpreterShadowReportEndpointReturnsStoreError(t *testing.T) {
 	sessionID := uuid.NewString()
-	store := newFakeStore()
+	store := newFakeStoreWithPassengerAuthority()
 	store.shadowReportErr = errors.New("store unavailable")
 
 	rec := serveStructuredInterpreterShadowReportRequest(store, "/chat/reports/structured-interpreter-shadow?session_id="+sessionID)
