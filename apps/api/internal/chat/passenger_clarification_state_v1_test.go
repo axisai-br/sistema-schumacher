@@ -50,6 +50,108 @@ func TestPassengerStateFoundationDoesNotAddLexicalFamilyRules(t *testing.T) {
 	}
 }
 
+func TestPassengerEvidenceStructuralFieldsRejectHasEvidenceFalse(t *testing.T) {
+	fresh := newPassengerClarificationStateV1()
+	fresh.BootstrapCompleted = true
+	if err := validatePassengerClarificationStateV1(fresh); err != nil {
+		t.Fatalf("literal fresh UNKNOWN with HasEvidence=false must remain valid: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*PassengerClarificationStateV1)
+	}{
+		{
+			name: "passenger_prompt_message_id",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.PassengerPromptMessageID = "passenger-prompt"
+			},
+		},
+		{
+			name: "child_prompt_message_id",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.ChildPromptMessageID = "child-prompt"
+			},
+		},
+		{
+			name: "passenger_last_message_id",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.PassengerLastMessageID = "passenger-answer"
+			},
+		},
+		{
+			name: "child_last_message_id",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.ChildLastMessageID = "child-answer"
+			},
+		},
+		{
+			name: "applied_event_ids",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.AppliedEventIDs = []string{"event-1"}
+			},
+		},
+		{
+			name: "applied_message_ids",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.AppliedMessageIDs = []string{"message-1"}
+			},
+		},
+		{
+			name: "passenger_slot_open",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.PassengerSlotStatus = PassengerClarificationSlotOpen
+				state.PassengerPromptMessageID = "passenger-prompt"
+			},
+		},
+		{
+			name: "child_slot_open",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.ChildSlotStatus = PassengerClarificationSlotOpen
+				state.ChildPromptMessageID = "child-prompt"
+			},
+		},
+		{
+			name: "passenger_slot_answered_and_count_known",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.PassengerSlotStatus = PassengerClarificationSlotAnswered
+				state.PassengerCountKnown = true
+				state.PassengerCount = 1
+				state.PassengerCountProvenance = PassengerCountProvenanceAbsoluteTotal
+			},
+		},
+		{
+			name: "child_slot_answered_and_count_known",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.ChildSlotStatus = PassengerClarificationSlotAnswered
+				state.ChildUnder5CountKnown = true
+			},
+		},
+		{
+			name: "passenger_slot_conflicting",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.PassengerSlotStatus = PassengerClarificationSlotConflicting
+			},
+		},
+		{
+			name: "child_slot_conflicting",
+			mutate: func(state *PassengerClarificationStateV1) {
+				state.ChildSlotStatus = PassengerClarificationSlotConflicting
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := fresh
+			test.mutate(&state)
+			if err := validatePassengerClarificationStateV1(state); err == nil {
+				t.Fatalf("HasEvidence=false must reject structural passenger evidence: %+v", state)
+			}
+		})
+	}
+}
+
 func TestPassengerStateBootstrapUsesStructuredEvidenceOnly(t *testing.T) {
 	rawOnly := Message{
 		ID: "raw-only", Direction: "INBOUND", Body: "somos 99 e uma crianca",
@@ -272,7 +374,7 @@ func TestPassengerChildAddsTravelerUsesPersistedPromptEpoch(t *testing.T) {
 	}
 }
 
-func TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch(t *testing.T) {
+func TestPassengerGateAfterDeliveredPromptStopsExternalWorkBeforeDispatch(t *testing.T) {
 	store := newFakeTravelQueryV2ShadowClaimStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not run"}}
 	jsonRunner := &fakeJSONDecisionRunner{enabled: true}
@@ -288,11 +390,22 @@ func TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch(t *testing.T) {
 		ChatAgentMode:                      chatAgentModeHybridJSON,
 	}, runner, jsonRunner, openAI, travel, availability, booking, payment)
 
+	session := seedPassengerCollectionPhase(t, store.fakeStore)
+	passengerState, ok := passengerClarificationStateV1FromSession(store.fakeStore.sessions[session.ID])
+	if !ok || !passengerState.HasEvidence || strings.TrimSpace(passengerState.PassengerPromptMessageID) == "" ||
+		passengerState.PassengerCountKnown || passengerState.ChildUnder5CountKnown {
+		t.Fatalf("expected delivered passenger prompt with unknown slots, got %+v exists=%t", passengerState, ok)
+	}
+	prompt := store.fakeStore.messages[passengerState.PassengerPromptMessageID]
+	if !passengerPromptDeliveryConfirmedV1(prompt) {
+		t.Fatalf("passenger gate fixture must use an effectively delivered prompt, got %+v", prompt)
+	}
+
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
-		ContactKey: "5511999990001",
+		ContactKey: session.ContactKey,
 		Message: IngestMessagePayload{
 			Direction: "INBOUND", Kind: "IMAGE", ProviderMessageID: "unsafe-passenger-message",
-			IdempotencyKey: "unsafe-passenger-message", Body: "quero reservar e pagar agora",
+			IdempotencyKey: "unsafe-passenger-message", Body: "nao sei informar",
 			NormalizedPayload: map[string]interface{}{
 				"image_url":       "https://files.example.test/unsafe-document.jpg",
 				"image_mime_type": "image/jpeg",
@@ -302,16 +415,19 @@ func TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ingest unsafe state turn: %v", err)
 	}
-	unsafe := newPassengerClarificationStateV1()
-	unsafe.BootstrapCompleted = true
-	seedPassengerClarificationStateV1ForTest(store.fakeStore, ingested.Session.ID, unsafe)
 
 	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
 	if err != nil {
 		t.Fatalf("reprocess unsafe state: %v", err)
 	}
-	if out.Draft == nil || asString(out.Draft.NormalizedPayload["template_name"]) != string(TemplateAskPassengerCount) {
-		t.Fatalf("unsafe state must return deterministic clarification, got %+v", out.Draft)
+	if out.Draft == nil || !strings.Contains(foldChatText(out.Draft.Body), "passagem e so para voce") {
+		t.Fatalf("unsafe state must preserve the deterministic passenger clarification, got %+v", out.Draft)
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != safePhaseFallbackTemplateName {
+		t.Fatalf("expected generic safe phase fallback, got %q payload=%+v", got, out.Draft.NormalizedPayload)
+	}
+	if _, ok := out.Draft.NormalizedPayload[passengerPendingPromptEventV1MessageKey]; ok {
+		t.Fatalf("generic safe phase fallback must not synthesize a passenger prompt event, got %+v", out.Draft.NormalizedPayload)
 	}
 	if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
 		availability.calls != 0 || booking.calls != 0 || payment.calls != 0 || len(out.ToolCalls) != 0 {

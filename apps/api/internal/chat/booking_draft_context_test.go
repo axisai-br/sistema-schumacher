@@ -6,8 +6,566 @@ import (
 	"time"
 )
 
+func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(t *testing.T) {
+	now := availabilityTestObservedAt()
+	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	selected := availability.Results[1]
+	firstDateInput := availabilityTestDateInput(t, availability.Results[0].TripDate)
+	firstDateMetadata := availabilityTestDayMonthMetadata(t, availability.Results[0].TripDate)
+	selectedDateInput := availabilityTestDateInput(t, selected.TripDate)
+	selectedDateMetadata := availabilityTestDayMonthMetadata(t, selected.TripDate)
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 2)
+	selectionSnapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
+	selectionSnapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "selection-event-option-2"
+	selectionSnapshot[availabilityPromptSourceMessageIDPayloadKey] = "availability-list-original"
+	selectionSnapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	promptMessage := availabilityAuthorityPromptMessageForTest(
+		"availability-list-original",
+		availability,
+		now.Add(-4*time.Minute),
+	)
+	selectedMessage := Message{
+		ID:                "selected-option-2",
+		Direction:         "OUTBOUND",
+		Body:              askPassengerCountReply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           selectionPayload,
+		NormalizedPayload: cloneMap(selectionPayload),
+		ReceivedAt:        now.Add(-3 * time.Minute),
+		CreatedAt:         now.Add(-3 * time.Minute),
+	}
+
+	tests := []struct {
+		name                    string
+		rejectionBody           string
+		rejectionTemplateData   map[string]interface{}
+		wantBookable            bool
+		wantSelectedOptionIndex int
+	}{
+		{
+			name:          "later rejection of option 1 preserves option 2",
+			rejectionBody: "não quero essa 1, paga agora?",
+			rejectionTemplateData: map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey:  true,
+				outOfTurnRejectedOptionIndexesDataKey: []interface{}{1},
+			},
+			wantBookable:            true,
+			wantSelectedOptionIndex: 2,
+		},
+		{
+			name:          "later rejection of option 1 date preserves option 2",
+			rejectionBody: "não quero " + firstDateInput + ", paga agora?",
+			rejectionTemplateData: map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey: true,
+				outOfTurnRejectedTripDatesDataKey:    []interface{}{firstDateMetadata},
+			},
+			wantBookable:            true,
+			wantSelectedOptionIndex: 2,
+		},
+		{
+			name:          "later rejection of selected option 2 removes authority",
+			rejectionBody: "não quero essa 2, paga agora?",
+			rejectionTemplateData: map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey:  true,
+				outOfTurnRejectedOptionIndexesDataKey: []interface{}{2},
+			},
+		},
+		{
+			name:          "later rejection of selected option 2 date removes authority",
+			rejectionBody: "não quero " + selectedDateInput + ", paga agora?",
+			rejectionTemplateData: map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey: true,
+				outOfTurnRejectedTripDatesDataKey:    []interface{}{selectedDateMetadata},
+			},
+		},
+		{
+			name:          "later whole-context rejection removes authority",
+			rejectionBody: "não quero essa, paga agora?",
+			rejectionTemplateData: map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey:  true,
+				outOfTurnRejectedWholeContextDataKey:  true,
+				outOfTurnRejectedOptionIndexesDataKey: nil,
+				outOfTurnRejectedTripDatesDataKey:     nil,
+				outOfTurnPendingPromptTemplateDataKey: string(TemplateContextFallbackAvailabilityOption),
+				outOfTurnActivePromptTemplateDataKey:  string(ActivePromptAvailabilityOptionChoice),
+				outOfTurnActivePromptSourceIDDataKey:  promptMessage.ID,
+				outOfTurnInfoKindTemplateDataKey:      string(OutOfTurnInfoPaymentOptions),
+				outOfTurnTemplateDataKey:              true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rejectionTemplateData := cloneMap(test.rejectionTemplateData)
+			if strings.TrimSpace(asString(rejectionTemplateData[outOfTurnActivePromptSourceIDDataKey])) == "" {
+				rejectionTemplateData[outOfTurnActivePromptSourceIDDataKey] = promptMessage.ID
+			}
+			history := []Message{
+				promptMessage,
+				selectedMessage,
+				{
+					ID:         "rejection-inbound",
+					Direction:  "INBOUND",
+					Body:       test.rejectionBody,
+					ReceivedAt: now.Add(-2 * time.Minute),
+					CreatedAt:  now.Add(-2 * time.Minute),
+				},
+				{
+					ID:               "rejection-info",
+					Direction:        "OUTBOUND",
+					Body:             "O pagamento pode ser realizado agora. Para continuar, qual opção você prefere?",
+					ProcessingStatus: messageStatusAutomationSent,
+					NormalizedPayload: map[string]interface{}{
+						"template_data": rejectionTemplateData,
+					},
+					ReceivedAt: now.Add(-time.Minute),
+					CreatedAt:  now.Add(-time.Minute),
+				},
+			}
+
+			evidence := latestAvailabilitySelectionEvidence(history)
+			if evidence.bookable() != test.wantBookable {
+				t.Fatalf("resolved bookable authority=%t, want %t: %+v", evidence.bookable(), test.wantBookable, evidence)
+			}
+			session := sessionWithReplayedAvailabilitySelectionForTest(Session{}, history)
+			context := collectBookingDraftContextForRoutingBaseline(session, history)
+			if context.HasBookableSelection != test.wantBookable {
+				t.Fatalf("booking draft authority=%t, want %t: %+v", context.HasBookableSelection, test.wantBookable, context)
+			}
+			if !test.wantBookable {
+				if context.SelectedOptionIndex != 0 || context.TripID != "" ||
+					context.BoardStopID != "" || context.AlightStopID != "" ||
+					context.PackageName != "" || context.DepartureTime != "" ||
+					context.Price != 0 || context.Currency != "" {
+					t.Fatalf("rejected selection retained selected aggregate: %+v", context)
+				}
+				return
+			}
+			if context.SelectedOptionIndex != test.wantSelectedOptionIndex ||
+				context.TripID != selected.TripID ||
+				context.BoardStopID != selected.BoardStopID ||
+				context.AlightStopID != selected.AlightStopID ||
+				context.Origin != selected.OriginDisplayName ||
+				context.Destination != selected.DestinationDisplayName ||
+				context.PackageName != selected.PackageName ||
+				context.TripDate != selected.TripDate ||
+				context.DepartureTime != selected.OriginDepartTime ||
+				context.Price != selected.Price ||
+				context.Currency != selected.Currency {
+				t.Fatalf("unrejected prior option was not preserved atomically: got=%+v want=%+v", context, selected)
+			}
+			snapshot := selectedAvailabilityResultPayloadFromBookingDraft(context)
+			if strings.TrimSpace(asString(snapshot["package_name"])) != selected.PackageName ||
+				strings.TrimSpace(asString(snapshot["trip_id"])) != selected.TripID ||
+				strings.TrimSpace(asString(snapshot["board_stop_id"])) != selected.BoardStopID ||
+				strings.TrimSpace(asString(snapshot["alight_stop_id"])) != selected.AlightStopID {
+				t.Fatalf("booking draft did not persist the selected aggregate atomically: got=%+v want=%+v", snapshot, selected)
+			}
+		})
+	}
+}
+
+func TestBookingDraftReducesBookableAuthorityWithoutResurrectingSupersededSelection(t *testing.T) {
+	now := availabilityTestObservedAt()
+	availabilityA := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	availabilityA.Filter.PackageName = "package-a"
+	for index := range availabilityA.Results {
+		availabilityA.Results[index].PackageName = "package-a"
+	}
+	availabilityB := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+	availabilityB.Filter.PackageName = "package-b"
+	for index := range availabilityB.Results {
+		availabilityB.Results[index].PackageName = "package-b"
+	}
+	availabilityB.Results[1].TripID = "trip-b"
+	availabilityB.Results[1].BoardStopID = "board-b"
+	availabilityB.Results[1].AlightStopID = "alight-b"
+
+	selectionA := availabilityAuthoritySelectionMessageForTest(
+		"selection-a",
+		"availability-list-a",
+		availabilityA,
+		1,
+		now.Add(-4*time.Minute),
+	)
+	selectionB := availabilityAuthoritySelectionMessageForTest(
+		"selection-b",
+		"availability-list-b",
+		availabilityB,
+		2,
+		now.Add(-3*time.Minute),
+	)
+
+	tests := []struct {
+		name                  string
+		rejectedPromptSource  string
+		rejectedOptionIndex   int
+		wantBookable          bool
+		wantSelectedTripID    string
+		wantSelectedPackage   string
+		wantBookingCreateOpen bool
+	}{
+		{
+			name:                 "rejecting replacement leaves no authority and never restores superseded selection",
+			rejectedPromptSource: "availability-list-b",
+			rejectedOptionIndex:  2,
+		},
+		{
+			name:                  "rejecting superseded selection leaves current replacement authoritative",
+			rejectedPromptSource:  "availability-list-a",
+			rejectedOptionIndex:   1,
+			wantBookable:          true,
+			wantSelectedTripID:    "trip-b",
+			wantSelectedPackage:   "package-b",
+			wantBookingCreateOpen: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			history := []Message{
+				availabilityAuthorityPromptMessageForTest(
+					"availability-list-a",
+					availabilityA,
+					now.Add(-6*time.Minute),
+				),
+				selectionA,
+				availabilityAuthorityPromptMessageForTest(
+					"availability-list-b",
+					availabilityB,
+					now.Add(-5*time.Minute),
+				),
+				selectionB,
+				availabilityAuthorityRejectionMessageForTest(
+					"rejection",
+					test.rejectedPromptSource,
+					test.rejectedOptionIndex,
+					now.Add(-time.Minute),
+				),
+			}
+			if !test.wantBookable {
+				history = append(history, availabilityAuthorityProjectionMessageForTest(
+					"stale-projection-a",
+					"selection-a",
+					"availability-list-a",
+					availabilityA,
+					1,
+					now,
+				))
+			}
+
+			evidence := latestAvailabilitySelectionEvidence(history)
+			if evidence.bookable() != test.wantBookable {
+				t.Fatalf("resolved bookable authority=%t, want %t: %+v", evidence.bookable(), test.wantBookable, evidence)
+			}
+			session := sessionWithReplayedAvailabilitySelectionForTest(Session{}, history)
+			context := collectBookingDraftContextForRoutingBaseline(session, history)
+			if context.HasBookableSelection != test.wantBookable {
+				t.Fatalf("booking draft authority=%t, want %t: %+v", context.HasBookableSelection, test.wantBookable, context)
+			}
+			if context.TripID != test.wantSelectedTripID || context.PackageName != test.wantSelectedPackage {
+				t.Fatalf(
+					"resolved aggregate trip/package=(%q,%q), want (%q,%q): %+v",
+					context.TripID,
+					context.PackageName,
+					test.wantSelectedTripID,
+					test.wantSelectedPackage,
+					context,
+				)
+			}
+			selectionState, ok := availabilitySelectionStateV1FromSession(session)
+			if !ok {
+				t.Fatalf("canonical replay state is missing from test session: %+v", session.Metadata)
+			}
+			_, _, bookingCreateOpen := resolveBookingCreateSelectionFromState("sim", selectionState)
+			if bookingCreateOpen != test.wantBookingCreateOpen {
+				t.Fatalf("booking_create selection open=%t, want %t", bookingCreateOpen, test.wantBookingCreateOpen)
+			}
+		})
+	}
+}
+
+func TestBookingDraftScopesAvailabilityRejectionToPromptSource(t *testing.T) {
+	now := availabilityTestObservedAt()
+	availability := availabilityOptionPromptFutureResultAt(now)
+	availability.Filter.PackageName = "package-a"
+	availability.Results[0].PackageName = "package-a"
+	selection := availabilityAuthoritySelectionMessageForTest(
+		"selection-a",
+		"availability-list-a",
+		availability,
+		1,
+		now.Add(-2*time.Minute),
+	)
+
+	tests := []struct {
+		name                 string
+		rejectedPromptSource string
+		wantBookable         bool
+	}{
+		{
+			name:                 "same option index and date from another list does not reject authority",
+			rejectedPromptSource: "availability-list-b",
+			wantBookable:         true,
+		},
+		{
+			name:                 "rejection from selected list removes authority",
+			rejectedPromptSource: "availability-list-a",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			history := []Message{
+				availabilityAuthorityPromptMessageForTest(
+					"availability-list-a",
+					availability,
+					now.Add(-3*time.Minute),
+				),
+				selection,
+				availabilityAuthorityRejectionMessageForTest(
+					"rejection",
+					test.rejectedPromptSource,
+					1,
+					now.Add(-time.Minute),
+				),
+			}
+
+			session := sessionWithReplayedAvailabilitySelectionForTest(Session{}, history)
+			context := collectBookingDraftContextForRoutingBaseline(session, history)
+			if context.HasBookableSelection != test.wantBookable {
+				t.Fatalf("bookable authority=%t, want %t: %+v", context.HasBookableSelection, test.wantBookable, context)
+			}
+			if test.wantBookable &&
+				(context.SelectedOptionIndex != 1 || context.TripID != availability.Results[0].TripID ||
+					context.PackageName != "package-a") {
+				t.Fatalf("cross-list rejection changed selected aggregate: %+v", context)
+			}
+		})
+	}
+}
+
+func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *testing.T) {
+	now := availabilityTestObservedAt()
+	availabilityA := availabilityOptionPromptFutureResultAt(now)
+	availabilityA.Filter.PackageName = "package-a"
+	availabilityA.Results[0].PackageName = "package-a"
+	availabilityB := availabilityA
+	availabilityB.Filter.PackageName = "package-b"
+	availabilityB.Results = append([]AvailabilitySearchItem(nil), availabilityA.Results...)
+	availabilityB.Results[0].PackageName = "package-b"
+
+	tests := []struct {
+		name                string
+		promptSourceID      string
+		includePromptSource bool
+		includeOwnEnvelope  bool
+		wantBookable        bool
+		wantPackage         string
+	}{
+		{
+			name:                "own selection event recovers package a before later matching envelope",
+			promptSourceID:      "availability-list-a",
+			includePromptSource: true,
+			includeOwnEnvelope:  true,
+			wantBookable:        true,
+			wantPackage:         "package-a",
+		},
+		{
+			name:                "exact prompt source recovers package a before later matching envelope",
+			promptSourceID:      "availability-list-a",
+			includePromptSource: true,
+			wantBookable:        true,
+			wantPackage:         "package-a",
+		},
+		{
+			name: "absent exact source grants no authority",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityA, 1)
+			snapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
+			delete(snapshot, "package_name")
+			delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
+			delete(snapshot, availabilitySelectionMaterializesAuthorityPayloadKey)
+			snapshot["selection_message_id"] = "selection-a"
+			if test.promptSourceID != "" {
+				snapshot["availability_prompt_source_message_id"] = test.promptSourceID
+			}
+			if test.wantBookable {
+				snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+			}
+			if !test.includeOwnEnvelope {
+				delete(selectionPayload, "tool_context")
+			}
+
+			history := []Message{}
+			if test.includePromptSource {
+				history = append(history, availabilityAuthorityPromptMessageForTest(
+					test.promptSourceID,
+					availabilityA,
+					now.Add(-3*time.Minute),
+				))
+			}
+			history = append(history, Message{
+				ID:                "selection-a",
+				Direction:         "OUTBOUND",
+				Body:              askPassengerCountReply,
+				ProcessingStatus:  messageStatusAutomationSent,
+				Payload:           selectionPayload,
+				NormalizedPayload: cloneMap(selectionPayload),
+				ReceivedAt:        now.Add(-2 * time.Minute),
+				CreatedAt:         now.Add(-2 * time.Minute),
+			})
+			history = append(history, availabilityAuthorityPromptMessageForTest(
+				"later-unselected-envelope-b",
+				availabilityB,
+				now.Add(-time.Minute),
+			))
+
+			session := sessionWithReplayedAvailabilitySelectionForTest(Session{}, history)
+			context := collectBookingDraftContextForRoutingBaseline(session, history)
+			if context.HasBookableSelection != test.wantBookable {
+				t.Fatalf("legacy selected authority=%t, want %t: %+v", context.HasBookableSelection, test.wantBookable, context)
+			}
+			if !test.wantBookable {
+				if context.SelectedOptionIndex != 0 || context.TripID != "" ||
+					context.BoardStopID != "" || context.AlightStopID != "" ||
+					context.PackageName != "" {
+					t.Fatalf("source-less legacy selection leaked authority: %+v", context)
+				}
+				return
+			}
+			if context.TripID != availabilityA.Results[0].TripID {
+				t.Fatalf("legacy selected authority was lost: %+v", context)
+			}
+			if context.PackageName != test.wantPackage {
+				t.Fatalf("recovered package=%q, want %q: %+v", context.PackageName, test.wantPackage, context)
+			}
+		})
+	}
+}
+
+func availabilityAuthoritySelectionMessageForTest(
+	messageID string,
+	promptSourceMessageID string,
+	availability AvailabilitySearchResult,
+	index int,
+	at time.Time,
+) Message {
+	payload := persistedAvailabilitySelectionPayloadForTest(availability, index)
+	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
+	snapshot["selection_message_id"] = messageID
+	snapshot["availability_prompt_source_message_id"] = promptSourceMessageID
+	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	return Message{
+		ID:                messageID,
+		Direction:         "OUTBOUND",
+		Body:              askPassengerCountReply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           payload,
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        at,
+		CreatedAt:         at,
+	}
+}
+
+func availabilityAuthorityRejectionMessageForTest(
+	messageID string,
+	promptSourceMessageID string,
+	optionIndex int,
+	at time.Time,
+) Message {
+	return Message{
+		ID:               messageID,
+		Direction:        "OUTBOUND",
+		Body:             "Essa opção foi rejeitada.",
+		ProcessingStatus: messageStatusAutomationSent,
+		NormalizedPayload: map[string]interface{}{
+			"template_data": map[string]interface{}{
+				outOfTurnRejectedAvailabilityDataKey:  true,
+				outOfTurnRejectedOptionIndexesDataKey: []interface{}{optionIndex},
+				outOfTurnActivePromptSourceIDDataKey:  promptSourceMessageID,
+			},
+		},
+		ReceivedAt: at,
+		CreatedAt:  at,
+	}
+}
+
+func availabilityAuthorityProjectionMessageForTest(
+	messageID string,
+	selectionMessageID string,
+	promptSourceMessageID string,
+	availability AvailabilitySearchResult,
+	index int,
+	at time.Time,
+) Message {
+	payload := persistedAvailabilitySelectionPayloadForTest(availability, index)
+	payload["intent"] = string(IntentPassengerCountReply)
+	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
+	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = selectionMessageID
+	snapshot[availabilityPromptSourceMessageIDPayloadKey] = promptSourceMessageID
+	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = false
+	return Message{
+		ID:                messageID,
+		Direction:         "OUTBOUND",
+		Body:              askPassengerCountReply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           payload,
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        at,
+		CreatedAt:         at,
+	}
+}
+
+func availabilityAuthorityPromptMessageForTest(
+	messageID string,
+	availability AvailabilitySearchResult,
+	at time.Time,
+) Message {
+	return Message{
+		ID:               messageID,
+		Direction:        "OUTBOUND",
+		Body:             buildAvailabilityListReply(availability),
+		ProcessingStatus: messageStatusAutomationSent,
+		Payload: map[string]interface{}{
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+			},
+		},
+		ReceivedAt: at,
+		CreatedAt:  at,
+	}
+}
+
 func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *testing.T) {
 	now := time.Now().UTC()
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-1",
+				BoardStopID:            "board-1",
+				AlightStopID:           "alight-1",
+				OriginDisplayName:      "Santa Ines/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "09:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+			},
+		},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -16,32 +574,12 @@ func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *
 			ReceivedAt:       now.Add(-4 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{
-							Origin:      "Santa Ines/MA",
-							Destination: "Fraiburgo/SC",
-							Qty:         1,
-							Limit:       5,
-						},
-						Results: []AvailabilitySearchItem{
-							{
-								TripID:                 "trip-1",
-								BoardStopID:            "board-1",
-								AlightStopID:           "alight-1",
-								OriginDisplayName:      "Santa Ines/MA",
-								DestinationDisplayName: "Fraiburgo/SC",
-								OriginDepartTime:       "09:00",
-								TripDate:               "2026-05-11",
-								Price:                  950,
-								Currency:               "BRL",
-							},
-						},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 	}
 
 	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "e so para mim")
@@ -64,6 +602,28 @@ func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *
 	}
 }
 
+func TestBookingDraftRoutingBaselineUnselectedSingleOptionKeepsEnvelopeOnly(t *testing.T) {
+	now := availabilityTestObservedAt()
+	availability := singleOptionUnselectedAvailabilityResultAt(now)
+	history := availabilityOptionPromptHistory(now, availability)
+
+	context := collectBookingDraftContextForRoutingBaseline(Session{}, history)
+
+	if !context.HasAvailabilityShown {
+		t.Fatal("expected the routing baseline to preserve the availability envelope")
+	}
+	if context.Origin != availability.Filter.Origin || context.Destination != availability.Filter.Destination {
+		t.Fatalf("routing baseline lost filter route: got=%+v filter=%+v", context, availability.Filter)
+	}
+	if context.HasBookableSelection || context.SelectedOptionIndex != 0 {
+		t.Fatalf("unselected single option became bookable in routing baseline: %+v", context)
+	}
+	if context.TripID != "" || context.BoardStopID != "" || context.AlightStopID != "" ||
+		context.TripDate != "" || context.DepartureTime != "" || context.Price != 0 || context.Currency != "" {
+		t.Fatalf("routing baseline promoted item-only facts from an unselected single option: %+v", context)
+	}
+}
+
 func TestBuildBookingContinuationReplyAsksOnlyForDocuments(t *testing.T) {
 	reply := buildBookingContinuationReply(BookingDraftContext{PassengerCount: 2}, BookingNextAskPassengerDocuments)
 	if !strings.Contains(reply, "nomes completos e os documentos dos 2 passageiros") {
@@ -74,6 +634,7 @@ func TestBuildBookingContinuationReplyAsksOnlyForDocuments(t *testing.T) {
 func TestDecideNextBookingStepDoesNotCallCreateWithoutPassengerDetails(t *testing.T) {
 	context := BookingDraftContext{
 		HasAvailabilityShown:        true,
+		HasBookableSelection:        true,
 		TripID:                      "trip-1",
 		BoardStopID:                 "board-1",
 		AlightStopID:                "alight-1",
@@ -108,6 +669,7 @@ func TestPassengerQuestionAloneDoesNotStartAdvancedBookingFlow(t *testing.T) {
 func TestDecideNextBookingStepCannotCallCreateWithoutSelectedTripData(t *testing.T) {
 	complete := BookingDraftContext{
 		HasAvailabilityShown:  true,
+		HasBookableSelection:  true,
 		TripID:                "trip-1",
 		BoardStopID:           "board-1",
 		AlightStopID:          "alight-1",
@@ -782,6 +1344,7 @@ func TestBuildBookingContinuationReplyDoesNotRepeatComboQuestionWhenPassengerKno
 func TestBuildBookingCreateMissingDataReplyListsExactMissingFields(t *testing.T) {
 	context := BookingDraftContext{
 		HasAvailabilityShown:    true,
+		HasBookableSelection:    true,
 		TripID:                  "trip-1",
 		BoardStopID:             "board-1",
 		Origin:                  "Santa Ines/MA",
@@ -814,6 +1377,7 @@ func TestBuildBookingCreateMissingDataReplyListsExactMissingFields(t *testing.T)
 func TestExpectedPassengerDocumentCountDoesNotPromoteKnownCountFromReconstructedDetails(t *testing.T) {
 	context := BookingDraftContext{
 		HasAvailabilityShown:  true,
+		HasBookableSelection:  true,
 		TripID:                "trip-1",
 		BoardStopID:           "board-1",
 		AlightStopID:          "alight-1",
@@ -1213,6 +1777,7 @@ func TestLatestLapChildAgeAdultExtractMakesZeroChildReadinessReady(t *testing.T)
 	)
 	context := BookingDraftContext{
 		HasAvailabilityShown: true,
+		HasBookableSelection: true,
 		TripID:               "trip-age-1", BoardStopID: "board-age-1", AlightStopID: "alight-age-1",
 		Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", TripDate: "2026-08-25",
 		PassengerCount: 1, PassengerCountKnown: true,
@@ -1249,6 +1814,7 @@ func TestLatestLapChildAgeAdultExtractKeepsExpectedChildReadinessBlocked(t *test
 	)
 	context := BookingDraftContext{
 		HasAvailabilityShown: true,
+		HasBookableSelection: true,
 		TripID:               "trip-age-2", BoardStopID: "board-age-2", AlightStopID: "alight-age-2",
 		Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", TripDate: "2026-08-25",
 		PassengerCount: 2, PassengerCountKnown: true,
@@ -1703,6 +2269,15 @@ func TestDocumentMergeKeepsSoloPassenger(t *testing.T) {
 func passengerSlotAvailabilityHistory(t *testing.T, passengerQuestion string) []Message {
 	t.Helper()
 	now := time.Now().UTC()
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-1", BoardStopID: "board-1", AlightStopID: "alight-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC",
+			OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
+		}},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	return []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -1711,18 +2286,14 @@ func passengerSlotAvailabilityHistory(t *testing.T, passengerQuestion string) []
 			ReceivedAt:       now.Add(-4 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
-						Results: []AvailabilitySearchItem{{
-							TripID: "trip-1", BoardStopID: "board-1", AlightStopID: "alight-1",
-							OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC",
-							OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
-						}},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
-		{Direction: "OUTBOUND", Body: passengerQuestion, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		{
+			Direction: "OUTBOUND", Body: passengerQuestion, ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt: now.Add(-2 * time.Minute), Payload: cloneMap(selectionPayload), NormalizedPayload: cloneMap(selectionPayload),
+		},
 	}
 }

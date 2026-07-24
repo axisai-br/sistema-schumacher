@@ -429,13 +429,15 @@ type SaveReprocessSnapshotResult struct {
 }
 
 type ApplyPassengerClarificationEventsV1Input struct {
-	SessionID string
-	Events    []PassengerClarificationEventV1
+	SessionID                   string
+	Events                      []PassengerClarificationEventV1
+	AvailabilitySelectionEvents []AvailabilitySelectionEventV1
 }
 
 type ApplyPassengerClarificationEventsV1Result struct {
-	Session Session
-	State   PassengerClarificationStateV1
+	Session                    Session
+	State                      PassengerClarificationStateV1
+	AvailabilitySelectionState AvailabilitySelectionStateV1
 }
 
 type SaveAgentDraftInput struct {

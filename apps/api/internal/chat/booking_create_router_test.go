@@ -3,12 +3,16 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
-	"schumacher-tur/api/internal/bookings"
-	"schumacher-tur/api/internal/payments"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"schumacher-tur/api/internal/bookings"
+	"schumacher-tur/api/internal/payments"
+	"schumacher-tur/api/internal/shared/config"
 )
 
 const testBirthCertificateNumber = "12345678901234567890123456789012"
@@ -589,7 +593,7 @@ func TestParseBookingCreateFromDocumentConfirmationUsesLapChildAssignmentReplyBy
 	}
 }
 
-func TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply(t *testing.T) {
+func TestFindLatestSelectedOptionIndexRejectsRawHistoricalReplies(t *testing.T) {
 	now := time.Now().UTC()
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute)},
@@ -611,13 +615,23 @@ func TestFindLatestSelectedOptionIndexIgnoresLapChildAssignmentReply(t *testing.
 		{Direction: "INBOUND", Body: "2", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
 	}
 
-	if got := findLatestSelectedOptionIndex(history); got != 1 {
-		t.Fatalf("expected trip selection 1 to be preserved, got %d", got)
+	if got := findLatestSelectedOptionIndex(history); got != 0 {
+		t.Fatalf("raw historical trip/passenger indexes must not become durable authority, got %d", got)
 	}
 }
 
 func TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection(t *testing.T) {
 	now := time.Now().UTC()
+	selectedSnapshot := map[string]interface{}{
+		"selected_option_index": 2,
+		"trip_id":               "trip-2026-07-14",
+		"board_stop_id":         "board-2026-07-14",
+		"alight_stop_id":        "alight-2026-07-14",
+		"trip_date":             "2026-07-14",
+		selectedAvailabilitySelectionMessageIDPayloadKey:     "persisted-selection-event-2",
+		availabilityPromptSourceMessageIDPayloadKey:          "persisted-availability-prompt-2",
+		availabilitySelectionMaterializesAuthorityPayloadKey: true,
+	}
 	history := []Message{
 		{Direction: "OUTBOUND", Body: "Achei duas opcoes para Santa Ines/MA. Qual opcao voce prefere?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "INBOUND", Body: "14/07, paga agora?", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
@@ -627,28 +641,16 @@ func TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection(t *test
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 			Payload: map[string]interface{}{
-				"intent":                string(IntentSelectAvailabilityOption),
-				"template_name":         string(TemplateAskPassengerCount),
-				"selected_option_index": 2,
-				selectedAvailabilityResultPayloadKey: map[string]interface{}{
-					"selected_option_index": 2,
-					"trip_id":               "trip-2026-07-14",
-					"board_stop_id":         "board-2026-07-14",
-					"alight_stop_id":        "alight-2026-07-14",
-					"trip_date":             "2026-07-14",
-				},
+				"intent":                             string(IntentSelectAvailabilityOption),
+				"template_name":                      string(TemplateAskPassengerCount),
+				"selected_option_index":              2,
+				selectedAvailabilityResultPayloadKey: cloneMap(selectedSnapshot),
 			},
 			NormalizedPayload: map[string]interface{}{
-				"intent":                string(IntentSelectAvailabilityOption),
-				"template_name":         string(TemplateAskPassengerCount),
-				"selected_option_index": 2,
-				selectedAvailabilityResultPayloadKey: map[string]interface{}{
-					"selected_option_index": 2,
-					"trip_id":               "trip-2026-07-14",
-					"board_stop_id":         "board-2026-07-14",
-					"alight_stop_id":        "alight-2026-07-14",
-					"trip_date":             "2026-07-14",
-				},
+				"intent":                             string(IntentSelectAvailabilityOption),
+				"template_name":                      string(TemplateAskPassengerCount),
+				"selected_option_index":              2,
+				selectedAvailabilityResultPayloadKey: cloneMap(selectedSnapshot),
 			},
 		},
 		{Direction: "INBOUND", Body: "1", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
@@ -685,7 +687,7 @@ func TestFindLatestSelectedOptionIndexIgnoresMetadataOnlyAvailabilitySelection(t
 	}
 }
 
-func TestFindLatestSelectedOptionIndexUsesSameMessageAvailabilityFacts(t *testing.T) {
+func TestFindLatestSelectedOptionIndexRejectsSameMessageAvailabilityFactsWithoutAuthority(t *testing.T) {
 	now := time.Now().UTC()
 	history := []Message{
 		{
@@ -709,8 +711,8 @@ func TestFindLatestSelectedOptionIndexUsesSameMessageAvailabilityFacts(t *testin
 		},
 	}
 
-	if got := findLatestSelectedOptionIndex(history); got != 2 {
-		t.Fatalf("expected same-message availability facts to materialize selected_option_index=2, got %d", got)
+	if got := findLatestSelectedOptionIndex(history); got != 0 {
+		t.Fatalf("same-message availability facts without explicit authority materialized index=%d", got)
 	}
 }
 
@@ -797,6 +799,9 @@ func TestCollectBookingDraftContextPrefersSelectedAvailabilitySnapshot(t *testin
 					"trip_date":                "2026-07-14",
 					"price":                    950,
 					"currency":                 "BRL",
+					selectedAvailabilitySelectionMessageIDPayloadKey:     "preferred-selection-event-2",
+					availabilityPromptSourceMessageIDPayloadKey:          "preferred-availability-prompt-2",
+					availabilitySelectionMaterializesAuthorityPayloadKey: true,
 				},
 				"tool_context": map[string]interface{}{
 					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
@@ -850,6 +855,9 @@ func TestCollectBookingDraftContextKeepsLatestSelectedAvailabilitySnapshotIndex(
 			"trip_date":                tripDate,
 			"price":                    price,
 			"currency":                 "BRL",
+			selectedAvailabilitySelectionMessageIDPayloadKey:     "latest-selection-event-" + strconv.Itoa(index),
+			availabilityPromptSourceMessageIDPayloadKey:          "latest-availability-prompt-" + strconv.Itoa(index),
+			availabilitySelectionMaterializesAuthorityPayloadKey: true,
 		}
 	}
 
@@ -1035,11 +1043,15 @@ func TestAvailabilityDraftHasSelectedTripRequiresCompleteSelectedTripFacts(t *te
 					"trip_id":               "trip-2026-07-14",
 					"board_stop_id":         "board-2026-07-14",
 					"alight_stop_id":        "alight-2026-07-14",
+					selectedAvailabilitySelectionMessageIDPayloadKey:     "complete-selection-event-2",
+					availabilityPromptSourceMessageIDPayloadKey:          "complete-availability-prompt-2",
+					availabilitySelectionMaterializesAuthorityPayloadKey: true,
 				},
 			},
 		},
 	}
-	if !availabilityDraftHasSelectedTrip(Session{}, completeHistory, "") {
+	session := materializePersistedAvailabilitySelectionForTest(Session{}, completeHistory)
+	if !availabilityDraftHasSelectedTrip(session, completeHistory, "") {
 		t.Fatalf("expected complete selected availability snapshot to count as selected trip")
 	}
 }
@@ -1080,7 +1092,7 @@ func TestAvailabilityDraftHasSelectedTripAcceptsBareOptionWithCompleteAvailabili
 	}
 }
 
-func TestCollectBookingDraftContextAllowsFreshAvailabilityAfterOldSelectionBlocker(t *testing.T) {
+func TestCollectBookingDraftContextKeepsFreshAvailabilityEnvelopeAfterOldSelectionBlocker(t *testing.T) {
 	now := time.Now().UTC()
 	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
 		TripID:                 "trip-2026-07-13",
@@ -1104,10 +1116,13 @@ func TestCollectBookingDraftContextAllowsFreshAvailabilityAfterOldSelectionBlock
 	history := []Message{oldAvailability, blocker, freshAvailability}
 
 	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
-	if context.TripID != "trip-2026-07-14" ||
-		context.BoardStopID != "board-2026-07-14" ||
-		context.AlightStopID != "alight-2026-07-14" {
-		t.Fatalf("expected fresh availability after old blocker to populate booking draft, got %+v", context)
+	if !context.HasAvailabilityShown || context.Origin != "Videira/SC" || context.Destination != "Santa Ines/MA" {
+		t.Fatalf("expected fresh availability after old blocker to preserve its envelope, got %+v", context)
+	}
+	if context.HasBookableSelection || context.SelectedOptionIndex != 0 ||
+		context.TripID != "" || context.BoardStopID != "" || context.AlightStopID != "" ||
+		context.TripDate != "" || context.DepartureTime != "" {
+		t.Fatalf("fresh unselected availability must not promote its single item, got %+v", context)
 	}
 }
 
@@ -1180,7 +1195,7 @@ func TestAvailabilityDraftHasSelectedTripBlocksOldAvailabilityWhenSelectionBlock
 	}
 }
 
-func TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySelection(t *testing.T) {
+func TestCollectBookingDraftContextRejectsSameMessageAvailabilityWithoutAuthority(t *testing.T) {
 	now := time.Now().UTC()
 	history := []Message{
 		{
@@ -1252,16 +1267,14 @@ func TestCollectBookingDraftContextUsesSameMessageAvailabilityForMetadataOnlySel
 	}
 
 	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "")
-	if context.SelectedOptionIndex != 2 ||
-		context.TripID != "trip-2026-07-14" ||
-		context.BoardStopID != "board-2026-07-14" ||
-		context.AlightStopID != "alight-2026-07-14" ||
-		context.TripDate != "2026-07-14" {
-		t.Fatalf("expected metadata-only selection to use availability from the same message, got %+v", context)
+	if context.HasBookableSelection || context.SelectedOptionIndex != 0 ||
+		context.TripID != "" || context.BoardStopID != "" ||
+		context.AlightStopID != "" || context.TripDate != "" {
+		t.Fatalf("same-message availability without authority leaked selected facts: %+v", context)
 	}
 }
 
-func TestParseBookingCreateInputSingleOptionFallbackWorksWithoutSelectionBlocker(t *testing.T) {
+func TestParseBookingCreateInputRejectsSingleOptionWithoutBookableSelection(t *testing.T) {
 	now := time.Now().UTC()
 	session := Session{
 		ContactKey:    "5549988709047",
@@ -1271,15 +1284,117 @@ func TestParseBookingCreateInputSingleOptionFallbackWorksWithoutSelectionBlocker
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := singleOptionBookingCreateAvailabilityHistory(now)
 
-	input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil)
-	if !ok {
-		t.Fatalf("expected single-option fallback without blocker to build booking input")
+	if input, ok := parseBookingCreateInput(session, history, "quero reservar Joao Vitor Messias 84960815086", nil); ok {
+		t.Fatalf("single visible option without a bookable selection must not authorize booking_create: %+v", input)
 	}
-	if input.SelectedOptionIndex != 1 ||
-		input.TripID != "trip-2026-07-13" ||
-		input.BoardStopID != "board-2026-07-13" ||
-		input.AlightStopID != "alight-2026-07-13" {
-		t.Fatalf("expected single-option fallback to use the visible trip, got %+v", input)
+}
+
+func TestParseBookingCreateInputUsesPersistedBookableSelection(t *testing.T) {
+	now := time.Now().UTC()
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	availability := bookingCreateSelectionAvailabilityResult("trip-bookable", "board-bookable", "alight-bookable")
+	session = materializeExplicitAvailabilitySelectionForTest(
+		session,
+		nil,
+		"opção 1",
+		&availability,
+	)
+	history := []Message{
+		{
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(availability),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-3 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+				},
+			},
+		},
+		{
+			Direction:        "INBOUND",
+			Body:             "so pra mim, sem crianca",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-2 * time.Minute),
+		},
+	}
+
+	input, ok := parseBookingCreateInput(session, history, "quero reservar\nJoao Vitor Messias | CPF | 84960815086", nil)
+	if !ok {
+		t.Fatal("persisted bookable selection must continue authorizing the normal booking flow")
+	}
+	if input.SelectedOptionIndex != 1 || input.TripID != "trip-bookable" ||
+		input.BoardStopID != "board-bookable" || input.AlightStopID != "alight-bookable" {
+		t.Fatalf("booking_create did not use the persisted bookable snapshot: %+v", input)
+	}
+}
+
+func TestParseBookingCreateInputRejectsFailedHistoricalIndexAfterFreshAvailability(t *testing.T) {
+	now := time.Now().UTC()
+	failedReply := Message{
+		ID:               "failed-selection-boundary",
+		Direction:        "INBOUND",
+		Body:             "1",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       now.Add(-3 * time.Minute),
+	}
+	fresh := bookingCreateSelectionAvailabilityResult("trip-fresh", "board-fresh", "alight-fresh")
+	history := []Message{
+		{
+			ID:               "old-rendered-without-facts",
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(fresh),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-4 * time.Minute),
+		},
+		failedReply,
+		{
+			ID:               "fresh-complete-availability",
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(fresh),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       now.Add(-2 * time.Minute),
+			Payload: map[string]interface{}{
+				"tool_context": map[string]interface{}{
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(fresh),
+				},
+			},
+		},
+		{
+			Direction:        "INBOUND",
+			Body:             "so pra mim, sem crianca",
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       now.Add(-time.Minute),
+		},
+	}
+	session := Session{
+		ContactKey:    "5549988709047",
+		CustomerPhone: "5549988709047",
+		CustomerName:  "Joao Vitor Messias",
+		Metadata:      map[string]interface{}{"agent": map[string]interface{}{}},
+	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	writeCanonicalAvailabilityFactsInvalidationMetadata(
+		asMap(session.Metadata["agent"]),
+		true,
+		canonicalAvailabilityFactsInvalidationBoundary{
+			AfterMessageID: failedReply.ID,
+			AfterCreatedAt: canonicalAvailabilityHistoryMessageTime(failedReply),
+		},
+	)
+
+	if input, ok := parseBookingCreateInput(
+		session,
+		history,
+		"quero reservar\nJoao Vitor Messias | CPF | 84960815086",
+		nil,
+	); ok {
+		t.Fatalf("failed historical index must not combine with fresh availability or authorize booking_create: %+v", input)
 	}
 }
 
@@ -1852,6 +1967,24 @@ func TestBuildBookingContinuationDraftRunDoesNotPersistMetadataOnlySelectedOptio
 
 func TestParseBookingCreateInputUsesStructuredPassengerConfirmationOnHistory(t *testing.T) {
 	now := time.Now().UTC()
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Destination: "Ituporanga/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-1",
+				BoardStopID:            "board-1",
+				AlightStopID:           "alight-1",
+				OriginDisplayName:      "Moncao/MA",
+				DestinationDisplayName: "Ituporanga/SC",
+				OriginDepartTime:       "09:00",
+				TripDate:               "2026-04-26",
+			},
+		},
+	}
 	session := Session{
 		ContactKey:    "5549988709047",
 		CustomerPhone: "5549988709047",
@@ -1866,24 +1999,7 @@ func TestParseBookingCreateInputUsesStructuredPassengerConfirmationOnHistory(t *
 			ReceivedAt:       now.Add(-4 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{
-							Destination: "Ituporanga/SC",
-							Qty:         1,
-							Limit:       5,
-						},
-						Results: []AvailabilitySearchItem{
-							{
-								TripID:                 "trip-1",
-								BoardStopID:            "board-1",
-								AlightStopID:           "alight-1",
-								OriginDisplayName:      "Moncao/MA",
-								DestinationDisplayName: "Ituporanga/SC",
-								OriginDepartTime:       "09:00",
-								TripDate:               "2026-04-26",
-							},
-						},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
@@ -1892,6 +2008,14 @@ func TestParseBookingCreateInputUsesStructuredPassengerConfirmationOnHistory(t *
 			Body:             "a primeira",
 			ProcessingStatus: "PROCESSED",
 			ReceivedAt:       now.Add(-3 * time.Minute),
+		},
+		{
+			Direction:         "OUTBOUND",
+			Body:              askPassengerCountReply,
+			ProcessingStatus:  messageStatusAutomationSent,
+			ReceivedAt:        now.Add(-165 * time.Second),
+			Payload:           persistedAvailabilitySelectionPayloadForTest(availability, 1),
+			NormalizedPayload: persistedAvailabilitySelectionPayloadForTest(availability, 1),
 		},
 		{
 			Direction:        "INBOUND",
@@ -2006,9 +2130,10 @@ func TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSe
 		messageStatusAutomationPending,
 	} {
 		t.Run(status, func(t *testing.T) {
+			selectionPayload := persistedAvailabilitySelectionPayloadForTest(visibleResult, 1)
 			history := append(bookingCreateAvailabilityHistory(now, visibleResult, hiddenResult, status),
 				Message{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-50 * time.Second)},
-				Message{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-40 * time.Second)},
+				Message{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-40 * time.Second), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 				Message{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-30 * time.Second)},
 				Message{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-20 * time.Second)},
 				Message{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-10 * time.Second)},
@@ -2178,6 +2303,11 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	}
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
+	session = materializePersistedAvailabilitySelectionForTest(session, history)
+	context := collectBookingDraftContextFromState(session, history, "conferem")
+	if !context.HasBookableSelection {
+		t.Fatalf("positive document confirmation fixture must contain durable bookable selection: context=%+v evidence=%+v", context, latestAvailabilitySelectionEvidence(history))
+	}
 
 	input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "conferem")
 	if !ok {
@@ -2203,6 +2333,78 @@ func TestParseBookingCreateFromDocumentConfirmation(t *testing.T) {
 	}
 	if input.IdempotencyKey == "" {
 		t.Fatalf("expected idempotency key")
+	}
+}
+
+func TestParseBookingCreateFromDocumentConfirmationRequiresBookableSelection(t *testing.T) {
+	session := Session{
+		ID:            "session-document-confirmation-without-bookable-selection",
+		ContactKey:    "5549988709147",
+		CustomerPhone: "5549988709147",
+		CustomerName:  "Messias",
+	}
+	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	history := documentConfirmationBookingHistoryWithoutBookableSelection(time.Now().UTC(), "EXTRACTED", true)
+
+	if input, ok := parseBookingCreateFromDocumentConfirmation(session, history, "sim"); ok {
+		t.Fatalf("document confirmation without durable bookable selection must not produce BookingCreateInput: %+v", input)
+	}
+}
+
+func TestDocumentConfirmationWithoutBookableSelectionDoesNotCallBookingCreate(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "must not authorize booking", Model: "gpt-test"}}
+	creator := &fakeBookingCreator{enabled: true}
+	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner, creator)
+
+	now := time.Now().UTC()
+	contactKey := "document-confirmation-without-bookable-selection"
+	seed := sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0))
+	session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+		Channel: "WHATSAPP", ContactKey: contactKey, CustomerPhone: contactKey, CustomerName: "Messias",
+		LastMessageAt: &now, LastOutboundAt: &now, Metadata: seed.Metadata,
+	})
+	if err != nil {
+		t.Fatalf("seed document confirmation session: %v", err)
+	}
+	for index, message := range documentConfirmationBookingHistoryWithoutBookableSelection(now, "EXTRACTED", true) {
+		if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+			SessionID:         session.ID,
+			Direction:         message.Direction,
+			Kind:              "TEXT",
+			ProviderMessageID: fmt.Sprintf("document-confirmation-history-%d", index),
+			IdempotencyKey:    fmt.Sprintf("document-confirmation-history-%d", index),
+			Body:              message.Body,
+			Payload:           message.Payload,
+			NormalizedPayload: message.NormalizedPayload,
+			ProcessingStatus:  message.ProcessingStatus,
+			ReceivedAt:        message.ReceivedAt,
+		}); err != nil {
+			t.Fatalf("seed document confirmation history message %d: %v", index, err)
+		}
+	}
+
+	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
+		ContactKey: contactKey,
+		Message: IngestMessagePayload{
+			Direction: "INBOUND", ProviderMessageID: "document-confirmation-without-authority",
+			IdempotencyKey: "document-confirmation-without-authority", Body: "sim",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest document confirmation without authority: %v", err)
+	}
+	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
+	if err != nil {
+		t.Fatalf("reprocess document confirmation without authority: %v", err)
+	}
+	if creator.calls != 0 {
+		t.Fatalf("document confirmation without durable bookable selection called booking_create %d times: tools=%+v draft=%+v", creator.calls, out.ToolCalls, out.Draft)
+	}
+	for _, call := range out.ToolCalls {
+		if call.ToolName == toolNameBookingCreate {
+			t.Fatalf("document confirmation without authority emitted booking_create tool call: %+v", call)
+		}
 	}
 }
 
@@ -2643,6 +2845,29 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 		CustomerName:  "Joao",
 	}
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Igarape do Meio/MA",
+			Destination: "Petrolandia/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-manual-1",
+				BoardStopID:            "board-manual-1",
+				AlightStopID:           "alight-manual-1",
+				OriginDisplayName:      "Igarape do Meio/MA",
+				DestinationDisplayName: "Petrolandia/SC",
+				OriginDepartTime:       "11:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+				PackageName:            packageToSantaCatarina,
+			},
+		},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -2651,33 +2876,12 @@ func TestParseBookingCreateFromManualPassengerConfirmation(t *testing.T) {
 			ReceivedAt:       now.Add(-7 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{
-							Origin:      "Igarape do Meio/MA",
-							Destination: "Petrolandia/SC",
-							Qty:         1,
-							Limit:       5,
-						},
-						Results: []AvailabilitySearchItem{
-							{
-								TripID:                 "trip-manual-1",
-								BoardStopID:            "board-manual-1",
-								AlightStopID:           "alight-manual-1",
-								OriginDisplayName:      "Igarape do Meio/MA",
-								DestinationDisplayName: "Petrolandia/SC",
-								OriginDepartTime:       "11:00",
-								TripDate:               "2026-05-11",
-								Price:                  950,
-								Currency:               "BRL",
-								PackageName:            packageToSantaCatarina,
-							},
-						},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "11/05", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento. Se preferir, pode mandar foto legivel do documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
 		{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
@@ -2738,9 +2942,14 @@ func TestCanonicalBookingCreateContextExcessBlocksBodyPassengerBypass(t *testing
 			{Name: "Maria Messias", DocumentType: "RG", Document: "1234567", Confidence: 0.98},
 		},
 	})
-	body := "quero reservar\nJoao Vitor Messias CPF 52998224725"
+	body := "quero reservar opcao 1\nJoao Vitor Messias CPF 52998224725"
 	availability := canonicalBookingCreateTestAvailability(1)
-	if _, _, ok := resolveBookingCreateSelection(body, history, &availability); !ok {
+	session = materializeExplicitAvailabilitySelectionForTest(session, history, body, &availability)
+	selectionState, ok := availabilitySelectionStateV1FromSession(session)
+	if !ok {
+		t.Fatal("test must persist the current selection before exercising canonical readiness")
+	}
+	if _, _, ok := resolveBookingCreateSelectionFromState(body, selectionState); !ok {
 		t.Fatalf("test must have a valid trip selection before exercising canonical readiness")
 	}
 
@@ -2807,6 +3016,7 @@ func TestCanonicalBookingCreateReadinessClassifiesQuantity(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			tc.context.HasBookableSelection = true
 			readiness := evaluateCanonicalBookingCreateReadiness(tc.context)
 			if readiness.QuantityStatus != tc.wantStatus || readiness.Ready != tc.wantReady {
 				t.Fatalf("unexpected canonical readiness: got %+v want status=%s ready=%t", readiness, tc.wantStatus, tc.wantReady)
@@ -2865,9 +3075,10 @@ func TestCanonicalBookingCreateUnresolvedPartialsKeepOnlyRealIdentities(t *testi
 		CPF:          "52998224725",
 	}
 	context := BookingDraftContext{
-		PassengerCount:      1,
-		PassengerCountKnown: true,
-		PassengerDetails:    []BookingCreatePassengerInput{passenger},
+		HasBookableSelection: true,
+		PassengerCount:       1,
+		PassengerCountKnown:  true,
+		PassengerDetails:     []BookingCreatePassengerInput{passenger},
 		PartialPassengerDetails: []BookingPassengerDocumentPartial{
 			{NameFragment: "ivoneide", DocumentType: "CPF", Document: "46643591104"},
 			{NameFragment: "ivoneide pereira", DocumentType: "CPF", Document: "466.435.911-04"},
@@ -3015,7 +3226,7 @@ func TestBookingCreateEntryPointsUseCanonicalReadinessAndPassengers(t *testing.T
 	}
 
 	availability := canonicalBookingCreateTestAvailability(2)
-	fromIntent, intentOK := parseBookingCreateInput(session, history, "quero reservar", &availability)
+	fromIntent, intentOK := parseBookingCreateInput(session, history, "quero reservar opcao 1", &availability)
 	fromConfirmation, confirmationOK := parseBookingCreateFromDocumentConfirmation(session, history, "sim")
 	if !intentOK || !confirmationOK {
 		t.Fatalf("both entry points must accept the same ready context, intent=%t confirmation=%t", intentOK, confirmationOK)
@@ -3062,6 +3273,14 @@ func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
 		CustomerPhone: "5549988709047",
 	}
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Igarape do Meio/MA", Destination: "Petrolandia/SC", Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-no-child-1", BoardStopID: "board-no-child-1", AlightStopID: "alight-no-child-1",
+			OriginDisplayName: "Igarape do Meio/MA", DestinationDisplayName: "Petrolandia/SC", OriginDepartTime: "11:00", TripDate: "2026-05-11",
+		}},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3070,17 +3289,11 @@ func TestBookingCreateDoesNotInferLapChildFromGenericSim(t *testing.T) {
 			ReceivedAt:       now.Add(-7 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{Origin: "Igarape do Meio/MA", Destination: "Petrolandia/SC", Qty: 1, Limit: 5},
-						Results: []AvailabilitySearchItem{{
-							TripID: "trip-no-child-1", BoardStopID: "board-no-child-1", AlightStopID: "alight-no-child-1",
-							OriginDisplayName: "Igarape do Meio/MA", DestinationDisplayName: "Petrolandia/SC", OriginDepartTime: "11:00", TripDate: "2026-05-11",
-						}},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
-		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem é só para você ou tem mais alguém, informe também se há criança até 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar seu nome completo e o documento.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
 		{Direction: "INBOUND", Body: "Joao Vitor Messias 84960815086", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
@@ -3133,6 +3346,23 @@ func TestLastBotAskedPassengerCount(t *testing.T) {
 }
 
 func documentConfirmationBookingHistory(now time.Time, documentMode string, includeDocumentExtract bool) []Message {
+	history := documentConfirmationBookingHistoryWithoutBookableSelection(now, documentMode, includeDocumentExtract)
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(documentConfirmationAvailabilityResult(), 1)
+	selection := Message{
+		Direction:         "OUTBOUND",
+		Body:              askPassengerCountReply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		ReceivedAt:        now.Add(-225 * time.Second),
+		Payload:           cloneMap(selectionPayload),
+		NormalizedPayload: cloneMap(selectionPayload),
+	}
+	history = append(history, Message{})
+	copy(history[3:], history[2:])
+	history[2] = selection
+	return history
+}
+
+func documentConfirmationBookingHistoryWithoutBookableSelection(now time.Time, documentMode string, includeDocumentExtract bool) []Message {
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3141,28 +3371,7 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 			ReceivedAt:       now.Add(-5 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{
-							Origin:      "Santa Inês/MA",
-							Destination: "Fraiburgo/SC",
-							Qty:         1,
-							Limit:       8,
-						},
-						Results: []AvailabilitySearchItem{
-							{
-								TripID:                 "trip-doc-1",
-								BoardStopID:            "board-doc-1",
-								AlightStopID:           "alight-doc-1",
-								OriginDisplayName:      "Santa Inês/MA",
-								DestinationDisplayName: "Fraiburgo/SC",
-								OriginDepartTime:       "12:00",
-								TripDate:               "2026-05-11",
-								Price:                  950,
-								Currency:               "BRL",
-								PackageName:            packageToSantaCatarina,
-							},
-						},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(documentConfirmationAvailabilityResult()),
 				},
 			},
 		},
@@ -3220,6 +3429,31 @@ func documentConfirmationBookingHistory(now time.Time, documentMode string, incl
 	return history
 }
 
+func documentConfirmationAvailabilityResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Inês/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       8,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-doc-1",
+				BoardStopID:            "board-doc-1",
+				AlightStopID:           "alight-doc-1",
+				OriginDisplayName:      "Santa Inês/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "12:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+				PackageName:            packageToSantaCatarina,
+			},
+		},
+	}
+}
+
 func knownPassengerCountDocumentConfirmationHistory(t *testing.T, passengerReply string, extract DocumentExtractResult) []Message {
 	t.Helper()
 	history := passengerSlotAvailabilityHistory(t, askPassengerCountReply)
@@ -3265,6 +3499,28 @@ func partialDocumentConfirmationBookingHistory(now time.Time, passenger Document
 }
 
 func documentCorrectionBookingHistory(now time.Time) []Message {
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Monção/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-correction-1",
+				BoardStopID:            "board-correction-1",
+				AlightStopID:           "alight-correction-1",
+				OriginDisplayName:      "Monção/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "09:00",
+				TripDate:               "2026-05-11",
+				Price:                  950,
+				Currency:               "BRL",
+			},
+		},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3273,32 +3529,12 @@ func documentCorrectionBookingHistory(now time.Time) []Message {
 			ReceivedAt:       now.Add(-8 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{
-							Origin:      "Monção/MA",
-							Destination: "Fraiburgo/SC",
-							Qty:         1,
-							Limit:       5,
-						},
-						Results: []AvailabilitySearchItem{
-							{
-								TripID:                 "trip-correction-1",
-								BoardStopID:            "board-correction-1",
-								AlightStopID:           "alight-correction-1",
-								OriginDisplayName:      "Monção/MA",
-								DestinationDisplayName: "Fraiburgo/SC",
-								OriginDepartTime:       "09:00",
-								TripDate:               "2026-05-11",
-								Price:                  950,
-								Currency:               "BRL",
-							},
-						},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de ate 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de ate 5 anos?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", Body: "so eu", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Tem crianca de 5 anos ou menos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "INBOUND", Body: "nao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
@@ -3328,6 +3564,15 @@ func documentCorrectionBookingHistory(now time.Time) []Message {
 }
 
 func lapChildBookingHistory(now time.Time, passengerDetails string) []Message {
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Monte Carlo/SC", Qty: 2, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-lap-1", BoardStopID: "board-lap-1", AlightStopID: "alight-lap-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Monte Carlo/SC",
+			OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
+		}},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	return []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3336,19 +3581,12 @@ func lapChildBookingHistory(now time.Time, passengerDetails string) []Message {
 			ReceivedAt:       now.Add(-7 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Monte Carlo/SC", Qty: 2, Limit: 5},
-						Results: []AvailabilitySearchItem{{
-							TripID: "trip-lap-1", BoardStopID: "board-lap-1", AlightStopID: "alight-lap-1",
-							OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Monte Carlo/SC",
-							OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
-						}},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", Body: "eu e meu filho de 4 anos", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG).", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
 		{Direction: "INBOUND", Body: passengerDetails, ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},
@@ -3361,6 +3599,14 @@ func soloChildBookingHistory(now time.Time) []Message {
 }
 
 func soloChildBookingHistoryWithReply(now time.Time, childReply string) []Message {
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-solo-child-1", BoardStopID: "board-solo-child-1", AlightStopID: "alight-solo-child-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
+		}},
+	}
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	return []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -3369,18 +3615,12 @@ func soloChildBookingHistoryWithReply(now time.Time, childReply string) []Messag
 			ReceivedAt:       now.Add(-7 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
-						Results: []AvailabilitySearchItem{{
-							TripID: "trip-solo-child-1", BoardStopID: "board-solo-child-1", AlightStopID: "alight-solo-child-1",
-							OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
-						}},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
 		{Direction: "INBOUND", Body: "opcao 1", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-6 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou vai mais alguem junto?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-5 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", Body: "so pra mim", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-4 * time.Minute)},
 		{Direction: "OUTBOUND", Body: askChildUnder5Reply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-3 * time.Minute)},
 		{Direction: "INBOUND", Body: childReply, ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-2 * time.Minute)},

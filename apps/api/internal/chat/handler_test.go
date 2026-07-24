@@ -561,7 +561,7 @@ func TestGetCurrentDraftAllowsAutoSendForImageTurn(t *testing.T) {
 	}
 }
 
-func TestReprocessGatesDocumentImageWhenPassengerAuthorityIsUnknown(t *testing.T) {
+func TestReprocessGatesDocumentImageAfterDeliveredPassengerPrompt(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -572,7 +572,7 @@ func TestReprocessGatesDocumentImageWhenPassengerAuthorityIsUnknown(t *testing.T
 		},
 	}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
-	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+	outbound, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: "5549988709047",
 		Message: IngestMessagePayload{
 			Direction:         "OUTBOUND",
@@ -580,9 +580,11 @@ func TestReprocessGatesDocumentImageWhenPassengerAuthorityIsUnknown(t *testing.T
 			IdempotencyKey:    "idem-doc-out-1",
 			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ingest outbound: %v", err)
 	}
+	seedDeliveredPassengerPromptForTest(t, store, outbound.Session.ID, time.Now().UTC())
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: "5549988709047",
 		Message: IngestMessagePayload{
@@ -624,7 +626,7 @@ func TestReprocessGatesDocumentImageWhenPassengerAuthorityIsUnknown(t *testing.T
 	}
 }
 
-func TestReprocessGatesDocumentImageDataURLWhenPassengerAuthorityIsUnknown(t *testing.T) {
+func TestReprocessGatesDocumentImageDataURLAfterDeliveredPassengerPrompt(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{
 		enabled: true,
@@ -635,7 +637,7 @@ func TestReprocessGatesDocumentImageDataURLWhenPassengerAuthorityIsUnknown(t *te
 		},
 	}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
-	if _, err := svc.Ingest(context.Background(), IngestMessageInput{
+	outbound, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: "5549988709050",
 		Message: IngestMessagePayload{
 			Direction:         "OUTBOUND",
@@ -643,9 +645,11 @@ func TestReprocessGatesDocumentImageDataURLWhenPassengerAuthorityIsUnknown(t *te
 			IdempotencyKey:    "idem-doc-data-out-1",
 			Body:              "Pode enviar seu nome completo e o documento. Se for foto, envie frente e verso.",
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ingest outbound: %v", err)
 	}
+	seedDeliveredPassengerPromptForTest(t, store, outbound.Session.ID, time.Now().UTC())
 	ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
 		ContactKey: "5549988709050",
 		Message: IngestMessagePayload{
@@ -2508,7 +2512,7 @@ func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contac
 	}
 	seedPassengerClarificationStateV1ForTest(store, session.ID, completePassengerStateForTest(1, 0))
 
-	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+	availabilityResult := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
 			Origin:      "Moncao/MA",
 			Destination: "Fraiburgo/SC",
@@ -2529,7 +2533,8 @@ func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contac
 				PackageName:            packageToSantaCatarina,
 			},
 		},
-	})
+	}
+	availabilityPayload := buildAvailabilityToolResponsePayload(availabilityResult)
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-doc-text-availability-" + contactKey,
@@ -2551,9 +2556,10 @@ func seedDocumentCollectionBookingHistory(t *testing.T, store *fakeStore, contac
 		t.Fatalf("seed availability draft: %v", err)
 	}
 
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityResult, 1)
 	messages := []CreateMessageInput{
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute), Body: "1"},
-		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?", Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "so eu"},
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "Tem crianca de 5 anos ou menos viajando?"},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: "nao"},
@@ -2618,7 +2624,7 @@ func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(
 	}
 	seedPassengerClarificationStateV1ForTest(store, session.ID, passengerState)
 
-	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+	availabilityResult := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
 			Origin:      "Santa Ines/MA",
 			Destination: "Fraiburgo/SC",
@@ -2651,7 +2657,8 @@ func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(
 				PackageName:            packageToSantaCatarina,
 			},
 		},
-	})
+	}
+	availabilityPayload := buildAvailabilityToolResponsePayload(availabilityResult)
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,
 		Direction:        "OUTBOUND",
@@ -2673,9 +2680,10 @@ func seedInlinePassengerDocumentBookingHistoryWithPassengerReply(
 		t.Fatalf("seed availability: %v", err)
 	}
 
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityResult, 1)
 	messages := []CreateMessageInput{
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "primeira opcao"},
-		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto? Tem crianca de 5 anos ou menos?", Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: passengerReply},
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Body: "Perfeito. Agora pode enviar os nomes completos e os documentos dos 2 passageiros faltantes (CPF ou RG)."},
 	}
@@ -2705,13 +2713,14 @@ func seedSequentialSoloChildDocumentBookingHistory(t *testing.T, store *fakeStor
 	seedPassengerClarificationStateV1ForTest(store, session.ID, passengerState)
 	session = sessionWithPassengerClarificationStateForTest(session, passengerState)
 
-	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+	availabilityResult := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
 		Results: []AvailabilitySearchItem{{
 			TripID: "trip-sequential-docs-1", BoardStopID: "board-sequential-docs-1", AlightStopID: "alight-sequential-docs-1",
 			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-06-22", Price: 950, Currency: "BRL",
 		}},
-	})
+	}
+	availabilityPayload := buildAvailabilityToolResponsePayload(availabilityResult)
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-8 * time.Minute),
 		Body:              "Encontrei esta opcao para Santa Ines/MA -> Fraiburgo/SC.",
@@ -2721,9 +2730,10 @@ func seedSequentialSoloChildDocumentBookingHistory(t *testing.T, store *fakeStor
 		t.Fatalf("seed availability: %v", err)
 	}
 
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityResult, 1)
 	messages := []CreateMessageInput{
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-7 * time.Minute), Body: "primeira opcao"},
-		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto?"},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-6 * time.Minute), Body: "A passagem e so para voce ou vai mais alguem junto?", Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-5 * time.Minute), Body: "so pra mim"},
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Body: askChildUnder5Reply},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute), Body: "sim"},
@@ -2847,16 +2857,18 @@ func TestReprocessAsksOnlyForMissingPassengerDocumentAfterImageExtract(t *testin
 		},
 	}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
-	availabilityPayload := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+	availabilityResult := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 2, Limit: 5},
 		Results: []AvailabilitySearchItem{{
 			TripID: "trip-missing-doc", BoardStopID: "board-missing-doc", AlightStopID: "alight-missing-doc",
 			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-08-25", Price: 950, Currency: "BRL",
 		}},
-	})
+	}
+	availabilityPayload := buildAvailabilityToolResponsePayload(availabilityResult)
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityResult, 1)
 	messages := []IngestMessagePayload{
 		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-availability", IdempotencyKey: "idem-missing-availability", Body: "Encontrei uma opcao para Santa Ines/MA -> Fraiburgo/SC.", Payload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}, NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availabilityPayload}}},
-		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-1", IdempotencyKey: "idem-missing-out-1", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?"},
+		{Direction: "OUTBOUND", ProviderMessageID: "msg-missing-out-1", IdempotencyKey: "idem-missing-out-1", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{Direction: "INBOUND", ProviderMessageID: "msg-missing-in-1", IdempotencyKey: "idem-missing-in-1", Body: "eu e minha filha de 4 anos", NormalizedPayload: map[string]interface{}{
 			passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{
 				{Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger, Value: 2, ValueKnown: true, PassengerProvenance: PassengerCountProvenanceIncludesSpeakerComposition},
@@ -3475,17 +3487,19 @@ func TestUnknownAvailabilityQtyServiceDoesNotConfirmDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed unknown-quantity session: %v", err)
 	}
-	availability := buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
+	availabilityResult := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Fraiburgo/SC", Qty: 1, Limit: 5},
 		Results: []AvailabilitySearchItem{{
 			TripID: "trip-unknown-qty", BoardStopID: "board-unknown-qty", AlightStopID: "alight-unknown-qty",
 			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Fraiburgo/SC", OriginDepartTime: "12:00", TripDate: "2026-08-25", Price: 950, Currency: "BRL",
 		}},
-	})
+	}
+	availability := buildAvailabilityToolResponsePayload(availabilityResult)
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityResult, 1)
 	seed := []CreateMessageInput{
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: "Encontrei esta opcao para Santa Ines/MA -> Fraiburgo/SC.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute), Payload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availability}}, NormalizedPayload: map[string]interface{}{"tool_context": map[string]interface{}{toolNameAvailabilitySearch: availability}}},
 		{SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
-		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
+		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
 		{SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: "Pode enviar seu nome completo e CPF.", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-time.Minute)},
 	}
 	for _, message := range seed {
@@ -3493,6 +3507,7 @@ func TestUnknownAvailabilityQtyServiceDoesNotConfirmDocument(t *testing.T) {
 			t.Fatalf("seed unknown-quantity history: %v", err)
 		}
 	}
+	seedDeliveredPassengerPromptForTest(t, store, session.ID, now.Add(-30*time.Second))
 
 	result := reprocessSequentialDocumentImage(t, svc, session.ContactKey, "unknown-availability-qty")
 	if got := strings.TrimSpace(asString(result.Draft.NormalizedPayload["template_name"])); got == string(TemplateConfirmDocument) {
@@ -7969,6 +7984,25 @@ func seedPassengerCountContextWithAvailability(t *testing.T, store *fakeStore, q
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       5,
+		},
+		Results: []AvailabilitySearchItem{{
+			TripID:                 "trip-1",
+			BoardStopID:            "board-1",
+			AlightStopID:           "alight-1",
+			OriginDisplayName:      "Santa Ines/MA",
+			DestinationDisplayName: "Fraiburgo/SC",
+			OriginDepartTime:       "12:00",
+			TripDate:               "2026-05-25",
+			Price:                  950,
+			Currency:               "BRL",
+		}},
+	}
 	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:        session.ID,
 		Direction:        "OUTBOUND",
@@ -7978,25 +8012,7 @@ func seedPassengerCountContextWithAvailability(t *testing.T, store *fakeStore, q
 		ReceivedAt:       now.Add(-4 * time.Minute),
 		Payload: map[string]interface{}{
 			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-					Filter: AvailabilitySearchInput{
-						Origin:      "Santa Ines/MA",
-						Destination: "Fraiburgo/SC",
-						Qty:         1,
-						Limit:       5,
-					},
-					Results: []AvailabilitySearchItem{{
-						TripID:                 "trip-1",
-						BoardStopID:            "board-1",
-						AlightStopID:           "alight-1",
-						OriginDisplayName:      "Santa Ines/MA",
-						DestinationDisplayName: "Fraiburgo/SC",
-						OriginDepartTime:       "12:00",
-						TripDate:               "2026-05-25",
-						Price:                  950,
-						Currency:               "BRL",
-					}},
-				}),
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 			},
 		},
 	}); err != nil {
@@ -8019,6 +8035,11 @@ func seedPassengerCountContextWithAvailability(t *testing.T, store *fakeStore, q
 		Body:             question,
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       now.Add(-2 * time.Minute),
+		Payload:          persistedAvailabilitySelectionPayloadForTest(availability, 1),
+		NormalizedPayload: persistedAvailabilitySelectionPayloadForTest(
+			availability,
+			1,
+		),
 	}); err != nil {
 		t.Fatalf("seed passenger question: %v", err)
 	}
@@ -8900,7 +8921,7 @@ func TestReprocessAsksDocumentsWhenCustomerChoosesPreviousOptionWithKnownPasseng
 	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-prev-booking-create",
-		Body:             "Tenho duas opcoes para essa data.",
+		Body:             "Encontrei estas opcoes:\n1. Videira/SC para Sao Luis/MA, 2026-05-10, saida 18:30, R$ 950\n2. Videira/SC para Sao Luis/MA, 2026-05-10, saida 20:15, R$ 980\n\nQual opcao voce prefere?",
 		SenderName:       "SHABAS",
 		ProcessingStatus: messageStatusAutomationSent,
 		Payload: map[string]interface{}{
@@ -10492,14 +10513,110 @@ func (s *fakeStore) ApplyPassengerClarificationEventsV1(
 	if err := validatePassengerClarificationStateV1(state); err != nil {
 		state = invalidPassengerClarificationStateV1()
 	}
+	availabilityStructuredHistory := make([]Message, 0, len(s.messageOrder))
+	for _, messageID := range s.messageOrder {
+		message := s.messages[messageID]
+		if message.SessionID == session.ID {
+			availabilityStructuredHistory = append(availabilityStructuredHistory, Message{
+				ID:                message.ID,
+				SessionID:         message.SessionID,
+				Direction:         message.Direction,
+				Payload:           cloneMap(message.Payload),
+				NormalizedPayload: cloneMap(message.NormalizedPayload),
+				ProcessingStatus:  message.ProcessingStatus,
+				SentAt:            message.SentAt,
+				ReceivedAt:        message.ReceivedAt,
+				CreatedAt:         message.CreatedAt,
+			})
+		}
+	}
+	availabilityEvents, err := hydrateAvailabilitySelectionEventsV1(
+		input.AvailabilitySelectionEvents,
+		availabilityStructuredHistory,
+		true,
+	)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	availabilityEvents = NormalizeAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		availabilityEvents,
+	)
+	availabilityEventsByMessageID := map[string][]AvailabilitySelectionEventV1{}
+	for _, event := range availabilityEvents {
+		message, exists := s.messages[event.MessageID]
+		if !exists || message.SessionID != session.ID ||
+			!strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			return ApplyPassengerClarificationEventsV1Result{}, ErrAvailabilitySelectionStateInvalid
+		}
+		availabilityEventsByMessageID[event.MessageID] = append(
+			availabilityEventsByMessageID[event.MessageID],
+			event,
+		)
+	}
+	for messageID, messageEvents := range availabilityEventsByMessageID {
+		message := s.messages[messageID]
+		if message.NormalizedPayload == nil {
+			message.NormalizedPayload = map[string]interface{}{}
+		}
+		persistedEvents := make([]AvailabilitySelectionEventV1, 0, len(messageEvents))
+		for _, event := range messageEvents {
+			event.EventID = ""
+			event.Order = AvailabilitySelectionEventOrderV1{}
+			persistedEvents = append(persistedEvents, event)
+		}
+		message.NormalizedPayload[availabilitySelectionEventsV1MessageKey] = persistedEvents
+		s.messages[message.ID] = message
+	}
+
+	availabilityStructuredHistory = availabilityStructuredHistory[:0]
+	for _, messageID := range s.messageOrder {
+		message := s.messages[messageID]
+		if message.SessionID == session.ID {
+			availabilityStructuredHistory = append(availabilityStructuredHistory, Message{
+				ID:                message.ID,
+				SessionID:         message.SessionID,
+				Direction:         message.Direction,
+				Payload:           cloneMap(message.Payload),
+				NormalizedPayload: cloneMap(message.NormalizedPayload),
+				ProcessingStatus:  message.ProcessingStatus,
+				SentAt:            message.SentAt,
+				ReceivedAt:        message.ReceivedAt,
+				CreatedAt:         message.CreatedAt,
+			})
+		}
+	}
+	replayEvents := availabilitySelectionStructuredEventsV1(availabilityStructuredHistory)
+	replayEvents = availabilitySelectionBootstrapEventsWithInvalidationV1(
+		session,
+		replayEvents,
+		availabilityStructuredHistory,
+	)
+	replayEvents = NormalizeAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		replayEvents,
+	)
+	availabilityState := ReduceAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		replayEvents,
+	)
+	availabilityState.BootstrapCompleted = true
+	if err := validateAvailabilitySelectionStateV1(availabilityState); err != nil {
+		availabilityState = invalidAvailabilitySelectionStateV1("INVALID_REPLAY_STATE")
+	}
 	metadata := cloneMap(session.Metadata)
 	memory := cloneMap(asMap(metadata["memory"]))
 	memory[passengerClarificationStateV1MemoryKey] = state
+	memory[availabilitySelectionStateV1MemoryKey] = availabilityState
 	metadata["memory"] = memory
 	session.Metadata = metadata
 	session.UpdatedAt = time.Now().UTC()
 	s.sessions[session.ID] = session
-	return ApplyPassengerClarificationEventsV1Result{Session: session, State: state}, nil
+	return ApplyPassengerClarificationEventsV1Result{
+		Session:                    session,
+		State:                      state,
+		AvailabilitySelectionState: availabilityState,
+	}, nil
 }
 
 func (s *fakeStore) RequestHandoff(_ context.Context, input RequestHandoffInput) (RequestHandoffResult, error) {
@@ -11139,6 +11256,9 @@ func (s *fakeStore) SaveReprocessSnapshot(_ context.Context, input SaveReprocess
 	memory := cloneMap(input.Memory)
 	if value, ok := passengerClarificationStateV1ValueFromSession(session); ok {
 		memory[passengerClarificationStateV1MemoryKey] = value
+	}
+	if value, ok := availabilitySelectionStateV1ValueFromSession(session); ok {
+		memory[availabilitySelectionStateV1MemoryKey] = value
 	}
 	session.Metadata["memory"] = memory
 	session.Metadata["agent"] = input.Agent

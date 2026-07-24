@@ -189,29 +189,48 @@ func passengerClarificationPromptEventV1(kind ActivePromptKind, messageID string
 func passengerClarificationPromptEventForRunV1(
 	run RunAgentResult,
 	messageID string,
-	state PassengerClarificationStateV1,
+	_ PassengerClarificationStateV1,
 ) (PassengerClarificationEventV1, bool) {
+	kind, ok := passengerClarificationPromptKindForRunV1(run)
+	if !ok {
+		return PassengerClarificationEventV1{}, false
+	}
+	return passengerClarificationPromptEventV1(kind, messageID)
+}
+
+func passengerClarificationPromptKindForRunV1(run RunAgentResult) (ActivePromptKind, bool) {
 	templateName := ResponseTemplateName(firstNonEmpty(
 		asString(run.ResponsePayload["template_name"]),
 		asString(run.RequestPayload["template_name"]),
 	))
+	action := strings.TrimSpace(firstNonEmpty(
+		asString(run.ResponsePayload["action"]),
+		asString(run.RequestPayload["action"]),
+	))
 	switch templateName {
 	case TemplateAskPassengerCount:
-		return passengerClarificationPromptEventV1(ActivePromptPassengerCount, messageID)
+		if action != "template" && action != string(BookingNextAskPassengerClarification) {
+			return ActivePromptUnknown, false
+		}
+		return ActivePromptPassengerCount, true
+	case TemplateContextFallbackPassengerCount:
+		if action != "template" {
+			return ActivePromptUnknown, false
+		}
+		return ActivePromptPassengerCount, true
 	case TemplateAskChildUnder5:
-		return passengerClarificationPromptEventV1(ActivePromptLapChildQuestion, messageID)
+		if action != string(BookingNextAskPassengerClarification) {
+			return ActivePromptUnknown, false
+		}
+		return ActivePromptLapChildQuestion, true
+	case TemplateContextFallbackChildUnder5:
+		if action != "template" {
+			return ActivePromptUnknown, false
+		}
+		return ActivePromptLapChildQuestion, true
+	default:
+		return ActivePromptUnknown, false
 	}
-
-	if templateName != ResponseTemplateName(safePhaseFallbackTemplateName) {
-		return PassengerClarificationEventV1{}, false
-	}
-	if !state.PassengerCountKnown {
-		return passengerClarificationPromptEventV1(ActivePromptPassengerCount, messageID)
-	}
-	if !state.ChildUnder5CountKnown {
-		return passengerClarificationPromptEventV1(ActivePromptLapChildQuestion, messageID)
-	}
-	return PassengerClarificationEventV1{}, false
 }
 
 func passengerClarificationEventIsPromptV1(event PassengerClarificationEventV1) bool {

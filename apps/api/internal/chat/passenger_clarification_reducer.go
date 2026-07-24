@@ -464,6 +464,9 @@ func validatePassengerClarificationStateV1(state PassengerClarificationStateV1) 
 		!passengerClarificationSlotStatusValidV1(state.ChildSlotStatus) {
 		return ErrPassengerClarificationStateInvalid
 	}
+	if !state.HasEvidence && passengerClarificationStateHasStructuralEvidenceV1(state) {
+		return ErrPassengerClarificationStateInvalid
+	}
 	if state.PassengerCountKnown != (state.PassengerSlotStatus == PassengerClarificationSlotAnswered) ||
 		state.ChildUnder5CountKnown != (state.ChildSlotStatus == PassengerClarificationSlotAnswered) {
 		return ErrPassengerClarificationStateInvalid
@@ -508,6 +511,29 @@ func validatePassengerClarificationStateV1(state PassengerClarificationStateV1) 
 		}
 	}
 	return nil
+}
+
+func passengerClarificationStateHasStructuralEvidenceV1(state PassengerClarificationStateV1) bool {
+	return strings.TrimSpace(state.BookingID) != "" ||
+		state.Authority == PassengerClarificationAuthorityPostBooking ||
+		state.PassengerCount != 0 ||
+		state.PassengerCountKnown ||
+		state.PassengerCountProvenance != PassengerCountProvenanceUnknown ||
+		state.PassengerSlotStatus != PassengerClarificationSlotPending ||
+		strings.TrimSpace(state.PassengerPromptMessageID) != "" ||
+		strings.TrimSpace(state.PassengerLastMessageID) != "" ||
+		len(state.PassengerReasonCodes) != 0 ||
+		state.ChildUnder5Count != 0 ||
+		state.ChildUnder5CountKnown ||
+		state.ChildUnder5AddsTraveler ||
+		state.ChildUnder5AddsTravelerOrigin != (PassengerClarificationAddsTravelerOriginV1{}) ||
+		state.ChildSlotStatus != PassengerClarificationSlotPending ||
+		strings.TrimSpace(state.ChildPromptMessageID) != "" ||
+		strings.TrimSpace(state.ChildLastMessageID) != "" ||
+		len(state.ChildReasonCodes) != 0 ||
+		len(state.ChildReferences) != 0 ||
+		len(state.AppliedEventIDs) != 0 ||
+		len(state.AppliedMessageIDs) != 0
 }
 
 func passengerCountProvenanceActionableV1(provenance PassengerCountProvenance) bool {
@@ -590,14 +616,32 @@ func passengerClarificationStateConflictingV1(state PassengerClarificationStateV
 		state.ChildSlotStatus == PassengerClarificationSlotConflicting
 }
 
+func passengerClarificationStateInvalidOrConflictingV1(state PassengerClarificationStateV1) bool {
+	return validatePassengerClarificationStateV1(state) != nil ||
+		passengerClarificationStateConflictingV1(state)
+}
+
+// passengerClarificationContextActiveV1 is false for the durable UNKNOWN
+// bootstrap of a fresh session. Structured passenger evidence, including an
+// effectively delivered passenger prompt, activates the passenger gate.
+func passengerClarificationContextActiveV1(state PassengerClarificationStateV1) bool {
+	return state.HasEvidence
+}
+
+func passengerClarificationSlotsUnknownV1(state PassengerClarificationStateV1) bool {
+	return !state.PassengerCountKnown || !state.ChildUnder5CountKnown
+}
+
 func passengerClarificationStateRequiresClarificationV1(state PassengerClarificationStateV1) bool {
 	return passengerClarificationStateUnsafeV1(state)
 }
 
 func passengerClarificationStateUnsafeV1(state PassengerClarificationStateV1) bool {
-	return validatePassengerClarificationStateV1(state) != nil ||
-		passengerClarificationStateConflictingV1(state) ||
-		!state.PassengerCountKnown || !state.ChildUnder5CountKnown
+	if passengerClarificationStateInvalidOrConflictingV1(state) {
+		return true
+	}
+	return passengerClarificationContextActiveV1(state) &&
+		passengerClarificationSlotsUnknownV1(state)
 }
 
 func passengerClarificationEventReason(event PassengerClarificationEventV1, fallback string) string {

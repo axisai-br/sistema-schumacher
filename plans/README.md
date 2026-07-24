@@ -11,14 +11,15 @@
 7. `h-2026-07-16a-travel-v2-shadow-operacional.md`
 8. `h-2026-07-16b-passenger-child-state.md` — umbrella não executável
 9. `h-2026-07-16b1-passenger-state-foundation.md`
-10. `h-2026-07-16b2-passenger-meaning-v1.md`
-11. `h-2026-07-16b3-passenger-meaning-runtime.md`
-12. `3.6f-d-corpus-evaluator-v2.md`
-13. `3.6f-e-observabilidade-v2.md`
-14. `3.6f-f-templates-seguros.md`
-15. `3.6f-g-earliest-available.md`
-16. `3.6f-h-route-coverage.md`
-17. `3.6f-i-arbitragem-runtime-weak.md`
+10. `h-2026-07-22a-fresh-session-passenger-gate.md` — EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW
+11. `h-2026-07-16b2-passenger-meaning-v1.md` — bloqueada pelo gate operacional de B1
+12. `h-2026-07-16b3-passenger-meaning-runtime.md`
+13. `3.6f-d-corpus-evaluator-v2.md`
+14. `3.6f-e-observabilidade-v2.md`
+15. `3.6f-f-templates-seguros.md`
+16. `3.6f-g-earliest-available.md`
+17. `3.6f-h-route-coverage.md`
+18. `3.6f-i-arbitragem-runtime-weak.md`
 
 Leia também:
 
@@ -39,6 +40,8 @@ O Codex recebe somente:
 
 Não executar múltiplos slices ou hotfixes no mesmo `/goal` ou PR.
 
-H-2026-07-16B é somente umbrella. Para essa fila, abrir exclusivamente o plano
-do filho que estiver marcado como `PRÓXIMA`; B2 não pode ser incluído no diff de
-B1 e B3 não pode ser incluído no diff de B2.
+H-2026-07-16B é somente umbrella. H-2026-07-22A interrompe a sequência como
+hotfix ativo, **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW**; B2 permanece
+bloqueada até review, deploy e smoke verdes do
+hotfix. B2 não pode ser incluído no diff do hotfix e B3 não pode ser incluído
+no diff de B2.

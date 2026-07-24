@@ -123,6 +123,16 @@ func availabilityInferenceHistory(
 	return overlay
 }
 
+func availabilityInferenceHistoryForSession(session Session, history []Message) []Message {
+	if !canonicalAvailabilityFactsInvalidatedInMetadata(session.Metadata) {
+		return history
+	}
+	return availabilityInferenceHistory(
+		history,
+		canonicalAvailabilityFactsInvalidationBoundaryInMetadata(session.Metadata),
+	)
+}
+
 func canonicalAvailabilityHistoryMessageAtOrBeforeBoundary(
 	message Message,
 	historyIndex int,

@@ -725,7 +725,7 @@ func availabilitySelectionStructuredHistory(t *testing.T) []Message {
 	t.Helper()
 	return []Message{{
 		Direction:        "OUTBOUND",
-		Body:             "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC.",
+		Body:             "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC. Qual opcao voce prefere?",
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       time.Now().UTC().Add(-2 * time.Minute),
 		Payload: map[string]interface{}{

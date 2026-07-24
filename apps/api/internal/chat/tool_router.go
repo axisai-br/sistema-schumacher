@@ -818,7 +818,12 @@ func parseAvailabilityDateSelectionInput(history []Message, text string, observe
 	if !ok {
 		return AvailabilitySearchInput{}, false
 	}
-	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(sourceHistoryIndex, 0, selected.TripDate) {
+	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForPrompt(
+		availabilityPromptSourceMessageIDAtHistoryIndex(history, sourceHistoryIndex),
+		sourceHistoryIndex,
+		0,
+		selected.TripDate,
+	) {
 		return AvailabilitySearchInput{}, false
 	}
 

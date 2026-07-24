@@ -261,7 +261,7 @@ func TestGuardrailAdvancedPhasesUseSafeFallbackInsteadOfFreeFormLLM(t *testing.T
 	}
 }
 
-func TestPassengerStrongGuardrailHumanSupportWinsUnsafeState(t *testing.T) {
+func TestPassengerGateStrongHumanSupportWinsUnsafeState(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
@@ -882,7 +882,9 @@ func seedPassengerCollectionPhase(t *testing.T, store *fakeStore) Session {
 	unknown.BootstrapCompleted = true
 	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
 	seedAvailabilityOutbound(t, store, session.ID, now.Add(-3*time.Minute))
+	availabilityPromptSourceMessageID := store.messageOrder[len(store.messageOrder)-1]
 	seedInboundSent(t, store, session.ID, "opcao 1", now.Add(-2*time.Minute))
+	selectionMessageID := store.messageOrder[len(store.messageOrder)-1]
 	selected := map[string]interface{}{
 		"selected_option_index":    1,
 		"trip_id":                  "trip-jul-1",
@@ -896,6 +898,9 @@ func seedPassengerCollectionPhase(t *testing.T, store *fakeStore) Session {
 		"trip_date":                "2026-07-10",
 		"price":                    950,
 		"currency":                 "BRL",
+		selectedAvailabilitySelectionMessageIDPayloadKey:     selectionMessageID,
+		availabilityPromptSourceMessageIDPayloadKey:          availabilityPromptSourceMessageID,
+		availabilitySelectionMaterializesAuthorityPayloadKey: true,
 	}
 	prompt, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply,
@@ -938,7 +943,14 @@ func seedBookingPendingPhase(t *testing.T, store *fakeStore) Session {
 	now := time.Now().UTC()
 	session := seedSessionOnly(t, store, now)
 	seedAvailabilityOutbound(t, store, session.ID, now.Add(-5*time.Minute))
-	seedOutboundSent(t, store, session.ID, askPassengerCountReply, now.Add(-4*time.Minute))
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(guardrailAvailabilityResult(), 1)
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply,
+		ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-4 * time.Minute),
+		Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload),
+	}); err != nil {
+		t.Fatalf("seed selected passenger prompt: %v", err)
+	}
 	seedInboundSent(t, store, session.ID, "sou eu mesmo, sem crianca", now.Add(-3*time.Minute))
 	seedOutboundSent(t, store, session.ID, "Perfeito. Agora pode enviar seu nome completo e o documento.", now.Add(-2*time.Minute))
 	seedInboundSent(t, store, session.ID, "Joao Vitor Messias CPF 52998224725", now.Add(-1*time.Minute))
@@ -1020,20 +1032,24 @@ func seedAvailabilityOutbound(t *testing.T, store *fakeStore, sessionID string, 
 		ProcessingStatus: messageStatusAutomationSent,
 		Payload: map[string]interface{}{
 			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-					Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Videira/SC", PackageName: packageToSantaCatarina, Qty: 1, Limit: 5},
-					Results: []AvailabilitySearchItem{{
-						TripID: "trip-jul-1", BoardStopID: "board-jul-1", AlightStopID: "alight-jul-1",
-						OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Videira/SC",
-						OriginDepartTime: "08:00", TripDate: "2026-07-10", SeatsAvailable: 5,
-						Price: 950, Currency: "BRL", Status: "ACTIVE", TripStatus: "SCHEDULED", PackageName: packageToSantaCatarina,
-					}},
-				}),
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(guardrailAvailabilityResult()),
 			},
 		},
 		ReceivedAt: at,
 	}); err != nil {
 		t.Fatalf("seed availability outbound: %v", err)
+	}
+}
+
+func guardrailAvailabilityResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Videira/SC", PackageName: packageToSantaCatarina, Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-jul-1", BoardStopID: "board-jul-1", AlightStopID: "alight-jul-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Videira/SC",
+			OriginDepartTime: "08:00", TripDate: "2026-07-10", SeatsAvailable: 5,
+			Price: 950, Currency: "BRL", Status: "ACTIVE", TripStatus: "SCHEDULED", PackageName: packageToSantaCatarina,
+		}},
 	}
 }
 

@@ -5,7 +5,11 @@ import (
 	"strings"
 )
 
-const selectedAvailabilityResultPayloadKey = "selected_availability_result"
+const (
+	selectedAvailabilityResultPayloadKey             = "selected_availability_result"
+	selectedAvailabilitySelectionMessageIDPayloadKey = "selection_message_id"
+	availabilityPromptSourceMessageIDPayloadKey      = "availability_prompt_source_message_id"
+)
 
 type BookingNextAction string
 
@@ -19,48 +23,52 @@ const (
 )
 
 type BookingDraftContext struct {
-	Origin                        string
-	Destination                   string
-	SelectedOptionIndex           int
-	TripID                        string
-	BoardStopID                   string
-	AlightStopID                  string
-	TripDate                      string
-	DepartureTime                 string
-	Price                         float64
-	Currency                      string
-	PassengerCount                int
-	PassengerCountProvenance      PassengerCountProvenance
-	ExpectedDocumentCount         int
-	ChildUnder5Count              int
-	PassengerCountKnown           bool
-	PassengerCountConflicting     bool
-	ChildUnder5CountKnown         bool
-	ChildUnder5AddsTraveler       bool
-	PassengerSlotStatus           PassengerClarificationSlotStatusV1
-	ChildSlotStatus               PassengerClarificationSlotStatusV1
-	PassengerPromptMessageID      string
-	ChildPromptMessageID          string
-	PassengerReasonCodes          []string
-	ChildReasonCodes              []string
-	ChildUnder5AddsTravelerOrigin PassengerClarificationAddsTravelerOriginV1
-	ChildReferences               []PassengerClarificationChildReferenceV1
-	LapChildAssignmentKnown       bool
-	LapChildPassengerIndexes      []int
-	NeedsLapChildAssignment       bool
-	HasPassengerDetails           bool
-	PassengerDetailsCount         int
-	PassengerDetailsText          string
-	PassengerDetails              []BookingCreatePassengerInput
-	PassengerSnapshot             bookingPassengerSnapshot
-	PartialPassengerDetails       []BookingPassengerDocumentPartial
-	PartialPassengerDetailsCount  int
-	HasAvailabilityShown          bool
-	AskedPassengerQuestion        bool
-	PassengerCountContextActive   bool
-	RequestedPassengerDocuments   bool
-	BookingCreated                bool
-	AskedPaymentPreference        bool
+	Origin                            string
+	Destination                       string
+	PackageName                       string
+	SelectionMessageID                string
+	AvailabilityPromptSourceMessageID string
+	SelectedOptionIndex               int
+	TripID                            string
+	BoardStopID                       string
+	AlightStopID                      string
+	TripDate                          string
+	DepartureTime                     string
+	Price                             float64
+	Currency                          string
+	PassengerCount                    int
+	PassengerCountProvenance          PassengerCountProvenance
+	ExpectedDocumentCount             int
+	ChildUnder5Count                  int
+	PassengerCountKnown               bool
+	PassengerCountConflicting         bool
+	ChildUnder5CountKnown             bool
+	ChildUnder5AddsTraveler           bool
+	PassengerSlotStatus               PassengerClarificationSlotStatusV1
+	ChildSlotStatus                   PassengerClarificationSlotStatusV1
+	PassengerPromptMessageID          string
+	ChildPromptMessageID              string
+	PassengerReasonCodes              []string
+	ChildReasonCodes                  []string
+	ChildUnder5AddsTravelerOrigin     PassengerClarificationAddsTravelerOriginV1
+	ChildReferences                   []PassengerClarificationChildReferenceV1
+	LapChildAssignmentKnown           bool
+	LapChildPassengerIndexes          []int
+	NeedsLapChildAssignment           bool
+	HasPassengerDetails               bool
+	PassengerDetailsCount             int
+	PassengerDetailsText              string
+	PassengerDetails                  []BookingCreatePassengerInput
+	PassengerSnapshot                 bookingPassengerSnapshot
+	PartialPassengerDetails           []BookingPassengerDocumentPartial
+	PartialPassengerDetailsCount      int
+	HasAvailabilityShown              bool
+	HasBookableSelection              bool
+	AskedPassengerQuestion            bool
+	PassengerCountContextActive       bool
+	RequestedPassengerDocuments       bool
+	BookingCreated                    bool
+	AskedPaymentPreference            bool
 }
 
 type availabilitySelectionStatus string
@@ -74,19 +82,36 @@ const (
 )
 
 type availabilitySelectionEvidence struct {
-	Status                availabilitySelectionStatus
-	SourceHistoryIndex    int
-	SelectedOptionIndex   int
-	RejectedOptionIndexes []int
-	RejectedTripDates     []string
-	RejectedWholeContext  bool
-	TripID                string
-	BoardStopID           string
-	AlightStopID          string
-	TripDate              string
-	DepartureTime         string
-	Price                 float64
-	Currency              string
+	Status                            availabilitySelectionStatus
+	SourceHistoryIndex                int
+	SelectionMessageID                string
+	RejectionMessageID                string
+	AvailabilityPromptSourceMessageID string
+	MaterializesAuthority             bool
+	SelectedOptionIndex               int
+	RejectedOptionIndexes             []int
+	RejectedTripDates                 []string
+	RejectedWholeContext              bool
+	LaterRejections                   []availabilitySelectionRejection
+	TripID                            string
+	BoardStopID                       string
+	AlightStopID                      string
+	OriginDisplayName                 string
+	DestinationDisplayName            string
+	PackageName                       string
+	TripDate                          string
+	DepartureTime                     string
+	Price                             float64
+	Currency                          string
+}
+
+type availabilitySelectionRejection struct {
+	SourceHistoryIndex                int
+	RejectionMessageID                string
+	AvailabilityPromptSourceMessageID string
+	OptionIndexes                     []int
+	TripDates                         []string
+	WholeContext                      bool
 }
 
 func (e availabilitySelectionEvidence) found() bool {
@@ -108,23 +133,67 @@ func (e availabilitySelectionEvidence) blocksHistoryIndex(historyIndex int) bool
 }
 
 func (e availabilitySelectionEvidence) rejectsAvailabilityOptionForHistory(historyIndex int, index int, tripDate string) bool {
-	if e.Status != availabilitySelectionRejected || historyIndex < 0 || e.SourceHistoryIndex < historyIndex {
+	return e.rejectsAvailabilityOptionForPrompt("", historyIndex, index, tripDate)
+}
+
+func (e availabilitySelectionEvidence) rejectsAvailabilityOptionForPrompt(
+	promptSourceMessageID string,
+	historyIndex int,
+	index int,
+	tripDate string,
+) bool {
+	if historyIndex < 0 {
 		return false
 	}
-	if e.RejectedWholeContext {
-		return true
+	promptSourceMessageID = strings.TrimSpace(promptSourceMessageID)
+	if len(e.LaterRejections) > 0 {
+		for _, rejection := range e.LaterRejections {
+			if rejection.SourceHistoryIndex < historyIndex {
+				continue
+			}
+			if !availabilityRejectionMatchesPromptSource(
+				promptSourceMessageID,
+				rejection.AvailabilityPromptSourceMessageID,
+			) {
+				continue
+			}
+			if rejection.WholeContext ||
+				availabilityOptionIndexRejected(rejection.OptionIndexes, index) ||
+				availabilityTripDateRejected(rejection.TripDates, tripDate) {
+				return true
+			}
+		}
+		return false
 	}
-	if e.rejectsOptionIndex(index) {
+	if e.Status != availabilitySelectionRejected || e.SourceHistoryIndex < historyIndex {
+		return false
+	}
+	if !availabilityRejectionMatchesPromptSource(
+		promptSourceMessageID,
+		e.AvailabilityPromptSourceMessageID,
+	) {
+		return false
+	}
+	if e.RejectedWholeContext || e.rejectsOptionIndex(index) {
 		return true
 	}
 	return e.rejectsTripDate(tripDate)
 }
 
-func (e availabilitySelectionEvidence) rejectsOptionIndex(index int) bool {
+func availabilityRejectionMatchesPromptSource(promptSourceMessageID string, rejectionPromptSourceMessageID string) bool {
+	promptSourceMessageID = strings.TrimSpace(promptSourceMessageID)
+	rejectionPromptSourceMessageID = strings.TrimSpace(rejectionPromptSourceMessageID)
+	if promptSourceMessageID == "" || rejectionPromptSourceMessageID == "" {
+		return promptSourceMessageID == "" && rejectionPromptSourceMessageID == ""
+	}
+	return promptSourceMessageID == rejectionPromptSourceMessageID
+}
+
+func availabilityOptionIndexRejected(rejectedIndexes []int, index int) bool {
 	if index <= 0 {
 		return false
 	}
-	for _, rejected := range e.RejectedOptionIndexes {
+	for _, rejected := range rejectedIndexes {
 		if rejected == index {
 			return true
 		}
@@ -132,17 +201,41 @@ func (e availabilitySelectionEvidence) rejectsOptionIndex(index int) bool {
 	return false
 }
 
-func (e availabilitySelectionEvidence) rejectsTripDate(tripDate string) bool {
+func availabilityTripDateRejected(rejectedDates []string, tripDate string) bool {
 	date := canonicalRejectedTripDate(tripDate)
 	if date == "" {
 		return false
 	}
-	for _, rejected := range e.RejectedTripDates {
+	for _, rejected := range rejectedDates {
 		if canonicalRejectedTripDate(rejected) == date {
 			return true
 		}
 	}
 	return false
+}
+
+func (e availabilitySelectionEvidence) rejectsOptionIndex(index int) bool {
+	return availabilityOptionIndexRejected(e.RejectedOptionIndexes, index)
+}
+
+func (e availabilitySelectionEvidence) rejectsTripDate(tripDate string) bool {
+	return availabilityTripDateRejected(e.RejectedTripDates, tripDate)
+}
+
+func (e availabilitySelectionEvidence) availabilityItem() (AvailabilitySearchItem, bool) {
+	item := AvailabilitySearchItem{
+		TripID:                 strings.TrimSpace(e.TripID),
+		BoardStopID:            strings.TrimSpace(e.BoardStopID),
+		AlightStopID:           strings.TrimSpace(e.AlightStopID),
+		OriginDisplayName:      strings.TrimSpace(e.OriginDisplayName),
+		DestinationDisplayName: strings.TrimSpace(e.DestinationDisplayName),
+		PackageName:            strings.TrimSpace(e.PackageName),
+		TripDate:               strings.TrimSpace(e.TripDate),
+		OriginDepartTime:       strings.TrimSpace(e.DepartureTime),
+		Price:                  e.Price,
+		Currency:               strings.TrimSpace(e.Currency),
+	}
+	return item, e.bookable() && hasCompleteSelectedTripFacts(item.TripID, item.BoardStopID, item.AlightStopID)
 }
 
 func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
@@ -153,6 +246,31 @@ func (c BookingDraftContext) IsAdvancedBookingFlow() bool {
 		strings.TrimSpace(c.TripID) != ""
 }
 
+type bookingDraftAvailabilityProjectionPolicy string
+
+const (
+	bookingDraftAvailabilityEnvelopeOnly      bookingDraftAvailabilityProjectionPolicy = "ENVELOPE_ONLY"
+	bookingDraftAvailabilityBookableSelection bookingDraftAvailabilityProjectionPolicy = "BOOKABLE_SELECTION"
+)
+
+type bookingDraftTurnProjection struct {
+	CurrentTurn        string
+	AvailabilityPolicy bookingDraftAvailabilityProjectionPolicy
+}
+
+func bookingDraftCurrentTurnProjection(currentTurn string) bookingDraftTurnProjection {
+	return bookingDraftTurnProjection{
+		CurrentTurn:        currentTurn,
+		AvailabilityPolicy: bookingDraftAvailabilityBookableSelection,
+	}
+}
+
+func bookingDraftRoutingBaselineProjection() bookingDraftTurnProjection {
+	return bookingDraftTurnProjection{
+		AvailabilityPolicy: bookingDraftAvailabilityEnvelopeOnly,
+	}
+}
+
 func collectBookingDraftContextFromState(session Session, history []Message, currentTurn string) BookingDraftContext {
 	state, ok := passengerClarificationStateV1FromSession(session)
 	if !ok {
@@ -161,32 +279,50 @@ func collectBookingDraftContextFromState(session Session, history []Message, cur
 	return collectBookingDraftContextWithPassengerState(session, history, currentTurn, state)
 }
 
+func collectBookingDraftContextForRoutingBaseline(session Session, history []Message) BookingDraftContext {
+	state, ok := passengerClarificationStateV1FromSession(session)
+	if !ok {
+		state = newPassengerClarificationStateV1()
+	}
+	return collectBookingDraftContextForRoutingBaselineWithPassengerState(session, history, state)
+}
+
+func collectBookingDraftContextForRoutingBaselineWithPassengerState(
+	session Session,
+	history []Message,
+	passengerState PassengerClarificationStateV1,
+) BookingDraftContext {
+	return collectBookingDraftContextWithPassengerStateProjection(
+		session,
+		history,
+		passengerState,
+		bookingDraftRoutingBaselineProjection(),
+	)
+}
+
 func collectBookingDraftContextWithPassengerState(
 	session Session,
 	history []Message,
 	currentTurn string,
 	passengerState PassengerClarificationStateV1,
 ) BookingDraftContext {
-	selectionEvidence := latestAvailabilitySelectionEvidence(history)
-	selectedOptionIndex := 0
-	if selectionEvidence.bookable() {
-		selectedOptionIndex = selectionEvidence.SelectedOptionIndex
-	}
-	if !selectionEvidence.found() {
-		candidateIndex := findLatestSelectedOptionIndex(history)
-		foldedCurrentTurn := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
-		selectingNow := extractSelectedOptionIndex(currentTurn) > 0 ||
-			looksLikeContextualAvailabilitySelection(foldedCurrentTurn)
-		if !selectingNow {
-			selectedOptionIndex = candidateIndex
-		} else {
-			currentAvailability := currentAvailabilitySelectionPromptAvailabilityContext(history)
-			if _, ok := selectedAvailabilityItemForMaterialization(currentAvailability, candidateIndex); ok {
-				selectedOptionIndex = candidateIndex
-			}
-		}
-	}
-	context := BookingDraftContext{SelectedOptionIndex: selectedOptionIndex}
+	return collectBookingDraftContextWithPassengerStateProjection(
+		session,
+		history,
+		passengerState,
+		bookingDraftCurrentTurnProjection(currentTurn),
+	)
+}
+
+func collectBookingDraftContextWithPassengerStateProjection(
+	session Session,
+	history []Message,
+	passengerState PassengerClarificationStateV1,
+	projection bookingDraftTurnProjection,
+) BookingDraftContext {
+	history = availabilityInferenceHistoryForSession(session, history)
+	selectionState := availabilitySelectionStateV1ForRead(session, history)
+	context := applyAvailabilitySelectionStateV1ToBookingDraft(BookingDraftContext{}, selectionState)
 	context = applyPassengerClarificationStateToBookingDraft(context, passengerState)
 
 	for i := len(history) - 1; i >= 0; i-- {
@@ -205,16 +341,13 @@ func collectBookingDraftContextWithPassengerState(
 
 		if snapshot := selectedAvailabilityResultFromMessage(message); len(snapshot) > 0 {
 			context.HasAvailabilityShown = true
-			if shouldMergeSelectedAvailabilitySnapshotForBookingDraft(selectionEvidence, i, context, snapshot) {
-				mergeSelectedAvailabilitySnapshotIntoBookingDraft(&context, snapshot)
-			}
 		}
 
 		for _, toolContext := range messageToolContexts(message) {
 			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil && shouldMergeAvailabilityFactsFromMessage(message) {
 				context.HasAvailabilityShown = true
-				if shouldMergeAvailabilityPayloadForBookingDraft(selectionEvidence, i, context, availability) {
-					mergeAvailabilityPayloadIntoBookingDraft(&context, availability)
+				if !context.HasBookableSelection {
+					mergeAvailabilityEnvelopeIntoBookingDraft(&context, availability)
 				}
 			}
 		}
@@ -225,7 +358,7 @@ func collectBookingDraftContextWithPassengerState(
 		expectedForReconstruction = expectedPassengerDocumentCount(context)
 	}
 	evidence := reconstructPassengerDocumentEvidence(
-		passengerDocumentEvidenceTimeline(history, currentTurn, session, context.TripDate),
+		passengerDocumentEvidenceTimeline(history, projection.CurrentTurn, session, context.TripDate),
 		expectedForReconstruction,
 	)
 	passengerDetailsText := evidence.SourceText
@@ -256,7 +389,7 @@ func collectBookingDraftContextWithPassengerState(
 	if !context.LapChildAssignmentKnown {
 		explicitLapChildIndexes, hasExplicitLapChildAssignment = explicitLapChildAssignmentIndexes(
 			history,
-			currentTurn,
+			projection.CurrentTurn,
 			passengers,
 			context.ChildUnder5Count,
 		)
@@ -268,7 +401,7 @@ func collectBookingDraftContextWithPassengerState(
 		context.ExpectedDocumentCount > 0 &&
 		len(passengers) == context.ExpectedDocumentCount &&
 		!context.LapChildAssignmentKnown {
-		if indexes, ok := inferLapChildAssignmentIndexes(history, currentTurn, passengers, context.ChildUnder5Count); ok {
+		if indexes, ok := inferLapChildAssignmentIndexes(history, projection.CurrentTurn, passengers, context.ChildUnder5Count); ok {
 			context.LapChildPassengerIndexes = indexes
 			context.LapChildAssignmentKnown = true
 		}
@@ -297,6 +430,30 @@ func collectBookingDraftContextWithPassengerState(
 	return context
 }
 
+func applyAvailabilitySelectionStateV1ToBookingDraft(
+	context BookingDraftContext,
+	state AvailabilitySelectionStateV1,
+) BookingDraftContext {
+	if state.Status != AvailabilitySelectionStatusBookable {
+		return context
+	}
+	item, ok := state.Snapshot.availabilityItem()
+	if !ok || state.SelectedOptionIndex <= 0 ||
+		state.Snapshot.SelectedOptionIndex != state.SelectedOptionIndex {
+		return context
+	}
+	context = applyBookableAvailabilityItemToBookingDraft(context, state.SelectedOptionIndex, item)
+	if !context.HasBookableSelection {
+		return context
+	}
+	context.Origin = firstNonEmpty(state.Snapshot.Origin, context.Origin)
+	context.Destination = firstNonEmpty(state.Snapshot.Destination, context.Destination)
+	context.PackageName = strings.TrimSpace(state.Snapshot.PackageName)
+	context.SelectionMessageID = strings.TrimSpace(state.SelectionProjectionMessageID)
+	context.AvailabilityPromptSourceMessageID = strings.TrimSpace(state.AvailabilityPromptSourceMessageID)
+	return context
+}
+
 func applyPassengerClarificationStateToBookingDraft(
 	context BookingDraftContext,
 	state PassengerClarificationStateV1,
@@ -317,7 +474,7 @@ func applyPassengerClarificationStateToBookingDraft(
 	context.ChildUnder5AddsTravelerOrigin = state.ChildUnder5AddsTravelerOrigin
 	context.ChildReferences = clonePassengerClarificationChildReferencesV1(state.ChildReferences)
 	context.BookingCreated = state.Authority == PassengerClarificationAuthorityPostBooking
-	if state.HasEvidence {
+	if passengerClarificationContextActiveV1(state) {
 		context.AskedPassengerQuestion = true
 		context.PassengerCountContextActive = true
 	}
@@ -325,38 +482,191 @@ func applyPassengerClarificationStateToBookingDraft(
 }
 
 func latestAvailabilitySelectionEvidence(history []Message) availabilitySelectionEvidence {
-	for i := len(history) - 1; i >= 0; i-- {
+	rejections := []availabilitySelectionRejection{}
+	authority := availabilitySelectionEvidence{Status: availabilitySelectionNone}
+
+	for i := 0; i < len(history); i++ {
 		message := history[i]
+		evidence := availabilitySelectionEvidence{Status: availabilitySelectionNone}
 		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
 			folded := strings.Join(strings.Fields(foldChatText(messageTurnText(message))), " ")
 			rejection := parseAvailabilityRejectionEvidence(folded)
 			if rejection.Found && hasPriorAvailabilityContextBefore(history, i) {
-				return availabilitySelectionEvidence{
-					Status:                availabilitySelectionRejected,
-					SourceHistoryIndex:    i,
-					RejectedOptionIndexes: append([]int(nil), rejection.OptionIndexes...),
-					RejectedTripDates:     append([]string(nil), rejection.TripDates...),
-					RejectedWholeContext:  rejection.WholeContext,
-				}
+				rejection.AvailabilityPromptSourceMessageID = availabilityPromptSourceMessageIDBefore(history, i)
+				evidence = availabilitySelectionEvidenceFromRejection(i, strings.TrimSpace(message.ID), rejection)
 			}
 		}
 
-		evidence := messageAvailabilitySelectionEvidence(message)
-		if evidence.found() {
-			evidence.SourceHistoryIndex = i
-			return evidence
+		if messageEvidence := messageAvailabilitySelectionEvidence(message); messageEvidence.found() {
+			evidence = messageEvidence
+		}
+		if !evidence.found() {
+			continue
+		}
+		evidence.SourceHistoryIndex = i
+		if evidence.Status == availabilitySelectionRejected && evidence.RejectionMessageID == "" {
+			evidence.RejectionMessageID = strings.TrimSpace(message.ID)
+		} else if evidence.SelectionMessageID == "" {
+			evidence.SelectionMessageID = strings.TrimSpace(message.ID)
+		}
+		switch evidence.Status {
+		case availabilitySelectionRejected:
+			rejection := availabilitySelectionRejectionFromEvidence(evidence)
+			rejections = append(rejections, rejection)
+			if authority.bookable() {
+				if availabilityRejectionTargetsSelection(rejection, authority) {
+					authority = evidence
+				}
+				continue
+			}
+			if evidence.RejectedWholeContext ||
+				!authority.found() ||
+				authority.Status == availabilitySelectionRejected {
+				authority = evidence
+			}
+		case availabilitySelectionBlockedMetadataOnly, availabilitySelectionIncomplete:
+			authority = evidence
+		case availabilitySelectionBookable:
+			if evidence.MaterializesAuthority {
+				authority = evidence
+			}
 		}
 	}
-	return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+
+	if !authority.found() {
+		return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+	}
+	authority.LaterRejections = cloneAvailabilitySelectionRejections(rejections)
+	if authority.Status == availabilitySelectionRejected {
+		authority.RejectedOptionIndexes = availabilitySelectionRejectedOptionIndexes(rejections)
+		authority.RejectedTripDates = availabilitySelectionRejectedTripDates(rejections)
+	}
+	return authority
+}
+
+func availabilitySelectionEvidenceFromRejection(
+	sourceHistoryIndex int,
+	rejectionMessageID string,
+	rejection availabilityRejectionEvidence,
+) availabilitySelectionEvidence {
+	return availabilitySelectionEvidence{
+		Status:                            availabilitySelectionRejected,
+		SourceHistoryIndex:                sourceHistoryIndex,
+		RejectionMessageID:                strings.TrimSpace(rejectionMessageID),
+		AvailabilityPromptSourceMessageID: strings.TrimSpace(rejection.AvailabilityPromptSourceMessageID),
+		RejectedOptionIndexes:             append([]int(nil), rejection.OptionIndexes...),
+		RejectedTripDates:                 append([]string(nil), rejection.TripDates...),
+		RejectedWholeContext:              rejection.WholeContext,
+	}
+}
+
+func availabilitySelectionRejectionFromEvidence(evidence availabilitySelectionEvidence) availabilitySelectionRejection {
+	return availabilitySelectionRejection{
+		SourceHistoryIndex:                evidence.SourceHistoryIndex,
+		RejectionMessageID:                strings.TrimSpace(evidence.RejectionMessageID),
+		AvailabilityPromptSourceMessageID: strings.TrimSpace(evidence.AvailabilityPromptSourceMessageID),
+		OptionIndexes:                     append([]int(nil), evidence.RejectedOptionIndexes...),
+		TripDates:                         append([]string(nil), evidence.RejectedTripDates...),
+		WholeContext:                      evidence.RejectedWholeContext,
+	}
+}
+
+func cloneAvailabilitySelectionRejections(rejections []availabilitySelectionRejection) []availabilitySelectionRejection {
+	cloned := make([]availabilitySelectionRejection, 0, len(rejections))
+	for _, rejection := range rejections {
+		cloned = append(cloned, availabilitySelectionRejection{
+			SourceHistoryIndex:                rejection.SourceHistoryIndex,
+			RejectionMessageID:                strings.TrimSpace(rejection.RejectionMessageID),
+			AvailabilityPromptSourceMessageID: strings.TrimSpace(rejection.AvailabilityPromptSourceMessageID),
+			OptionIndexes:                     append([]int(nil), rejection.OptionIndexes...),
+			TripDates:                         append([]string(nil), rejection.TripDates...),
+			WholeContext:                      rejection.WholeContext,
+		})
+	}
+	return cloned
+}
+
+func availabilityRejectionTargetsSelection(
+	rejection availabilitySelectionRejection,
+	selection availabilitySelectionEvidence,
+) bool {
+	if !availabilitySelectionAndRejectionSharePromptSource(selection, rejection) {
+		return false
+	}
+	return rejection.WholeContext ||
+		availabilityOptionIndexRejected(rejection.OptionIndexes, selection.SelectedOptionIndex) ||
+		availabilityTripDateRejected(rejection.TripDates, selection.TripDate)
+}
+
+func availabilitySelectionAndRejectionSharePromptSource(
+	selection availabilitySelectionEvidence,
+	rejection availabilitySelectionRejection,
+) bool {
+	selectionPromptSourceMessageID := strings.TrimSpace(selection.AvailabilityPromptSourceMessageID)
+	rejectionPromptSourceMessageID := strings.TrimSpace(rejection.AvailabilityPromptSourceMessageID)
+	if selectionPromptSourceMessageID != "" || rejectionPromptSourceMessageID != "" {
+		if selectionPromptSourceMessageID != "" && rejectionPromptSourceMessageID != "" {
+			return selectionPromptSourceMessageID == rejectionPromptSourceMessageID
+		}
+		return selectionPromptSourceMessageID == "" &&
+			rejectionPromptSourceMessageID == strings.TrimSpace(selection.SelectionMessageID)
+	}
+	return true
+}
+
+func availabilityPromptSourceMessageIDBefore(history []Message, beforeIndex int) string {
+	if beforeIndex > len(history) {
+		beforeIndex = len(history)
+	}
+	for i := beforeIndex - 1; i >= 0; i-- {
+		message := history[i]
+		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
+			!shouldMergeAvailabilityFactsFromMessage(message) {
+			continue
+		}
+		if context := availabilitySelectionPromptContextFromMessage(message); context.OptionCount > 0 {
+			return availabilityPromptSourceMessageIDFromMessage(message)
+		}
+	}
+	return ""
+}
+
+func availabilityPromptSourceMessageIDAtHistoryIndex(history []Message, historyIndex int) string {
+	if historyIndex < 0 || historyIndex >= len(history) {
+		return ""
+	}
+	return availabilityPromptSourceMessageIDFromMessage(history[historyIndex])
+}
+
+func availabilitySelectionRejectedOptionIndexes(rejections []availabilitySelectionRejection) []int {
+	indexes := []int{}
+	for _, rejection := range rejections {
+		for _, index := range rejection.OptionIndexes {
+			indexes = appendUniqueAvailabilityOptionIndex(indexes, index)
+		}
+	}
+	return indexes
+}
+
+func availabilitySelectionRejectedTripDates(rejections []availabilitySelectionRejection) []string {
+	dates := []string{}
+	for _, rejection := range rejections {
+		for _, date := range rejection.TripDates {
+			dates = appendUniqueAvailabilityTripDate(dates, canonicalRejectedTripDate(date))
+		}
+	}
+	return dates
 }
 
 func messageAvailabilitySelectionEvidence(message Message) availabilitySelectionEvidence {
 	if rejection := availabilityRejectionEvidenceFromMessageMetadata(message); rejection.Found {
 		return availabilitySelectionEvidence{
-			Status:                availabilitySelectionRejected,
-			RejectedOptionIndexes: append([]int(nil), rejection.OptionIndexes...),
-			RejectedTripDates:     append([]string(nil), rejection.TripDates...),
-			RejectedWholeContext:  rejection.WholeContext,
+			Status:                            availabilitySelectionRejected,
+			RejectionMessageID:                strings.TrimSpace(message.ID),
+			AvailabilityPromptSourceMessageID: strings.TrimSpace(rejection.AvailabilityPromptSourceMessageID),
+			RejectedOptionIndexes:             append([]int(nil), rejection.OptionIndexes...),
+			RejectedTripDates:                 append([]string(nil), rejection.TripDates...),
+			RejectedWholeContext:              rejection.WholeContext,
 		}
 	}
 	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
@@ -379,7 +689,14 @@ func messageAvailabilitySelectionEvidence(message Message) availabilitySelection
 		}
 		status, selected := messageAvailabilitySelectionStatusForIndex(message, index)
 		if status == availabilitySelectionBookable {
-			return availabilitySelectionEvidenceFromSelected(status, index, selected)
+			evidence := availabilitySelectionEvidenceFromSelected(status, index, selected)
+			evidence.SelectionMessageID, evidence.AvailabilityPromptSourceMessageID =
+				availabilitySelectionIdentityFromMessage(message, index)
+			evidence.MaterializesAuthority = availabilitySelectionMessageMaterializesAuthority(
+				message,
+				evidence.SelectionMessageID,
+			)
+			return evidence
 		}
 		if status == availabilitySelectionIncomplete && incompleteIndex <= 0 {
 			incompleteIndex = index
@@ -389,18 +706,72 @@ func messageAvailabilitySelectionEvidence(message Message) availabilitySelection
 		}
 	}
 	if incompleteIndex > 0 {
+		selectionMessageID, promptSourceMessageID := availabilitySelectionIdentityFromMessage(message, incompleteIndex)
 		return availabilitySelectionEvidence{
-			Status:              availabilitySelectionIncomplete,
-			SelectedOptionIndex: incompleteIndex,
+			Status:                            availabilitySelectionIncomplete,
+			SelectionMessageID:                selectionMessageID,
+			AvailabilityPromptSourceMessageID: promptSourceMessageID,
+			SelectedOptionIndex:               incompleteIndex,
 		}
 	}
 	if metadataOnlyIndex > 0 {
+		selectionMessageID, promptSourceMessageID := availabilitySelectionIdentityFromMessage(message, metadataOnlyIndex)
 		return availabilitySelectionEvidence{
-			Status:              availabilitySelectionBlockedMetadataOnly,
-			SelectedOptionIndex: metadataOnlyIndex,
+			Status:                            availabilitySelectionBlockedMetadataOnly,
+			SelectionMessageID:                selectionMessageID,
+			AvailabilityPromptSourceMessageID: promptSourceMessageID,
+			SelectedOptionIndex:               metadataOnlyIndex,
 		}
 	}
 	return availabilitySelectionEvidence{Status: availabilitySelectionNone}
+}
+
+func availabilitySelectionIdentityFromMessage(message Message, index int) (string, string) {
+	selectionMessageID := ""
+	promptSourceMessageID := ""
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if len(payload) == 0 {
+			continue
+		}
+		snapshot := selectedAvailabilityResultFromPayload(payload)
+		if len(snapshot) == 0 {
+			continue
+		}
+		snapshotIndex := asInt(snapshot["selected_option_index"])
+		if snapshotIndex > 0 && index > 0 && snapshotIndex != index {
+			continue
+		}
+		if snapshotSelectionMessageID := strings.TrimSpace(
+			asString(snapshot[selectedAvailabilitySelectionMessageIDPayloadKey]),
+		); snapshotSelectionMessageID != "" {
+			selectionMessageID = snapshotSelectionMessageID
+		}
+		promptSourceMessageID = firstNonEmpty(
+			strings.TrimSpace(asString(snapshot[availabilityPromptSourceMessageIDPayloadKey])),
+			promptSourceMessageID,
+		)
+	}
+	return selectionMessageID, promptSourceMessageID
+}
+
+func availabilitySelectionMessageMaterializesAuthority(message Message, _ string) bool {
+	materializes, present := availabilitySelectionMessageAuthorityMarker(message)
+	return present && materializes && availabilitySelectionMessageHasStructuralSelectIntentV1(message)
+}
+
+func availabilitySelectionMessageAuthorityMarker(message Message) (bool, bool) {
+	foundTrue := false
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if snapshot := selectedAvailabilityResultFromPayload(payload); len(snapshot) > 0 {
+			if materializes, exists := snapshot[availabilitySelectionMaterializesAuthorityPayloadKey]; exists {
+				if !readBool(materializes) {
+					return false, true
+				}
+				foundTrue = true
+			}
+		}
+	}
+	return foundTrue, foundTrue
 }
 
 func availabilityRejectionEvidenceFromMessageMetadata(message Message) availabilityRejectionEvidence {
@@ -420,10 +791,11 @@ func availabilityRejectionEvidenceFromTemplateData(data map[string]interface{}) 
 		return availabilityRejectionEvidence{}
 	}
 	rejection := availabilityRejectionEvidence{
-		Found:         true,
-		WholeContext:  templateDataBool(data, outOfTurnRejectedWholeContextDataKey),
-		OptionIndexes: availabilityRejectedOptionIndexesFromMetadata(data[outOfTurnRejectedOptionIndexesDataKey]),
-		TripDates:     availabilityRejectedTripDatesFromMetadata(data[outOfTurnRejectedTripDatesDataKey]),
+		Found:                             true,
+		WholeContext:                      templateDataBool(data, outOfTurnRejectedWholeContextDataKey),
+		AvailabilityPromptSourceMessageID: strings.TrimSpace(asString(data[outOfTurnActivePromptSourceIDDataKey])),
+		OptionIndexes:                     availabilityRejectedOptionIndexesFromMetadata(data[outOfTurnRejectedOptionIndexesDataKey]),
+		TripDates:                         availabilityRejectedTripDatesFromMetadata(data[outOfTurnRejectedTripDatesDataKey]),
 	}
 	if !rejection.WholeContext && !rejection.hasSpecificTarget() {
 		rejection.WholeContext = true
@@ -514,15 +886,18 @@ func messageAvailabilitySelectionStatusForIndex(message Message, index int) (ava
 
 func availabilitySelectionEvidenceFromSelected(status availabilitySelectionStatus, index int, selected map[string]interface{}) availabilitySelectionEvidence {
 	return availabilitySelectionEvidence{
-		Status:              status,
-		SelectedOptionIndex: index,
-		TripID:              strings.TrimSpace(asString(selected["trip_id"])),
-		BoardStopID:         strings.TrimSpace(asString(selected["board_stop_id"])),
-		AlightStopID:        strings.TrimSpace(asString(selected["alight_stop_id"])),
-		TripDate:            strings.TrimSpace(asString(selected["trip_date"])),
-		DepartureTime:       strings.TrimSpace(asString(selected["origin_depart_time"])),
-		Price:               asFloat64(selected["price"]),
-		Currency:            strings.TrimSpace(asString(selected["currency"])),
+		Status:                 status,
+		SelectedOptionIndex:    index,
+		TripID:                 strings.TrimSpace(asString(selected["trip_id"])),
+		BoardStopID:            strings.TrimSpace(asString(selected["board_stop_id"])),
+		AlightStopID:           strings.TrimSpace(asString(selected["alight_stop_id"])),
+		OriginDisplayName:      strings.TrimSpace(firstNonEmpty(asString(selected["origin"]), asString(selected["origin_display_name"]))),
+		DestinationDisplayName: strings.TrimSpace(firstNonEmpty(asString(selected["destination"]), asString(selected["destination_display_name"]))),
+		PackageName:            strings.TrimSpace(asString(selected["package_name"])),
+		TripDate:               strings.TrimSpace(asString(selected["trip_date"])),
+		DepartureTime:          strings.TrimSpace(asString(selected["origin_depart_time"])),
+		Price:                  asFloat64(selected["price"]),
+		Currency:               strings.TrimSpace(asString(selected["currency"])),
 	}
 }
 
@@ -559,53 +934,86 @@ func selectedAvailabilityPayloadItem(payload map[string]interface{}, index int) 
 	return results[selectedIndex], true
 }
 
-func shouldMergeSelectedAvailabilitySnapshotForBookingDraft(selection availabilitySelectionEvidence, historyIndex int, context BookingDraftContext, snapshot map[string]interface{}) bool {
+func shouldMergeSelectedAvailabilitySnapshotForBookingDraft(
+	selection availabilitySelectionEvidence,
+	historyIndex int,
+	messageID string,
+	context BookingDraftContext,
+	snapshot map[string]interface{},
+) bool {
 	if !selection.found() {
 		return true
 	}
-	if selection.rejectsSelectedAvailabilitySnapshotForHistory(historyIndex, snapshot) {
+	if selection.rejectsSelectedAvailabilitySnapshotForHistory(historyIndex, messageID, snapshot) {
 		return false
 	}
 	if !selection.bookable() {
 		return !selection.blocksHistoryIndex(historyIndex)
 	}
-	if historyIndex == selection.SourceHistoryIndex {
-		return true
-	}
-	if strings.TrimSpace(context.TripID) == "" {
+	if !availabilitySelectionRecoverySourceMatchesMessage(selection, historyIndex, messageID) ||
+		strings.TrimSpace(context.TripID) == "" {
 		return false
 	}
 	return selectedAvailabilitySnapshotMatchesBookingDraft(context, snapshot)
 }
 
-func shouldMergeAvailabilityPayloadForBookingDraft(selection availabilitySelectionEvidence, historyIndex int, context BookingDraftContext, payload map[string]interface{}) bool {
+func shouldMergeAvailabilityPayloadForBookingDraft(
+	selection availabilitySelectionEvidence,
+	historyIndex int,
+	messageID string,
+	context BookingDraftContext,
+	payload map[string]interface{},
+) bool {
 	if !selection.found() {
 		return true
 	}
-	if selection.rejectsAvailabilityPayloadForBookingDraft(historyIndex, context, payload) {
+	if selection.rejectsAvailabilityPayloadForBookingDraft(historyIndex, messageID, context, payload) {
 		return false
 	}
 	if !selection.bookable() {
 		return !selection.blocksHistoryIndex(historyIndex)
 	}
-	if historyIndex == selection.SourceHistoryIndex {
-		return true
-	}
-	return availabilityPayloadSelectionMatchesBookingDraft(context, payload)
+	return availabilitySelectionRecoverySourceMatchesMessage(selection, historyIndex, messageID) &&
+		availabilityPayloadSelectionMatchesBookingDraft(context, payload)
 }
 
-func (e availabilitySelectionEvidence) rejectsSelectedAvailabilitySnapshotForHistory(historyIndex int, snapshot map[string]interface{}) bool {
+func availabilitySelectionRecoverySourceMatchesMessage(
+	selection availabilitySelectionEvidence,
+	historyIndex int,
+	messageID string,
+) bool {
+	messageID = strings.TrimSpace(messageID)
+	selectionMessageID := strings.TrimSpace(selection.SelectionMessageID)
+	promptSourceMessageID := strings.TrimSpace(selection.AvailabilityPromptSourceMessageID)
+	if selectionMessageID != "" || promptSourceMessageID != "" {
+		return messageID != "" &&
+			(messageID == selectionMessageID || messageID == promptSourceMessageID)
+	}
+	return historyIndex == selection.SourceHistoryIndex
+}
+
+func (e availabilitySelectionEvidence) rejectsSelectedAvailabilitySnapshotForHistory(
+	historyIndex int,
+	messageID string,
+	snapshot map[string]interface{},
+) bool {
 	if len(snapshot) == 0 {
 		return false
 	}
-	return e.rejectsAvailabilityOptionForHistory(
+	return e.rejectsAvailabilityOptionForPrompt(
+		strings.TrimSpace(messageID),
 		historyIndex,
 		asInt(snapshot["selected_option_index"]),
 		asString(snapshot["trip_date"]),
 	)
 }
 
-func (e availabilitySelectionEvidence) rejectsAvailabilityPayloadForBookingDraft(historyIndex int, context BookingDraftContext, payload map[string]interface{}) bool {
+func (e availabilitySelectionEvidence) rejectsAvailabilityPayloadForBookingDraft(
+	historyIndex int,
+	messageID string,
+	context BookingDraftContext,
+	payload map[string]interface{},
+) bool {
 	results := asInterfaceSliceMaps(payload["results"])
 	if len(results) == 0 {
 		return false
@@ -617,7 +1025,8 @@ func (e availabilitySelectionEvidence) rejectsAvailabilityPayloadForBookingDraft
 	if selectedIndex <= 0 || selectedIndex > len(results) {
 		return false
 	}
-	return e.rejectsAvailabilityOptionForHistory(
+	return e.rejectsAvailabilityOptionForPrompt(
+		strings.TrimSpace(messageID),
 		historyIndex,
 		selectedIndex,
 		asString(results[selectedIndex-1]["trip_date"]),
@@ -773,6 +1182,8 @@ func evaluateCanonicalBookingCreateReadiness(context BookingDraftContext) canoni
 	}
 
 	switch {
+	case !context.HasBookableSelection:
+		readiness.Reason = "bookable_selection_missing"
 	case readiness.QuantityStatus != bookingCreateQuantityExact:
 	case len(readiness.UnresolvedPartials) > 0:
 		readiness.Reason = "passenger_document_partial_unresolved"
@@ -813,6 +1224,7 @@ func bookingNextActionFromCanonicalReadiness(context BookingDraftContext, readin
 		return BookingNextAskBookingPaymentPreference
 	}
 	if !context.HasAvailabilityShown ||
+		!context.HasBookableSelection ||
 		strings.TrimSpace(context.TripID) == "" ||
 		strings.TrimSpace(context.BoardStopID) == "" ||
 		strings.TrimSpace(context.AlightStopID) == "" ||
@@ -1431,8 +1843,29 @@ func selectedAvailabilityResultFromPayload(payload map[string]interface{}) map[s
 	return nil
 }
 
-func mergeAvailabilityPayloadIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
+func shouldMergeSelectedAvailabilityItemForProjection(
+	policy bookingDraftAvailabilityProjectionPolicy,
+	selection availabilitySelectionEvidence,
+	context BookingDraftContext,
+) bool {
+	if !context.HasBookableSelection || context.SelectedOptionIndex <= 0 {
+		return false
+	}
+	switch policy {
+	case bookingDraftAvailabilityBookableSelection:
+		return true
+	case bookingDraftAvailabilityEnvelopeOnly:
+		return selection.bookable()
+	default:
+		return false
+	}
+}
+
+func mergeAvailabilityEnvelopeIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
 	if context == nil {
+		return
+	}
+	if context.HasBookableSelection {
 		return
 	}
 
@@ -1445,26 +1878,26 @@ func mergeAvailabilityPayloadIntoBookingDraft(context *BookingDraftContext, payl
 	if tripDate := strings.TrimSpace(asString(payload["trip_date"])); tripDate != "" && context.TripDate == "" {
 		context.TripDate = tripDate
 	}
+}
 
-	results := asInterfaceSliceMaps(payload["results"])
-	if len(results) == 0 {
+func mergeSelectedAvailabilityItemIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
+	if context == nil || !context.HasBookableSelection || context.SelectedOptionIndex <= 0 {
 		return
 	}
 
-	selectedIndex := context.SelectedOptionIndex - 1
-	if selectedIndex < 0 || selectedIndex >= len(results) {
-		if len(results) != 1 {
-			return
-		}
-		selectedIndex = 0
+	item, ok := selectedAvailabilityPayloadItem(payload, context.SelectedOptionIndex)
+	if !ok || !selectedAvailabilitySnapshotMaterializesIndex(item, context.SelectedOptionIndex) {
+		return
 	}
 
-	item := results[selectedIndex]
 	if context.Origin == "" {
 		context.Origin = strings.TrimSpace(asString(item["origin_display_name"]))
 	}
 	if context.Destination == "" {
 		context.Destination = strings.TrimSpace(asString(item["destination_display_name"]))
+	}
+	if context.PackageName == "" {
+		context.PackageName = strings.TrimSpace(asString(item["package_name"]))
 	}
 	if context.TripID == "" {
 		context.TripID = strings.TrimSpace(asString(item["trip_id"]))
@@ -1490,15 +1923,14 @@ func mergeAvailabilityPayloadIntoBookingDraft(context *BookingDraftContext, payl
 }
 
 func mergeSelectedAvailabilitySnapshotIntoBookingDraft(context *BookingDraftContext, payload map[string]interface{}) {
-	if context == nil || len(payload) == 0 {
+	if context == nil || !context.HasBookableSelection || context.SelectedOptionIndex <= 0 || len(payload) == 0 {
 		return
 	}
-	acceptsSnapshotSelection := strings.TrimSpace(context.TripID) == ""
 	if !selectedAvailabilitySnapshotMatchesBookingDraft(*context, payload) {
 		return
 	}
-	if index := asInt(payload["selected_option_index"]); index > 0 && (acceptsSnapshotSelection || context.SelectedOptionIndex <= 0) {
-		context.SelectedOptionIndex = index
+	if index := asInt(payload["selected_option_index"]); index > 0 && index != context.SelectedOptionIndex {
+		return
 	}
 	if origin := firstNonEmpty(
 		strings.TrimSpace(asString(payload["origin"])),
@@ -1511,6 +1943,9 @@ func mergeSelectedAvailabilitySnapshotIntoBookingDraft(context *BookingDraftCont
 		strings.TrimSpace(asString(payload["destination_display_name"])),
 	); destination != "" && context.Destination == "" {
 		context.Destination = destination
+	}
+	if packageName := strings.TrimSpace(asString(payload["package_name"])); packageName != "" && context.PackageName == "" {
+		context.PackageName = packageName
 	}
 	if tripID := strings.TrimSpace(asString(payload["trip_id"])); tripID != "" && context.TripID == "" {
 		context.TripID = tripID
@@ -1544,10 +1979,25 @@ func applySelectedAvailabilityResultToBookingDraft(
 	if !ok {
 		return context
 	}
+	return applyBookableAvailabilityItemToBookingDraft(context, selectedOptionIndex, item)
+}
+
+func applyBookableAvailabilityItemToBookingDraft(
+	context BookingDraftContext,
+	selectedOptionIndex int,
+	item AvailabilitySearchItem,
+) BookingDraftContext {
+	if selectedOptionIndex <= 0 || !hasCompleteAvailabilitySearchItemFacts(item) {
+		return context
+	}
 	context.HasAvailabilityShown = true
+	context.HasBookableSelection = true
 	context.SelectedOptionIndex = selectedOptionIndex
 	context.Origin = strings.TrimSpace(item.OriginDisplayName)
 	context.Destination = strings.TrimSpace(item.DestinationDisplayName)
+	context.PackageName = strings.TrimSpace(item.PackageName)
+	context.SelectionMessageID = ""
+	context.AvailabilityPromptSourceMessageID = ""
 	context.TripID = strings.TrimSpace(item.TripID)
 	context.BoardStopID = strings.TrimSpace(item.BoardStopID)
 	context.AlightStopID = strings.TrimSpace(item.AlightStopID)
@@ -1589,6 +2039,10 @@ func attachSelectedAvailabilityResultToTemplateRun(run RunAgentResult, availabil
 	if len(snapshot) == 0 {
 		return run
 	}
+	if promptSourceMessageID := strings.TrimSpace(decision.AvailabilityPromptSourceMessageID); promptSourceMessageID != "" {
+		snapshot[availabilityPromptSourceMessageIDPayloadKey] = promptSourceMessageID
+	}
+	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = false
 	if run.RequestPayload == nil {
 		run.RequestPayload = map[string]interface{}{}
 	}
@@ -1602,6 +2056,23 @@ func attachSelectedAvailabilityResultToTemplateRun(run RunAgentResult, availabil
 	return run
 }
 
+func attachAvailabilitySelectionMessageIDToTemplateRun(run RunAgentResult, selectionMessageID string) RunAgentResult {
+	selectionMessageID = strings.TrimSpace(selectionMessageID)
+	if selectionMessageID == "" {
+		return run
+	}
+	for _, payload := range []map[string]interface{}{run.RequestPayload, run.ResponsePayload} {
+		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
+		if len(snapshot) == 0 {
+			continue
+		}
+		if strings.TrimSpace(asString(snapshot[selectedAvailabilitySelectionMessageIDPayloadKey])) == "" {
+			snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = selectionMessageID
+		}
+	}
+	return run
+}
+
 func selectedAvailabilityResultPayloadFromAvailability(availability *AvailabilitySearchResult, selectedOptionIndex int) map[string]interface{} {
 	item, ok := selectedAvailabilityItemForMaterialization(availability, selectedOptionIndex)
 	if !ok {
@@ -1611,27 +2082,36 @@ func selectedAvailabilityResultPayloadFromAvailability(availability *Availabilit
 }
 
 func selectedAvailabilityResultPayloadFromBookingDraft(context BookingDraftContext) map[string]interface{} {
-	if context.SelectedOptionIndex <= 0 || !hasCompleteSelectedTripFacts(
+	if !context.HasBookableSelection || context.SelectedOptionIndex <= 0 || !hasCompleteSelectedTripFacts(
 		context.TripID,
 		context.BoardStopID,
 		context.AlightStopID,
 	) {
 		return nil
 	}
-	return map[string]interface{}{
+	snapshot := map[string]interface{}{
 		"selected_option_index":    context.SelectedOptionIndex,
 		"trip_id":                  strings.TrimSpace(context.TripID),
 		"board_stop_id":            strings.TrimSpace(context.BoardStopID),
 		"alight_stop_id":           strings.TrimSpace(context.AlightStopID),
 		"origin":                   strings.TrimSpace(context.Origin),
 		"destination":              strings.TrimSpace(context.Destination),
+		"package_name":             strings.TrimSpace(context.PackageName),
 		"origin_display_name":      strings.TrimSpace(context.Origin),
 		"destination_display_name": strings.TrimSpace(context.Destination),
 		"origin_depart_time":       strings.TrimSpace(context.DepartureTime),
 		"trip_date":                strings.TrimSpace(context.TripDate),
 		"price":                    context.Price,
 		"currency":                 strings.TrimSpace(context.Currency),
+		availabilitySelectionMaterializesAuthorityPayloadKey: false,
 	}
+	if selectionMessageID := strings.TrimSpace(context.SelectionMessageID); selectionMessageID != "" {
+		snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = selectionMessageID
+	}
+	if promptSourceMessageID := strings.TrimSpace(context.AvailabilityPromptSourceMessageID); promptSourceMessageID != "" {
+		snapshot[availabilityPromptSourceMessageIDPayloadKey] = promptSourceMessageID
+	}
+	return snapshot
 }
 
 func selectedAvailabilityItemForMaterialization(
@@ -1645,6 +2125,10 @@ func selectedAvailabilityItemForMaterialization(
 	if !hasCompleteAvailabilitySearchItemFacts(item) {
 		return AvailabilitySearchItem{}, false
 	}
+	item.PackageName = firstNonEmpty(
+		strings.TrimSpace(item.PackageName),
+		strings.TrimSpace(availability.Filter.PackageName),
+	)
 	return item, true
 }
 

@@ -37,13 +37,14 @@ const (
 )
 
 type IntentDecision struct {
-	Intent              Intent
-	Source              string
-	SelectedOptionIndex int
-	AvailabilityInput   *AvailabilitySearchInput
-	TemplateName        ResponseTemplateName
-	Action              string
-	TemplateData        map[string]interface{}
+	Intent                            Intent
+	Source                            string
+	SelectedOptionIndex               int
+	AvailabilityPromptSourceMessageID string
+	AvailabilityInput                 *AvailabilitySearchInput
+	TemplateName                      ResponseTemplateName
+	Action                            string
+	TemplateData                      map[string]interface{}
 }
 
 var (
@@ -156,18 +157,6 @@ func routeDeterministicIntent(history []Message, currentTurn string, state Canon
 		return decision
 	}
 
-	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice {
-		optionCount := activePrompt.AvailabilityOptionCount
-		if optionCount <= 0 {
-			optionCount = currentAvailabilitySelectionOptionCount(history)
-		}
-		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic", state.Phase == ConversationPhaseTripSelection); ok {
-			return decision
-		}
-		if optionCount > 1 && looksLikeAmbiguousAvailabilityOptionReply(body, folded) {
-			return IntentDecision{Intent: IntentUnknown, Source: "deterministic_availability_option_ambiguous"}
-		}
-	}
 	if input, ok := parseAvailabilityDateSelectionInput(history, body, observedAt); ok {
 		return IntentDecision{
 			Intent:            IntentAvailabilitySearch,
@@ -294,11 +283,11 @@ func isPaymentDocumentReplyPhase(phase ConversationPhase) bool {
 func routeActivePromptAnswer(ctx ActivePromptContext, history []Message, body string, folded string, state CanonicalConversationState, observedAt time.Time) (IntentDecision, bool) {
 	switch ctx.Kind {
 	case ActivePromptAvailabilityOptionChoice:
-		optionCount := ctx.AvailabilityOptionCount
-		if optionCount <= 0 {
-			optionCount = currentAvailabilitySelectionOptionCount(history)
+		promptContext, ok := activeAvailabilitySelectionPromptContext(ctx, history)
+		if !ok {
+			break
 		}
-		if decision, ok := routeAvailabilityOptionAnswer(optionCount, history, body, folded, "deterministic_active_prompt_availability_option", true); ok {
+		if decision, ok := routeAvailabilityOptionAnswer(promptContext.OptionCount, history, body, folded, "deterministic_active_prompt_availability_option", true); ok {
 			return decision, true
 		}
 		outOfTurnInfoQuestion := detectOutOfTurnInfoQuestion(body, ctx) != OutOfTurnInfoUnknown
@@ -396,7 +385,8 @@ func routeAvailabilityOptionDateAnswer(history []Message, body string, observedA
 	if selectedIndex <= 0 {
 		return IntentDecision{}, false
 	}
-	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(
+	if latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForPrompt(
+		promptContext.SourceMessageID,
 		promptContext.SourceHistoryIndex,
 		selectedIndex,
 		latest.Results[selectedIndex-1].TripDate,
@@ -509,7 +499,8 @@ func availabilityPromptSelectionRejected(history []Message, promptContext availa
 		}
 	}
 
-	return latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForHistory(
+	return latestAvailabilitySelectionEvidence(history).rejectsAvailabilityOptionForPrompt(
+		promptContext.SourceMessageID,
 		promptContext.SourceHistoryIndex,
 		index,
 		tripDate,
@@ -520,6 +511,35 @@ type availabilitySelectionPromptContext struct {
 	OptionCount        int
 	HasCurrentFacts    bool
 	SourceHistoryIndex int
+	SourceMessageID    string
+}
+
+func activeAvailabilitySelectionPromptContext(
+	activePrompt ActivePromptContext,
+	history []Message,
+) (availabilitySelectionPromptContext, bool) {
+	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice {
+		return availabilitySelectionPromptContext{}, false
+	}
+	message, sourceHistoryIndex, ok := latestReliableAssistantMessageWithIndex(history)
+	if !ok {
+		return availabilitySelectionPromptContext{}, false
+	}
+	if sourceMessageID := strings.TrimSpace(activePrompt.SourceMessageID); sourceMessageID != "" &&
+		availabilityPromptSourceMessageIDFromMessage(message) != sourceMessageID {
+		return availabilitySelectionPromptContext{}, false
+	}
+	if sourceBody := strings.TrimSpace(activePrompt.SourceMessageBody); sourceBody == "" ||
+		!equivalentAssistantPromptBody(sourceBody, messageTurnText(message)) {
+		return availabilitySelectionPromptContext{}, false
+	}
+	context := availabilitySelectionPromptContextFromMessage(message)
+	if context.OptionCount <= 0 {
+		return availabilitySelectionPromptContext{}, false
+	}
+	context.SourceHistoryIndex = sourceHistoryIndex
+	context.SourceMessageID = availabilityPromptSourceMessageIDFromMessage(message)
+	return context, true
 }
 
 func looksLikeAmbiguousAvailabilityOptionReply(body string, folded string) bool {
@@ -546,7 +566,20 @@ func currentAvailabilitySelectionPromptContext(history []Message) availabilitySe
 
 	context := availabilitySelectionPromptContextFromMessage(message)
 	context.SourceHistoryIndex = sourceHistoryIndex
+	context.SourceMessageID = availabilityPromptSourceMessageIDFromMessage(message)
 	return context
+}
+
+func availabilityPromptSourceMessageIDFromMessage(message Message) string {
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		sourceMessageID := strings.TrimSpace(
+			asString(asMap(payload["template_data"])[outOfTurnActivePromptSourceIDDataKey]),
+		)
+		if sourceMessageID != "" {
+			return sourceMessageID
+		}
+	}
+	return strings.TrimSpace(message.ID)
 }
 
 func availabilitySelectionPromptContextFromMessage(message Message) availabilitySelectionPromptContext {
@@ -554,13 +587,12 @@ func availabilitySelectionPromptContextFromMessage(message Message) availability
 	renderedCount := availabilityOptionCountFromRenderedPrompt(body)
 	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
 	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
-	if renderedCount <= 0 && currentFactsCount <= 0 && !looksLikeAvailabilitySelectionPrompt(folded) {
-		return availabilitySelectionPromptContext{}
-	}
-
 	optionCount := renderedCount
 	if optionCount <= 0 {
 		optionCount = currentFactsCount
+	}
+	if optionCount <= 0 || !activePromptLooksLikeAvailabilityOptionChoice(folded, optionCount) {
+		return availabilitySelectionPromptContext{}
 	}
 	hasCurrentFacts := currentFactsCount > 0 && (renderedCount <= 0 || renderedCount == currentFactsCount)
 	return availabilitySelectionPromptContext{
@@ -753,10 +785,11 @@ func looksLikeNegatedAvailabilitySelection(folded string) bool {
 }
 
 type availabilityRejectionEvidence struct {
-	Found         bool
-	WholeContext  bool
-	OptionIndexes []int
-	TripDates     []string
+	Found                             bool
+	WholeContext                      bool
+	AvailabilityPromptSourceMessageID string
+	OptionIndexes                     []int
+	TripDates                         []string
 }
 
 func (e availabilityRejectionEvidence) hasSpecificTarget() bool {

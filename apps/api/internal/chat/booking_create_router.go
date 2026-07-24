@@ -151,6 +151,7 @@ func parseBookingCreateInputWithPassengerState(
 	currentAvailability *AvailabilitySearchResult,
 	passengerState PassengerClarificationStateV1,
 ) (BookingCreateInput, bool) {
+	history = availabilityInferenceHistoryForSession(session, history)
 	body := strings.TrimSpace(text)
 	if body == "" {
 		return BookingCreateInput{}, false
@@ -163,12 +164,22 @@ func parseBookingCreateInputWithPassengerState(
 		return BookingCreateInput{}, false
 	}
 
-	selectedOptionIndex, selected, ok := resolveBookingCreateSelection(body, history, currentAvailability)
+	selectionState := availabilitySelectionStateV1ForRead(session, history)
+	selectedOptionIndex, selected, ok := resolveBookingCreateSelectionFromState(body, selectionState)
 	if !ok {
 		return BookingCreateInput{}, false
 	}
 
 	context := collectBookingDraftContextWithPassengerState(session, history, body, passengerState)
+	if !context.HasBookableSelection {
+		return BookingCreateInput{}, false
+	}
+	if context.SelectedOptionIndex != selectedOptionIndex ||
+		context.TripID != selected.TripID ||
+		context.BoardStopID != selected.BoardStopID ||
+		context.AlightStopID != selected.AlightStopID {
+		return BookingCreateInput{}, false
+	}
 	readiness := evaluateCanonicalBookingCreateReadiness(context)
 	if !readiness.Ready {
 		return BookingCreateInput{}, false
@@ -206,7 +217,8 @@ func parseBookingCreateFromDocumentConfirmationWithPassengerState(
 
 	context := collectBookingDraftContextWithPassengerState(session, history, currentTurn, passengerState)
 
-	if strings.TrimSpace(context.TripID) == "" ||
+	if !context.HasBookableSelection ||
+		strings.TrimSpace(context.TripID) == "" ||
 		strings.TrimSpace(context.BoardStopID) == "" ||
 		strings.TrimSpace(context.AlightStopID) == "" ||
 		strings.TrimSpace(context.Origin) == "" ||
@@ -964,60 +976,37 @@ func looksLikeCreateBookingIntent(text string) bool {
 }
 
 func resolveBookingCreateSelection(text string, history []Message, currentAvailability *AvailabilitySearchResult) (int, AvailabilitySearchItem, bool) {
+	// Compatibility helper for callers without a reconstructed session state.
+	// History and the current envelope are deliberately non-authoritative.
+	_ = history
+	_ = currentAvailability
+	state := newAvailabilitySelectionStateV1()
+	state.BootstrapCompleted = true
+	return resolveBookingCreateSelectionFromState(text, state)
+}
+
+func resolveBookingCreateSelectionFromState(
+	text string,
+	state AvailabilitySelectionStateV1,
+) (int, AvailabilitySearchItem, bool) {
 	folded := strings.Join(strings.Fields(foldChatText(text)), " ")
 	if looksLikeNegatedAvailabilitySelection(folded) {
 		return 0, AvailabilitySearchItem{}, false
 	}
-
-	selection := latestAvailabilitySelectionEvidence(history)
-	options := []AvailabilitySearchItem{}
-	usingHistoricalAvailability := false
-	availabilitySourceHistoryIndex := -1
-	if currentAvailability != nil && len(currentAvailability.Results) > 0 {
-		options = append(options, currentAvailability.Results...)
-	} else if previous, sourceHistoryIndex, ok := latestVisibleAvailabilitySelectionContextWithSource(history); ok {
-		usingHistoricalAvailability = true
-		availabilitySourceHistoryIndex = sourceHistoryIndex
-		options = append(options, previous.Results...)
-	}
-	if len(options) == 0 {
+	if state.Status != AvailabilitySelectionStatusBookable ||
+		state.SelectedOptionIndex <= 0 ||
+		state.Snapshot.SelectedOptionIndex != state.SelectedOptionIndex {
 		return 0, AvailabilitySearchItem{}, false
 	}
-	if usingHistoricalAvailability &&
-		selection.blocksHistoryIndex(availabilitySourceHistoryIndex) {
-		return 0, AvailabilitySearchItem{}, false
-	}
-
 	explicitIndex := extractSelectedOptionIndex(text)
-	index := explicitIndex
-	if index <= 0 {
-		index = findLatestSelectedOptionIndex(history)
+	if explicitIndex > 0 && explicitIndex != state.SelectedOptionIndex {
+		return 0, AvailabilitySearchItem{}, false
 	}
-	if index > 0 {
-		if index > len(options) {
-			return 0, AvailabilitySearchItem{}, false
-		}
-		selected := options[index-1]
-		if usingHistoricalAvailability &&
-			selection.rejectsAvailabilityOptionForHistory(availabilitySourceHistoryIndex, index, selected.TripDate) {
-			return 0, AvailabilitySearchItem{}, false
-		}
-		if !hasCompleteAvailabilitySearchItemFacts(selected) {
-			return 0, AvailabilitySearchItem{}, false
-		}
-		return index, selected, true
+	selected, ok := state.Snapshot.availabilityItem()
+	if !ok {
+		return 0, AvailabilitySearchItem{}, false
 	}
-	if len(options) == 1 {
-		if usingHistoricalAvailability &&
-			selection.rejectsAvailabilityOptionForHistory(availabilitySourceHistoryIndex, 1, options[0].TripDate) {
-			return 0, AvailabilitySearchItem{}, false
-		}
-		if !hasCompleteAvailabilitySearchItemFacts(options[0]) {
-			return 0, AvailabilitySearchItem{}, false
-		}
-		return 1, options[0], true
-	}
-	return 0, AvailabilitySearchItem{}, false
+	return state.SelectedOptionIndex, selected, true
 }
 
 func hasCompleteAvailabilitySearchItemFacts(item AvailabilitySearchItem) bool {
@@ -2194,32 +2183,11 @@ func looksLikeBareCPF(text string) bool {
 }
 
 func findLatestSelectedOptionIndex(history []Message) int {
+	// Historical text is not durable selection authority. Only an outbound
+	// selection with a complete bookable snapshot can be reconstructed here.
 	selection := latestAvailabilitySelectionEvidence(history)
 	if selection.bookable() {
 		return selection.SelectedOptionIndex
-	}
-	if selection.blocksOlderEvidence() {
-		return 0
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		body := strings.TrimSpace(messageTurnText(history[i]))
-		if strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
-			if previousAssistantAskedLapChildAssignment(history, i) ||
-				previousAssistantAskedPassengerCount(history, i) {
-				continue
-			}
-			folded := strings.Join(strings.Fields(foldChatText(body)), " ")
-			if looksLikeNegatedAvailabilitySelection(folded) {
-				continue
-			}
-		}
-		if body == "" {
-			continue
-		}
-		if index := extractSelectedOptionIndex(body); index > 0 {
-			return index
-		}
 	}
 	return 0
 }

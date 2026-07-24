@@ -3,13 +3,15 @@
 ## Status atual no tracker
 
 ```text
-PRÓXIMA — ainda não iniciada.
+BLOQUEADA por H-2026-07-22A / gate operacional de H-2026-07-16B1.
 ```
 
-B1 satisfez o gate predecessor após review final sem P1/P2. Essa liberação torna
-B2 somente a próxima slice: sua execução exige um novo `/goal` explícito. Este
-PR não implementa contrato, validator, corpus ou shadow de B2. B3 permanece
-bloqueada por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+O review local histórico de B1 foi limpo, mas evidência operacional posterior
+mostrou o bootstrap `UNKNOWN` bloqueando sessões novas antes de existir contexto
+de passageiros. H-2026-07-22A está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
+REVIEW**. Este PR não implementa contrato, validator,
+corpus ou shadow de B2. B3 permanece bloqueada por B2, e
+3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 ## Objetivo
 
@@ -19,7 +21,8 @@ user-visible.
 
 ## Pré-condições
 
-- B1 concluído e revisado sem P1/P2;
+- H-2026-07-22A revisado sem P1/P2, implantado e com smoke verde;
+- gate operacional de B1 novamente concluído;
 - serialização concorrente comprovada em PostgreSQL;
 - estado e eventos estruturais são autoridade;
 - nenhuma interpretação lexical nova permanece no foundation;
