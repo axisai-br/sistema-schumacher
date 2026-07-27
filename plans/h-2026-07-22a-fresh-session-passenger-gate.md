@@ -3,11 +3,13 @@
 ## Status no tracker
 
 ```text
-H-2026-07-22A — EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO.
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
 ```
 
-Este hotfix reabre o gate operacional de H-2026-07-16B1. Enquanto review,
-deploy e smoke não estiverem verdes, H-2026-07-16B2 permanece bloqueada.
+Este hotfix reabre o gate operacional de H-2026-07-16B1. O review final está
+limpo; enquanto commit, push, deploy e smoke não estiverem verdes,
+H-2026-07-16B2 permanece bloqueada.
 
 ## Evidência operacional
 
@@ -299,7 +301,7 @@ source exato; sem prova exata, o estado permanece `NONE`/fail-closed.
 10. bootstrap usa a sessão estruturada completa uma única vez, e as aplicações
     concorrentes fake/PostgreSQL não perdem eventos.
 
-### Regressões dos 4 P1 atuais de replay canônico
+### Regressões dos 4 P1 do review anterior de replay canônico
 
 1. seleção legada sem `selection_message_id` explícito permanece `NONE`; o ID
    do outbound/projeção nunca é usado como fallback;
@@ -359,7 +361,7 @@ REVIEW ANTERIOR 7 — 2 P1 preservados como corrigidos
 REVIEW ANTERIOR 8 — 3 P1 preservados como corrigidos
 REVIEW ANTERIOR 9 — 3 P1 DE AUTORIDADE DURÁVEL preservados como corrigidos
 REVIEW ANTERIOR 10 — 4 P1 DE AUTORIDADE DURÁVEL preservados como corrigidos
-REVIEW ATUAL — 4 P1 DE REPLAY CANÔNICO
+REVIEW ANTERIOR 11 — 4 P1 DE REPLAY CANÔNICO
 RED NOVO — ASK_PASSENGER_COUNT com facts de continuidade reativou seleção: "1" trocou opção 2 pela 1 e "sim" virou fallback de availability
 RED NOVO — os quatro turnos mistos deíxis/índice + humano/cancelamento foram classificados antes de STRONG; houve fallback e até runner legado
 RED NOVO — resultado único exibido + índice bruto + documentos completos + "sim" produziu BookingCreateInput com índice 0 e chamou booking_create uma vez
@@ -399,7 +401,7 @@ PASS — go test -count=1 ./internal/chat
 PASS — go test -count=1 ./...
 PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
 PASS — git diff --check
-STATUS — H-2026-07-22A — EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO; aguardando novo review
+STATUS HISTÓRICO/SUPERSEDED — naquele checkpoint, H-2026-07-22A aguardava novo review após a correção manual dos 5 P1
 ```
 
 Os oito P1 dos reviews anteriores permanecem corrigidos: snapshot
@@ -475,7 +477,7 @@ do banco e o estado mantém `LastAppliedEventOrder`; batches são ordenados e
 eventos antigos não substituem seleção/tombstone. A prova PostgreSQL real com
 duas pools passou sem `SKIP`.
 
-Os 4 P1 atuais substituem a atualização incremental por replay canônico
+Os 4 P1 do review anterior substituíram a atualização incremental por replay canônico
 completo sob o lock da sessão. O evento atual é persistido estruturalmente no
 inbound, todos os eventos da sessão são carregados sem `body` e sem `LIMIT 50`,
 a ordem é hidratada somente de `received_at`, `created_at`, `message_id` e
@@ -486,19 +488,87 @@ ordinal do banco, e o reducer sempre parte do estado zero. `LastAppliedEventOrde
 projeção validada. A propriedade cobre todas as permutações, duplicação e
 restart, e o gate PostgreSQL 16 obrigatório passou `count=20` com duas pools.
 
-Commit, push, deploy e smoke não foram executados. O status permanece
-`EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO`; os P1 da rodada
-anterior e os demais P1 históricos permanecem corrigidos, não há declaração de
-review limpo e B2 continua bloqueada.
+
+Os 5 P1 do review atual exigem:
+
+- resolver `selection_message_id` para uma mensagem inbound real e anterior à
+  projeção no stream da sessão;
+- hidratar a ordem da materialização legada pela mensagem inbound de seleção;
+- aceitar prompt source legado somente com declaração estrutural positiva de
+  lista de disponibilidade;
+- deduplicar eventos semânticos antes da atribuição de ordinal e `EventID`;
+- executar a matriz com `MATERIALIZE A/B`, `REJECT A/B`, `INVALIDATE`, projeção
+  e duplicata no mesmo batch em todas as 720 permutações de seis batches.
+
+O patch manual foi preparado em `availability_selection_state_v1.go` e
+`availability_selection_state_v1_test.go`. Na primeira aplicação, porém,
+`go test -race -count=1 ./internal/chat`, `go test -count=1 ./internal/chat` e
+`go test -count=1 ./...` ficaram RED: fixtures antigas fabricavam
+`selection_message_id`/prompt source na projeção `OUTBOUND`, sem seleção
+`INBOUND` real e sem lista estrutural explícita.
+
+A reconciliação não relaxou produção. Os helpers passaram a representar
+explicitamente os dois modelos autorizados:
+
+1. moderno: estado/evento persistido, prompt source real, seleção `INBOUND`
+   real e projeção sem autoridade;
+2. legado: lista `OUTBOUND` estrutural → seleção `INBOUND` → projeção
+   `OUTBOUND`, com identidade e ordem causal coerentes.
+
+`materializePersistedAvailabilitySelectionForTest` usa somente replay
+estruturado; projeção autoritativa exige IDs explícitos; o `fakeStore` recebe
+evento canônico; e o wrapper de `booking_create` não infere seleção pelo texto.
+Não houve RED independente contra o repository real, então nenhum código de
+produção adicional foi alterado.
+
+Validação final executada em 2026-07-27:
+
+```text
+PASS — matriz replay/order/legacy/projection/invalidation, count=20 — 15.562s
+PASS — provas funcionais 1–10, count=20 — 17.939s
+PASS — go test -race -count=1 ./internal/chat — 23.570s
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn — 1.682s
+PASS — regressões cancel/passenger/availability — 3.832s
+PASS SEM SKIP — PostgreSQL 16 real efêmero, duas pools, lock invertido, count=20 — 9.895s
+PASS — go test -count=1 ./internal/chat — 4.243s
+PASS — go test -count=1 ./... — internal/chat 4.862s; demais pacotes verdes
+PASS — regexp.MustCompile em produção = 54
+PASS — gofmt
+PASS — git diff --check
+```
+
+No checkpoint pré-review final, o PostgreSQL efêmero havia sido removido e
+commit, push, deploy, smoke e novo `/review` ainda não tinham sido executados.
+Naquele momento não existia declaração de review limpo. Esse registro está
+preservado como histórico/superseded.
+
+## Review final limpo
+
+O review final considerou o patch **seguro para commit** e não encontrou P1/P2.
+Foram confirmados os 10 controles: `count=20`, race, suítes amplas, PostgreSQL
+**16.14** real sem `SKIP`, inventário de 54 `regexp.MustCompile`, `gofmt` e
+`git diff --check`.
+
+Status vigente:
+
+```text
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+```
+
+Commit, push, PR, merge/deploy e smoke ainda não foram executados. Deploy e
+smoke estão autorizados como próximos gates. B2 permanece bloqueada até
+commit, push, deploy e smoke verdes e só pode ser liberada depois do smoke
+verde.
 
 ## Gate operacional
 
-O próximo gate é um novo review sem P1/P2. O desbloqueio de B2 exige
-adicionalmente commit/push/deploy e smoke do cenário real, todos em rodada
-explicitamente autorizada. Este `/goal` não autoriza nenhuma dessas operações
-externas.
+Próxima ação única: commit, push, PR, merge/deploy autorizado e smoke
+operacional. O review final autoriza essa cadeia como próximo gate, mas este
+`/goal` documental não executa nenhuma dessas operações externas. B2 continua
+bloqueada até o smoke verde.
 
-Smoke futuro mínimo:
+Smoke operacional pendente mínimo:
 
 ```text
 sessão realmente limpa
@@ -507,6 +577,9 @@ rota + EARLIEST_AVAILABLE executa availability_search exatamente uma vez
 seleção válida persiste a opção e então abre o prompt de passageiros
 pós-prompt desconhecido/conflitante permanece fail-closed
 ```
+
+Os blocos `/goal` e `/review` abaixo são registros históricos/superseded das
+rodadas anteriores e não definem o status vigente nem a próxima ação atual.
 
 ## `/goal`
 

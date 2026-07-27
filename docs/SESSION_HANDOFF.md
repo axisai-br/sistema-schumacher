@@ -20,8 +20,9 @@ backend executa somente ações autorizadas
 3.6F-C concluída em código; H-2026-07-16A teve smoke operacional verde
 H-2026-07-16B em andamento
 H-2026-07-16B1 concluída em código, com gate operacional reaberto
-H-2026-07-22A — EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO
-H-2026-07-16B2 bloqueada até review, deploy e smoke verdes do hotfix
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+H-2026-07-16B2 bloqueada até commit, push, deploy e smoke verdes do hotfix
 3.6F-D bloqueada por H-B
 ```
 
@@ -299,43 +300,95 @@ fonte legadas ficaram explícitas; a ordem passou a ser hidratada dos campos
 reais da mensagem. A rodada seguinte comprovou, porém, que a aplicação ainda
 era incremental e podia divergir do restart.
 
-O review atual encontrou **4 P1 DE REPLAY CANÔNICO**, corrigidos localmente e
-ainda aguardando novo review:
+O review anterior encontrou **4 P1 DE REPLAY CANÔNICO**. Essa rodada
+introduziu o replay completo sob o lock, tornou o PostgreSQL 16 obrigatório e
+removeu o descarte incremental por cursor. O review seguinte preservou essas
+correções e encontrou **5 P1 adicionais** na fronteira legada e no gate de
+propriedade:
 
-- seleção legada sem `selection_message_id` ainda podia receber um ID inventado
-  da projeção;
-- uma seleção/projeção anterior podia ser aceita como prompt source quando a
-  lista original não estava disponível;
-- evento durável atrasado podia ser ignorado depois do avanço do cursor, fazendo
-  live e restart produzirem estados diferentes;
-- o teste PostgreSQL obrigatório ainda executava `SKIP` quando a URL não estava
-  configurada.
+1. `selection_message_id` não era resolvido contra uma mensagem inbound real da
+   mesma sessão;
+2. a materialização legada herdava a ordem da projeção outbound, não da mensagem
+   inbound selecionada;
+3. um outbound genérico com `availability_search` copiado, mas sem
+   `intent/template_name` explícitos, ainda podia virar prompt source;
+4. duplicatas idênticas no mesmo batch recebiam ordinais e `EventID` distintos;
+5. a propriedade de replay não incluía `MATERIALIZE B`, `REJECT A`,
+   `INVALIDATE` e duplicata no mesmo batch.
 
-Agora cada aplicação, dentro do lock da sessão, persiste o evento atual no
-inbound, carrega todos os eventos estruturados da sessão sem `body` e sem
-`LIMIT 50`, incorpora marker/boundary, hidrata a ordem somente de
-`received_at`, `created_at`, `message_id` e ordinal, ordena e reduz desde o
-estado zero. A projeção completa só é persistida depois de validada.
-`LastAppliedEventOrder` é recalculado; nunca decide se um evento participa.
+O patch manual atual:
 
-Legado sem ID explícito permanece `NONE`. Prompt source exige exatamente uma
-lista anterior confiável, estrutural, completa e compatível; seleção,
-passageiros, documentos, pagamento e continuação não são candidatos. História
-limitada e envelope atual não concedem autoridade a booking draft ou
-`booking_create`: ambos consomem somente a projeção reconstruída e validada.
+- resolve `selection_message_id` somente para uma mensagem `INBOUND` anterior à
+  projeção, dentro do stream da sessão; identidade ausente, outbound ou
+  causalmente posterior falha fechado;
+- usa a ordem da mensagem inbound de seleção e exige que a lista-fonte seja
+  anterior a essa seleção;
+- exige declaração estrutural positiva de lista por
+  `IntentAvailabilitySearch` ou `TemplateAvailabilityList`;
+- normaliza e remove duplicatas semânticas antes de ordenar e atribuir ordinais;
+- amplia a propriedade para os seis batches causais, cobrindo materializações
+  A/B, rejeições A/B, invalidação, projeção e duplicata no mesmo batch, em todas
+  as `720` permutações de aquisição, com reload e restart.
 
-A propriedade fake percorre todas as seis permutações de materialização antiga
-`A`, rejeição nova `B` de outra fonte e projeção não autoritativa, reaplica
-duplicatas e reinicia após cada permutação. O estado live, o reload e o
-bootstrap são idênticos; `A` permanece `BOOKABLE` e a rejeição de `B` fica
-registrada.
+### Reconciliação da suíte em 2026-07-27
 
-O modo `CHAT_REQUIRE_PASSENGER_STATE_POSTGRES_TEST=1` falha sem URL. Com
-PostgreSQL 16 real efêmero, duas pools e lock invertido, o teste obrigatório
-passou `count=20` e comprovou igualdade live/restart. O `count=20` dirigido e
-race também passaram; `go test -count=1 ./internal/chat`, `go test -count=1
-./...`, regexp=54 e `git diff --check` passaram. Não houve commit, push, deploy
-ou smoke e não há declaração de review limpo.
+A primeira aplicação manual deixou `internal/chat`, `internal/chat -race` e
+`./...` em RED. O patch canônico passava isoladamente; as falhas em cascata
+vinham de fixtures que fabricavam autoridade em projeções `OUTBOUND`, sem
+`INBOUND` real e sem lista-fonte estrutural.
+
+A correção foi somente de testes:
+
+- `persistedAvailabilitySelectionPayloadForTest` passou a exigir identidade e
+  fonte explícitas para uma projeção autoritativa;
+- `materializePersistedAvailabilitySelectionForTest` passou a usar apenas o
+  replay dos eventos estruturados;
+- os helpers canônicos criam prompt estrutural, seleção `INBOUND` real, evento
+  explícito e projeção não autoritativa, inclusive no `fakeStore`;
+- as fixtures legadas agora contêm a timeline completa e causal;
+- o wrapper de `booking_create` não materializa mais seleção a partir de texto.
+
+Não surgiu reprodução independente contra o repository real; nenhum código de
+produção adicional foi necessário além do patch manual já existente.
+
+Gates finais executados:
+
+```text
+PASS — matriz AvailabilitySelection replay/order/legacy/projection/invalidation, count=20 — 15.562s
+PASS — provas funcionais 1–10, count=20 — 17.939s
+PASS — go test -race -count=1 ./internal/chat — 23.570s
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn — 1.682s
+PASS — regressões cancel/passenger/availability — 3.832s
+PASS SEM SKIP — PostgreSQL 16 real efêmero, duas pools, lock invertido e count=20 — 9.895s
+PASS — go test -count=1 ./internal/chat — 4.243s
+PASS — go test -count=1 ./... — internal/chat 4.862s; demais pacotes verdes
+PASS — inventário de produção: 54 regexp.MustCompile
+PASS — gofmt
+PASS — git diff --check
+```
+
+Esse era o checkpoint pré-review final: o contêiner PostgreSQL efêmero havia
+sido removido e ainda não existia declaração de review limpo. O estado está
+preservado como histórico/superseded pelo resultado seguinte.
+
+### Review final limpo
+
+O review final considerou H-2026-07-22A **seguro para commit** e não encontrou
+P1/P2. Confirmou os 10 controles, incluindo `count=20`, race, suítes amplas,
+PostgreSQL **16.14** real sem `SKIP`, inventário de 54
+`regexp.MustCompile`, `gofmt` e `git diff --check`.
+
+Status vigente:
+
+```text
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+```
+
+Commit, push, PR, merge/deploy e smoke ainda não foram executados. Deploy e
+smoke estão autorizados como próximos gates. B2 permanece bloqueada até
+commit, push, deploy e smoke verdes e só pode ser liberada depois do smoke
+verde.
 
 ## Bug H-2026-07-16B
 
@@ -349,22 +402,21 @@ Esse bug é determinístico e separado de TravelQueryMeaningV2.
 
 ## Próxima ação
 
-Executar somente:
+Executar somente a cadeia:
 
 ```text
-plans/h-2026-07-22a-fresh-session-passenger-gate.md
+commit
+push
+PR
+merge/deploy autorizado
+smoke operacional
 ```
 
-A matriz local dos 4 P1 atuais de replay canônico inclui `count=20` dirigido,
-race e PostgreSQL 16 real obrigatório com duas pools, lock invertido e
-live/restart idênticos. As suítes amplas, o inventário de 54
-`regexp.MustCompile` em produção e `git diff --check` passaram. O status permanece
-`H-2026-07-22A — EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO`: os P1 da
-rodada anterior e os demais P1 históricos permanecem corrigidos, sem declaração
-de review limpo. A próxima ação é um novo `/review` dirigido aos 4 P1 de replay
-canônico, sem commit, push, deploy ou smoke. B2 só pode ser reavaliada depois de
-review, deploy e smoke verdes. Só depois do fechamento integral de H-B pode-se
-reavaliar 3.6F-D.
+A correção manual dos 5 P1, a reconciliação das fixtures e o review final sem
+P1/P2 estão concluídos. A próxima ação única é commit, push, PR, merge/deploy
+autorizado e smoke operacional. O status vigente é
+`H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE
+PENDENTES`. B2 permanece bloqueada até o smoke verde.
 
 ## Arquivos que a nova sessão deve ler
 

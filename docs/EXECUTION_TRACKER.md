@@ -289,8 +289,8 @@ Regras:
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
 | 8 | H-2026-07-16B | **EM ANDAMENTO — gate operacional de B1 reaberto** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; H-2026-07-22A interrompe a fila antes de B2. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-22A** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | o bootstrap `UNKNOWN` bloqueou sessões novas antes de existir contexto de passageiros. |
-| 10 | H-2026-07-22A | **EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | cada aplicação persiste o evento atual e reconstrói a autoridade desde zero com todos os eventos estruturados da sessão; identidade/fonte legadas falham fechado e o gate PostgreSQL 16 é obrigatório; novo review está pendente. |
-| 11 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-22A / gate operacional de H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após review, deploy e smoke verdes do hotfix. |
+| 10 | H-2026-07-22A | **REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE PENDENTES** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | review final confirmou os 10 controles, inclusive PostgreSQL 16.14 real sem `SKIP`; commit, push, PR, merge/deploy e smoke ainda não foram executados. |
+| 11 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-22A / gate operacional de H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após commit, push, deploy e smoke verdes do hotfix. |
 | 12 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 13 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 14 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -1673,12 +1673,13 @@ Decisão canônica:
 H-B1 — CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO
   evidência de sessão nova mostrou bootstrap UNKNOWN bloqueando antes do
   contexto de passageiros
-H-2026-07-22A — EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
   bootstrap invalidado, autoridade explícita, source legado exato e ordem causal;
-  P1 das rodadas anteriores preservados; novo review pendente
+  review final confirmou 10 controles; nenhum P1/P2
 H-B2 — BLOQUEADA por H-2026-07-22A / gate operacional de H-B1
   PassengerClarificationMeaningV1 strict + validator + corpus + shadow;
-  sem tools ou mudança user-visible
+  só inicia após commit, push, deploy e smoke verdes
 H-B3 — BLOQUEADA por H-B2
   promoção somente em prompt passageiro/criança e decisão
   WEAK/FALLBACK/UNKNOWN; sem booking/payment direto
@@ -2833,7 +2834,8 @@ próxima ação histórica daquela rodada: concluir estado/eventos duráveis, ex
 
 ### 8.11 Hotfix user-visible — H-2026-07-22A (2026-07-22)
 
-**Status:** **EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO**.
+**Status:** **REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE
+PENDENTES**.
 
 #### Evidência operacional e causa
 
@@ -3355,7 +3357,7 @@ A correção mantém a responsabilidade dentro do estado durável:
 Não houve migration, parser, regex, provider, código B2, mudança de contrato
 público, commit, push, deploy ou smoke.
 
-#### Correção local dos 4 P1 atuais de replay canônico
+#### Correção local dos 4 P1 do review anterior de replay canônico
 
 O review atual preservou as correções anteriores, mas comprovou quatro falhas
 restantes no contrato de replay:
@@ -3473,7 +3475,7 @@ Os 4 P1 anteriores de autoridade durável acrescentaram:
 - PostgreSQL real com duas pools confirma serialização, hidratação da ordem pelo
   banco e zero `booking_create` sem `BOOKABLE`.
 
-Os 4 P1 atuais de replay canônico acrescentam:
+Os 4 P1 do review anterior de replay canônico acrescentaram:
 
 - legado sem ID explícito permanece `NONE`, sem fallback para projeção;
 - lista-fonte deve ser estrutural, confiável, completa, compatível e única;
@@ -3542,7 +3544,7 @@ plans/h-2026-07-22a-fresh-session-passenger-gate.md
 #### Validação e review
 
 A evidência das rodadas anteriores continua registrada abaixo. A matriz dos
-4 P1 atuais de replay canônico foi executada integralmente em `apps/api`, sem
+4 P1 do review anterior de replay canônico foi executada integralmente em `apps/api`, sem
 reduzir os comandos exigidos:
 
 ```text
@@ -3586,20 +3588,84 @@ PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/
 PASS — git diff --check
 ```
 
-Resultado do review atual: **4 P1 DE REPLAY CANÔNICO**. Os quatro estão **corrigidos
-localmente** e a matriz final está verde; os P1 da rodada anterior e os demais P1
-históricos permanecem corrigidos. O resultado continua **aguardando novo
-review** e não há declaração de review limpo. O diff mantém a responsabilidade
-única do hotfix e não contém implementação de
-`PassengerClarificationMeaningV1`.
+Resultado do review atual: **5 P1 DE IDENTIDADE E REPLAY CANÔNICO**.
+O patch manual resolve a identidade da seleção contra o stream inbound da
+sessão, deriva a ordem do evento selecionado, exige lista-fonte explicitamente
+estrutural, remove duplicatas antes do ordinal e amplia a propriedade para os
+seis batches causais em 720 permutações. Os P1 anteriores permanecem no escopo
+de regressão.
 
-Teste em produção/smoke: **obrigatório e pendente; não executado nem autorizado
-nesta rodada**. Commit, push e deploy: **não executados**. H-2026-07-22A
-permanece **EM CORREÇÃO APÓS REVIEW — 4 P1 DE REPLAY CANÔNICO** e H-B2 permanece
-**BLOQUEADA**. Próxima ação recomendada: executar novo `/review` dirigido aos
-4 P1 atuais. Commit/push, deploy e smoke só podem ser reavaliados em rodada
-posterior e explicitamente
-autorizada; B2 continua bloqueada até review, deploy e smoke verdes registrados.
+#### Reconciliação da suíte executada em 2026-07-27
+
+A primeira aplicação manual dos 5 P1 deixou `go test -race -count=1
+./internal/chat`, `go test -count=1 ./internal/chat` e `go test -count=1 ./...`
+em RED. As falhas convergiam para `HasBookableSelection=false` e
+`ROUTE_SELECTION`, enquanto a matriz canônica do patch passava isoladamente.
+A causa raiz confirmada foi incompatibilidade das fixtures: projeções
+`OUTBOUND` fabricavam `selection_message_id`/prompt source sem a mensagem
+`INBOUND` correspondente e listas antigas carregavam apenas `tool_context`, sem
+`intent`/`template_name` estrutural.
+
+A reconciliação ficou restrita a testes. Os helpers de seleção agora:
+
+- persistem estado/evento moderno explicitamente, com mensagem `INBOUND` real,
+  prompt source real e projeção sem autoridade;
+- representam bootstrap legado pela timeline completa lista `OUTBOUND` →
+  seleção `INBOUND` → projeção `OUTBOUND`;
+- exigem IDs explícitos quando a fixture declara `materializes_authority=true`;
+- reconstroem `materializePersistedAvailabilitySelectionForTest` somente pelo
+  replay estruturado e não por evidência projetada;
+- não criam seleção a partir do texto do wrapper de `booking_create`.
+
+Não houve RED independente que pudesse ocorrer no repository real. Portanto
+nenhum código de produção adicional foi alterado para acomodar a suíte; o único
+delta de produção permanece o patch manual em
+`availability_selection_state_v1.go`.
+
+Validação final realmente executada em `apps/api`:
+
+```text
+PASS — grupo de fixtures diretamente afetado
+PASS — go test -count=20 ./internal/chat -run 'Test.*AvailabilitySelection.*(Replay|Order|Legacy|Projection|Invalidation)' — 15.562s
+PASS — provas funcionais 1–10 em count=20 — 17.939s
+PASS — go test -race -count=1 ./internal/chat — 23.570s
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn — 1.682s
+PASS — regressões cancel/passenger/availability — 3.832s
+PASS SEM SKIP — PostgreSQL 16 real efêmero, duas pools, lock invertido, count=20, live/reload/restart — 9.895s
+PASS — go test -count=1 ./internal/chat — 4.243s
+PASS — go test -count=1 ./... — internal/chat 4.862s e demais pacotes verdes
+PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
+PASS — gofmt sem arquivos pendentes
+PASS — git diff --check
+```
+
+#### Checkpoint pré-review final — histórico/superseded
+
+No checkpoint imediatamente anterior ao review final, o PostgreSQL 16 havia
+sido criado somente para a prova e removido em seguida; ainda não existia
+declaração de review limpo, e commit, push, deploy, smoke e teste em produção
+não haviam sido executados. Esse status intermediário foi superseded pelo
+review final abaixo.
+
+#### Review final limpo — status vigente
+
+O review final concluiu que o patch está **seguro para commit** e não encontrou
+P1/P2. Foram confirmados os 10 controles: `count=20`, race, suítes amplas,
+PostgreSQL **16.14** real sem `SKIP`, inventário de 54 `regexp.MustCompile`,
+`gofmt` e `git diff --check`.
+
+Status vigente:
+
+```text
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+```
+
+Commit, push, PR, merge/deploy e smoke ainda não foram executados. Deploy e
+smoke estão autorizados como próximos gates. Próxima ação única: commit, push,
+PR, merge/deploy autorizado e smoke operacional. H-B2 permanece
+**BLOQUEADA** até commit, push, deploy e smoke verdes; na fila, o desbloqueio
+só ocorre após o smoke verde.
 
 ---
 
