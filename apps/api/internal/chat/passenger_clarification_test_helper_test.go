@@ -35,77 +35,9 @@ func parseBookingCreateInput(
 	text string,
 	currentAvailability *AvailabilitySearchResult,
 ) (BookingCreateInput, bool) {
-	session = materializeExplicitAvailabilitySelectionForTest(
-		session,
-		history,
-		text,
-		currentAvailability,
-	)
 	session = materializePersistedAvailabilitySelectionForTest(session, history)
 	state := explicitPassengerClarificationStateForTest(session, history)
 	return parseBookingCreateInputWithPassengerState(session, history, text, currentAvailability, state)
-}
-
-func materializeExplicitAvailabilitySelectionForTest(
-	session Session,
-	history []Message,
-	text string,
-	currentAvailability *AvailabilitySearchResult,
-) Session {
-	if _, present := availabilitySelectionStateV1ValueFromSession(session); present {
-		return session
-	}
-	index := extractSelectedOptionIndex(text)
-	if index <= 0 || looksLikeNegatedAvailabilitySelection(
-		strings.Join(strings.Fields(foldChatText(text)), " "),
-	) {
-		return session
-	}
-	availability := currentAvailability
-	sourceHistoryIndex := len(history)
-	promptSourceMessageID := "test-current-availability"
-	rejectionPromptSourceMessageID := promptSourceMessageID
-	if availability == nil {
-		previous, historyIndex, ok := latestVisibleAvailabilitySelectionContextWithSource(history)
-		if !ok {
-			return session
-		}
-		availability = previous
-		sourceHistoryIndex = historyIndex
-		promptSourceMessageID = availabilityPromptSourceMessageIDAtHistoryIndex(history, historyIndex)
-		rejectionPromptSourceMessageID = promptSourceMessageID
-		if promptSourceMessageID == "" {
-			promptSourceMessageID = "test-history-prompt"
-		}
-	}
-	selected, ok := selectedAvailabilityItemForMaterialization(availability, index)
-	if !ok {
-		return session
-	}
-	evidence := latestAvailabilitySelectionEvidence(history)
-	if evidence.blocksHistoryIndex(sourceHistoryIndex) ||
-		evidence.rejectsAvailabilityOptionForPrompt(
-			rejectionPromptSourceMessageID,
-			sourceHistoryIndex,
-			index,
-			selected.TripDate,
-		) {
-		return session
-	}
-	snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(availability, index)
-	if !ok {
-		return session
-	}
-	selectionState := ReduceAvailabilitySelectionEventsV1(newAvailabilitySelectionStateV1(), []AvailabilitySelectionEventV1{
-		materializedAvailabilitySelectionEventForTest(
-			"test-selection-event",
-			"test-selection-projection",
-			promptSourceMessageID,
-			snapshot,
-		),
-	})
-	selectionState.BootstrapCompleted = true
-	return sessionWithAvailabilitySelectionStateForTest(session, selectionState)
 }
 
 func materializePersistedAvailabilitySelectionForTest(
@@ -115,44 +47,9 @@ func materializePersistedAvailabilitySelectionForTest(
 	if _, present := availabilitySelectionStateV1ValueFromSession(session); present {
 		return session
 	}
-	evidence := latestAvailabilitySelectionEvidence(history)
-	if !evidence.bookable() ||
-		!evidence.MaterializesAuthority ||
-		strings.TrimSpace(evidence.SelectionMessageID) == "" ||
-		strings.TrimSpace(evidence.AvailabilityPromptSourceMessageID) == "" {
-		return session
-	}
-	for index := len(history) - 1; index >= 0; index-- {
-		messageEvidence := messageAvailabilitySelectionEvidence(history[index])
-		if !messageEvidence.bookable() ||
-			messageEvidence.SelectionMessageID != evidence.SelectionMessageID {
-			continue
-		}
-		snapshot, ok := availabilitySelectionSnapshotV1FromPayload(
-			selectedAvailabilityResultFromMessage(history[index]),
-		)
-		if !ok {
-			return session
-		}
-		projectionMessageID := strings.TrimSpace(history[index].ID)
-		if projectionMessageID == "" {
-			projectionMessageID = evidence.SelectionMessageID
-		}
-		state := ReduceAvailabilitySelectionEventsV1(
-			newAvailabilitySelectionStateV1(),
-			[]AvailabilitySelectionEventV1{
-				materializedAvailabilitySelectionEventForTest(
-					evidence.SelectionMessageID,
-					projectionMessageID,
-					evidence.AvailabilityPromptSourceMessageID,
-					snapshot,
-				),
-			},
-		)
-		state.BootstrapCompleted = true
-		return sessionWithAvailabilitySelectionStateForTest(session, state)
-	}
-	return session
+	state := bootstrapAvailabilitySelectionStateFromHistoryForTest(history)
+	state.BootstrapCompleted = true
+	return sessionWithAvailabilitySelectionStateForTest(session, state)
 }
 
 func sessionWithAvailabilitySelectionStateForTest(
@@ -185,12 +82,33 @@ func sessionWithReplayedAvailabilitySelectionForTest(
 	return sessionWithAvailabilitySelectionStateForTest(session, state)
 }
 
-func persistedAvailabilitySelectionPayloadForTest(availability AvailabilitySearchResult, index int) map[string]interface{} {
+type availabilitySelectionProjectionAuthorityForTest struct {
+	SelectionMessageID    string
+	PromptSourceMessageID string
+	MaterializesAuthority bool
+}
+
+func persistedAvailabilitySelectionPayloadForTest(
+	availability AvailabilitySearchResult,
+	index int,
+	authority availabilitySelectionProjectionAuthorityForTest,
+) map[string]interface{} {
 	snapshot := selectedAvailabilityResultPayloadFromAvailability(&availability, index)
-	selectionIdentity := strings.TrimSpace(asString(snapshot["trip_id"])) + "-" + strconv.Itoa(index)
-	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "test-selection-event-" + selectionIdentity
-	snapshot[availabilityPromptSourceMessageIDPayloadKey] = "test-availability-prompt-" + selectionIdentity
-	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	selectionMessageID := strings.TrimSpace(authority.SelectionMessageID)
+	promptSourceMessageID := strings.TrimSpace(authority.PromptSourceMessageID)
+	if authority.MaterializesAuthority &&
+		(selectionMessageID == "" || promptSourceMessageID == "") {
+		panic("authoritative availability projection fixture requires explicit selection and prompt source IDs")
+	}
+	if selectionMessageID != "" {
+		snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = selectionMessageID
+	}
+	if promptSourceMessageID != "" {
+		snapshot[availabilityPromptSourceMessageIDPayloadKey] = promptSourceMessageID
+	}
+	if authority.MaterializesAuthority {
+		snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	}
 	return map[string]interface{}{
 		"intent":                             string(IntentSelectAvailabilityOption),
 		"template_name":                      string(TemplateAskPassengerCount),
@@ -199,6 +117,270 @@ func persistedAvailabilitySelectionPayloadForTest(availability AvailabilitySearc
 		"tool_context": map[string]interface{}{
 			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
+	}
+}
+
+func canonicalAvailabilitySelectionHistoryForTest(
+	history []Message,
+	availability AvailabilitySearchResult,
+	index int,
+	promptIndex int,
+	selectionIndex int,
+	projectionIndex int,
+) []Message {
+	if promptIndex < 0 || promptIndex >= len(history) ||
+		selectionIndex < 0 || selectionIndex >= len(history) ||
+		projectionIndex < 0 || projectionIndex >= len(history) ||
+		!(promptIndex < selectionIndex && selectionIndex < projectionIndex) {
+		panic("invalid canonical availability fixture indexes")
+	}
+	snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(&availability, index)
+	if !ok {
+		panic("invalid canonical availability fixture snapshot")
+	}
+	history = append([]Message(nil), history...)
+	identity := strings.TrimSpace(snapshot.TripID) + "-" + strconv.Itoa(index)
+	prompt := history[promptIndex]
+	prompt.ID = firstNonEmpty(strings.TrimSpace(prompt.ID), "test-availability-prompt-"+identity)
+	prompt.Payload = cloneMap(prompt.Payload)
+	prompt.NormalizedPayload = cloneMap(prompt.NormalizedPayload)
+	for _, payload := range []map[string]interface{}{prompt.Payload, prompt.NormalizedPayload} {
+		payload["intent"] = string(IntentAvailabilitySearch)
+		payload["template_name"] = string(TemplateAvailabilityList)
+		toolContext := cloneMap(asMap(payload["tool_context"]))
+		if len(asMap(toolContext[toolNameAvailabilitySearch])) == 0 {
+			toolContext[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(availability)
+		}
+		payload["tool_context"] = toolContext
+	}
+	history[promptIndex] = prompt
+
+	selection := history[selectionIndex]
+	selection.ID = firstNonEmpty(strings.TrimSpace(selection.ID), "test-selection-inbound-"+identity)
+	selection.Direction = "INBOUND"
+	selection.NormalizedPayload = cloneMap(selection.NormalizedPayload)
+
+	projection := history[projectionIndex]
+	projection.ID = firstNonEmpty(strings.TrimSpace(projection.ID), "test-selection-projection-"+identity)
+	projectionPayload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		index,
+		availabilitySelectionProjectionAuthorityForTest{
+			SelectionMessageID:    selection.ID,
+			PromptSourceMessageID: prompt.ID,
+		},
+	)
+	projection.Payload = cloneMap(projection.Payload)
+	projection.NormalizedPayload = cloneMap(projection.NormalizedPayload)
+	for key, value := range projectionPayload {
+		projection.Payload[key] = value
+		projection.NormalizedPayload[key] = value
+	}
+
+	event := materializedAvailabilitySelectionEventForTest(
+		selection.ID,
+		projection.ID,
+		prompt.ID,
+		snapshot,
+	)
+	event.EventID = ""
+	event.Order = AvailabilitySelectionEventOrderV1{}
+	selection.NormalizedPayload[availabilitySelectionEventsV1MessageKey] =
+		[]AvailabilitySelectionEventV1{event}
+
+	history[selectionIndex] = selection
+	history[projectionIndex] = projection
+	return history
+}
+
+func appendCanonicalAvailabilitySelectionForTest(
+	history []Message,
+	availability AvailabilitySearchResult,
+	index int,
+	promptAt time.Time,
+) []Message {
+	promptIndex := len(history)
+	fixtureID := strconv.Itoa(promptIndex) + "-" + strconv.Itoa(index)
+	sessionID := availabilitySelectionFixtureSessionIDForTest(history)
+	history = append(history,
+		Message{
+			ID:               "test-availability-prompt-" + fixtureID,
+			SessionID:        sessionID,
+			Direction:        "OUTBOUND",
+			Body:             buildAvailabilityListReply(availability),
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       promptAt,
+			CreatedAt:        promptAt,
+		},
+	)
+	return appendCanonicalAvailabilitySelectionForPromptForTest(
+		history,
+		availability,
+		index,
+		promptIndex,
+		promptAt.Add(time.Second),
+	)
+}
+
+func appendCanonicalAvailabilitySelectionForPromptForTest(
+	history []Message,
+	availability AvailabilitySearchResult,
+	index int,
+	promptIndex int,
+	selectionAt time.Time,
+) []Message {
+	selectionIndex := len(history)
+	fixtureID := strconv.Itoa(selectionIndex) + "-" + strconv.Itoa(index)
+	sessionID := ""
+	if promptIndex >= 0 && promptIndex < len(history) {
+		sessionID = strings.TrimSpace(history[promptIndex].SessionID)
+	}
+	if sessionID == "" {
+		sessionID = availabilitySelectionFixtureSessionIDForTest(history)
+	}
+	history = append(history,
+		Message{
+			ID:               "test-selection-inbound-" + fixtureID,
+			SessionID:        sessionID,
+			Direction:        "INBOUND",
+			Body:             "opcao " + strconv.Itoa(index),
+			ProcessingStatus: "PROCESSED",
+			ReceivedAt:       selectionAt,
+			CreatedAt:        selectionAt,
+		},
+		Message{
+			ID:               "test-selection-projection-" + fixtureID,
+			SessionID:        sessionID,
+			Direction:        "OUTBOUND",
+			Body:             askPassengerCountReply,
+			ProcessingStatus: messageStatusAutomationSent,
+			ReceivedAt:       selectionAt.Add(time.Second),
+			CreatedAt:        selectionAt.Add(time.Second),
+		},
+	)
+	return canonicalAvailabilitySelectionHistoryForTest(
+		history,
+		availability,
+		index,
+		promptIndex,
+		selectionIndex,
+		selectionIndex+1,
+	)
+}
+
+func availabilitySelectionFixtureSessionIDForTest(history []Message) string {
+	for index := len(history) - 1; index >= 0; index-- {
+		if sessionID := strings.TrimSpace(history[index].SessionID); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
+}
+
+type seededCanonicalAvailabilitySelectionForTest struct {
+	Prompt     Message
+	Selection  Message
+	Projection Message
+	State      AvailabilitySelectionStateV1
+	Session    Session
+}
+
+func seedCanonicalAvailabilitySelectionForTest(
+	t *testing.T,
+	store *fakeStore,
+	sessionID string,
+	availability AvailabilitySearchResult,
+	index int,
+	promptAt time.Time,
+	projectionBody string,
+) seededCanonicalAvailabilitySelectionForTest {
+	t.Helper()
+	if strings.TrimSpace(projectionBody) == "" {
+		projectionBody = askPassengerCountReply
+	}
+	promptPayload := map[string]interface{}{
+		"intent":        string(IntentAvailabilitySearch),
+		"template_name": string(TemplateAvailabilityList),
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+		},
+	}
+	prompt, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		Body:              buildAvailabilityListReply(availability),
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           cloneMap(promptPayload),
+		NormalizedPayload: cloneMap(promptPayload),
+		ReceivedAt:        promptAt,
+	})
+	if err != nil {
+		t.Fatalf("seed canonical availability prompt: %v", err)
+	}
+	selection, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:        sessionID,
+		Direction:        "INBOUND",
+		Kind:             "TEXT",
+		Body:             "opcao " + strconv.Itoa(index),
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       promptAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("seed canonical availability selection inbound: %v", err)
+	}
+	projectionPayload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		index,
+		availabilitySelectionProjectionAuthorityForTest{
+			SelectionMessageID:    selection.ID,
+			PromptSourceMessageID: prompt.ID,
+		},
+	)
+	projection, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		Body:              projectionBody,
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           cloneMap(projectionPayload),
+		NormalizedPayload: cloneMap(projectionPayload),
+		ReceivedAt:        promptAt.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("seed canonical availability projection: %v", err)
+	}
+	snapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &availability, index)
+	applied, err := store.ApplyPassengerClarificationEventsV1(
+		context.Background(),
+		ApplyPassengerClarificationEventsV1Input{
+			SessionID: sessionID,
+			AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{
+				materializedAvailabilitySelectionEventForTest(
+					selection.ID,
+					projection.ID,
+					prompt.ID,
+					snapshot,
+				),
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("persist canonical availability selection: %v", err)
+	}
+	state := applied.AvailabilitySelectionState
+	if state.Status != AvailabilitySelectionStatusBookable ||
+		state.SelectionEventMessageID != selection.ID ||
+		state.SelectionProjectionMessageID != projection.ID ||
+		state.AvailabilityPromptSourceMessageID != prompt.ID {
+		t.Fatalf("canonical availability fixture is not BOOKABLE: %+v", state)
+	}
+	return seededCanonicalAvailabilitySelectionForTest{
+		Prompt:     prompt,
+		Selection:  selection,
+		Projection: projection,
+		State:      state,
+		Session:    applied.Session,
 	}
 }
 

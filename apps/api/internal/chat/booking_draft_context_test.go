@@ -14,11 +14,15 @@ func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(
 	firstDateMetadata := availabilityTestDayMonthMetadata(t, availability.Results[0].TripDate)
 	selectedDateInput := availabilityTestDateInput(t, selected.TripDate)
 	selectedDateMetadata := availabilityTestDayMonthMetadata(t, selected.TripDate)
-	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 2)
-	selectionSnapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
-	selectionSnapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "selection-event-option-2"
-	selectionSnapshot[availabilityPromptSourceMessageIDPayloadKey] = "availability-list-original"
-	selectionSnapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	selectionPayload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		2,
+		availabilitySelectionProjectionAuthorityForTest{
+			SelectionMessageID:    "selection-event-option-2",
+			PromptSourceMessageID: "availability-list-original",
+			MaterializesAuthority: true,
+		},
+	)
 	promptMessage := availabilityAuthorityPromptMessageForTest(
 		"availability-list-original",
 		availability,
@@ -103,6 +107,10 @@ func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(
 			}
 			history := []Message{
 				promptMessage,
+				availabilityAuthoritySelectionInboundForTest(
+					"selection-event-option-2",
+					now.Add(-210*time.Second),
+				),
 				selectedMessage,
 				{
 					ID:         "rejection-inbound",
@@ -129,9 +137,16 @@ func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(
 				t.Fatalf("resolved bookable authority=%t, want %t: %+v", evidence.bookable(), test.wantBookable, evidence)
 			}
 			session := sessionWithReplayedAvailabilitySelectionForTest(Session{}, history)
+			replayedState, _ := availabilitySelectionStateV1FromSession(session)
 			context := collectBookingDraftContextForRoutingBaseline(session, history)
 			if context.HasBookableSelection != test.wantBookable {
-				t.Fatalf("booking draft authority=%t, want %t: %+v", context.HasBookableSelection, test.wantBookable, context)
+				t.Fatalf(
+					"booking draft authority=%t, want %t: context=%+v replay=%+v",
+					context.HasBookableSelection,
+					test.wantBookable,
+					context,
+					replayedState,
+				)
 			}
 			if !test.wantBookable {
 				if context.SelectedOptionIndex != 0 || context.TripID != "" ||
@@ -187,7 +202,7 @@ func TestBookingDraftReducesBookableAuthorityWithoutResurrectingSupersededSelect
 		"availability-list-a",
 		availabilityA,
 		1,
-		now.Add(-4*time.Minute),
+		now.Add(-5*time.Minute),
 	)
 	selectionB := availabilityAuthoritySelectionMessageForTest(
 		"selection-b",
@@ -230,11 +245,19 @@ func TestBookingDraftReducesBookableAuthorityWithoutResurrectingSupersededSelect
 					availabilityA,
 					now.Add(-6*time.Minute),
 				),
+				availabilityAuthoritySelectionInboundForTest(
+					"selection-a",
+					selectionA.ReceivedAt.Add(-time.Millisecond),
+				),
 				selectionA,
 				availabilityAuthorityPromptMessageForTest(
 					"availability-list-b",
 					availabilityB,
-					now.Add(-5*time.Minute),
+					now.Add(-4*time.Minute),
+				),
+				availabilityAuthoritySelectionInboundForTest(
+					"selection-b",
+					selectionB.ReceivedAt.Add(-time.Millisecond),
 				),
 				selectionB,
 				availabilityAuthorityRejectionMessageForTest(
@@ -323,6 +346,10 @@ func TestBookingDraftScopesAvailabilityRejectionToPromptSource(t *testing.T) {
 					availability,
 					now.Add(-3*time.Minute),
 				),
+				availabilityAuthoritySelectionInboundForTest(
+					"selection-a",
+					selection.ReceivedAt.Add(-time.Millisecond),
+				),
 				selection,
 				availabilityAuthorityRejectionMessageForTest(
 					"rejection",
@@ -386,7 +413,11 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			selectionPayload := persistedAvailabilitySelectionPayloadForTest(availabilityA, 1)
+			selectionPayload := persistedAvailabilitySelectionPayloadForTest(
+				availabilityA,
+				1,
+				availabilitySelectionProjectionAuthorityForTest{},
+			)
 			snapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
 			delete(snapshot, "package_name")
 			delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
@@ -410,8 +441,12 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 					now.Add(-3*time.Minute),
 				))
 			}
+			history = append(history, availabilityAuthoritySelectionInboundForTest(
+				"selection-a",
+				now.Add(-150*time.Second),
+			))
 			history = append(history, Message{
-				ID:                "selection-a",
+				ID:                "selection-a-projection",
 				Direction:         "OUTBOUND",
 				Body:              askPassengerCountReply,
 				ProcessingStatus:  messageStatusAutomationSent,
@@ -456,13 +491,17 @@ func availabilityAuthoritySelectionMessageForTest(
 	index int,
 	at time.Time,
 ) Message {
-	payload := persistedAvailabilitySelectionPayloadForTest(availability, index)
-	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-	snapshot["selection_message_id"] = messageID
-	snapshot["availability_prompt_source_message_id"] = promptSourceMessageID
-	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
+	payload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		index,
+		availabilitySelectionProjectionAuthorityForTest{
+			SelectionMessageID:    messageID,
+			PromptSourceMessageID: promptSourceMessageID,
+			MaterializesAuthority: true,
+		},
+	)
 	return Message{
-		ID:                messageID,
+		ID:                messageID + "-projection",
 		Direction:         "OUTBOUND",
 		Body:              askPassengerCountReply,
 		ProcessingStatus:  messageStatusAutomationSent,
@@ -470,6 +509,20 @@ func availabilityAuthoritySelectionMessageForTest(
 		NormalizedPayload: cloneMap(payload),
 		ReceivedAt:        at,
 		CreatedAt:         at,
+	}
+}
+
+func availabilityAuthoritySelectionInboundForTest(
+	messageID string,
+	at time.Time,
+) Message {
+	return Message{
+		ID:               messageID,
+		Direction:        "INBOUND",
+		Body:             "opcao selecionada",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       at,
+		CreatedAt:        at,
 	}
 }
 
@@ -504,12 +557,15 @@ func availabilityAuthorityProjectionMessageForTest(
 	index int,
 	at time.Time,
 ) Message {
-	payload := persistedAvailabilitySelectionPayloadForTest(availability, index)
+	payload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		index,
+		availabilitySelectionProjectionAuthorityForTest{
+			SelectionMessageID:    selectionMessageID,
+			PromptSourceMessageID: promptSourceMessageID,
+		},
+	)
 	payload["intent"] = string(IntentPassengerCountReply)
-	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = selectionMessageID
-	snapshot[availabilityPromptSourceMessageIDPayloadKey] = promptSourceMessageID
-	snapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = false
 	return Message{
 		ID:                messageID,
 		Direction:         "OUTBOUND",
@@ -527,18 +583,22 @@ func availabilityAuthorityPromptMessageForTest(
 	availability AvailabilitySearchResult,
 	at time.Time,
 ) Message {
-	return Message{
-		ID:               messageID,
-		Direction:        "OUTBOUND",
-		Body:             buildAvailabilityListReply(availability),
-		ProcessingStatus: messageStatusAutomationSent,
-		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
-			},
+	payload := map[string]interface{}{
+		"intent":        string(IntentAvailabilitySearch),
+		"template_name": string(TemplateAvailabilityList),
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
-		ReceivedAt: at,
-		CreatedAt:  at,
+	}
+	return Message{
+		ID:                messageID,
+		Direction:         "OUTBOUND",
+		Body:              buildAvailabilityListReply(availability),
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           cloneMap(payload),
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        at,
+		CreatedAt:         at,
 	}
 }
 
@@ -565,7 +625,6 @@ func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *
 			},
 		},
 	}
-	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
 	history := []Message{
 		{
 			Direction:        "OUTBOUND",
@@ -579,8 +638,9 @@ func TestCollectBookingDraftContextUsesSelectedAvailabilityAndPassengerReply(t *
 			},
 		},
 		{Direction: "INBOUND", Body: "primeira opcao", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
-		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute), Payload: selectionPayload, NormalizedPayload: cloneMap(selectionPayload)},
+		{Direction: "OUTBOUND", Body: "A passagem e so para voce ou tem mais alguem? Ha crianca de ate 5 anos viajando?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
 	}
+	history = canonicalAvailabilitySelectionHistoryForTest(history, availability, 1, 0, 1, 2)
 
 	context := collectBookingDraftContext(sessionWithPassengerClarificationStateForTest(Session{}, unknownPassengerStateForTest()), history, "e so para mim")
 	context = mergePassengerReplyIntoBookingDraft(context, 1, 0)
@@ -2277,8 +2337,7 @@ func passengerSlotAvailabilityHistory(t *testing.T, passengerQuestion string) []
 			OriginDepartTime: "12:00", TripDate: "2026-05-25", Price: 950, Currency: "BRL",
 		}},
 	}
-	selectionPayload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
-	return []Message{
+	history := []Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Certo. Opcoes Santa Ines/MA -> Fraiburgo/SC.",
@@ -2293,7 +2352,8 @@ func passengerSlotAvailabilityHistory(t *testing.T, passengerQuestion string) []
 		{Direction: "INBOUND", Body: "primeira", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-3 * time.Minute)},
 		{
 			Direction: "OUTBOUND", Body: passengerQuestion, ProcessingStatus: messageStatusAutomationSent,
-			ReceivedAt: now.Add(-2 * time.Minute), Payload: cloneMap(selectionPayload), NormalizedPayload: cloneMap(selectionPayload),
+			ReceivedAt: now.Add(-2 * time.Minute),
 		},
 	}
+	return canonicalAvailabilitySelectionHistoryForTest(history, availability, 1, 0, 1, 2)
 }

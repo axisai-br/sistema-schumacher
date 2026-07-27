@@ -252,11 +252,16 @@ func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope
 			if test.removeSelectedItemPackage {
 				selectedAvailability.Results[1].PackageName = ""
 			}
-			selectionPayload := persistedAvailabilitySelectionPayloadForTest(selectedAvailability, 2)
+			selectionPayload := persistedAvailabilitySelectionPayloadForTest(
+				selectedAvailability,
+				2,
+				availabilitySelectionProjectionAuthorityForTest{
+					SelectionMessageID:    "selected-option-2-event",
+					PromptSourceMessageID: "selected-option-2-prompt",
+					MaterializesAuthority: true,
+				},
+			)
 			selectionSnapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
-			selectionSnapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "selected-option-2-event"
-			selectionSnapshot[availabilityPromptSourceMessageIDPayloadKey] = "selected-option-2-prompt"
-			selectionSnapshot[availabilitySelectionMaterializesAuthorityPayloadKey] = true
 			if test.removeSnapshotPackage {
 				delete(selectionSnapshot, "package_name")
 			}
@@ -269,6 +274,10 @@ func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope
 					"selected-option-2-prompt",
 					selectedAvailability,
 					now.Add(-3*time.Minute),
+				),
+				availabilityAuthoritySelectionInboundForTest(
+					"selected-option-2-event",
+					now.Add(-150*time.Second),
 				),
 				{
 					ID:                "selected-option-2-package-a",

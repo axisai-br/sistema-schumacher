@@ -875,16 +875,28 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		"legacy-selection-projection",
 		availability,
 		IntentSelectAvailabilityOption,
+		now.Add(3*time.Second),
+	)
+	selectionInbound := legacyAvailabilitySelectionInboundForStateTest(
+		selection,
 		now.Add(2*time.Second),
 	)
 
 	t.Run("exact preceding source becomes bookable", func(t *testing.T) {
-		state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{promptA, selection})
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{promptA, selectionInbound, selection},
+		)
 		if state.Status != AvailabilitySelectionStatusBookable ||
 			state.AvailabilityPromptSourceMessageID != promptA.ID ||
 			state.SelectionProjectionMessageID != selection.ID ||
-			state.SelectionEventMessageID != "legacy-selection-event-"+selection.ID {
+			state.SelectionEventMessageID != selectionInbound.ID {
 			t.Fatalf("legacy selection did not resolve exact source without projection authority: %+v", state)
+		}
+		if compareAvailabilitySelectionEventOrderV1(
+			state.LastAppliedEventOrder,
+			availabilitySelectionEventOrderFromMessageV1(selectionInbound, 0),
+		) != 0 {
+			t.Fatalf("legacy selection used projection order instead of inbound order: %+v", state.LastAppliedEventOrder)
 		}
 	})
 
@@ -893,7 +905,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			"legacy-selection-missing-id",
 			availability,
 			IntentSelectAvailabilityOption,
-			now.Add(2*time.Second),
+			now.Add(3*time.Second),
 		)
 		delete(
 			asMap(identityMissing.Payload[selectedAvailabilityResultPayloadKey]),
@@ -909,17 +921,89 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		}
 	})
 
+	t.Run("nonexistent selection identity stays none", func(t *testing.T) {
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{promptA, selection})
+		if state.Status != AvailabilitySelectionStatusNone {
+			t.Fatalf("legacy selection with nonexistent inbound identity became authoritative: %+v", state)
+		}
+	})
+
+	t.Run("outbound selection identity stays none", func(t *testing.T) {
+		outboundIdentity := legacyAvailabilitySelectionMessageForStateTest(
+			"legacy-selection-outbound-id",
+			availability,
+			IntentSelectAvailabilityOption,
+			now.Add(3*time.Second),
+		)
+		for _, payload := range []map[string]interface{}{outboundIdentity.Payload, outboundIdentity.NormalizedPayload} {
+			asMap(payload[selectedAvailabilityResultPayloadKey])[selectedAvailabilitySelectionMessageIDPayloadKey] = promptA.ID
+		}
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{promptA, outboundIdentity})
+		if state.Status != AvailabilitySelectionStatusNone {
+			t.Fatalf("legacy selection pointing at outbound message became authoritative: %+v", state)
+		}
+	})
+
+	t.Run("selection identity after projection stays none", func(t *testing.T) {
+		lateInbound := legacyAvailabilitySelectionInboundForStateTest(
+			selection,
+			now.Add(4*time.Second),
+		)
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{promptA, selection, lateInbound},
+		)
+		if state.Status != AvailabilitySelectionStatusNone {
+			t.Fatalf("legacy selection accepted causally late inbound identity: %+v", state)
+		}
+	})
+
 	t.Run("missing source stays none", func(t *testing.T) {
-		state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{selection})
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{selectionInbound, selection},
+		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("legacy selection without source became authoritative: %+v", state)
 		}
 	})
 
+	t.Run("prompt source after selection stays none", func(t *testing.T) {
+		latePrompt := legacyAvailabilityPromptMessageForStateTest(
+			"legacy-prompt-after-selection",
+			availability,
+			now.Add(2500*time.Millisecond),
+		)
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{selectionInbound, latePrompt, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusNone {
+			t.Fatalf("legacy selection accepted a prompt emitted after the selection inbound: %+v", state)
+		}
+	})
+
 	t.Run("ambiguous source stays none", func(t *testing.T) {
-		state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{promptA, promptB, selection})
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{promptA, promptB, selectionInbound, selection},
+		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("legacy selection with ambiguous sources became authoritative: %+v", state)
+		}
+	})
+
+	t.Run("generic outbound with copied facts is not a prompt source", func(t *testing.T) {
+		genericPrompt := legacyAvailabilityPromptMessageForStateTest(
+			"legacy-generic-outbound",
+			availability,
+			now,
+		)
+		for _, payload := range []map[string]interface{}{genericPrompt.Payload, genericPrompt.NormalizedPayload} {
+			delete(payload, "intent")
+			delete(payload, "template_name")
+		}
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{genericPrompt, selectionInbound, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusNone {
+			t.Fatalf("generic outbound carrying availability facts became prompt authority: %+v", state)
 		}
 	})
 
@@ -931,7 +1015,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			now.Add(time.Second),
 		)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{projectionSource, selection},
+			[]Message{projectionSource, selectionInbound, selection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("legacy selection projection became a prompt source: %+v", state)
@@ -951,9 +1035,15 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 				"legacy-"+strings.ReplaceAll(test.name, " ", "-")+"-projection",
 				availability,
 				test.intent,
+				now.Add(3*time.Second),
+			)
+			projectionInbound := legacyAvailabilitySelectionInboundForStateTest(
+				projection,
 				now.Add(2*time.Second),
 			)
-			state := bootstrapAvailabilitySelectionStateFromHistoryForTest([]Message{promptA, projection})
+			state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+				[]Message{promptA, projectionInbound, projection},
+			)
 			if state.Status != AvailabilitySelectionStatusNone {
 				t.Fatalf("%s projection became authoritative: %+v", test.intent, state)
 			}
@@ -966,25 +1056,25 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		})
 	}
 
-	t.Run("legacy rejection targets recovered source", func(t *testing.T) {
+	t.Run("legacy rejection uses selection inbound causal order", func(t *testing.T) {
 		rejection := availabilityAuthorityRejectionMessageForTest(
-			"legacy-rejection",
+			"legacy-rejection-before-projection",
 			promptA.ID,
 			1,
-			now.Add(3*time.Second),
+			now.Add(2500*time.Millisecond),
 		)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{promptA, selection, rejection},
+			[]Message{promptA, selectionInbound, rejection, selection},
 		)
 		if state.Status != AvailabilitySelectionStatusRejected ||
 			state.Tombstone == nil ||
 			state.Tombstone.AvailabilityPromptSourceMessageID != promptA.ID {
-			t.Fatalf("legacy rejection missed recovered selection source: %+v", state)
+			t.Fatalf("legacy projection order reopened a rejected selection: %+v", state)
 		}
 	})
 
 	t.Run("read consumers require persisted reconstructed state", func(t *testing.T) {
-		history := []Message{promptA, selection}
+		history := []Message{promptA, selectionInbound, selection}
 		replayed := bootstrapAvailabilitySelectionStateFromHistoryForTest(history)
 		if replayed.Status != AvailabilitySelectionStatusBookable {
 			t.Fatalf("test replay did not reconstruct BOOKABLE authority: %+v", replayed)
@@ -1219,171 +1309,200 @@ func TestAvailabilitySelectionStateV1CausalOrderBeatsLockOrder(t *testing.T) {
 }
 
 func TestAvailabilitySelectionReplayOrderPermutationProperty(t *testing.T) {
-	permutations := []struct {
-		name  string
-		order []int
-	}{
-		{name: "materialization rejection projection", order: []int{0, 1, 2}},
-		{name: "materialization projection rejection", order: []int{0, 2, 1}},
-		{name: "rejection materialization projection", order: []int{1, 0, 2}},
-		{name: "rejection projection materialization", order: []int{1, 2, 0}},
-		{name: "projection materialization rejection", order: []int{2, 0, 1}},
-		{name: "projection rejection materialization", order: []int{2, 1, 0}},
+	arrivalPermutations := availabilitySelectionArrivalPermutationsForTest(6)
+	if len(arrivalPermutations) != 720 {
+		t.Fatalf("expected complete 6-event arrival matrix with 720 permutations, got %d", len(arrivalPermutations))
 	}
-
-	var referenceStateJSON string
 	replayObservedAt := availabilityTestObservedAt()
-	for _, permutation := range permutations {
-		t.Run(permutation.name, func(t *testing.T) {
-			store := newFakeStore()
-			now := replayObservedAt
-			session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
-				Channel:       "WHATSAPP",
-				ContactKey:    "availability-replay-" + strings.ReplaceAll(permutation.name, " ", "-"),
-				CustomerPhone: "availability-replay-" + strings.ReplaceAll(permutation.name, " ", "-"),
-			})
-			if err != nil {
-				t.Fatalf("seed replay session: %v", err)
-			}
-			materializationMessage := seedAvailabilitySelectionReplayMessageForTest(
-				store,
-				session.ID,
-				"00000000-0000-0000-0000-000000000101",
-				"replay-old-materialization",
-				now,
-			)
-			rejectionMessage := seedAvailabilitySelectionReplayMessageForTest(
-				store,
-				session.ID,
-				"00000000-0000-0000-0000-000000000102",
-				"replay-new-rejection",
-				now.Add(time.Minute),
-			)
-			projectionMessage := seedAvailabilitySelectionReplayMessageForTest(
-				store,
-				session.ID,
-				"00000000-0000-0000-0000-000000000103",
-				"replay-new-projection",
-				now.Add(2*time.Minute),
-			)
-			availability := availabilityOptionPromptFutureResultAt(now)
-			snapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &availability, 1)
-			inputs := []ApplyPassengerClarificationEventsV1Input{
-				{
-					SessionID: session.ID,
-					AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{
-						materializedAvailabilitySelectionEventForTest(
-							materializationMessage.ID,
-							"replay-selection-projection-a",
-							"replay-prompt-a",
-							snapshot,
-						),
-					},
-				},
-				{
-					SessionID: session.ID,
-					AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
-						Type:                              AvailabilitySelectionEventRejected,
-						MessageID:                         rejectionMessage.ID,
-						AvailabilityPromptSourceMessageID: "replay-prompt-b",
-						RejectedOptionIndexes:             []int{1},
-					}},
-				},
-				{
-					SessionID: session.ID,
-					AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
-						Type:                              AvailabilitySelectionEventMaterialized,
-						MessageID:                         projectionMessage.ID,
-						ProjectionMessageID:               "replay-copied-projection-a",
-						AvailabilityPromptSourceMessageID: "replay-prompt-a",
-						SelectedOptionIndex:               snapshot.SelectedOptionIndex,
-						Snapshot:                          snapshot,
-						MaterializesAuthority:             false,
-					}},
-				},
-			}
+	var referenceStateJSON string
 
-			var liveState AvailabilitySelectionStateV1
-			for _, inputIndex := range permutation.order {
-				applied, applyErr := store.ApplyPassengerClarificationEventsV1(
-					context.Background(),
-					inputs[inputIndex],
-				)
-				if applyErr != nil {
-					t.Fatalf("apply replay event %d: %v", inputIndex, applyErr)
-				}
-				liveState = applied.AvailabilitySelectionState
-				duplicate, duplicateErr := store.ApplyPassengerClarificationEventsV1(
-					context.Background(),
-					inputs[inputIndex],
-				)
-				if duplicateErr != nil {
-					t.Fatalf("duplicate replay event %d: %v", inputIndex, duplicateErr)
-				}
-				if availabilitySelectionStateJSONForTest(t, duplicate.AvailabilitySelectionState) !=
-					availabilitySelectionStateJSONForTest(t, liveState) {
-					t.Fatalf(
-						"duplicate event changed replay state: first=%+v duplicate=%+v",
-						liveState,
-						duplicate.AvailabilitySelectionState,
-					)
-				}
-				liveState = duplicate.AvailabilitySelectionState
-			}
-
-			if liveState.Status != AvailabilitySelectionStatusBookable ||
-				liveState.SelectionEventMessageID != materializationMessage.ID ||
-				liveState.AvailabilityPromptSourceMessageID != "replay-prompt-a" ||
-				liveState.Snapshot.TripID != snapshot.TripID ||
-				len(liveState.AppliedEventIDs) != 3 {
-				t.Fatalf("permuted replay produced wrong authority: %+v", liveState)
-			}
-			reloaded, err := store.GetSession(context.Background(), session.ID)
-			if err != nil {
-				t.Fatalf("reload replay session: %v", err)
-			}
-			reloadedState, ok := availabilitySelectionStateV1FromSession(reloaded)
-			if !ok ||
-				availabilitySelectionStateJSONForTest(t, reloadedState) !=
-					availabilitySelectionStateJSONForTest(t, liveState) {
-				t.Fatalf("reload differs from live replay: live=%+v reload=%+v", liveState, reloadedState)
-			}
-
-			reloaded.Metadata = cloneMap(reloaded.Metadata)
-			memory := cloneMap(asMap(reloaded.Metadata["memory"]))
-			delete(memory, availabilitySelectionStateV1MemoryKey)
-			reloaded.Metadata["memory"] = memory
-			store.sessions[reloaded.ID] = reloaded
-			restarted, err := store.ApplyPassengerClarificationEventsV1(
-				context.Background(),
-				ApplyPassengerClarificationEventsV1Input{SessionID: session.ID},
-			)
-			if err != nil {
-				t.Fatalf("restart canonical replay: %v", err)
-			}
-			restartedJSON := availabilitySelectionStateJSONForTest(
-				t,
-				restarted.AvailabilitySelectionState,
-			)
-			liveJSON := availabilitySelectionStateJSONForTest(t, liveState)
-			if restartedJSON != liveJSON {
-				t.Fatalf(
-					"restart differs from live canonical replay: live=%s restart=%s",
-					liveJSON,
-					restartedJSON,
-				)
-			}
-			if referenceStateJSON == "" {
-				referenceStateJSON = liveJSON
-			} else if liveJSON != referenceStateJSON {
-				t.Fatalf(
-					"arrival permutation changed canonical replay: reference=%s current=%s",
-					referenceStateJSON,
-					liveJSON,
-				)
-			}
+	for permutationIndex, arrivalOrder := range arrivalPermutations {
+		store := newFakeStore()
+		now := replayObservedAt
+		session, err := store.UpsertSession(context.Background(), UpsertSessionInput{
+			Channel:       "WHATSAPP",
+			ContactKey:    "availability-replay-" + strconv.Itoa(permutationIndex),
+			CustomerPhone: "availability-replay-" + strconv.Itoa(permutationIndex),
 		})
+		if err != nil {
+			t.Fatalf("seed replay session for permutation %v: %v", arrivalOrder, err)
+		}
+
+		messageIDs := []string{
+			"00000000-0000-0000-0000-000000000201",
+			"00000000-0000-0000-0000-000000000202",
+			"00000000-0000-0000-0000-000000000203",
+			"00000000-0000-0000-0000-000000000204",
+			"00000000-0000-0000-0000-000000000205",
+			"00000000-0000-0000-0000-000000000206",
+		}
+		messages := make([]Message, len(messageIDs))
+		for index, messageID := range messageIDs {
+			messages[index] = seedAvailabilitySelectionReplayMessageForTest(
+				store,
+				session.ID,
+				messageID,
+				"replay-event-"+strconv.Itoa(index),
+				now.Add(time.Duration(index)*time.Minute),
+			)
+		}
+
+		availabilityA := availabilityOptionPromptFutureResultAt(now)
+		availabilityB := availabilityOptionPromptFutureResultAt(now.Add(24 * time.Hour))
+		availabilityB.Results[0].TripID = "replay-trip-b"
+		availabilityB.Results[0].BoardStopID = "replay-board-b"
+		availabilityB.Results[0].AlightStopID = "replay-alight-b"
+		snapshotA := mustAvailabilitySelectionSnapshotV1ForTest(t, &availabilityA, 1)
+		snapshotB := mustAvailabilitySelectionSnapshotV1ForTest(t, &availabilityB, 1)
+		materializeB := materializedAvailabilitySelectionEventForTest(
+			messages[3].ID,
+			"replay-selection-projection-b",
+			"replay-prompt-b",
+			snapshotB,
+		)
+
+		inputs := []ApplyPassengerClarificationEventsV1Input{
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{
+					materializedAvailabilitySelectionEventForTest(
+						messages[0].ID,
+						"replay-selection-projection-a",
+						"replay-prompt-a",
+						snapshotA,
+					),
+				},
+			},
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
+					Type:                              AvailabilitySelectionEventRejected,
+					MessageID:                         messages[1].ID,
+					AvailabilityPromptSourceMessageID: "replay-prompt-a",
+					RejectedOptionIndexes:             []int{1},
+				}},
+			},
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
+					Type:                 AvailabilitySelectionEventInvalidated,
+					MessageID:            messages[2].ID,
+					RejectedWholeContext: true,
+					ReasonCode:           "REPLAY_PROPERTY_INVALIDATION",
+				}},
+			},
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{
+					materializeB,
+					materializeB,
+				},
+			},
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
+					Type:                              AvailabilitySelectionEventRejected,
+					MessageID:                         messages[4].ID,
+					AvailabilityPromptSourceMessageID: "replay-prompt-b",
+					RejectedOptionIndexes:             []int{1},
+				}},
+			},
+			{
+				SessionID: session.ID,
+				AvailabilitySelectionEvents: []AvailabilitySelectionEventV1{{
+					Type:                              AvailabilitySelectionEventMaterialized,
+					MessageID:                         messages[5].ID,
+					ProjectionMessageID:               "replay-copied-projection-b",
+					AvailabilityPromptSourceMessageID: "replay-prompt-b",
+					SelectedOptionIndex:               snapshotB.SelectedOptionIndex,
+					Snapshot:                          snapshotB,
+					MaterializesAuthority:             false,
+				}},
+			},
+		}
+
+		var liveState AvailabilitySelectionStateV1
+		for _, inputIndex := range arrivalOrder {
+			applied, applyErr := store.ApplyPassengerClarificationEventsV1(
+				context.Background(),
+				inputs[inputIndex],
+			)
+			if applyErr != nil {
+				t.Fatalf("apply permutation %v input %d: %v", arrivalOrder, inputIndex, applyErr)
+			}
+			liveState = applied.AvailabilitySelectionState
+		}
+
+		if liveState.Status != AvailabilitySelectionStatusRejected ||
+			liveState.Tombstone == nil ||
+			liveState.Tombstone.EventMessageID != messages[4].ID ||
+			liveState.SelectionEventMessageID != "" ||
+			liveState.Snapshot != (AvailabilitySelectionSnapshotV1{}) ||
+			len(liveState.AppliedEventIDs) != 6 {
+			t.Fatalf("permutation %v produced wrong canonical state: %+v", arrivalOrder, liveState)
+		}
+		liveJSON := availabilitySelectionStateJSONForTest(t, liveState)
+		if referenceStateJSON == "" {
+			referenceStateJSON = liveJSON
+		} else if liveJSON != referenceStateJSON {
+			t.Fatalf(
+				"arrival permutation %v changed canonical replay: reference=%s current=%s",
+				arrivalOrder,
+				referenceStateJSON,
+				liveJSON,
+			)
+		}
+
+		reloaded, err := store.GetSession(context.Background(), session.ID)
+		if err != nil {
+			t.Fatalf("reload permutation %v: %v", arrivalOrder, err)
+		}
+		reloadedState, ok := availabilitySelectionStateV1FromSession(reloaded)
+		if !ok || availabilitySelectionStateJSONForTest(t, reloadedState) != liveJSON {
+			t.Fatalf("reload differs for permutation %v: live=%+v reload=%+v", arrivalOrder, liveState, reloadedState)
+		}
+
+		reloaded.Metadata = cloneMap(reloaded.Metadata)
+		memory := cloneMap(asMap(reloaded.Metadata["memory"]))
+		delete(memory, availabilitySelectionStateV1MemoryKey)
+		reloaded.Metadata["memory"] = memory
+		store.sessions[reloaded.ID] = reloaded
+		restarted, err := store.ApplyPassengerClarificationEventsV1(
+			context.Background(),
+			ApplyPassengerClarificationEventsV1Input{SessionID: session.ID},
+		)
+		if err != nil {
+			t.Fatalf("restart permutation %v: %v", arrivalOrder, err)
+		}
+		if restartedJSON := availabilitySelectionStateJSONForTest(
+			t,
+			restarted.AvailabilitySelectionState,
+		); restartedJSON != liveJSON {
+			t.Fatalf("restart differs for permutation %v: live=%s restart=%s", arrivalOrder, liveJSON, restartedJSON)
+		}
 	}
+}
+
+func availabilitySelectionArrivalPermutationsForTest(size int) [][]int {
+	current := make([]int, size)
+	for index := range current {
+		current[index] = index
+	}
+	permutations := make([][]int, 0)
+	var visit func(int)
+	visit = func(position int) {
+		if position == len(current) {
+			permutations = append(permutations, append([]int(nil), current...))
+			return
+		}
+		for index := position; index < len(current); index++ {
+			current[position], current[index] = current[index], current[position]
+			visit(position + 1)
+			current[position], current[index] = current[index], current[position]
+		}
+	}
+	visit(0)
+	return permutations
 }
 
 func availabilitySelectionStateJSONForTest(
@@ -1561,17 +1680,37 @@ func legacyAvailabilityPromptMessageForStateTest(
 	availability AvailabilitySearchResult,
 	at time.Time,
 ) Message {
-	return Message{
-		ID:               messageID,
-		Direction:        "OUTBOUND",
-		ProcessingStatus: messageStatusAutomationSent,
-		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
-			},
+	payload := map[string]interface{}{
+		"intent":        string(IntentAvailabilitySearch),
+		"template_name": string(TemplateAvailabilityList),
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
-		ReceivedAt: at,
-		CreatedAt:  at,
+	}
+	return Message{
+		ID:                messageID,
+		Direction:         "OUTBOUND",
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           payload,
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        at,
+		CreatedAt:         at,
+	}
+}
+
+func legacyAvailabilitySelectionInboundForStateTest(
+	projection Message,
+	at time.Time,
+) Message {
+	selectionMessageID := strings.TrimSpace(asString(
+		asMap(projection.Payload[selectedAvailabilityResultPayloadKey])[selectedAvailabilitySelectionMessageIDPayloadKey],
+	))
+	return Message{
+		ID:               selectionMessageID,
+		Direction:        "INBOUND",
+		ProcessingStatus: "PROCESSED",
+		ReceivedAt:       at,
+		CreatedAt:        at,
 	}
 }
 
@@ -1581,7 +1720,11 @@ func legacyAvailabilitySelectionMessageForStateTest(
 	intent Intent,
 	at time.Time,
 ) Message {
-	payload := persistedAvailabilitySelectionPayloadForTest(availability, 1)
+	payload := persistedAvailabilitySelectionPayloadForTest(
+		availability,
+		1,
+		availabilitySelectionProjectionAuthorityForTest{},
+	)
 	payload["intent"] = string(intent)
 	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
 	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "legacy-selection-event-" + messageID

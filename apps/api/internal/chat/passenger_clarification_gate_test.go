@@ -1406,18 +1406,15 @@ func TestStrongPreservesPriorBookableSelectionAgainstUnselectedSingleOption(t *t
 	for index := range availability.Results {
 		availability.Results[index].PackageName = priorSelectedPackage
 	}
-	seedAvailabilitySelectionPromptForFailClosedTest(
-		t, store, session.ID, "strong-prior-list", availability,
-		messageStatusAutomationSent, true, now.Add(-3*time.Minute),
+	seedCanonicalAvailabilitySelectionForTest(
+		t,
+		store,
+		session.ID,
+		availability,
+		2,
+		now.Add(-4*time.Minute),
+		askPassengerCountReply,
 	)
-	priorPayload := persistedAvailabilitySelectionPayloadForTest(availability, 2)
-	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
-		SessionID: session.ID, IdempotencyKey: "strong-prior-selection-option-2",
-		Body: askPassengerCountReply, SenderName: "SHABAS", ProcessingStatus: messageStatusAutomationSent,
-		Payload: priorPayload, NormalizedPayload: cloneMap(priorPayload), RecordedAt: now.Add(-2 * time.Minute),
-	}); err != nil {
-		t.Fatalf("seed prior bookable option 2: %v", err)
-	}
 	currentAvailability := singleOptionUnselectedAvailabilityResultAt(now.Add(30 * 24 * time.Hour))
 	currentAvailability.Filter.PackageName = laterEnvelopePackage
 	currentAvailability.Results[0].PackageName = laterEnvelopePackage
@@ -1542,14 +1539,15 @@ func TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload(t *
 	for index := range previousAvailability.Results {
 		previousAvailability.Results[index].PackageName = previousPackage
 	}
-	previousPayload := persistedAvailabilitySelectionPayloadForTest(previousAvailability, 2)
-	if _, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
-		SessionID: session.ID, IdempotencyKey: "materialize-previous-option-2",
-		Body: askPassengerCountReply, SenderName: "SHABAS", ProcessingStatus: messageStatusAutomationSent,
-		Payload: previousPayload, NormalizedPayload: cloneMap(previousPayload), RecordedAt: now.Add(-2 * time.Minute),
-	}); err != nil {
-		t.Fatalf("seed previous aggregate: %v", err)
-	}
+	seedCanonicalAvailabilitySelectionForTest(
+		t,
+		store,
+		session.ID,
+		previousAvailability,
+		2,
+		now.Add(-4*time.Minute),
+		askPassengerCountReply,
+	)
 
 	replacementAvailability := availabilityOptionPromptFutureResultAt(now.Add(30 * 24 * time.Hour))
 	replacementAvailability.Filter.PackageName = replacementPackage

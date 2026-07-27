@@ -1671,21 +1671,39 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 				t.Fatalf("expected rejected availability not to be reused for booking_create, got %+v", input)
 			}
 
-			freshAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
-				TripID:                 "trip-2026-07-14",
-				BoardStopID:            "board-2026-07-14",
-				AlightStopID:           "alight-2026-07-14",
-				OriginDisplayName:      "Videira/SC",
-				DestinationDisplayName: "Santa Ines/MA",
-				OriginDepartTime:       "14:00",
-				TripDate:               "2026-07-14",
-				Price:                  980,
-				Currency:               "BRL",
-			})[0]
+			freshResult := AvailabilitySearchResult{
+				Filter: AvailabilitySearchInput{
+					Origin:      "Videira/SC",
+					Destination: "Santa Ines/MA",
+					Qty:         1,
+					Limit:       1,
+				},
+				Results: []AvailabilitySearchItem{{
+					TripID:                 "trip-2026-07-14",
+					BoardStopID:            "board-2026-07-14",
+					AlightStopID:           "alight-2026-07-14",
+					OriginDisplayName:      "Videira/SC",
+					DestinationDisplayName: "Santa Ines/MA",
+					OriginDepartTime:       "14:00",
+					TripDate:               "2026-07-14",
+					Price:                  980,
+					Currency:               "BRL",
+				}},
+			}
+			freshAvailability := singleAvailabilitySearchHistory(now, freshResult.Results[0])[0]
 			freshAvailability.SessionID = session.ID
 			freshAvailability.ReceivedAt = now.Add(1 * time.Minute)
+			freshAvailability.CreatedAt = now.Add(1 * time.Minute)
+			freshPromptIndex := len(history)
 			history = append(history, freshAvailability)
 			history = appendExplicitSoloPassengerDeclaration(history, now.Add(2*time.Minute))
+			history = appendCanonicalAvailabilitySelectionForPromptForTest(
+				history,
+				freshResult,
+				1,
+				freshPromptIndex,
+				now.Add(3*time.Minute),
+			)
 
 			input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil)
 			if !ok {

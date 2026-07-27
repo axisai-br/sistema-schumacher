@@ -373,7 +373,9 @@ func NormalizeAvailabilitySelectionEventsV1WithoutState(event AvailabilitySelect
 	event.ReasonCode = strings.TrimSpace(event.ReasonCode)
 	event.Snapshot = normalizeAvailabilitySelectionSnapshotV1(event.Snapshot)
 	event.RejectedOptionIndexes = uniqueAvailabilitySelectionIndexesV1(event.RejectedOptionIndexes)
+	sort.Ints(event.RejectedOptionIndexes)
 	event.RejectedTripDates = uniqueAvailabilitySelectionTripDatesV1(event.RejectedTripDates)
+	sort.Strings(event.RejectedTripDates)
 	event.Order = normalizeAvailabilitySelectionEventOrderV1(event.Order)
 	event.EventID = availabilitySelectionEventIDV1(event)
 	return event
@@ -711,7 +713,7 @@ func hydrateAvailabilitySelectionEventsV1(
 	hydrated := make([]AvailabilitySelectionEventV1, 0, len(events))
 	for _, messageID := range messageIDs {
 		message := messagesByID[messageID]
-		messageEvents := eventsByMessageID[messageID]
+		messageEvents := deduplicateAvailabilitySelectionEventsV1(eventsByMessageID[messageID])
 		sort.SliceStable(messageEvents, func(i, j int) bool {
 			leftRank := availabilitySelectionEventTypeRankV1(messageEvents[i].Type)
 			rightRank := availabilitySelectionEventTypeRankV1(messageEvents[j].Type)
@@ -728,6 +730,25 @@ func hydrateAvailabilitySelectionEventsV1(
 		}
 	}
 	return sortAvailabilitySelectionEventsV1(hydrated), nil
+}
+
+func deduplicateAvailabilitySelectionEventsV1(
+	events []AvailabilitySelectionEventV1,
+) []AvailabilitySelectionEventV1 {
+	seen := make(map[string]struct{}, len(events))
+	deduplicated := make([]AvailabilitySelectionEventV1, 0, len(events))
+	for _, event := range events {
+		event = NormalizeAvailabilitySelectionEventsV1WithoutState(event)
+		event.EventID = ""
+		event.Order = AvailabilitySelectionEventOrderV1{}
+		key := availabilitySelectionEventCanonicalKeyV1(event)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		deduplicated = append(deduplicated, event)
+	}
+	return deduplicated
 }
 
 func availabilitySelectionEventTypeRankV1(eventType AvailabilitySelectionEventTypeV1) int {
@@ -785,7 +806,9 @@ func availabilitySelectionStructuredEventsV1(messages []Message) []AvailabilityS
 			continue
 		}
 		if legacy, ok := legacyAvailabilitySelectionEventV1FromMessage(message, index, messages); ok {
-			legacy.Order = availabilitySelectionEventOrderFromMessageV1(message, 0)
+			if !legacy.Order.known() {
+				legacy.Order = availabilitySelectionEventOrderFromMessageV1(message, 0)
+			}
 			legacy = NormalizeAvailabilitySelectionEventsV1WithoutState(legacy)
 			legacy = enrichLegacyAvailabilitySelectionEventSnapshotV1(legacy, messages)
 			events = append(events, legacy)
@@ -993,7 +1016,7 @@ func availabilitySelectionEventsV1FromMessage(message Message) []AvailabilitySel
 		decoded[index].EventID = ""
 		decoded[index].Order = AvailabilitySelectionEventOrderV1{}
 	}
-	hydrated, err := hydrateAvailabilitySelectionEventsV1(decoded, []Message{message}, false)
+	hydrated, err := hydrateAvailabilitySelectionEventsV1(decoded, []Message{message}, true)
 	if err != nil {
 		return nil
 	}
@@ -1062,17 +1085,22 @@ func legacyAvailabilitySelectionEventV1FromMessage(
 			return AvailabilitySelectionEventV1{}, false
 		}
 	}
-	promptSource, sourceOK := exactLegacyAvailabilitySelectionPromptSourceV1(
+	selectionEventMessageID := strings.TrimSpace(evidence.SelectionMessageID)
+	selectionMessage, selectionHistoryIndex, selectionMessageOK := exactLegacyAvailabilitySelectionMessageV1(
 		messages,
 		historyIndex,
+		selectionEventMessageID,
+	)
+	if !selectionMessageOK {
+		return AvailabilitySelectionEventV1{}, false
+	}
+	promptSource, sourceOK := exactLegacyAvailabilitySelectionPromptSourceV1(
+		messages,
+		selectionHistoryIndex,
 		evidence.SelectedOptionIndex,
 		snapshot,
 	)
 	if !structuralSelection || !sourceOK {
-		return AvailabilitySelectionEventV1{}, false
-	}
-	selectionEventMessageID := strings.TrimSpace(evidence.SelectionMessageID)
-	if selectionEventMessageID == "" {
 		return AvailabilitySelectionEventV1{}, false
 	}
 	event := AvailabilitySelectionEventV1{
@@ -1084,9 +1112,38 @@ func legacyAvailabilitySelectionEventV1FromMessage(
 		Snapshot:                          snapshot,
 		MaterializesAuthority:             true,
 		ReasonCode:                        "LEGACY_STRUCTURED_SELECTION",
+		Order:                             availabilitySelectionEventOrderFromMessageV1(selectionMessage, 0),
 	}
 	event = NormalizeAvailabilitySelectionEventsV1WithoutState(event)
 	return event, true
+}
+
+func exactLegacyAvailabilitySelectionMessageV1(
+	messages []Message,
+	beforeIndex int,
+	selectionMessageID string,
+) (Message, int, bool) {
+	selectionMessageID = strings.TrimSpace(selectionMessageID)
+	if selectionMessageID == "" {
+		return Message{}, -1, false
+	}
+	if beforeIndex > len(messages) {
+		beforeIndex = len(messages)
+	}
+	var selected Message
+	selectedIndex := -1
+	for index := 0; index < beforeIndex; index++ {
+		message := messages[index]
+		if strings.TrimSpace(message.ID) != selectionMessageID {
+			continue
+		}
+		if selectedIndex >= 0 || !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+			return Message{}, -1, false
+		}
+		selected = message
+		selectedIndex = index
+	}
+	return selected, selectedIndex, selectedIndex >= 0
 }
 
 func availabilitySelectionMessageHasStructuralSelectIntentV1(message Message) bool {
@@ -1153,6 +1210,7 @@ func legacyAvailabilityListPromptSourceV1(message Message) bool {
 		!isReliableActivePromptOutbound(message) {
 		return false
 	}
+	explicitListPrompt := false
 	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
 		if len(payload) == 0 {
 			continue
@@ -1166,10 +1224,19 @@ func legacyAvailabilityListPromptSourceV1(message Message) bool {
 		if intent != "" && intent != IntentUnknown && intent != IntentAvailabilitySearch {
 			return false
 		}
+		if intent == IntentAvailabilitySearch {
+			explicitListPrompt = true
+		}
 		templateName := ResponseTemplateName(strings.TrimSpace(payloadMetadataString(payload, "template_name")))
 		if templateName != "" && templateName != TemplateAvailabilityList {
 			return false
 		}
+		if templateName == TemplateAvailabilityList {
+			explicitListPrompt = true
+		}
+	}
+	if !explicitListPrompt {
+		return false
 	}
 	for _, toolContext := range messageToolContexts(message) {
 		if legacyAvailabilityListPayloadCompleteV1(asMap(toolContext[toolNameAvailabilitySearch])) {
