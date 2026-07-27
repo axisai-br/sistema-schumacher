@@ -197,12 +197,122 @@ func TestDeriveCanonicalConversationStateInvisibleSingleOptionAvailabilityDoesNo
 
 			got := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
-			if got.Route.TripID != "trip-2026-07-06" {
-				t.Fatalf("expected route to use visible trip, got %+v", got.Route)
+			if got.Route.Origin != visibleResult.Filter.Origin ||
+				got.Route.Destination != visibleResult.Filter.Destination ||
+				got.Route.PackageName != visibleResult.Filter.PackageName {
+				t.Fatalf("expected route to preserve only the visible availability envelope, got %+v", got.Route)
 			}
-			if got.Route.TripID == "hidden-trip" || got.Route.DepartureTime == "23:59" {
-				t.Fatalf("invisible availability facts preseeded route: %+v", got.Route)
+			if got.Route.SelectedOptionIndex != 0 || got.Route.TripID != "" ||
+				got.Route.BoardStopID != "" || got.Route.AlightStopID != "" ||
+				got.Route.TripDate != "" || got.Route.DepartureTime != "" ||
+				got.Route.Price != 0 || got.Route.Currency != "" {
+				t.Fatalf("visible or invisible unselected item preseeded route: %+v", got.Route)
 			}
+		})
+	}
+}
+
+func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope(t *testing.T) {
+	now := availabilityTestObservedAt()
+	const (
+		selectedPackage   = "package-selected-a"
+		unselectedPackage = "package-unselected-b"
+	)
+
+	tests := []struct {
+		name                      string
+		removeSnapshotPackage     bool
+		removeSelectedItemPackage bool
+		wantPackage               string
+	}{
+		{
+			name:        "complete selected snapshot",
+			wantPackage: selectedPackage,
+		},
+		{
+			name:                  "legacy snapshot recovers from matching item",
+			removeSnapshotPackage: true,
+			wantPackage:           selectedPackage,
+		},
+		{
+			name:                      "legacy snapshot never recovers from filter",
+			removeSnapshotPackage:     true,
+			removeSelectedItemPackage: true,
+			wantPackage:               "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			selectedAvailability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
+			selectedAvailability.Filter.PackageName = selectedPackage
+			for index := range selectedAvailability.Results {
+				selectedAvailability.Results[index].PackageName = selectedPackage
+			}
+			if test.removeSelectedItemPackage {
+				selectedAvailability.Results[1].PackageName = ""
+			}
+			selectionPayload := persistedAvailabilitySelectionPayloadForTest(
+				selectedAvailability,
+				2,
+				availabilitySelectionProjectionAuthorityForTest{
+					SelectionMessageID:    "selected-option-2-event",
+					PromptSourceMessageID: "selected-option-2-prompt",
+					MaterializesAuthority: true,
+				},
+			)
+			selectionSnapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
+			if test.removeSnapshotPackage {
+				delete(selectionSnapshot, "package_name")
+			}
+
+			unselectedAvailability := availabilityOptionPromptFutureResultAt(now.Add(30 * 24 * time.Hour))
+			unselectedAvailability.Filter.PackageName = unselectedPackage
+			unselectedAvailability.Results[0].PackageName = unselectedPackage
+			history := []Message{
+				availabilityAuthorityPromptMessageForTest(
+					"selected-option-2-prompt",
+					selectedAvailability,
+					now.Add(-3*time.Minute),
+				),
+				availabilityAuthoritySelectionInboundForTest(
+					"selected-option-2-event",
+					now.Add(-150*time.Second),
+				),
+				{
+					ID:                "selected-option-2-package-a",
+					Direction:         "OUTBOUND",
+					Body:              askPassengerCountReply,
+					ProcessingStatus:  messageStatusAutomationSent,
+					Payload:           selectionPayload,
+					NormalizedPayload: cloneMap(selectionPayload),
+					ReceivedAt:        now.Add(-2 * time.Minute),
+					CreatedAt:         now.Add(-2 * time.Minute),
+				},
+				{
+					ID:               "unselected-envelope-package-b",
+					Direction:        "OUTBOUND",
+					Body:             buildAvailabilityListReply(unselectedAvailability),
+					ProcessingStatus: messageStatusAutomationSent,
+					Payload: map[string]interface{}{
+						"tool_context": map[string]interface{}{
+							toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(unselectedAvailability),
+						},
+					},
+					ReceivedAt: now.Add(-time.Minute),
+					CreatedAt:  now.Add(-time.Minute),
+				},
+			}
+
+			session := sessionWithReplayedAvailabilitySelectionForTest(
+				Session{ID: "selected-package-session", HandoffStatus: "BOT"},
+				history,
+			)
+			got := deriveCanonicalConversationStateForRoutingBaseline(session, history)
+			want := selectedAvailability.Results[1]
+			want.PackageName = test.wantPackage
+			assertCanonicalRouteSelectionForTest(t, got.Route, 2, want, "selected package routing baseline")
+			assertStringValuesAbsentAtAnyDepthForTest(t, got, "selected package canonical state", unselectedPackage)
 		})
 	}
 }

@@ -3,13 +3,15 @@
 ## Status no tracker
 
 ```text
-EM ANDAMENTO — B1 concluída; B2 PRÓXIMA.
+EM ANDAMENTO — gate operacional de B1 reaberto por H-2026-07-22A.
 ```
 
 O H-B não é mais um slice executável. Ele organiza três slices independentes e
-permanece aberto até todos concluírem seus gates. B1 está concluída e segura
-para commit; B2 está liberada somente como próxima slice e nenhuma implementação
-de B2 foi iniciada. B3 e 3.6F-D permanecem bloqueadas.
+permanece aberto até todos concluírem seus gates. O review local histórico de
+B1 foi limpo, mas evidência operacional posterior mostrou que seu bootstrap
+`UNKNOWN` bloqueava sessões novas globalmente. H-2026-07-22A está **EM CORREÇÃO
+APÓS REVIEW — 3 P1 DO NOVO REVIEW**; B2, B3 e
+3.6F-D permanecem bloqueadas.
 
 ## Histórico — motivo do replanejamento após o sexto review
 
@@ -31,14 +33,16 @@ responsabilidades apontada pelos reviews. A decisão canônica passa a ser
 
 | Ordem | Slice | Status | Responsabilidade única |
 |---|---|---|---|
-| 1 | H-2026-07-16B1 | **CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT** | fonte durável, eventos, serialização por sessão, propagação do prompt enviado, fail-closed e `BookingDraftContext` como projeção; sem interpretação de linguagem |
-| 2 | H-2026-07-16B2 | **PRÓXIMA — ainda não iniciada** | `PassengerClarificationMeaningV1` strict, validator local, corpus e shadow; sem tools ou mudança user-visible |
-| 3 | H-2026-07-16B3 | **BLOQUEADA por H-B2** | promoção gated somente em prompt passageiro/criança e decisão `WEAK`/`FALLBACK`/`UNKNOWN`; sem booking/payment direto |
-| 4 | 3.6F-D | **BLOQUEADA por H-B** | só pode ser reavaliada depois do fechamento integral do umbrella |
+| 1 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | fonte durável preservada; bootstrap `UNKNOWN` fresco não pode bloquear o atendimento antes de contexto de passageiros |
+| 2 | H-2026-07-22A | **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW** | separar identidade do prompt de facts de continuidade, preservar `STRONG` e exigir autoridade bookable explícita sem enfraquecer o `UNKNOWN` fresco |
+| 3 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-22A / gate operacional de B1** | `PassengerClarificationMeaningV1` strict, validator local, corpus e shadow; sem tools ou mudança user-visible |
+| 4 | H-2026-07-16B3 | **BLOQUEADA por H-B2** | promoção gated somente em prompt passageiro/criança e decisão `WEAK`/`FALLBACK`/`UNKNOWN`; sem booking/payment direto |
+| 5 | 3.6F-D | **BLOQUEADA por H-B** | só pode ser reavaliada depois do fechamento integral do umbrella |
 
 Planos executáveis:
 
 - `plans/h-2026-07-16b1-passenger-state-foundation.md`;
+- `plans/h-2026-07-22a-fresh-session-passenger-gate.md`;
 - `plans/h-2026-07-16b2-passenger-meaning-v1.md`;
 - `plans/h-2026-07-16b3-passenger-meaning-runtime.md`.
 
@@ -52,7 +56,7 @@ Cada `/goal` executa exatamente um slice. Não executar B1, B2 e B3 no mesmo PR.
 | P1-02 | bootstrap reparsa inbound da janela histórica | B1 | `TestPassengerStateBootstrapUsesStructuredEvidenceOnly` |
 | P1-03 | evento fica no draft e não acompanha o outbound enviado | B1 | `TestPassengerPromptEventFollowsReviewedAndAutoSentOutboundBeyondHistoryWindow` |
 | P1-04 | contexto infantil depende de `ActivePrompt.Kind` textual | B1 | `TestPassengerChildAddsTravelerUsesPersistedPromptEpoch` |
-| P1-05 | estado inseguro chega a shadows, LLMs e tools | B1 | `TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch` |
+| P1-05 | estado inseguro chega a shadows, LLMs e tools | B1 | `TestPassengerGateAfterDeliveredPromptStopsExternalWorkBeforeDispatch` |
 | P1-06 | `BookingDraftContext` recupera contagem de `booking_create` | B1 | `TestBookingDraftProjectionIgnoresBookingCreatePassengerCount` |
 | P1-07 | booking criado avança payment antes de validar slots | B1 | `TestBookingCreatedWithUnknownPassengerSlotsFailsClosed` |
 | P1-08 | correção de total preserva `adds_traveler` incompatível | B1 | `TestPassengerAggregateCorrectionClearsDependentAddsTraveler` |
@@ -88,6 +92,8 @@ autoriza antecipar B2 dentro do diff do B1.
   `./internal/chat`, `./...` e `git diff --check` verde;
 - review sem P1/P2;
 - nenhuma chamada externa sob lock e nenhum incidente operacional aberto.
+- H-2026-07-22A revisado, implantado e com smoke verde, comprovando que sessão
+  nova não abre o gate prematuramente e que o fail-closed pós-prompt permanece.
 
 ### B2 -> B3
 
@@ -119,8 +125,10 @@ desbloqueio de 3.6F-D.
 
 ## Próxima ação única
 
-Preparar o commit de B1 a partir da composição auditada. Executar B2 somente em
-outro `/goal` explícito; este PR não iniciou contrato, validator, corpus ou
-shadow de B2. B3 permanece bloqueada por B2, e 3.6F-D permanece bloqueada pelo
+O review local de `plans/h-2026-07-22a-fresh-session-passenger-gate.md` está
+verde. Mediante novo `/goal` e autorização explícita, preparar commit/push,
+implantar e executar o smoke do hotfix. B2 só pode ser reavaliada depois de
+deploy e smoke verdes; este PR não inicia contrato, validator, corpus ou shadow
+de B2. B3 permanece bloqueada por B2, e 3.6F-D permanece bloqueada pelo
 fechamento integral de H-B. Este umbrella não deve ser usado como objetivo de
 implementação.

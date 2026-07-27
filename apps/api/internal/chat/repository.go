@@ -412,14 +412,285 @@ func (r *Repository) ApplyPassengerClarificationEventsV1(
 	if err != nil {
 		return ApplyPassengerClarificationEventsV1Result{}, err
 	}
+	availabilityState, err := r.replayAvailabilitySelectionStateV1Tx(
+		ctx,
+		tx,
+		session,
+		input.AvailabilitySelectionEvents,
+	)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
 	session, err = persistPassengerClarificationStateV1Tx(ctx, tx, session, state)
+	if err != nil {
+		return ApplyPassengerClarificationEventsV1Result{}, err
+	}
+	session, err = persistAvailabilitySelectionStateV1Tx(ctx, tx, session, availabilityState)
 	if err != nil {
 		return ApplyPassengerClarificationEventsV1Result{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ApplyPassengerClarificationEventsV1Result{}, err
 	}
-	return ApplyPassengerClarificationEventsV1Result{Session: session, State: state}, nil
+	return ApplyPassengerClarificationEventsV1Result{
+		Session:                    session,
+		State:                      state,
+		AvailabilitySelectionState: availabilityState,
+	}, nil
+}
+
+func (r *Repository) replayAvailabilitySelectionStateV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	session Session,
+	events []AvailabilitySelectionEventV1,
+) (AvailabilitySelectionStateV1, error) {
+	if len(events) > 0 {
+		eventMessages, err := availabilitySelectionEventMessagesV1Tx(ctx, tx, session.ID, events)
+		if err != nil {
+			return AvailabilitySelectionStateV1{}, err
+		}
+		events, err = hydrateAvailabilitySelectionEventsV1(events, eventMessages, true)
+		if err != nil {
+			return AvailabilitySelectionStateV1{}, err
+		}
+		events = NormalizeAvailabilitySelectionEventsV1(newAvailabilitySelectionStateV1(), events)
+		for _, event := range events {
+			if !availabilitySelectionEventValidV1(event) {
+				return invalidAvailabilitySelectionStateV1("INVALID_EVENT"), nil
+			}
+		}
+		if err := persistAvailabilitySelectionEventsV1Tx(ctx, tx, session.ID, events); err != nil {
+			return AvailabilitySelectionStateV1{}, err
+		}
+	}
+
+	messages, err := availabilitySelectionBootstrapMessagesV1Tx(ctx, tx, session.ID)
+	if err != nil {
+		return AvailabilitySelectionStateV1{}, err
+	}
+	replayEvents := availabilitySelectionStructuredEventsV1(messages)
+	replayEvents = availabilitySelectionBootstrapEventsWithInvalidationV1(
+		session,
+		replayEvents,
+		messages,
+	)
+	replayEvents = NormalizeAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		replayEvents,
+	)
+	for _, event := range replayEvents {
+		if !availabilitySelectionEventValidV1(event) {
+			return invalidAvailabilitySelectionStateV1("INVALID_REPLAY_EVENT"), nil
+		}
+	}
+	state := ReduceAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		replayEvents,
+	)
+	state.BootstrapCompleted = true
+	if err := validateAvailabilitySelectionStateV1(state); err != nil {
+		return invalidAvailabilitySelectionStateV1("INVALID_REPLAY_STATE"), nil
+	}
+	return state, nil
+}
+
+func availabilitySelectionBootstrapMessagesV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	sessionID string,
+) ([]Message, error) {
+	rows, err := tx.Query(ctx, `
+		select
+			id::text,
+			direction,
+			payload,
+			normalized_payload,
+			processing_status,
+			sent_at,
+			received_at,
+			created_at
+		from chat_messages
+		where session_id = $1::uuid
+		order by received_at asc, created_at asc, id asc
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0)
+	for rows.Next() {
+		var message Message
+		var payload []byte
+		var normalizedPayload []byte
+		if err := rows.Scan(
+			&message.ID,
+			&message.Direction,
+			&payload,
+			&normalizedPayload,
+			&message.ProcessingStatus,
+			&message.SentAt,
+			&message.ReceivedAt,
+			&message.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		message.Payload = decodeMap(payload)
+		message.NormalizedPayload = decodeMap(normalizedPayload)
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+func availabilitySelectionEventMessagesV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	sessionID string,
+	events []AvailabilitySelectionEventV1,
+) ([]Message, error) {
+	messageIDs := make([]string, 0, len(events))
+	for _, event := range events {
+		messageID := strings.TrimSpace(event.MessageID)
+		if messageID == "" || availabilitySelectionStringSliceContains(messageIDs, messageID) {
+			continue
+		}
+		messageIDs = append(messageIDs, messageID)
+	}
+	if len(messageIDs) == 0 {
+		return nil, ErrAvailabilitySelectionStateInvalid
+	}
+	rows, err := tx.Query(ctx, `
+		select
+			id::text,
+			direction,
+			payload,
+			normalized_payload,
+			processing_status,
+			sent_at,
+			received_at,
+			created_at
+		from chat_messages
+		where session_id = $1::uuid
+			and id = any($2::uuid[])
+	`, sessionID, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0, len(messageIDs))
+	for rows.Next() {
+		var message Message
+		var payload []byte
+		var normalizedPayload []byte
+		if err := rows.Scan(
+			&message.ID,
+			&message.Direction,
+			&payload,
+			&normalizedPayload,
+			&message.ProcessingStatus,
+			&message.SentAt,
+			&message.ReceivedAt,
+			&message.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		message.Payload = decodeMap(payload)
+		message.NormalizedPayload = decodeMap(normalizedPayload)
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(messages) != len(messageIDs) {
+		return nil, ErrAvailabilitySelectionStateInvalid
+	}
+	return messages, nil
+}
+
+func persistAvailabilitySelectionEventsV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	sessionID string,
+	events []AvailabilitySelectionEventV1,
+) error {
+	eventsByMessageID := map[string][]AvailabilitySelectionEventV1{}
+	for _, event := range events {
+		messageID := strings.TrimSpace(event.MessageID)
+		if messageID == "" {
+			return ErrAvailabilitySelectionStateInvalid
+		}
+		eventsByMessageID[messageID] = append(eventsByMessageID[messageID], event)
+	}
+	for messageID, messageEvents := range eventsByMessageID {
+		persistedEvents := make([]AvailabilitySelectionEventV1, 0, len(messageEvents))
+		for _, event := range messageEvents {
+			event.EventID = ""
+			event.Order = AvailabilitySelectionEventOrderV1{}
+			persistedEvents = append(persistedEvents, event)
+		}
+		raw, err := json.Marshal(persistedEvents)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
+			update chat_messages
+			set normalized_payload = coalesce(normalized_payload, '{}'::jsonb)
+				|| jsonb_build_object('availability_selection_events_v1', $3::jsonb)
+			where session_id = $1::uuid
+				and id = $2::uuid
+				and direction = 'INBOUND'
+		`, sessionID, messageID, string(raw))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrAvailabilitySelectionStateInvalid
+		}
+	}
+	return nil
+}
+
+func persistAvailabilitySelectionStateV1Tx(
+	ctx context.Context,
+	tx pgx.Tx,
+	session Session,
+	state AvailabilitySelectionStateV1,
+) (Session, error) {
+	metadata := cloneMap(session.Metadata)
+	memory := cloneMap(asMap(metadata["memory"]))
+	memory[availabilitySelectionStateV1MemoryKey] = state
+	metadata["memory"] = memory
+	payload, err := encodeMap(metadata)
+	if err != nil {
+		return Session{}, err
+	}
+	row := tx.QueryRow(ctx, `
+		update chat_sessions
+		set metadata = $2::jsonb,
+			updated_at = now()
+		where id = $1::uuid
+		returning
+			id::text,
+			channel,
+			contact_key,
+			coalesce(customer_phone, ''),
+			coalesce(customer_name, ''),
+			status,
+			handoff_status,
+			coalesce(current_owner_user_id::text, ''),
+			last_message_at,
+			last_inbound_at,
+			last_outbound_at,
+			metadata,
+			created_at,
+			updated_at
+	`, session.ID, payload)
+	return scanSession(row)
 }
 
 func (r *Repository) reducePassengerClarificationStateV1Tx(
@@ -2213,6 +2484,9 @@ func (r *Repository) SaveReprocessSnapshot(ctx context.Context, input SaveReproc
 	memory := cloneMap(input.Memory)
 	if value, ok := passengerClarificationStateV1ValueFromSession(lockedSession); ok {
 		memory[passengerClarificationStateV1MemoryKey] = value
+	}
+	if value, ok := availabilitySelectionStateV1ValueFromSession(lockedSession); ok {
+		memory[availabilitySelectionStateV1MemoryKey] = value
 	}
 	memoryPayload, err := encodeMap(memory)
 	if err != nil {

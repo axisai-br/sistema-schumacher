@@ -62,6 +62,19 @@ type CanonicalPaymentState struct {
 
 func deriveCanonicalConversationState(session Session, history []Message, currentTurn string) CanonicalConversationState {
 	draft := collectBookingDraftContextFromState(session, history, currentTurn)
+	return deriveCanonicalConversationStateFromBookingDraft(session, history, draft)
+}
+
+func deriveCanonicalConversationStateForRoutingBaseline(session Session, history []Message) CanonicalConversationState {
+	draft := collectBookingDraftContextForRoutingBaseline(session, history)
+	return deriveCanonicalConversationStateFromBookingDraft(session, history, draft)
+}
+
+func deriveCanonicalConversationStateFromBookingDraft(
+	session Session,
+	history []Message,
+	draft BookingDraftContext,
+) CanonicalConversationState {
 	state := CanonicalConversationState{
 		SessionID:          strings.TrimSpace(session.ID),
 		Phase:              ConversationPhaseDiscovery,
@@ -73,6 +86,7 @@ func deriveCanonicalConversationState(session Session, history []Message, curren
 	}
 	state.Route.Origin = draft.Origin
 	state.Route.Destination = draft.Destination
+	state.Route.PackageName = draft.PackageName
 	state.Route.SelectedOptionIndex = draft.SelectedOptionIndex
 	state.Route.TripID = draft.TripID
 	state.Route.BoardStopID = draft.BoardStopID
@@ -88,12 +102,49 @@ func deriveCanonicalConversationState(session Session, history []Message, curren
 	for i := 0; i < len(history); i++ {
 		message := history[i]
 		for _, toolContext := range messageToolContexts(message) {
+			if draft.HasBookableSelection {
+				toolContext = withoutAvailabilityToolFacts(toolContext)
+			}
 			mergeMessageToolFactsIntoCanonicalState(&state, message, toolContext)
 		}
+	}
+	if selectedAvailability := selectedAvailabilityToolFactsFromBookingDraft(draft); len(selectedAvailability) > 0 {
+		state.LastToolFacts[toolNameAvailabilitySearch] = selectedAvailability
 	}
 	state.Phase = inferConversationPhase(state, draft)
 	state.AllowedNextActions = allowedNextActionsForPhase(state.Phase)
 	return state
+}
+
+func selectedAvailabilityToolFactsFromBookingDraft(draft BookingDraftContext) map[string]interface{} {
+	selected := selectedAvailabilityResultPayloadFromBookingDraft(draft)
+	if len(selected) == 0 {
+		return nil
+	}
+	results := make([]map[string]interface{}, draft.SelectedOptionIndex)
+	for index := range results {
+		results[index] = map[string]interface{}{}
+	}
+	results[draft.SelectedOptionIndex-1] = cloneMap(selected)
+
+	facts := map[string]interface{}{
+		"result_count":          len(results),
+		"results":               results,
+		"selected_option_index": draft.SelectedOptionIndex,
+	}
+	if origin := strings.TrimSpace(draft.Origin); origin != "" {
+		facts["origin"] = origin
+	}
+	if destination := strings.TrimSpace(draft.Destination); destination != "" {
+		facts["destination"] = destination
+	}
+	if packageName := strings.TrimSpace(draft.PackageName); packageName != "" {
+		facts["package_name"] = packageName
+	}
+	if tripDate := strings.TrimSpace(draft.TripDate); tripDate != "" {
+		facts["trip_date"] = tripDate
+	}
+	return facts
 }
 
 func mergeMessageToolFactsIntoCanonicalState(state *CanonicalConversationState, message Message, toolContext map[string]interface{}) {

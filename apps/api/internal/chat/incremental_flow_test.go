@@ -361,8 +361,9 @@ func TestAvailabilityOptionMultipleAmbiguousReplyUsesContextualFallback(t *testi
 		t.Fatalf("list messages before reprocess: %v", err)
 	}
 	canonicalStateBeforeReprocess := deriveCanonicalConversationState(ingested.Session, historyBeforeReprocess, "ok")
-	if canonicalStateBeforeReprocess.Phase == ConversationPhaseRouteSelection || canonicalStateBeforeReprocess.Route.SelectedOptionIndex == 0 {
-		t.Fatalf("test setup must start from selected trip state, got %+v", canonicalStateBeforeReprocess)
+	if canonicalStateBeforeReprocess.Route.SelectedOptionIndex != 0 ||
+		len(asMap(canonicalStateBeforeReprocess.LastToolFacts[toolNameAvailabilitySearch])) == 0 {
+		t.Fatalf("test setup must keep a complete unselected availability list, got %+v", canonicalStateBeforeReprocess)
 	}
 
 	out, err := svc.Reprocess(context.Background(), ReprocessInput{SessionID: ingested.Session.ID})
@@ -1670,21 +1671,39 @@ func TestRejectedAvailabilityOutOfTurnPaymentReminderDoesNotAttachAvailabilityCo
 				t.Fatalf("expected rejected availability not to be reused for booking_create, got %+v", input)
 			}
 
-			freshAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
-				TripID:                 "trip-2026-07-14",
-				BoardStopID:            "board-2026-07-14",
-				AlightStopID:           "alight-2026-07-14",
-				OriginDisplayName:      "Videira/SC",
-				DestinationDisplayName: "Santa Ines/MA",
-				OriginDepartTime:       "14:00",
-				TripDate:               "2026-07-14",
-				Price:                  980,
-				Currency:               "BRL",
-			})[0]
+			freshResult := AvailabilitySearchResult{
+				Filter: AvailabilitySearchInput{
+					Origin:      "Videira/SC",
+					Destination: "Santa Ines/MA",
+					Qty:         1,
+					Limit:       1,
+				},
+				Results: []AvailabilitySearchItem{{
+					TripID:                 "trip-2026-07-14",
+					BoardStopID:            "board-2026-07-14",
+					AlightStopID:           "alight-2026-07-14",
+					OriginDisplayName:      "Videira/SC",
+					DestinationDisplayName: "Santa Ines/MA",
+					OriginDepartTime:       "14:00",
+					TripDate:               "2026-07-14",
+					Price:                  980,
+					Currency:               "BRL",
+				}},
+			}
+			freshAvailability := singleAvailabilitySearchHistory(now, freshResult.Results[0])[0]
 			freshAvailability.SessionID = session.ID
 			freshAvailability.ReceivedAt = now.Add(1 * time.Minute)
+			freshAvailability.CreatedAt = now.Add(1 * time.Minute)
+			freshPromptIndex := len(history)
 			history = append(history, freshAvailability)
 			history = appendExplicitSoloPassengerDeclaration(history, now.Add(2*time.Minute))
+			history = appendCanonicalAvailabilitySelectionForPromptForTest(
+				history,
+				freshResult,
+				1,
+				freshPromptIndex,
+				now.Add(3*time.Minute),
+			)
 
 			input, ok := parseBookingCreateInput(session, history, "quero reservar opção 1\nJoao Vitor Messias | CPF | 84960815086", nil)
 			if !ok {
@@ -1759,6 +1778,10 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 			if got := availabilityRejectedOptionIndexesFromMetadata(templateData[outOfTurnRejectedOptionIndexesDataKey]); !sameIntSlice(got, []int{1}) {
 				t.Fatalf("expected rejected option indexes [1], got %+v metadata=%+v", got, templateData)
 			}
+			promptSourceMessageID := strings.TrimSpace(asString(templateData[outOfTurnActivePromptSourceIDDataKey]))
+			if promptSourceMessageID == "" {
+				t.Fatalf("rejection metadata must persist the availability prompt source: %+v", templateData)
+			}
 
 			markSessionMessagesAutomationSent(t, store, session.ID)
 			second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "selection-after-specific-rejection-"+reply, reply)
@@ -1779,6 +1802,12 @@ func TestAvailabilitySelectionAfterSpecificRejectedOptionOutOfTurnPayment(t *tes
 				snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
 				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != optionTwo.TripID {
 					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
+				}
+				if got := strings.TrimSpace(asString(snapshot[availabilityPromptSourceMessageIDPayloadKey])); got != promptSourceMessageID {
+					t.Fatalf("selection prompt source=%q, want %q snapshot=%+v", got, promptSourceMessageID, snapshot)
+				}
+				if got := strings.TrimSpace(asString(snapshot[selectedAvailabilitySelectionMessageIDPayloadKey])); got != second.Draft.ID {
+					t.Fatalf("selection message id=%q, want %q snapshot=%+v", got, second.Draft.ID, snapshot)
 				}
 				return
 			}
@@ -1852,6 +1881,10 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 			if got := availabilityRejectedTripDatesFromMetadata(templateData[outOfTurnRejectedTripDatesDataKey]); !sameStringSlice(got, []string{rejectedDateMetadata}) {
 				t.Fatalf("expected rejected trip date [%s], got %+v metadata=%+v", rejectedDateMetadata, got, templateData)
 			}
+			promptSourceMessageID := strings.TrimSpace(asString(templateData[outOfTurnActivePromptSourceIDDataKey]))
+			if promptSourceMessageID == "" {
+				t.Fatalf("rejection metadata must persist the availability prompt source: %+v", templateData)
+			}
 
 			markSessionMessagesAutomationSent(t, store, session.ID)
 			second := ingestAndReprocessActivePromptFlowTurn(t, svc, session.ContactKey, "selection-after-specific-date-rejection-"+reply, reply)
@@ -1873,6 +1906,12 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 				if got := strings.TrimSpace(asString(snapshot["trip_id"])); got != optionTwo.TripID {
 					t.Fatalf("expected option 2 trip snapshot, got %q snapshot=%+v", got, snapshot)
 				}
+				if got := strings.TrimSpace(asString(snapshot[availabilityPromptSourceMessageIDPayloadKey])); got != promptSourceMessageID {
+					t.Fatalf("selection prompt source=%q, want %q snapshot=%+v", got, promptSourceMessageID, snapshot)
+				}
+				if got := strings.TrimSpace(asString(snapshot[selectedAvailabilitySelectionMessageIDPayloadKey])); got != second.Draft.ID {
+					t.Fatalf("selection message id=%q, want %q snapshot=%+v", got, second.Draft.ID, snapshot)
+				}
 				return
 			}
 			if second.Draft.NormalizedPayload["template_name"] == string(TemplateAskPassengerCount) ||
@@ -1888,13 +1927,17 @@ func TestAvailabilitySelectionAfterSpecificRejectedDateOutOfTurnPayment(t *testi
 
 func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncompleteFacts(t *testing.T) {
 	testCases := []struct {
-		name       string
-		secondTurn bool
-		seed       func(t *testing.T, store *fakeStore, session Session, now time.Time)
+		name                     string
+		secondTurn               bool
+		wantAvailabilityFallback bool
+		wantInvalidation         bool
+		seed                     func(t *testing.T, store *fakeStore, session Session, now time.Time)
 	}{
 		{
-			name:       "stale_facts",
-			secondTurn: true,
+			name:                     "stale_facts",
+			secondTurn:               true,
+			wantAvailabilityFallback: true,
+			wantInvalidation:         true,
 			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
 				stale := availabilityOptionPromptFutureResultAt(now)
 				seedAvailabilitySelectionPromptForFailClosedTest(t, store, session.ID, "stale-facts", stale, messageStatusAutomationSent, true, now.Add(-2*time.Minute))
@@ -1923,7 +1966,9 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 			},
 		},
 		{
-			name: "incomplete_current_item",
+			name:                     "incomplete_current_item",
+			wantAvailabilityFallback: true,
+			wantInvalidation:         true,
 			seed: func(t *testing.T, store *fakeStore, session Session, now time.Time) {
 				current := availabilityOptionPromptFutureResultAt(now)
 				current.Results = append([]AvailabilitySearchItem(nil), current.Results...)
@@ -1961,6 +2006,7 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 			if err != nil {
 				t.Fatalf("seed fail-closed session: %v", err)
 			}
+			seedDeliveredPassengerPromptForTest(t, base, session.ID, now.Add(-3*time.Minute))
 			testCase.seed(t, base, session, now)
 
 			ingested, err := svc.Ingest(context.Background(), IngestMessageInput{
@@ -1978,14 +2024,25 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 				t.Fatalf("reprocess fail-closed selection: %v", err)
 			}
 			if out.Draft == nil {
-				t.Fatal("expected safe passenger clarification draft")
+				t.Fatal("expected deterministic safe fallback draft")
 			}
-			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(TemplateAskPassengerCount) {
-				t.Fatalf("expected safe %s, got %q payload=%+v", TemplateAskPassengerCount, got, out.Draft.NormalizedPayload)
+			wantTemplate := TemplateAskPassengerCount
+			if testCase.wantAvailabilityFallback {
+				wantTemplate = TemplateContextFallbackAvailabilityOption
+			}
+			if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["template_name"])); got != string(wantTemplate) {
+				t.Fatalf("expected safe %s, got %q payload=%+v", wantTemplate, got, out.Draft.NormalizedPayload)
 			}
 			for label, payload := range map[string]map[string]interface{}{
 				"payload": out.Draft.Payload, "normalized_payload": out.Draft.NormalizedPayload,
 			} {
+				if testCase.wantAvailabilityFallback {
+					for _, key := range []string{passengerPendingPromptEventV1MessageKey, passengerPromptEventV1MessageKey} {
+						if _, exists := payload[key]; exists {
+							t.Fatalf("%s availability fallback created passenger prompt event %s: %+v", label, key, payload)
+						}
+					}
+				}
 				if index := payloadSelectedOptionIndex(payload); index != 0 {
 					t.Fatalf("%s leaked selected_option_index=%d: %+v", label, index, payload)
 				}
@@ -1996,28 +2053,34 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 			if facts := asMap(asMap(out.Draft.Payload["tool_context"])[toolNameAvailabilitySearch]); len(facts) != 0 {
 				t.Fatalf("fail-closed draft leaked stale/invisible/blocked/incomplete facts: %+v", facts)
 			}
-			canonicalState, ok := out.Memory["canonical_state"].(CanonicalConversationState)
-			if !ok {
-				t.Fatalf("expected sanitized canonical_state in fail-closed memory, got %#v", out.Memory["canonical_state"])
+			if testCase.wantInvalidation {
+				canonicalState, ok := out.Memory["canonical_state"].(CanonicalConversationState)
+				if !ok {
+					t.Fatalf("expected sanitized canonical_state in fail-closed memory, got %#v", out.Memory["canonical_state"])
+				}
+				assertCanonicalAvailabilityInvalidatedForTest(t, canonicalState, "fail-closed memory")
 			}
-			assertCanonicalAvailabilityInvalidatedForTest(t, canonicalState, "fail-closed memory")
 
 			reloaded, err := base.GetSession(context.Background(), session.ID)
 			if err != nil {
 				t.Fatalf("reload fail-closed session: %v", err)
 			}
-			persistedCanonical := canonicalConversationStateFromTestValue(
-				t,
-				asMap(reloaded.Metadata["agent"])["canonical_state"],
-				"metadata.agent.canonical_state",
-			)
-			assertCanonicalAvailabilityInvalidatedForTest(t, persistedCanonical, "persisted agent state")
-			persistedBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata)
-			if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) ||
-				persistedBoundary.AfterMessageID != ingested.Message.ID ||
-				!persistedBoundary.AfterCreatedAt.Equal(canonicalAvailabilityHistoryMessageTime(ingested.Message)) {
-				t.Fatalf("fail-closed did not persist the causal inbound boundary: marker=%t boundary=%+v inbound=%+v",
-					canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata), persistedBoundary, ingested.Message)
+			if testCase.wantInvalidation {
+				persistedCanonical := canonicalConversationStateFromTestValue(
+					t,
+					asMap(reloaded.Metadata["agent"])["canonical_state"],
+					"metadata.agent.canonical_state",
+				)
+				assertCanonicalAvailabilityInvalidatedForTest(t, persistedCanonical, "persisted agent state")
+				persistedBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(reloaded.Metadata)
+				if !canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) ||
+					persistedBoundary.AfterMessageID != ingested.Message.ID ||
+					!persistedBoundary.AfterCreatedAt.Equal(canonicalAvailabilityHistoryMessageTime(ingested.Message)) {
+					t.Fatalf("fail-closed did not persist the causal inbound boundary: marker=%t boundary=%+v inbound=%+v",
+						canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata), persistedBoundary, ingested.Message)
+				}
+			} else if canonicalAvailabilityFactsInvalidatedInMetadata(reloaded.Metadata) {
+				t.Fatalf("selection-like number outside the active availability prompt opened the materialization gate: %+v", reloaded.Metadata)
 			}
 			if runner.calls != 0 || jsonRunner.calls != 0 || openAI.calls != 0 || travel.calls != 0 ||
 				searcher.calls != 0 || booking.calls != 0 || payment.calls != 0 || paymentSearcher.calls != 0 || len(out.ToolCalls) != 0 {
@@ -2032,6 +2095,10 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 
 			if testCase.secondTurn {
 				markSessionMessagesAutomationSent(t, base, session.ID)
+				activePassengerState, ok := passengerClarificationStateV1FromSession(base.sessions[session.ID])
+				if !ok || strings.TrimSpace(activePassengerState.PassengerPromptMessageID) == "" {
+					t.Fatalf("expected active passenger prompt before structured answer, got %+v exists=%t", activePassengerState, ok)
+				}
 				secondTurnMessage, err := base.CreateMessage(context.Background(), CreateMessageInput{
 					SessionID: session.ID, Direction: "INBOUND", Kind: "TEXT", Body: "talvez",
 					ProcessingStatus: "BUFFERED_PENDING", ReceivedAt: now.Add(time.Minute),
@@ -2039,7 +2106,8 @@ func TestPassengerFailClosedAvailabilityRejectsStaleInvisibleBlockedAndIncomplet
 						passengerClarificationEventsV1MessageKey: []PassengerClarificationEventV1{
 							{
 								Type: PassengerClarificationEventPassengerCountSet, Slot: PassengerClarificationSlotPassenger,
-								Value: 1, ValueKnown: true,
+								PromptMessageID: activePassengerState.PassengerPromptMessageID,
+								Value:           1, ValueKnown: true,
 								PassengerProvenance: PassengerCountProvenanceAbsoluteTotal,
 							},
 							{
@@ -2575,7 +2643,12 @@ func assertPostInvalidationHistoryBoundaryFreshAvailabilityClearsAfterRouter(t *
 		if index := payloadSelectedOptionIndex(payload); index != 1 {
 			t.Fatalf("%s selected index=%d, want 1: %+v", label, index, payload)
 		}
-		if snapshot := asMap(payload[selectedAvailabilityResultPayloadKey]); !reflect.DeepEqual(snapshot, expectedSnapshot) {
+		snapshot := selectedAvailabilitySnapshotWithoutAuthorityIDsForTest(
+			t,
+			asMap(payload[selectedAvailabilityResultPayloadKey]),
+			out.Draft.ID,
+		)
+		if !reflect.DeepEqual(snapshot, expectedSnapshot) {
 			t.Fatalf("%s fresh snapshot mismatch: got=%+v want=%+v", label, snapshot, expectedSnapshot)
 		}
 		assertStringValuesAbsentAtAnyDepthForTest(t, payload, "fresh draft."+label,
@@ -2977,6 +3050,7 @@ func TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWi
 	if err != nil {
 		t.Fatalf("seed fail-closed selection session: %v", err)
 	}
+	seedDeliveredPassengerPromptForTest(t, base, session.ID, now.Add(-2*time.Minute))
 	availability := availabilityOptionPromptTwoOptionsFutureResultAt(now)
 	selected := availability.Results[1]
 	if _, err := base.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
@@ -3026,7 +3100,8 @@ func TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWi
 			t.Fatalf("%s selected_option_index=%d, want 2: %+v", label, got, payload)
 		}
 		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-		if !reflect.DeepEqual(snapshot, expectedSnapshot) {
+		withoutAuthorityIDs := selectedAvailabilitySnapshotWithoutAuthorityIDsForTest(t, snapshot, out.Draft.ID)
+		if !reflect.DeepEqual(withoutAuthorityIDs, expectedSnapshot) {
 			t.Fatalf("%s must preserve the complete selected option snapshot: got=%+v want=%+v", label, snapshot, expectedSnapshot)
 		}
 	}
@@ -3426,7 +3501,7 @@ func reprocessAvailabilitySelectionWithBookingCreator(t *testing.T, customerText
 	_, err = store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "draft-prev-availability-selection",
-		Body:             "Tenho duas opcoes para essa data.",
+		Body:             "Tenho duas opcoes. Qual opcao voce prefere?",
 		SenderName:       "SHABAS",
 		ProcessingStatus: messageStatusAutomationSent,
 		Payload: map[string]interface{}{
@@ -3509,7 +3584,7 @@ func availabilitySelectionHistory(t *testing.T) []Message {
 	return []Message{
 		{
 			Direction:        "OUTBOUND",
-			Body:             "Tenho duas opcoes para essa data.",
+			Body:             "Tenho duas opcoes. Qual opcao voce prefere?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 			Payload: map[string]interface{}{

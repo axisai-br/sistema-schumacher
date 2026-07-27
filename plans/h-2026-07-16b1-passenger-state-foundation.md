@@ -1,15 +1,20 @@
 # H-2026-07-16B1 — Fundação do estado de passageiros
 
-## Status após o review final de 2026-07-21
+## Status após a evidência operacional de 2026-07-22
 
 ```text
-CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT
+CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-22A
 ```
 
-O review final fechou B1 sem P1/P2. H-B permanece em andamento, B2 passa a
-`PRÓXIMA`, B3 continua bloqueada por B2 e 3.6F-D continua bloqueada pelo
-fechamento integral do umbrella. Esta rodada prepara o commit de B1, mas não
-autoriza iniciar B2, fazer commit, push, deploy ou smoke.
+O review final histórico fechou B1 sem P1/P2, mas evidência operacional posterior em sessão
+nova comprovou um bloqueio global: o bootstrap durável `UNKNOWN` foi tratado
+como inseguro antes de existir contexto de passageiros. H-2026-07-22A reabre o
+gate operacional de B1 e está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
+REVIEW**. B2 fica bloqueada até review, deploy e
+smoke verdes do hotfix. Esta rodada não autoriza iniciar B2,
+fazer commit, push, deploy ou smoke.
+
+Plano corretivo: `plans/h-2026-07-22a-fresh-session-passenger-gate.md`.
 
 ### Review final — sem P1/P2
 
@@ -280,8 +285,10 @@ propagação do prompt efetivamente enviado, fail-closed e
 ## Dependência e sucessor
 
 - predecessor: replanejamento documental do umbrella H-2026-07-16B;
-- sucessor: H-2026-07-16B2, agora `PRÓXIMA` após o review final limpo e as
-  provas concorrentes de B1;
+- gate corretivo: H-2026-07-22A, **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
+  REVIEW**, aguardando novo review;
+- sucessor: H-2026-07-16B2, novamente bloqueado até review, deploy e smoke
+  verdes do hotfix;
 - 3.6F-D permanece bloqueada pelo umbrella H-B.
 
 ## Fonte arquitetural
@@ -382,7 +389,7 @@ propagação do prompt efetivamente enviado, fail-closed e
 | P1-02 | bootstrap somente de evento/estado estruturado | `TestPassengerStateBootstrapUsesStructuredEvidenceOnly` |
 | P1-03 | copiar evento ao outbound enviado e aplicá-lo no delivery | `TestPassengerPromptEventFollowsReviewedAndAutoSentOutboundBeyondHistoryWindow` |
 | P1-04 | derivar contexto infantil da época persistida | `TestPassengerChildAddsTravelerUsesPersistedPromptEpoch` |
-| P1-05 | gate inseguro antes de todos os LLMs/tools | `TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch` |
+| P1-05 | gate inseguro antes de todos os LLMs/tools | `TestPassengerGateAfterDeliveredPromptStopsExternalWorkBeforeDispatch` |
 | P1-06 | projeção ignora `booking_create.passenger_count` histórico | `TestBookingDraftProjectionIgnoresBookingCreatePassengerCount` |
 | P1-07 | validar slots antes de booking criado/payment | `TestBookingCreatedWithUnknownPassengerSlotsFailsClosed` |
 | P1-08 | correção substitui agregado e dependências | `TestPassengerAggregateCorrectionClearsDependentAddsTraveler` |
@@ -672,16 +679,17 @@ PASS — git diff --check
 PASS — nenhuma alteração em arquivo de produção nesta correção
 ```
 
-Resultado do review final: **sem P1/P2; H-B1 concluída e segura para commit**.
-B2 passa a `PRÓXIMA`, sem implementação nesta rodada. H-B permanece em
-andamento, B3 permanece bloqueada por B2 e 3.6F-D continua bloqueada pelo
-fechamento integral de H-B.
+Resultado histórico do review final: **sem P1/P2**. Esse resultado foi
+superseded como gate operacional pela evidência de 2026-07-22; H-B1 permanece
+concluída em código, H-2026-07-22A está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO
+NOVO REVIEW**, e B2 continua bloqueada. H-B
+permanece em andamento, B3 permanece bloqueada por B2 e 3.6F-D
+continua bloqueada pelo fechamento integral de H-B.
 
 Teste em produção/smoke: **não executado e não autorizado nesta rodada**.
-Commit, push e deploy: **não executados**. Risco restante: B1 deliberadamente
-não interpreta linguagem; esse contrato pertence exclusivamente a B2. Próxima
-ação recomendada: preparar o commit de B1 e abrir outro `/goal` somente quando
-houver autorização explícita para executar B2.
+Commit, push e deploy: **não executados**. Risco operacional aberto: validar a
+correção de H-2026-07-22A em review, deploy e smoke antes de reavaliar B2. B1
+continua sem interpretar linguagem; esse contrato pertence exclusivamente a B2.
 
 ## `/goal`
 

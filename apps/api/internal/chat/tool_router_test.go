@@ -491,6 +491,7 @@ func TestResolveContextualActionToolsCreatesBookingAfterDocumentConfirmation(t *
 	}
 	history := documentConfirmationBookingHistory(time.Now().UTC(), "EXTRACTED", true)
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(1, 0))
+	session = materializePersistedAvailabilitySelectionForTest(session, history)
 
 	context, used, err := svc.resolveContextualActionTools(context.Background(), session, history, "Sim, tá certo.", agentToolContext{})
 	if err != nil {

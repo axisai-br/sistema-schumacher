@@ -731,6 +731,298 @@ func (s *Service) ReplyMedia(ctx context.Context, input ReplyMediaInput) (ReplyM
 	})
 }
 
+type availabilitySelectionGateClass string
+
+const (
+	availabilitySelectionGateNone                 availabilitySelectionGateClass = "NONE"
+	availabilitySelectionGateMaterialize          availabilitySelectionGateClass = "MATERIALIZE"
+	availabilitySelectionGateClarifyPreserve      availabilitySelectionGateClass = "CLARIFY_PRESERVE"
+	availabilitySelectionGateFailClosedInvalidate availabilitySelectionGateClass = "FAIL_CLOSED_INVALIDATE"
+)
+
+type availabilitySelectionGateDecision struct {
+	Class                             availabilitySelectionGateClass
+	SelectedOptionIndex               int
+	AvailabilityPromptSourceMessageID string
+	Availability                      *AvailabilitySearchResult
+}
+
+func classifyAvailabilitySelectionTurn(
+	activePrompt ActivePromptContext,
+	history []Message,
+	currentTurn string,
+	routedDecision IntentDecision,
+	availabilityFactsInvalidated bool,
+	selectionState AvailabilitySelectionStateV1,
+) availabilitySelectionGateDecision {
+	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
+	if looksLikeNegatedAvailabilitySelection(folded) {
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateNone}
+	}
+
+	routedIndex := 0
+	if routedDecision.Intent == IntentSelectAvailabilityOption && routedDecision.SelectedOptionIndex > 0 {
+		routedIndex = routedDecision.SelectedOptionIndex
+	}
+	explicitIndex := extractSelectedOptionIndex(currentTurn)
+	contextualSelection := looksLikeContextualAvailabilitySelection(folded)
+	promptContext, promptActive := activeAvailabilitySelectionPromptContext(activePrompt, history)
+	if !promptActive {
+		// A durable invalidation keeps repeated numeric/deictic attempts closed,
+		// but it cannot reinterpret an answer to another active prompt. Generic
+		// confirmations such as "ok" are never selections outside an actual
+		// availability-option prompt.
+		if activePrompt.Kind == ActivePromptUnknown && availabilityFactsInvalidated &&
+			(routedIndex > 0 || explicitIndex > 0 || contextualSelection) {
+			return availabilitySelectionGateDecision{Class: availabilitySelectionGateFailClosedInvalidate}
+		}
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateNone}
+	}
+
+	ambiguousSelection := looksLikeAmbiguousAvailabilityOptionReply(currentTurn, folded)
+	if routedIndex <= 0 && explicitIndex <= 0 && !ambiguousSelection {
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateNone}
+	}
+
+	optionCount := promptContext.OptionCount
+	if optionCount <= 0 {
+		optionCount = activePrompt.AvailabilityOptionCount
+	}
+	if optionCount <= 0 {
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateFailClosedInvalidate}
+	}
+
+	currentAvailability := currentAvailabilitySelectionPromptAvailabilityContext(history)
+	completeList := availabilitySelectionListComplete(currentAvailability, optionCount)
+	selectedIndex := routedIndex
+	if selectedIndex <= 0 {
+		selectedIndex = explicitIndex
+	}
+	if selectedIndex <= 0 && optionCount == 1 && ambiguousSelection {
+		selectedIndex = 1
+	}
+
+	if selectedIndex <= 0 || selectedIndex > optionCount {
+		if completeList {
+			return availabilitySelectionGateDecision{
+				Class:        availabilitySelectionGateClarifyPreserve,
+				Availability: currentAvailability,
+			}
+		}
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateFailClosedInvalidate}
+	}
+	selected, selectedOK := selectedAvailabilityItemForMaterialization(currentAvailability, selectedIndex)
+	if selectionState.rejectsPromptOption(
+		promptContext.SourceMessageID,
+		selectedIndex,
+		selected.TripDate,
+	) {
+		if completeList {
+			return availabilitySelectionGateDecision{
+				Class:        availabilitySelectionGateClarifyPreserve,
+				Availability: currentAvailability,
+			}
+		}
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateFailClosedInvalidate}
+	}
+	if !selectedOK {
+		return availabilitySelectionGateDecision{Class: availabilitySelectionGateFailClosedInvalidate}
+	}
+	return availabilitySelectionGateDecision{
+		Class:                             availabilitySelectionGateMaterialize,
+		SelectedOptionIndex:               selectedIndex,
+		AvailabilityPromptSourceMessageID: strings.TrimSpace(promptContext.SourceMessageID),
+		Availability:                      currentAvailability,
+	}
+}
+
+func availabilitySelectionListComplete(availability *AvailabilitySearchResult, optionCount int) bool {
+	if availability == nil || optionCount <= 0 || len(availability.Results) != optionCount {
+		return false
+	}
+	for _, item := range availability.Results {
+		if !hasCompleteAvailabilitySearchItemFacts(item) {
+			return false
+		}
+	}
+	return true
+}
+
+func materializedAvailabilitySelectionDecision(
+	gate availabilitySelectionGateDecision,
+	routed IntentDecision,
+) IntentDecision {
+	if gate.Class != availabilitySelectionGateMaterialize || gate.SelectedOptionIndex <= 0 {
+		return routed
+	}
+	source := strings.TrimSpace(routed.Source)
+	if routed.Intent != IntentSelectAvailabilityOption || source == "" {
+		source = "deterministic_availability_selection_gate"
+	}
+	return IntentDecision{
+		Intent:                            IntentSelectAvailabilityOption,
+		Source:                            source,
+		SelectedOptionIndex:               gate.SelectedOptionIndex,
+		AvailabilityPromptSourceMessageID: strings.TrimSpace(gate.AvailabilityPromptSourceMessageID),
+		TemplateName:                      TemplateAskPassengerCount,
+		Action:                            "template",
+	}
+}
+
+func applyMaterializedAvailabilitySelectionToCanonicalState(
+	state CanonicalConversationState,
+	gate availabilitySelectionGateDecision,
+	decision IntentDecision,
+) CanonicalConversationState {
+	if gate.Class != availabilitySelectionGateMaterialize ||
+		gate.Availability == nil ||
+		decision.Intent != IntentSelectAvailabilityOption ||
+		decision.SelectedOptionIndex <= 0 {
+		return state
+	}
+	mergeToolFactsIntoCanonicalState(&state, map[string]interface{}{
+		toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(*gate.Availability),
+	})
+	return applyIntentDecisionToCanonicalState(state, decision)
+}
+
+func availabilitySelectionEventsForTurnV1(
+	candidates []Message,
+	history []Message,
+	currentTurn string,
+	activePrompt ActivePromptContext,
+	routedDecision IntentDecision,
+	gate availabilitySelectionGateDecision,
+	currentState AvailabilitySelectionStateV1,
+	projectionMessageID string,
+) []AvailabilitySelectionEventV1 {
+	messageID := latestInboundCandidateMessageIDV1(candidates)
+	if messageID == "" {
+		return nil
+	}
+	switch gate.Class {
+	case availabilitySelectionGateMaterialize:
+		snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(
+			gate.Availability,
+			gate.SelectedOptionIndex,
+		)
+		if !ok {
+			return []AvailabilitySelectionEventV1{{
+				Type:                 AvailabilitySelectionEventInvalidated,
+				MessageID:            messageID,
+				ReasonCode:           "MATERIALIZATION_SNAPSHOT_INCOMPLETE",
+				RejectedWholeContext: true,
+			}}
+		}
+		return []AvailabilitySelectionEventV1{{
+			Type:                              AvailabilitySelectionEventMaterialized,
+			MessageID:                         messageID,
+			ProjectionMessageID:               strings.TrimSpace(projectionMessageID),
+			AvailabilityPromptSourceMessageID: strings.TrimSpace(gate.AvailabilityPromptSourceMessageID),
+			SelectedOptionIndex:               gate.SelectedOptionIndex,
+			Snapshot:                          snapshot,
+			MaterializesAuthority:             true,
+			ReasonCode:                        "CURRENT_TURN_SELECTION_MATERIALIZED",
+		}}
+	case availabilitySelectionGateFailClosedInvalidate:
+		return []AvailabilitySelectionEventV1{{
+			Type:                 AvailabilitySelectionEventInvalidated,
+			MessageID:            messageID,
+			ReasonCode:           "CURRENT_TURN_SELECTION_FAIL_CLOSED",
+			RejectedWholeContext: true,
+		}}
+	}
+
+	rejection := parseAvailabilityRejectionEvidence(
+		strings.Join(strings.Fields(foldChatText(currentTurn)), " "),
+	)
+	if !rejection.Found {
+		return nil
+	}
+	rejection.AvailabilityPromptSourceMessageID = availabilitySelectionRejectionPromptSourceV1(
+		activePrompt,
+		history,
+		routedDecision,
+		currentState,
+	)
+	return []AvailabilitySelectionEventV1{{
+		Type:                              AvailabilitySelectionEventRejected,
+		MessageID:                         messageID,
+		AvailabilityPromptSourceMessageID: rejection.AvailabilityPromptSourceMessageID,
+		RejectedOptionIndexes:             append([]int(nil), rejection.OptionIndexes...),
+		RejectedTripDates:                 append([]string(nil), rejection.TripDates...),
+		RejectedWholeContext:              rejection.WholeContext,
+		ReasonCode:                        "CURRENT_TURN_SELECTION_REJECTED",
+	}}
+}
+
+func availabilitySelectionRejectionPromptSourceV1(
+	activePrompt ActivePromptContext,
+	history []Message,
+	routedDecision IntentDecision,
+	currentState AvailabilitySelectionStateV1,
+) string {
+	if promptContext, ok := activeAvailabilitySelectionPromptContext(activePrompt, history); ok {
+		if source := strings.TrimSpace(promptContext.SourceMessageID); source != "" {
+			return source
+		}
+	}
+	if source := strings.TrimSpace(
+		asString(routedDecision.TemplateData[outOfTurnActivePromptSourceIDDataKey]),
+	); source != "" {
+		return source
+	}
+	if currentState.Status == AvailabilitySelectionStatusBookable {
+		return strings.TrimSpace(currentState.AvailabilityPromptSourceMessageID)
+	}
+	return ""
+}
+
+func latestInboundCandidateMessageIDV1(candidates []Message) string {
+	for index := len(candidates) - 1; index >= 0; index-- {
+		if !strings.EqualFold(strings.TrimSpace(candidates[index].Direction), "INBOUND") {
+			continue
+		}
+		if messageID := strings.TrimSpace(candidates[index].ID); messageID != "" {
+			return messageID
+		}
+	}
+	return ""
+}
+
+func availabilitySelectionProjectionMessageIDV1(draftID string) string {
+	draftID = strings.TrimSpace(draftID)
+	if draftID == "" {
+		return ""
+	}
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("availability-selection-projection:"+draftID)).String()
+}
+
+func availabilitySelectionMaterializationAppliedV1(
+	state AvailabilitySelectionStateV1,
+	events []AvailabilitySelectionEventV1,
+	gate availabilitySelectionGateDecision,
+) bool {
+	if gate.Class != availabilitySelectionGateMaterialize ||
+		state.Status != AvailabilitySelectionStatusBookable {
+		return false
+	}
+	for _, event := range events {
+		event = NormalizeAvailabilitySelectionEventsV1WithoutState(event)
+		if event.Type != AvailabilitySelectionEventMaterialized ||
+			!event.MaterializesAuthority ||
+			!availabilitySelectionStringSliceContains(state.AppliedEventIDs, event.EventID) {
+			continue
+		}
+		return state.SelectionEventMessageID == event.MessageID &&
+			state.SelectionProjectionMessageID == event.ProjectionMessageID &&
+			state.AvailabilityPromptSourceMessageID == event.AvailabilityPromptSourceMessageID &&
+			state.SelectedOptionIndex == event.SelectedOptionIndex &&
+			state.Snapshot == event.Snapshot
+	}
+	return false
+}
+
 func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output ReprocessResult, outputErr error) {
 	var travelV2BackgroundJob *travelQueryV2ShadowBackgroundJob
 	defer func() {
@@ -802,17 +1094,8 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	untranscribedAudioMessage, untranscribedAudio := currentTurnUntranscribedAudioCandidate(candidates)
 	currentTurn := NormalizeIncomingCustomerText(strings.TrimSpace(asString(memory["current_turn_body"])))
 	passengerTurnEvents := passengerClarificationStructuredEventsV1(candidates)
-	passengerApplied, err := s.store.ApplyPassengerClarificationEventsV1(ctx, ApplyPassengerClarificationEventsV1Input{
-		SessionID: sessionID,
-		Events:    passengerTurnEvents,
-	})
-	if err != nil {
-		return ReprocessResult{}, err
-	}
-	session = passengerApplied.Session
-	passengerState := passengerApplied.State
-	memory[passengerClarificationStateV1MemoryKey] = passengerState
-
+	draftID := buildAgentDraftIdempotencyKey(sessionID, candidateMessageIDs(candidates))
+	draftMessageID := uuid.NewString()
 	availabilityFactsInvalidated := canonicalAvailabilityFactsInvalidatedInMetadata(session.Metadata)
 	availabilityInvalidationBoundary := canonicalAvailabilityFactsInvalidationBoundaryInMetadata(session.Metadata)
 	if availabilityFactsInvalidated && !availabilityInvalidationBoundary.known() {
@@ -826,7 +1109,76 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 		inferenceHistory = availabilityInferenceHistory(history, availabilityInvalidationBoundary)
 	}
 
-	structuredCanonicalState := deriveCanonicalConversationState(session, inferenceHistory, currentTurn)
+	preApplyCanonicalState := deriveCanonicalConversationStateForRoutingBaseline(session, inferenceHistory)
+	if availabilityFactsInvalidated {
+		preApplyCanonicalState = invalidateCanonicalAvailabilityFacts(preApplyCanonicalState)
+	}
+	preApplyActivePrompt := InferActivePromptContext(inferenceHistory, preApplyCanonicalState)
+	preApplyDecision := routeDeterministicIntent(inferenceHistory, currentTurn, preApplyCanonicalState, observedAt)
+	selectionStateBeforeTurn := availabilitySelectionStateV1ForRead(session, inferenceHistory)
+	strongGuardrailBeforeSelection := shouldPrioritizeStrongGuardrailBeforeAvailabilitySelection(
+		preApplyActivePrompt,
+		currentTurn,
+		preApplyDecision,
+	)
+	selectionGate := availabilitySelectionGateDecision{Class: availabilitySelectionGateNone}
+	if !strongGuardrailBeforeSelection {
+		selectionGate = classifyAvailabilitySelectionTurn(
+			preApplyActivePrompt,
+			inferenceHistory,
+			currentTurn,
+			preApplyDecision,
+			availabilityFactsInvalidated,
+			selectionStateBeforeTurn,
+		)
+	}
+	if selectionGate.Class == availabilitySelectionGateMaterialize {
+		draftMessageID = availabilitySelectionProjectionMessageIDV1(draftID)
+	}
+	availabilityTurnEvents := availabilitySelectionEventsForTurnV1(
+		candidates,
+		inferenceHistory,
+		currentTurn,
+		preApplyActivePrompt,
+		preApplyDecision,
+		selectionGate,
+		selectionStateBeforeTurn,
+		draftMessageID,
+	)
+	passengerApplied, err := s.store.ApplyPassengerClarificationEventsV1(ctx, ApplyPassengerClarificationEventsV1Input{
+		SessionID:                   sessionID,
+		Events:                      passengerTurnEvents,
+		AvailabilitySelectionEvents: availabilityTurnEvents,
+	})
+	if err != nil {
+		return ReprocessResult{}, err
+	}
+	session = passengerApplied.Session
+	passengerState := passengerApplied.State
+	availabilitySelectionState := passengerApplied.AvailabilitySelectionState
+	if selectionGate.Class == availabilitySelectionGateMaterialize &&
+		!availabilitySelectionMaterializationAppliedV1(
+			availabilitySelectionState,
+			availabilityTurnEvents,
+			selectionGate,
+		) {
+		selectionGate = availabilitySelectionGateDecision{
+			Class: availabilitySelectionGateFailClosedInvalidate,
+		}
+	}
+	memory[passengerClarificationStateV1MemoryKey] = passengerState
+	memory[availabilitySelectionStateV1MemoryKey] = availabilitySelectionState
+
+	availabilityFactsInvalidated = canonicalAvailabilityFactsInvalidatedInMetadata(session.Metadata)
+	availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundaryInMetadata(session.Metadata)
+	if availabilityFactsInvalidated && !availabilityInvalidationBoundary.known() {
+		availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundaryForCandidates(candidates, observedAt)
+	}
+	inferenceHistory = history
+	if availabilityFactsInvalidated {
+		inferenceHistory = availabilityInferenceHistory(history, availabilityInvalidationBoundary)
+	}
+	structuredCanonicalState := deriveCanonicalConversationStateForRoutingBaseline(session, inferenceHistory)
 	if availabilityFactsInvalidated {
 		structuredCanonicalState = invalidateCanonicalAvailabilityFacts(structuredCanonicalState)
 	}
@@ -840,6 +1192,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	if canonicalStateEnabled() {
 		canonicalState = structuredCanonicalState
 		agentState["canonical_state"] = canonicalState
+		memory["canonical_state"] = canonicalState
 	}
 	if availabilityFactsInvalidated {
 		memory["canonical_state"] = structuredCanonicalState
@@ -850,41 +1203,57 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	localInterpretation := StructuredInterpretation{}
 	precomputedDeterministicDecision := s.routeDeterministicIntent(inferenceHistory, currentTurn, structuredCanonicalState, observedAt)
 	toolContext := agentToolContext{}
-	selectionAttempt := precomputedDeterministicDecision.Intent == IntentSelectAvailabilityOption ||
-		extractSelectedOptionIndex(currentTurn) > 0 ||
-		looksLikeContextualAvailabilitySelection(strings.Join(strings.Fields(foldChatText(currentTurn)), " "))
-	if selectionAttempt && (passengerUnsafe || availabilityFactsInvalidated) {
-		toolContext = attachCurrentAvailabilitySelectionContext(toolContext, inferenceHistory, precomputedDeterministicDecision)
-	}
-	selectionMaterializable := toolContext.Availability != nil
-	if selectionMaterializable {
-		availabilityFactsInvalidated = false
-		availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundary{}
-	} else if passengerUnsafe && selectionAttempt {
-		availabilityFactsInvalidated = true
-		availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundaryForCandidates(candidates, observedAt)
-		inferenceHistory = availabilityInferenceHistory(history, availabilityInvalidationBoundary)
-		structuredCanonicalState = deriveCanonicalConversationState(session, inferenceHistory, currentTurn)
-		structuredCanonicalState = invalidateCanonicalAvailabilityFacts(structuredCanonicalState)
-		structuredInput = StructuredInterpreterInput{
-			CurrentTurn: currentTurn,
-			State:       structuredCanonicalState,
-			History:     inferenceHistory,
-			ObservedAt:  observedAt,
-		}
+	if selectionGate.Class == availabilitySelectionGateMaterialize {
+		precomputedDeterministicDecision = materializedAvailabilitySelectionDecision(
+			selectionGate,
+			precomputedDeterministicDecision,
+		)
+		toolContext.Availability = selectionGate.Availability
+		structuredCanonicalState = applyMaterializedAvailabilitySelectionToCanonicalState(
+			structuredCanonicalState,
+			selectionGate,
+			precomputedDeterministicDecision,
+		)
+		structuredInput.State = structuredCanonicalState
 		if canonicalStateEnabled() {
 			canonicalState = structuredCanonicalState
 			agentState["canonical_state"] = canonicalState
 		}
 		memory["canonical_state"] = structuredCanonicalState
-		activePrompt = InferActivePromptContext(inferenceHistory, structuredCanonicalState)
-		precomputedDeterministicDecision = s.routeDeterministicIntent(inferenceHistory, currentTurn, structuredCanonicalState, observedAt)
+		availabilityFactsInvalidated = false
+		availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundary{}
+	} else if selectionGate.Class == availabilitySelectionGateClarifyPreserve {
+		// Reattach the complete visible facts to the clarification draft so the
+		// new outbound does not hide the list that the customer must number.
+		toolContext.Availability = selectionGate.Availability
+	} else if selectionGate.Class == availabilitySelectionGateFailClosedInvalidate {
+		if !availabilityFactsInvalidated {
+			availabilityInvalidationBoundary = canonicalAvailabilityFactsInvalidationBoundaryForCandidates(candidates, observedAt)
+			availabilityFactsInvalidated = true
+			inferenceHistory = availabilityInferenceHistory(history, availabilityInvalidationBoundary)
+			structuredCanonicalState = deriveCanonicalConversationStateForRoutingBaseline(session, inferenceHistory)
+			structuredCanonicalState = invalidateCanonicalAvailabilityFacts(structuredCanonicalState)
+			structuredInput = StructuredInterpreterInput{
+				CurrentTurn: currentTurn,
+				State:       structuredCanonicalState,
+				History:     inferenceHistory,
+				ObservedAt:  observedAt,
+			}
+			if canonicalStateEnabled() {
+				canonicalState = structuredCanonicalState
+				agentState["canonical_state"] = canonicalState
+			}
+			memory["canonical_state"] = structuredCanonicalState
+			activePrompt = InferActivePromptContext(inferenceHistory, structuredCanonicalState)
+			precomputedDeterministicDecision = s.routeDeterministicIntent(inferenceHistory, currentTurn, structuredCanonicalState, observedAt)
+		}
 		toolContext.Availability = nil
 	}
 	writeCanonicalAvailabilityFactsInvalidationMetadata(agentState, availabilityFactsInvalidated, availabilityInvalidationBoundary)
 	writeCanonicalAvailabilityFactsInvalidationMetadata(memory, availabilityFactsInvalidated, availabilityInvalidationBoundary)
-	availabilitySelectionUnsafe := availabilityFactsInvalidated && selectionAttempt && !selectionMaterializable
-	externalWorkUnsafe := passengerUnsafe || availabilitySelectionUnsafe
+	availabilitySelectionBlocked := selectionGate.Class == availabilitySelectionGateClarifyPreserve ||
+		selectionGate.Class == availabilitySelectionGateFailClosedInvalidate
+	externalWorkUnsafe := passengerUnsafe || availabilitySelectionBlocked || strongGuardrailBeforeSelection
 	shadow := StructuredInterpreterShadowSummary{}
 	var reusableOpenAIInterpreterResult *OpenAIInterpreterReusableResult
 	if !externalWorkUnsafe {
@@ -1006,7 +1375,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 		result.Reason = "review_required"
 		return result, nil
 	}
-	draftID := buildAgentDraftIdempotencyKey(sessionID, candidateMessageIDs(candidates))
 	if existing, err := s.store.FindMessageByKeys(ctx, "", draftID); err != nil {
 		return ReprocessResult{}, err
 	} else if existing != nil && existing.SessionID == sessionID && existing.Direction == "OUTBOUND" && isAutomationDraftStatus(existing.ProcessingStatus) {
@@ -1055,7 +1423,50 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	var deterministicBookingAction BookingNextAction
 	if externalWorkUnsafe {
 		bookingDraft := collectBookingDraftContextWithPassengerState(persisted.Session, inferenceHistory, currentTurn, passengerState)
+		if strongGuardrailBeforeSelection {
+			bookingDraft = collectBookingDraftContextForRoutingBaselineWithPassengerState(
+				persisted.Session,
+				inferenceHistory,
+				passengerState,
+			)
+		}
 		switch {
+		case strongGuardrailBeforeSelection:
+			if run, ok := buildPassengerUnsafeStrongGuardrailRun(precomputedDeterministicDecision, canonicalState); ok {
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+				memory["passenger_state_strong_guardrail_intent"] = string(precomputedDeterministicDecision.Intent)
+				memory["intent_decision"] = map[string]interface{}{
+					"intent":        string(precomputedDeterministicDecision.Intent),
+					"intent_source": precomputedDeterministicDecision.Source,
+					"action":        precomputedDeterministicDecision.Action,
+					"template_name": string(precomputedDeterministicDecision.TemplateName),
+				}
+				rolloutMetadata.DecisionSource = "deterministic_strong_guardrail"
+				rolloutMetadata.DecisionValid = boolPtr(true)
+			}
+		case availabilitySelectionBlocked:
+			source := "deterministic_availability_clarify_preserve"
+			if selectionGate.Class == availabilitySelectionGateFailClosedInvalidate {
+				source = "deterministic_availability_invalidated_history"
+			}
+			decision := buildActivePromptContextualFallbackTemplateDecision(
+				source,
+				TemplateContextFallbackAvailabilityOption,
+			)
+			if reply, ok := realizeIntentResponseTemplate(decision); ok && strings.TrimSpace(reply) != "" {
+				run := buildTemplateDraftRunFromDecision(decision, reply)
+				deterministicBookingRun = &run
+				deterministicBookingHandled = true
+				memory["intent_decision"] = map[string]interface{}{
+					"intent":        string(decision.Intent),
+					"intent_source": decision.Source,
+					"action":        decision.Action,
+					"template_name": string(decision.TemplateName),
+				}
+				rolloutMetadata.DecisionSource = "deterministic_availability_selection_gate"
+				rolloutMetadata.DecisionValid = boolPtr(true)
+			}
 		case passengerUnsafeStrongGuardrailDecision(precomputedDeterministicDecision):
 			if run, ok := buildPassengerUnsafeStrongGuardrailRun(precomputedDeterministicDecision, canonicalState); ok {
 				deterministicBookingRun = &run
@@ -1086,24 +1497,6 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 				rolloutMetadata.DecisionSource = "deterministic_out_of_turn_info"
 				rolloutMetadata.DecisionValid = boolPtr(true)
 			}
-		case availabilitySelectionUnsafe && !passengerUnsafe:
-			decision := buildActivePromptContextualFallbackTemplateDecision(
-				"deterministic_availability_invalidated_history",
-				TemplateContextFallbackAvailabilityOption,
-			)
-			if reply, ok := realizeIntentResponseTemplate(decision); ok && strings.TrimSpace(reply) != "" {
-				run := buildTemplateDraftRunFromDecision(decision, reply)
-				deterministicBookingRun = &run
-				deterministicBookingHandled = true
-				memory["intent_decision"] = map[string]interface{}{
-					"intent":        string(decision.Intent),
-					"intent_source": decision.Source,
-					"action":        decision.Action,
-					"template_name": string(decision.TemplateName),
-				}
-				rolloutMetadata.DecisionSource = "deterministic_availability_fail_closed"
-				rolloutMetadata.DecisionValid = boolPtr(true)
-			}
 		}
 		if !deterministicBookingHandled {
 			deterministicBookingAction = BookingNextAskPassengerClarification
@@ -1124,7 +1517,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 				run := attachSelectedAvailabilityResultToTemplateRun(
 					*deterministicBookingRun,
 					toolContext.Availability,
-					precomputedDeterministicDecision,
+					availabilitySelectionDecisionWithPromptSource(inferenceHistory, precomputedDeterministicDecision),
 				)
 				deterministicBookingRun = &run
 				if len(asMap(run.ResponsePayload[selectedAvailabilityResultPayloadKey])) > 0 {
@@ -1143,7 +1536,8 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 			}
 		}
 		memory["passenger_state_fail_closed"] = passengerUnsafe
-		memory["availability_selection_fail_closed"] = availabilitySelectionUnsafe
+		memory["availability_selection_class"] = string(selectionGate.Class)
+		memory["availability_selection_fail_closed"] = selectionGate.Class == availabilitySelectionGateFailClosedInvalidate
 		memory["passenger_count"] = bookingDraft.PassengerCount
 		memory["passenger_count_known"] = bookingDraft.PassengerCountKnown
 		memory["child_under_5_count"] = bookingDraft.ChildUnder5Count
@@ -1670,7 +2064,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 							}
 						}
 					}
-					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
+					run = attachSelectedAvailabilityResultToTemplateRun(
+						run,
+						toolContext.Availability,
+						availabilitySelectionDecisionWithPromptSource(inferenceHistory, decision),
+					)
 					intentMemory := asMap(memory["intent_decision"])
 					intentMemory["template_name"] = strings.TrimSpace(asString(run.ResponsePayload["template_name"]))
 					memory["intent_decision"] = intentMemory
@@ -1751,7 +2149,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 						asMap(memory["intent_decision"])["selected_option_index"] = decision.SelectedOptionIndex
 					}
 					run := buildTemplateDraftRunFromDecision(decision, reply)
-					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
+					run = attachSelectedAvailabilityResultToTemplateRun(
+						run,
+						toolContext.Availability,
+						availabilitySelectionDecisionWithPromptSource(inferenceHistory, decision),
+					)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "deterministic"
@@ -1826,7 +2228,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 						asMap(memory["intent_decision"])["selected_option_index"] = decision.SelectedOptionIndex
 					}
 					run := buildTemplateDraftRunFromDecision(decision, reply)
-					run = attachSelectedAvailabilityResultToTemplateRun(run, toolContext.Availability, decision)
+					run = attachSelectedAvailabilityResultToTemplateRun(
+						run,
+						toolContext.Availability,
+						availabilitySelectionDecisionWithPromptSource(inferenceHistory, decision),
+					)
 					deterministicBookingRun = &run
 					deterministicBookingHandled = true
 					rolloutMetadata.DecisionSource = "openai_interpreter_assist"
@@ -2344,7 +2750,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	applyRolloutMetadataToRun(&run, rolloutMetadata)
 
 	runAt := time.Now().UTC()
-	draftMessageID := uuid.NewString()
+	run = attachAvailabilitySelectionMessageIDToTemplateRun(run, draftMessageID)
 	pendingPassengerPromptEvent, hasPendingPassengerPromptEvent := passengerClarificationPromptEventForRunV1(run, draftMessageID, passengerState)
 	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run)
 	draftAgentState := buildDraftGeneratedAgentState(persisted.Session.Metadata, candidates, draftID, run, toolContext.Calls, autoSendPolicy, runAt)
@@ -2478,6 +2884,29 @@ func passengerUnsafeStrongGuardrailDecision(decision IntentDecision) bool {
 	}
 }
 
+func availabilitySelectionStrongGuardrailDecision(decision IntentDecision) bool {
+	if travelQueryV2ShadowDecisionStrength(decision, false) != DecisionStrengthStrong {
+		return false
+	}
+	return decision.Intent == IntentHumanSupport || decision.Intent == IntentBookingCancel
+}
+
+func shouldPrioritizeStrongGuardrailBeforeAvailabilitySelection(
+	activePrompt ActivePromptContext,
+	currentTurn string,
+	decision IntentDecision,
+) bool {
+	if !availabilitySelectionStrongGuardrailDecision(decision) {
+		return false
+	}
+	if activePrompt.Kind == ActivePromptAvailabilityOptionChoice {
+		return true
+	}
+	folded := strings.Join(strings.Fields(foldChatText(currentTurn)), " ")
+	return extractSelectedOptionIndex(currentTurn) > 0 ||
+		looksLikeAmbiguousAvailabilityOptionReply(currentTurn, folded)
+}
+
 func buildPassengerUnsafeStrongGuardrailRun(decision IntentDecision, state CanonicalConversationState) (RunAgentResult, bool) {
 	if decision.Action == "template" && canRealizeWithoutLLM(decision, state) {
 		reply, ok := realizeIntentResponseTemplate(decision)
@@ -2507,10 +2936,19 @@ func buildPassengerUnsafeStrongGuardrailRun(decision IntentDecision, state Canon
 	return run, true
 }
 
+func availabilitySelectionDecisionWithPromptSource(history []Message, decision IntentDecision) IntentDecision {
+	if decision.Intent != IntentSelectAvailabilityOption ||
+		strings.TrimSpace(decision.AvailabilityPromptSourceMessageID) != "" {
+		return decision
+	}
+	promptContext := currentAvailabilitySelectionPromptContext(history)
+	decision.AvailabilityPromptSourceMessageID = strings.TrimSpace(promptContext.SourceMessageID)
+	return decision
+}
+
 func attachCurrentAvailabilitySelectionContext(context agentToolContext, history []Message, decision IntentDecision) agentToolContext {
 	if decision.Intent != IntentSelectAvailabilityOption ||
-		decision.SelectedOptionIndex <= 0 ||
-		decision.TemplateName != TemplateAskPassengerCount {
+		decision.SelectedOptionIndex <= 0 {
 		return context
 	}
 	candidate := context.Availability
@@ -2638,7 +3076,7 @@ func isOutOfScopeDuringBookingDraftText(text string) bool {
 }
 
 func detectBookingAutoSendBlockReason(session Session, history []Message, draft Message) string {
-	draftContext := collectBookingDraftContextFromState(session, history, "")
+	draftContext := collectBookingDraftContextForRoutingBaseline(session, history)
 	if !draftContext.IsAdvancedBookingFlow() {
 		return ""
 	}
@@ -3531,7 +3969,7 @@ func (s *Service) maybeAutoSendDraft(ctx context.Context, result ReprocessResult
 
 	if result.Draft != nil {
 		if reason := detectBookingAutoSendBlockReason(result.Session, messages, *result.Draft); reason != "" {
-			blockState := deriveCanonicalConversationState(result.Session, messages, "")
+			blockState := deriveCanonicalConversationStateForRoutingBaseline(result.Session, messages)
 			s.logReprocess(
 				"chat reprocess event=auto_send_blocked reason=%s session_id=%s draft_message_id=%s phase=%s",
 				reason,

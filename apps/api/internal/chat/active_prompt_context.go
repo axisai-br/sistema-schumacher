@@ -49,6 +49,7 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 	availabilityOptionCount := activePromptAvailabilityOptionCount(message, history, state)
 	context.Kind = inferActivePromptKind(body, availabilityOptionCount)
 	if context.Kind == ActivePromptAvailabilityOptionChoice {
+		context.SourceMessageID = availabilityPromptSourceMessageIDFromMessage(message)
 		context.AvailabilityOptionCount = availabilityOptionCount
 		context.HasAvailabilityList = availabilityOptionCount > 0
 	}

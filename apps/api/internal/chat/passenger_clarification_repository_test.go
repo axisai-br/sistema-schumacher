@@ -14,10 +14,7 @@ import (
 )
 
 func TestPassengerStateApplyEventsSerializesSessionPostgres(t *testing.T) {
-	databaseURL := strings.TrimSpace(os.Getenv("CHAT_PASSENGER_STATE_POSTGRES_TEST_URL"))
-	if databaseURL == "" {
-		t.Skip("set CHAT_PASSENGER_STATE_POSTGRES_TEST_URL to execute the required PostgreSQL concurrency proof")
-	}
+	databaseURL := passengerStatePostgresTestURL(t, "passenger-state concurrency")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -25,6 +22,7 @@ func TestPassengerStateApplyEventsSerializesSessionPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL admin pool: %v", err)
 	}
+	requirePassengerStatePostgreSQL16(t, ctx, admin)
 	schema := "passenger_b1_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if _, err := admin.Exec(ctx, "create schema "+quotedSchema); err != nil {
@@ -65,8 +63,11 @@ func TestPassengerStateApplyEventsSerializesSessionPostgres(t *testing.T) {
 	sessionID := uuid.NewString()
 	initial := newPassengerClarificationStateV1()
 	initial.BootstrapCompleted = true
+	availabilityInitial := newAvailabilitySelectionStateV1()
+	availabilityInitial.BootstrapCompleted = true
 	metadata, err := json.Marshal(map[string]interface{}{"memory": map[string]interface{}{
 		passengerClarificationStateV1MemoryKey: initial,
+		availabilitySelectionStateV1MemoryKey:  availabilityInitial,
 	}})
 	if err != nil {
 		t.Fatalf("encode initial state: %v", err)
@@ -149,10 +150,7 @@ func TestPassengerStateApplyEventsSerializesSessionPostgres(t *testing.T) {
 }
 
 func TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres(t *testing.T) {
-	databaseURL := strings.TrimSpace(os.Getenv("CHAT_PASSENGER_STATE_POSTGRES_TEST_URL"))
-	if databaseURL == "" {
-		t.Skip("set CHAT_PASSENGER_STATE_POSTGRES_TEST_URL to execute the required PostgreSQL post-booking authority proof")
-	}
+	databaseURL := passengerStatePostgresTestURL(t, "post-booking passenger authority")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -160,6 +158,7 @@ func TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres(t *testi
 	if err != nil {
 		t.Fatalf("open PostgreSQL admin pool: %v", err)
 	}
+	requirePassengerStatePostgreSQL16(t, ctx, admin)
 	schema := "passenger_b1_booking_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if _, err := admin.Exec(ctx, "create schema "+quotedSchema); err != nil {
@@ -209,12 +208,15 @@ func TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres(t *testi
 		sessionID := uuid.NewString()
 		initial := newPassengerClarificationStateV1()
 		initial.BootstrapCompleted = true
+		availabilityInitial := newAvailabilitySelectionStateV1()
+		availabilityInitial.BootstrapCompleted = true
 		metadata, marshalErr := json.Marshal(map[string]interface{}{
 			"memory": map[string]interface{}{
 				"canonical_state": map[string]interface{}{
 					"booking": map[string]interface{}{"booking_id": bookingID},
 				},
 				passengerClarificationStateV1MemoryKey: initial,
+				availabilitySelectionStateV1MemoryKey:  availabilityInitial,
 			},
 		})
 		if marshalErr != nil {
@@ -357,4 +359,41 @@ func passengerStatePostgresPoolForSchema(t *testing.T, ctx context.Context, data
 		t.Fatalf("open PostgreSQL schema pool: %v", err)
 	}
 	return pool
+}
+
+func passengerStatePostgresTestURL(t *testing.T, proof string) string {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv("CHAT_PASSENGER_STATE_POSTGRES_TEST_URL"))
+	if databaseURL != "" {
+		return databaseURL
+	}
+	if strings.TrimSpace(os.Getenv("CHAT_REQUIRE_PASSENGER_STATE_POSTGRES_TEST")) == "1" {
+		t.Fatalf(
+			"CHAT_REQUIRE_PASSENGER_STATE_POSTGRES_TEST=1 requires CHAT_PASSENGER_STATE_POSTGRES_TEST_URL for %s",
+			proof,
+		)
+	}
+	t.Skipf(
+		"set CHAT_PASSENGER_STATE_POSTGRES_TEST_URL to execute the PostgreSQL %s proof",
+		proof,
+	)
+	return ""
+}
+
+func requirePassengerStatePostgreSQL16(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) {
+	t.Helper()
+	var version int
+	if err := pool.QueryRow(
+		ctx,
+		`select current_setting('server_version_num')::int`,
+	).Scan(&version); err != nil {
+		t.Fatalf("read PostgreSQL server version: %v", err)
+	}
+	if version < 160000 || version >= 170000 {
+		t.Fatalf("PostgreSQL 16 is required for this proof; server_version_num=%d", version)
+	}
 }

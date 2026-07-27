@@ -190,6 +190,7 @@ P0-C  Adicionar gate de testes ao CI
 H-2026-07-16A  Corrigir ausência de claims e observabilidade do recovery V2
 H-2026-07-16B  Umbrella do estado de passageiros
 H-2026-07-16B1 Fundação de autoridade, eventos, serialização e fail-closed
+H-2026-07-22A  Corrigir gate global de passageiros em sessões novas
 H-2026-07-16B2 PassengerClarificationMeaningV1 strict, corpus e shadow
 H-2026-07-16B3 Promoção runtime gated do meaning de passageiros
 

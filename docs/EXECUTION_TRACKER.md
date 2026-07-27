@@ -287,16 +287,17 @@ Regras:
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
-| 8 | H-2026-07-16B | **EM ANDAMENTO — B1 concluída; B2 é a próxima fundação do umbrella** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável para autoridade, meaning e promoção runtime. |
-| 9 | H-2026-07-16B1 | **CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fonte durável, eventos, serialização, prompt enviado, fail-closed e projeção; sem linguagem. |
-| 10 | H-2026-07-16B2 | **PRÓXIMA** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict, validator, corpus e shadow sem influência runtime. |
-| 11 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
-| 12 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
-| 13 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
-| 14 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
-| 15 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
-| 16 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
-| 17 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — gate operacional de B1 reaberto** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; H-2026-07-22A interrompe a fila antes de B2. |
+| 9 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-22A** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | o bootstrap `UNKNOWN` bloqueou sessões novas antes de existir contexto de passageiros. |
+| 10 | H-2026-07-22A | **REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE PENDENTES** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | review final confirmou os 10 controles, inclusive PostgreSQL 16.14 real sem `SKIP`; commit, push, PR, merge/deploy e smoke ainda não foram executados. |
+| 11 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-22A / gate operacional de H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após commit, push, deploy e smoke verdes do hotfix. |
+| 12 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
+| 13 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
+| 14 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
+| 15 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
+| 16 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
+| 17 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
+| 18 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
 
 ### Regra de desbloqueio
 
@@ -1640,8 +1641,8 @@ próxima ação histórica daquela rodada: revisar e, por fluxo autorizado, impl
 
 ### 8.10 Bug user-visible — H-2026-07-16B (2026-07-16)
 
-**Status:** **EM ANDAMENTO — B1 concluída; B2 é a próxima fundação do
-umbrella**.
+**Status:** **EM ANDAMENTO — gate operacional de B1 reaberto por
+H-2026-07-22A; B2 bloqueada**.
 
 O H-B agora é umbrella não executável. O 3.6F-D permanece **BLOQUEADA por
 H-2026-07-16B**.
@@ -1660,7 +1661,7 @@ superseded pelo review final sem P1/P2 de B1.
 | P1-02 | bootstrap reparsa inbound da janela histórica | B1 | `TestPassengerStateBootstrapUsesStructuredEvidenceOnly` |
 | P1-03 | `prompt_event` não acompanha o outbound efetivamente enviado | B1 | `TestPassengerPromptEventFollowsReviewedAndAutoSentOutboundBeyondHistoryWindow` |
 | P1-04 | contexto infantil deriva de `ActivePrompt.Kind`, não da época persistida | B1 | `TestPassengerChildAddsTravelerUsesPersistedPromptEpoch` |
-| P1-05 | estado inseguro chega a shadows, LLMs e tools | B1 | `TestPassengerUnsafeStateStopsExternalWorkBeforeDispatch` |
+| P1-05 | estado inseguro chega a shadows, LLMs e tools | B1 | `TestPassengerGateAfterDeliveredPromptStopsExternalWorkBeforeDispatch` |
 | P1-06 | `BookingDraftContext` recupera contagem de `booking_create` histórico | B1 | `TestBookingDraftProjectionIgnoresBookingCreatePassengerCount` |
 | P1-07 | booking criado avança payment antes da validação dos slots | B1 | `TestBookingCreatedWithUnknownPassengerSlotsFailsClosed` |
 | P1-08 | correção de total preserva `ChildUnder5AddsTraveler` incompatível | B1 | `TestPassengerAggregateCorrectionClearsDependentAddsTraveler` |
@@ -1669,12 +1670,16 @@ superseded pelo review final sem P1/P2 de B1.
 Decisão canônica:
 
 ```text
-H-B1 — CONCLUÍDA — REVIEW FINAL SEM P1/P2 — SEGURA PARA COMMIT
-  fonte durável + eventos + serialização por sessão + prompt enviado
-  + fail-closed + BookingDraftContext como projeção; sem linguagem
-H-B2 — PRÓXIMA
+H-B1 — CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO
+  evidência de sessão nova mostrou bootstrap UNKNOWN bloqueando antes do
+  contexto de passageiros
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+  bootstrap invalidado, autoridade explícita, source legado exato e ordem causal;
+  review final confirmou 10 controles; nenhum P1/P2
+H-B2 — BLOQUEADA por H-2026-07-22A / gate operacional de H-B1
   PassengerClarificationMeaningV1 strict + validator + corpus + shadow;
-  sem tools ou mudança user-visible
+  só inicia após commit, push, deploy e smoke verdes
 H-B3 — BLOQUEADA por H-B2
   promoção somente em prompt passageiro/criança e decisão
   WEAK/FALLBACK/UNKNOWN; sem booking/payment direto
@@ -1689,8 +1694,8 @@ superseded pelo B2.
 Critérios de desbloqueio:
 
 - B1 libera B2 somente com as nove regressões, inventário lexical sem
-  crescimento, teste PostgreSQL concorrente real, matriz completa e review sem
-  P1/P2;
+  crescimento, teste PostgreSQL concorrente real, matriz completa, review sem
+  P1/P2 e H-2026-07-22A revisado, implantado e com smoke verde;
 - B2 libera B3 somente com contrato strict, corpus/evaluator, shadow sem
   influência runtime, métricas críticas zeradas, limiares aprovados e review
   sem P1/P2;
@@ -2279,15 +2284,18 @@ PASS — git diff --check
 PASS — nenhuma alteração em arquivo de produção nesta correção
 ```
 
-Resultado do review final: **sem P1/P2; H-B1 concluída e segura para commit**.
-H-2026-07-16B permanece **EM ANDAMENTO**, H-B2 passa a **PRÓXIMA**, H-B3
-permanece **BLOQUEADA por H-B2** e 3.6F-D continua **BLOQUEADA pelo fechamento
-integral de H-B**.
+Resultado histórico do review final daquela rodada: **sem P1/P2; H-B1 então
+considerada segura para commit**. A evidência operacional de 2026-07-22
+supersede o desbloqueio descrito abaixo: H-2026-07-22A reabre o gate de B1 e
+volta a bloquear B2.
+
+Naquele fechamento, H-2026-07-16B permaneceu **EM ANDAMENTO**, H-B2 passou a
+**PRÓXIMA**, H-B3 permaneceu **BLOQUEADA por H-B2** e 3.6F-D continuou
+**BLOQUEADA pelo fechamento integral de H-B**.
 
 Teste em produção/smoke: **não executado e não autorizado nesta rodada**.
-Commit, push e deploy: **não executados**. Próxima ação recomendada: preparar o
-commit de B1 a partir do manifesto auditado; executar B2 somente em outro
-`/goal` explícito.
+Commit, push e deploy: **não executados naquela rodada**. A próxima ação atual
+está no registro de H-2026-07-22A e não autoriza executar B2.
 
 #### Manifesto completo do commit de B1
 
@@ -2821,8 +2829,843 @@ teste em produção. Esses riscos mantêm H-2026-07-16B aberta e 3.6F-D bloquead
 commit/push/deploy: não executados
 smoke/teste em produção: não executado nem autorizado neste ciclo; não classificado como pendente antes de novo review sem P1/P2
 3.6F-D: permanece bloqueada por H-2026-07-16B
-próxima ação recomendada: concluir estado/eventos duráveis, executar a matriz local e então solicitar novo /review sem executar commit, push, deploy ou smoke
+próxima ação histórica daquela rodada: concluir estado/eventos duráveis, executar a matriz local e então solicitar novo /review sem executar commit, push, deploy ou smoke
 ```
+
+### 8.11 Hotfix user-visible — H-2026-07-22A (2026-07-22)
+
+**Status:** **REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE
+PENDENTES**.
+
+#### Evidência operacional e causa
+
+Em sessão nova após limpeza, tanto `"oi"` quanto
+`"monção para videira na data mais próxima"` caíam diretamente em
+`ASK_PASSENGER_COUNT`; `tool_call_count=0`, `availability_search` não era
+executada e `history_count=1`.
+
+A causa foi comprovada no gate global de `Service.Reprocess`:
+
+1. `newPassengerClarificationStateV1` cria um bootstrap durável com ambos os
+   slots desconhecidos e `HasEvidence=false`;
+2. `passengerClarificationStateUnsafeV1` tratava qualquer slot desconhecido
+   como inseguro;
+3. `externalWorkUnsafe` incorporava esse resultado antes de greeting, seleção
+   de viagem e disponibilidade;
+4. o fail-closed caía em `BookingNextAskPassengerClarification`;
+5. testes amplos com `newFakeStoreWithPassengerAuthority` mascaravam o estado
+   literal de uma sessão criada por `newFakeStore()`.
+
+#### RED e correção local
+
+O RED foi iniciado com `newFakeStore()` e confirmou:
+
+```text
+RED — sessão nova + "oi" retornou pergunta de passageiros
+RED — sessão nova + "quero uma passagem" retornou pergunta de passageiros
+RED — rota + EARLIEST_AVAILABLE executou availability_search 0 vezes
+RED — seleção não chegou à materialização e tool_call_count permaneceu 0
+RED — bootstrap UNKNOWN fresco foi classificado como unsafe=true
+```
+
+O patch separa três conceitos:
+
+```text
+invalid_or_conflicting = validate(state) falha OR conflito estrutural
+active_passenger_context = state.HasEvidence
+unknown_slots = !PassengerCountKnown OR !ChildUnder5CountKnown
+
+unsafe = invalid_or_conflicting OR
+         (active_passenger_context AND unknown_slots)
+```
+
+Assim, `UNKNOWN` fresco não bloqueia greeting, coleta de rota ou disponibilidade.
+Estado inválido/conflitante continua sempre fail-closed. Depois de um prompt de
+passageiros realmente entregue, slots desconhecidos ou conflitantes continuam
+bloqueando runner, JSON runner, shadows V1/V2 e tools. Humano e cancelamento
+`STRONG` mantêm precedência local. Não houve parser, regex, provider nem código
+de B2.
+
+#### Correção local dos 2 P1 do review anterior
+
+O review seguinte encontrou dois P1 remanescentes:
+
+1. um snapshot persistido com `HasEvidence=false`, slot `OPEN` e
+   `PassengerPromptMessageID` real ainda era aceito pelo validator, classificava
+   o gate como seguro e liberava o shadow V1;
+2. uma seleção em sessão nova podia chegar a `ASK_PASSENGER_COUNT` e anexar
+   `pending_prompt_event` mesmo quando a opção visível não possuía `trip_id`,
+   `board_stop_id` ou `alight_stop_id` suficiente para materialização.
+
+Os REDs reproduziram `shadow=1` no primeiro caso e `ASK_PASSENGER_COUNT` nas
+seis combinações do segundo (`3` IDs ausentes x `"1"`/`"essa msm"`). A correção:
+
+- faz `validatePassengerClarificationStateV1` rejeitar `HasEvidence=false`
+  quando existe evidência estrutural de passageiros, incluindo IDs de prompt e
+  de última mensagem, IDs aplicados, slots não `PENDING` e contagens conhecidas;
+- mantém o `UNKNOWN` literal, sem qualquer campo estrutural, válido;
+- transforma snapshot persistido contraditório em
+  `invalidPassengerClarificationStateV1`, mantendo `externalWorkUnsafe=true`;
+- exige `selectedAvailabilityItemForMaterialization` antes de permitir a
+  transição de seleção para passageiros;
+- invalida os fatos incompletos na fronteira causal e impede reconstrução
+  metadata-only de `SelectedOptionIndex` enquanto o marcador canônico estiver
+  ativo.
+
+Com isso, opção incompleta retorna fallback determinístico de seleção sem abrir
+época de passageiros, sem índice/snapshot/IDs de rota e sem trabalho externo. A
+opção completa continua materializando índice, snapshot e rota atomicamente
+antes de produzir `ASK_PASSENGER_COUNT` e o evento pendente normal.
+
+#### Correção local dos 3 P1 do review anterior
+
+O review seguinte preservou as duas correções acima e encontrou três caminhos
+remanescentes:
+
+1. uma resposta numérica ou contextual diante de prompt de availability podia
+   cair no fallback do router e escapar da exigência de materialização;
+2. com `passengerUnsafe=true`, uma seleção não materializável perdia a
+   precedência para `ASK_PASSENGER_COUNT` e abria novo evento de prompt;
+3. `passengerClarificationPromptEventForRunV1` inferia prompt apenas por slots
+   desconhecidos em `SAFE_PHASE_FALLBACK`, fazendo cancelamento entregue trocar
+   indevidamente o epoch de passageiros.
+
+Os REDs reais confirmaram marker/boundary ausentes para prompt sem tool facts e
+índice fora do range, reaparecimento posterior do número bruto como
+`SelectedOptionIndex=1`, `ASK_PASSENGER_COUNT` com `pending_prompt_event` para
+opção incompleta em contexto de passageiros e evento espúrio no cancelamento.
+O allowlist também começou RED para os templates contextuais positivos de
+passageiro e criança.
+
+A correção:
+
+- cria uma decisão estrutural de tentativa de seleção usando prompt ativo,
+  contexto visível, marker durável e resposta atual, sem depender apenas do
+  `IntentSelectAvailabilityOption` final;
+- exige materialização para tentativa contextual/numérica no contexto de
+  availability; a falha cria ou preserva marker + boundary, mantém
+  `externalWorkUnsafe=true` e não anexa índice, snapshot ou facts;
+- não abre o gate para número fora de contexto; com marker já existente, uma
+  repetição permanece fail-closed sem mover o boundary nem executar novamente o
+  router;
+- impede `findLatestSelectedOptionIndex` de varrer o histórico enquanto o
+  marker canônico estiver ativo;
+- coloca o fallback de availability imediatamente depois dos guardrails
+  `STRONG`, inclusive quando `passengerUnsafe=true`;
+- substitui a inferência por estado/body por allowlist de template + action.
+  `SAFE_PHASE_FALLBACK`, cancelamento, humano, info paralela e demais
+  guardrails não criam prompt event; perguntas reais de passageiro/criança
+  continuam criando evento somente após delivery.
+
+As duas correções anteriores permanecem cobertas: snapshot contraditório com
+`HasEvidence=false` continua inválido/fail-closed, e `UNKNOWN` literal fresco
+continua permissivo antes de contexto de passageiros.
+
+#### Correção local dos 3 P1 do review anterior mais recente
+
+O review anterior mais recente preservou os cinco P1 anteriores como corrigidos
+e encontrou três lacunas novas na mesma fronteira:
+
+1. confirmação já reconhecida por `looksLikeBookingCreateConfirmation`, como
+   `"ok"`, não entrava no gate quando o prompt de availability tinha uma única
+   opção; sem facts completos, o turno escapava sem marker e liberava shadows;
+2. deíxis ambígua em lista completa com várias opções, como `"essa msm"`, e
+   índice fora do range eram tratados como falha destrutiva, ocultando uma lista
+   válida e impedindo a resposta numérica posterior;
+3. `resolveBookingCreateSelection` ainda consultava
+   `findLatestSelectedOptionIndex`, permitindo combinar um `"1"` falho antigo
+   com uma disponibilidade nova e autorizar `booking_create` sem seleção
+   bookable persistida.
+
+Os REDs confirmaram `SAFE_PHASE_FALLBACK` sem marker para `"ok"` diante de
+opção incompleta, marker indevido para deíxis/índice fora do range e
+`BookingCreateInput` válido ao combinar o índice bruto antigo com a opção nova.
+
+A correção centraliza a classificação estrutural do turno em quatro estados,
+sem regex nova:
+
+```text
+NONE
+MATERIALIZE
+CLARIFY_PRESERVE
+FAIL_CLOSED_INVALIDATE
+```
+
+- `MATERIALIZE` resolve índice único/expresso apenas contra o prompt atual e
+  exige `trip_id`, `board_stop_id` e `alight_stop_id`; confirmação de opção
+  única usa índice `1`, persiste snapshot completo e só então pergunta
+  passageiros;
+- `CLARIFY_PRESERVE` cobre deíxis ambígua e índice fora do range diante de lista
+  completa, bloqueia runner/JSON/shadows/claim/tools somente no turno, não cria
+  marker e reanexa os facts ao fallback para a lista continuar selecionável;
+- `FAIL_CLOSED_INVALIDATE` cobre confirmação/índice/deíxis sem facts completos,
+  persiste marker + boundary e mantém zero trabalho externo;
+- `"ok"` fora de prompt de availability permanece `NONE`;
+- booking draft e `booking_create` aceitam somente índice explícito do turno
+  resolvido contra facts completos atuais ou
+  `latestAvailabilitySelectionEvidence` bookable com snapshot completo;
+- o fallback de número bruto foi removido de `resolveBookingCreateSelection`, o
+  fallback automático de opção única sem seleção persistida foi removido e os
+  call sites de produção de `findLatestSelectedOptionIndex` foram zerados;
+- o overlay do marker/boundary agora também é aplicado nas duas projeções de
+  autoridade, impedindo que fatos pré-boundary reapareçam fora de
+  `Service.Reprocess`.
+
+Com isso, `"essa msm"` preserva a lista e a resposta seguinte `"1"` materializa
+a opção correta; índice fora do range não contamina o turno seguinte; `"1"`
+falho + disponibilidade nova + `"quero reservar"` produz zero autorização de
+`booking_create`; seleção bookable persistida continua no fluxo normal. Os
+cinco P1 anteriores permanecem cobertos e verdes.
+
+#### Correção local dos 3 P1 do novo review
+
+O novo review preservou os oito P1 anteriores como corrigidos e encontrou três
+lacunas adicionais:
+
+1. `promptContext.OptionCount > 0` confundia facts de continuidade com
+   identidade de prompt. Depois de selecionar a opção `2`, o
+   `ASK_PASSENGER_COUNT` ainda carregava o `tool_context` da lista; a resposta
+   de passageiros `"1"` podia rematerializar a opção `1`, e `"sim"` podia virar
+   fallback de availability;
+2. a classificação de seleção ocorria antes de preservar uma decisão
+   humano/cancelamento `STRONG`. Turnos mistos com índice ou deíxis podiam ser
+   reescritos como seleção ou clarificação;
+3. uma única opção completa exibida podia preencher os campos de viagem do
+   booking draft sem provar seleção. Com índice bruto histórico, passageiros e
+   documentos completos, a confirmação `"sim"` podia chegar a
+   `booking_create` sem autoridade bookable persistida.
+
+Os REDs reais confirmaram troca da opção `2` pela `1`, fallback de availability
+para `"sim"`, perda dos quatro guardrails `STRONG` exigidos e
+`BookingCreateInput` com `SelectedOptionIndex=0`; a regressão integrada chamou
+`booking_create` uma vez antes do patch.
+
+A correção:
+
+- separa identidade do prompt de facts de continuidade. A seleção só é
+  classificada quando `ActivePrompt.Kind` é
+  `AVAILABILITY_OPTION_CHOICE`, a fonte é o último outbound confiável que
+  realmente pergunta qual opção e ID/body correspondem à fonte do active
+  prompt. `ASK_PASSENGER_COUNT` pode transportar facts anteriores sem adquirir
+  identidade de prompt de availability;
+- detecta humano/cancelamento `STRONG` antes de
+  `classifyAvailabilitySelectionTurn` e executa o guardrail local antes de
+  qualquer materialização, clarificação ou invalidação;
+- adiciona `BookingDraftContext.HasBookableSelection`. Apenas seleção explícita
+  atual materializada contra facts completos ou a seleção bookable persistida
+  ativa a flag. `mergeAvailabilityPayloadIntoBookingDraft` pode enriquecer os
+  campos, mas opção única, trip IDs e `tool_context` não concedem autoridade;
+- exige `HasBookableSelection` em todos os entrypoints de `booking_create`,
+  inclusive confirmação de documentos. O controle positivo com seleção
+  bookable persistida continua produzindo a reserva normalmente.
+
+Não houve regex/parser novo, implementação de B2, commit, push, deploy ou
+smoke. Os oito P1 anteriores permanecem cobertos e verdes.
+
+#### Correção local do P1 do review anterior
+
+O review anterior preservou como corrigidos os três P1 da rodada precedente e
+encontrou uma projeção prematura restante: `deriveCanonicalConversationState`
+chamava `BookingDraftContext` com o `currentTurn` antes do roteamento. Em turnos
+mistos como `"opção 1, quero cancelar"` e
+`"primeira opção, quero falar com atendente"`, o intent `STRONG` vencia a
+resposta, mas índice e `trip/board/alight` da opção mencionada já podiam ser
+gravados no estado canônico.
+
+Os REDs reais confirmaram:
+
+```text
+RED — "opção 1, quero cancelar" chegou ao router com SelectedOptionIndex=1 e trip/board/alight da opção 1
+RED — "primeira opção, quero falar com atendente" chegou ao router com SelectedOptionIndex=1 e trip/board/alight da opção 1
+RED complementar — com marker + boundary existentes, "opção 1, quero cancelar" perdeu o cancelamento STRONG para CONTEXT_FALLBACK_AVAILABILITY_OPTION
+RED de escopo intermediário — antecipar todo humano/cancelamento desviou cancelamentos reais, impediu limpeza de pending_question e suprimiu shadows esperados; a precedência foi então restringida ao prompt de opções ou ao turno realmente misto
+```
+
+A correção estrutural:
+
+- introduz `bookingDraftRoutingBaselineProjection`,
+  `collectBookingDraftContextForRoutingBaseline` e
+  `deriveCanonicalConversationStateForRoutingBaseline`; o baseline usa sessão e
+  histórico persistido, preserva seleção bookable anterior e não materializa
+  seleção do turno atual;
+- roteia `currentTurn` contra esse baseline e só chama
+  `classifyAvailabilitySelectionTurn` quando não há humano/cancelamento `STRONG`
+  com precedência sobre seleção;
+- usa e persiste o baseline no guardrail `STRONG`, sem índice/snapshot/evento de
+  passageiros e sem criar, remover ou mover marker/boundary;
+- mantém `NONE`, `CLARIFY_PRESERVE` e `FAIL_CLOSED_INVALIDATE` inalterados;
+  somente `MATERIALIZE` chama
+  `applyMaterializedAvailabilitySelectionToCanonicalState` e substitui a rota
+  por uma opção atual completa;
+- preserva atomicamente uma seleção bookable anterior, inclusive a opção `2`,
+  quando o turno misto menciona a opção `1`;
+- mantém cancelamento real, handoff, pending question, shadows e tools fora de
+  selection context no fluxo anterior.
+
+Não houve alteração de parser, regex, provider, contratos OpenAI, B2,
+booking/payment, commit, push, deploy ou smoke.
+
+#### Correção local do P1 do review anterior
+
+O review mais recente preservou a correção acima e encontrou uma segunda
+projeção prematura dentro do próprio baseline. Mesmo sem projetar
+`currentTurn`, `mergeAvailabilityPayloadIntoBookingDraft` ainda usava o único
+resultado completo como fallback e copiava `trip_id`, `board_stop_id`,
+`alight_stop_id`, data, horário, preço e moeda enquanto
+`HasBookableSelection=false`. Assim, turnos mistos `STRONG` recebiam uma rota
+que parecia selecionada por item, embora não houvesse seleção persistida.
+
+O RED real confirmou a promoção nos quatro turnos exigidos:
+`"opção 1, quero cancelar"`, `"essa msm, quero falar com atendente"`,
+`"ok, quero cancelar"` e `"1, quero falar com uma pessoa"`. O mesmo item
+reaparecia no router e no interpreter do turno seguinte. O teste unitário do
+booking draft registrou `SelectedOptionIndex=0` e
+`HasBookableSelection=false`, mas ainda encontrou todos os IDs e fatos do único
+resultado.
+
+A correção:
+
+- torna a política de disponibilidade explícita em `BookingDraftContext`:
+  `ENVELOPE_ONLY` para o baseline de routing e `BOOKABLE_SELECTION` para a
+  projeção autorizada;
+- divide o merge em envelope/filtro e item selecionado; o fallback
+  `len(results)==1` foi removido, portanto resultado único não concede fatos de
+  item;
+- em `ENVELOPE_ONLY`, mantém `HasAvailabilityShown` e origem/destino do filtro,
+  mas não deriva do item índice, trip/stops, data, horário, preço, moeda ou
+  pacote;
+- permite que `ENVELOPE_ONLY` recupere o item apenas quando
+  `latestAvailabilitySelectionEvidence` já é bookable, preservando exatamente
+  a opção persistida — inclusive opção `2` diante de uma nova lista unitária
+  não selecionada;
+- mantém `MATERIALIZE` como único caminho do serviço que aplica uma opção atual
+  completa ao estado canônico, persiste índice/snapshot/trip/stops e então
+  produz `ASK_PASSENGER_COUNT`.
+
+As expectativas legadas que tratavam uma opção única apenas exibida como rota
+selecionada passaram a validar somente o envelope. A fixture de quantidade de
+passageiros que pressupunha viagem escolhida recebeu o snapshot bookable
+persistido correspondente; nenhum contrato de booking/payment foi alterado.
+
+Não houve alteração de parser, regex, provider, contratos OpenAI, B2,
+booking/payment, commit, push, deploy ou smoke.
+
+#### Correção local dos 2 P1 do review anterior
+
+O review anterior preservou os P1 anteriores como corrigidos e encontrou
+duas violações restantes da mesma raiz: a seleção bookable ainda não era tratada
+como agregado atômico.
+
+1. uma rejeição posterior específica da opção `1` fazia
+   `latestAvailabilitySelectionEvidence` ocultar a seleção bookable anterior da
+   opção `2`, embora essa opção não tivesse sido rejeitada. O booking draft podia
+   então combinar `HasBookableSelection=false` com `trip/board/alight` recuperados
+   do snapshot;
+2. o pacote não integrava `availabilitySelectionEvidence` nem
+   `BookingDraftContext`. O replay genérico podia combinar índice/IDs/data/preço
+   da opção `2` e pacote `B` de um envelope posterior não selecionado.
+
+Os REDs reproduziram exatamente `authority=false` para a opção `2` não rejeitada
+e o baseline `STRONG` com rota da opção `2`/pacote `B`.
+
+A correção:
+
+- percorre o histórico do mais novo para o mais antigo, acumula rejeições
+  posteriores, encerra em rejeição de todo o contexto e faz rejeição específica
+  bloquear somente índice/data correspondente;
+- preserva os blockers `incomplete` e `metadata-only`; uma seleção bookable
+  anterior só sobrevive quando não foi bloqueada pelas rejeições acumuladas;
+- usa a autoridade resolvida para aplicar de uma vez
+  `HasBookableSelection`, índice, `trip/board/alight`, endpoints, pacote, data,
+  horário, preço e moeda. Snapshot selecionado não pode mais preencher IDs
+  quando a autoridade é falsa;
+- inclui `PackageName` na evidência, no item, no booking draft, no snapshot
+  persistido e na projeção canônica;
+- quando existe seleção bookable, o canonical replay descarta availability não
+  selecionada e publica em `LastToolFacts` somente o agregado selecionado. Assim,
+  pacote de envelope posterior não aparece em state, memory ou metadata;
+- snapshot legado sem `package_name` recupera pacote somente do item cujo
+  `trip_id + board_stop_id + alight_stop_id` corresponde à seleção. Filtro
+  incompatível e o campo de pacote do envelope não fornecem esse fallback;
+- `MATERIALIZE` de uma opção válida posterior substitui todo o agregado e a
+  reconstrução após reload preserva autoridade, IDs e pacote coerentes.
+
+Não houve parser, regex, provider, código B2, alteração de booking/payment,
+commit, push, deploy ou smoke.
+
+#### Correção local dos 3 P1 do review atual
+
+O review atual preservou as correções anteriores, mas demonstrou que o scan
+reverso ainda não modelava identidade nem supersessão:
+
+1. depois de `S1/A → S2/B`, uma rejeição de `S2` pulava a autoridade corrente e
+   ressuscitava `S1`, embora `MATERIALIZE` de `S2` já tivesse substituído o
+   agregado anterior;
+2. rejeição específica por índice/data não carregava a identidade do prompt.
+   Assim, rejeitar a opção `1` da lista `B` também removia uma seleção da opção
+   `1` feita na lista `A`;
+3. snapshot legado incompleto podia recuperar pacote e demais lacunas de um
+   envelope posterior não selecionado com o mesmo índice e os mesmos
+   `trip/board/alight`, criando novamente um agregado híbrido.
+
+Os REDs reproduziram a ressurreição de `S1`, a colisão de índice/data entre
+listas e a recuperação indevida de `package-b` nos casos com fonte própria,
+fonte exata e fonte ausente.
+
+A correção:
+
+- substitui a busca reversa por reducer cronológico. Cada `MATERIALIZE`
+  bookable substitui integralmente a autoridade anterior; rejeitar a autoridade
+  corrente produz `NONE`, sem procurar seleção superseded. Rejeitar `S1` depois
+  de `S2` não altera `S2`, e blockers `incomplete`/`metadata-only` preservam o
+  fail-closed. Snapshot apenas propagado em resposta posterior preserva o
+  `SelectionMessageID` original e não funciona como novo `MATERIALIZE`;
+- mantém `SelectionMessageID` e `AvailabilityPromptSourceMessageID` na
+  evidência. O snapshot persiste `selection_message_id` e
+  `availability_prompt_source_message_id`; o ID da mensagem de seleção é
+  anexado antes de salvar o draft;
+- lê a fonte da rejeição em `active_prompt_source_message_id`, já emitido pelo
+  caminho out-of-turn. Lembretes reutilizam o ID estrutural da lista original,
+  não o ID do envelope de resposta;
+- aplica rejeição específica ou total somente à autoridade com o mesmo
+  `AvailabilityPromptSourceMessageID`. Colisão de índice ou data em outra lista
+  não remove a seleção ativa;
+- limita recuperação legada ao próprio evento de seleção ou à mensagem exata
+  indicada por `AvailabilityPromptSourceMessageID`, sempre com
+  `trip/board/alight` compatíveis. Envelope posterior nunca preenche lacunas; sem
+  fonte exata, o campo permanece vazio;
+- mantém `booking_create` fechado quando a rejeição remove a autoridade
+  corrente. `MATERIALIZE` posterior continua substituindo o agregado inteiro e
+  o reload preserva autoridade, IDs e pacote.
+
+Não houve parser, regex, provider, código B2, mudança de contrato público,
+commit, push, deploy ou smoke.
+
+#### Correção local dos 3 P1 de autoridade durável
+
+O review seguinte preservou as correções anteriores e demonstrou que a
+autoridade normal ainda dependia de uma janela limitada de histórico:
+
+1. `booking_create` podia resolver como fonte o outbound unitário de seleção que
+   já perguntava passageiros, em vez do prompt source original persistido;
+2. uma projeção propagada podia se promover a nova autoridade quando o
+   `MATERIALIZE` e o tombstone saíam da janela;
+3. rejeição simples não persistia `active_prompt_source_message_id`; depois do
+   truncamento, ela deixava de atingir a seleção correspondente.
+
+A raiz foi removida com `AvailabilitySelectionStateV1`, versionado em
+`metadata.memory`, com status `NONE | BOOKABLE | REJECTED | INVALIDATED`,
+`selection_event_message_id`, `selection_projection_message_id`,
+`availability_prompt_source_message_id`, índice, snapshot completo,
+tombstone/rejeições e `applied_event_ids`.
+
+Os eventos tipados `SELECTION_MATERIALIZED`, `SELECTION_REJECTED` e
+`SELECTION_INVALIDATED` são normalizados e reduzidos sem texto na mesma
+transação que já serializa `PassengerClarificationStateV1` pelo lock da sessão.
+`MATERIALIZED` substitui o agregado inteiro; rejeitar a autoridade corrente
+limpa o agregado e persiste tombstone; rejeição de outro prompt fica registrada
+sem alterar a seleção atual; projeções/copied snapshots usam
+`materializes_authority=false`.
+
+Ao reconhecer rejeição no turno atual, o serviço resolve o prompt source antes
+do replay e persiste o evento no `normalized_payload` do inbound dentro da
+mesma transação. `SaveReprocessSnapshot` preserva o estado bloqueado pelo lock e
+não o sobrescreve com memory stale.
+
+`BookingDraftContext` e todos os entrypoints de `booking_create` consultam
+primeiro o estado durável. `booking_create` não usa
+`latestVisibleAvailabilitySelectionContextWithSource` como autoridade e produz
+zero input sem `BOOKABLE`. A materialização explícita do turno só progride
+depois de confirmar que seu evento consta no estado retornado pela mesma seção
+serializada.
+
+O bootstrap legado consulta uma única vez todas as mensagens estruturadas da
+sessão, sem selecionar `body` e sem `LIMIT 50`, reduz o que tem prova exata e
+persiste imediatamente o resultado. Projeção falsa nunca cria estado; sem
+prova exata, o resultado é `NONE`/fail-closed. Recuperação de lacunas permanece
+limitada ao evento/projeção selecionada ou ao prompt source exato.
+
+Produção desta rodada:
+
+```text
+apps/api/internal/chat/availability_selection_state_v1.go
+apps/api/internal/chat/model.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_create_router.go
+```
+
+Testes desta rodada:
+
+```text
+apps/api/internal/chat/availability_selection_state_v1_test.go
+apps/api/internal/chat/availability_selection_repository_test.go
+apps/api/internal/chat/passenger_clarification_repository_test.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/openai_interpreter_assist_test.go
+```
+
+Não houve migration, parser, regex, provider, código B2, commit, push, deploy ou
+smoke.
+
+#### Correção local dos 4 P1 anteriores de autoridade durável
+
+O review anterior preservou os achados anteriores como corrigidos, mas encontrou
+quatro caminhos em que artefatos legados ou eventos concorrentes ainda podiam
+reconceder autoridade:
+
+1. o primeiro bootstrap de `AvailabilitySelectionStateV1` ignorava
+   `canonical_availability_facts_invalidated` e sua boundary, permitindo que
+   seleção estruturada anterior voltasse como `BOOKABLE`;
+2. projeção legada completa sem `materializes_authority` podia usar o próprio
+   outbound como `selection_message_id` e virar nova materialização;
+3. seleção legada sem prompt source fabricava o outbound de seleção como fonte,
+   portanto a rejeição estruturada apontada para a lista original não a atingia;
+4. duas reduções concorrentes eram decididas pela ordem de aquisição do lock,
+   não pela ordem causal das mensagens.
+
+A correção mantém a responsabilidade dentro do estado durável:
+
+- no primeiro bootstrap, o repository lê estado, marker, boundary e transcript
+  estruturado na mesma transação. A boundary vira
+  `SELECTION_INVALIDATED` ordenado; materialização pré-boundary é removida e
+  materialização posterior pode substituir a invalidação. Marker legado sem
+  boundary produz `INVALIDATED` conservador até nova materialização explícita;
+- ausência de `materializes_authority` significa `false`, sem fallback de
+  `selection_message_id` para o ID da projeção. Projeções de passageiros,
+  documentos e continuação nunca materializam. Compatibilidade legada exige
+  intent estrutural `SELECT_AVAILABILITY_OPTION`, snapshot completo e fonte
+  exata/inequívoca;
+- fonte ausente é recuperada apenas de outbound anterior confiável cujo item no
+  mesmo índice possui exatamente os mesmos `trip_id`, `board_stop_id` e
+  `alight_stop_id`. Não há leitura de `body`, parser lexical ou uso do outbound
+  de seleção como prompt source; zero ou múltiplas fontes deixam o estado
+  `NONE`;
+- eventos e tombstones carregam ordem
+  `received_at, created_at, message_id, event_ordinal`; o estado persiste
+  `last_applied_event_order`. O repository sobrescreve ordem/ID fornecidos pelo
+  caller com a mensagem real do banco, ordena batches e impede evento mais
+  antigo de substituir seleção ou tombstone atual;
+- a prova concorrente executou em PostgreSQL 16 real, com duas pools e caller
+  enviando ordem deliberadamente falsa. S2 permaneceu autoritativa quando
+  aplicada antes de S1 pelo lock, e rejeição nova permaneceu `REJECTED` quando a
+  materialização antiga adquiriu o lock depois.
+
+Não houve migration, parser, regex, provider, código B2, mudança de contrato
+público, commit, push, deploy ou smoke.
+
+#### Correção local dos 4 P1 do review anterior de replay canônico
+
+O review atual preservou as correções anteriores, mas comprovou quatro falhas
+restantes no contrato de replay:
+
+1. legado sem `selection_message_id` explícito ainda podia fabricar identidade
+   a partir do outbound/projeção;
+2. seleção ou continuação propagada podia ser aceita como prompt source quando
+   a lista original já não estava disponível;
+3. `LastAppliedEventOrder` podia descartar evento durável atrasado, deixando o
+   estado live dependente da ordem de aquisição do lock e diferente do restart;
+4. a prova PostgreSQL ainda retornava `SKIP` com URL ausente, mesmo quando
+   deveria ser gate obrigatório.
+
+A regra agora é única dentro do lock da sessão:
+
+1. hidratar o evento atual a partir da mensagem real e persistir sua forma
+   estrutural no inbound;
+2. carregar todas as mensagens da sessão necessárias aos eventos estruturados,
+   sem `body` e sem `LIMIT 50`;
+3. incorporar marker/boundary legado;
+4. hidratar ordem somente de `received_at`, `created_at`, `message_id` e ordinal;
+5. ordenar todos os eventos e reduzir sempre desde
+   `newAvailabilitySelectionStateV1()`;
+6. validar e persistir a projeção completa.
+
+`LastAppliedEventOrder` é apenas resultado do replay e não exclui evento.
+Identidade legada ausente permanece `NONE`. Prompt source legado exige
+exatamente uma lista anterior confiável, estrutural, completa e compatível;
+seleção, passageiros, documentos, pagamento e continuação não são candidatos.
+Sem projeção reconstruída e validada, booking draft e `booking_create` falham
+fechado.
+
+A propriedade cobre as seis permutações de materialização antiga `A`, rejeição
+nova `B` de outra fonte e projeção não autoritativa, com duplicação e restart em
+cada permutação. Quando `B` obtém o lock primeiro e `A` chega depois, o replay
+ordena causalmente `A` antes de `B`: `A` permanece `BOOKABLE` e a rejeição de
+`B` continua no ledger. Live, reload e bootstrap são idênticos.
+
+O modo `CHAT_REQUIRE_PASSENGER_STATE_POSTGRES_TEST=1` agora falha sem URL. A
+prova executou `count=20` em PostgreSQL 16 real efêmero, com duas pools, lock
+invertido e comparação byte a byte entre live e restart, sem `SKIP`.
+
+Não houve migration, parser, regex, provider, código B2, mudança de contrato
+público, commit, push, deploy ou smoke.
+
+#### Regressões e arquivos alterados
+
+As regressões cobrem confirmação `"ok"` com opção única completa, sem facts e
+com cada ID obrigatório ausente; deíxis ambígua com várias opções completas;
+seleção posterior por `"1"`; índice fora do range sem contaminação; índice falho
+seguido de disponibilidade nova e tentativa de `booking_create`; seleção
+bookable persistida; confirmação fora de prompt; zero trabalho externo nos
+caminhos de clarificação/invalidação; identidade do prompt depois de
+`ASK_PASSENGER_COUNT`; os quatro turnos mistos `STRONG`; ausência/presença de
+autoridade bookable na confirmação documental; e todos os casos dos oito P1
+anteriores. O P1 do review anterior acrescentou as frases exatas com
+`"opção 1"` e `"primeira opção"`, baseline sem seleção anterior, preservação
+integral da opção `2` anterior, controle positivo puro `"opção 1"`,
+marker/boundary preexistentes e o turno seguinte capturado diretamente no
+router e no shadow V1.
+
+O P1 do review anterior cobre opção única completa e não selecionada nos quatro
+turnos `STRONG` exigidos; baseline unitário somente com envelope; ausência de
+item em canonical, memory, metadata, draft e próximo router/interpreter;
+preservação exata da opção `2` diante de uma nova lista unitária; e os controles
+positivos puros `"ok"`/`"1"` materializando a opção antes de
+`ASK_PASSENGER_COUNT`.
+
+Os 3 P1 do review anterior acrescentaram:
+
+- `S1/A → S2/B → rejeição de S2`, resultando em nenhuma autoridade, sem
+  ressurreição de `S1` nem mesmo por projeção stale posterior, e sem abertura
+  de `booking_create`;
+- `S1/A → S2/B → rejeição de S1`, preservando `S2/B` integralmente;
+- seleção da opção `1` na lista `A` + rejeição da opção `1`/mesma data na lista
+  `B`, preservando `A`; a mesma rejeição originada em `A` remove a autoridade;
+- snapshot legado sem pacote + envelope posterior compatível/pacote `B`, sem
+  uso de `B`;
+- recuperação de pacote `A` somente pelo próprio evento de seleção ou pela
+  mensagem exata indicada pelo prompt source; fonte ausente mantém pacote vazio;
+- `MATERIALIZE` posterior de opção/pacote `B` substituindo todo o agregado;
+- reload/turno seguinte reconstruindo autoridade, `SelectionMessageID`,
+  `AvailabilityPromptSourceMessageID`, IDs da viagem e pacote sem drift.
+
+Os 3 P1 de autoridade durável acrescentam:
+
+- lista unitária selecionada e rejeitada permanece sem autoridade e com zero
+  `booking_create`, mesmo quando só a projeção posterior está na janela;
+- `S1 → S2 → rejeição de S2` termina sem autoridade e sem ressurreição de `S1`;
+- rejeição da lista `B` não limpa a seleção da lista `A`;
+- rejeição simples persiste o prompt source no inbound e reload mantém o
+  tombstone;
+- janela apenas com projeção superseded permanece `NONE`;
+- `BOOKABLE` alimenta o booking draft e o controle positivo de booking, enquanto
+  `NONE`/`REJECTED`/`INVALIDATED` produzem zero input;
+- materialização ausente do estado devolvido falha fechado, com zero runner e
+  zero `booking_create`;
+- bootstrap atravessa mais de 50 mensagens estruturadas uma única vez;
+- concorrência fake preserva ambos os eventos.
+
+Os 4 P1 anteriores de autoridade durável acrescentaram:
+
+- marker/boundary antigo bloqueia seleção pré-boundary, enquanto materialização
+  explícita pós-boundary volta a `BOOKABLE`;
+- marker legado sem boundary termina e permanece `INVALIDATED` conservador;
+- projeções `PASSENGER_COUNT_REPLY`, documentos e continuação, sem autoridade
+  explícita, permanecem `NONE` e produzem zero `booking_create`;
+- seleção legada resolve somente o prompt original estrutural exato; fonte
+  ausente ou ambígua permanece `NONE`, e rejeição legada atinge a fonte
+  recuperada;
+- S2 aplicada antes de S1 continua S2; rejeição nova aplicada antes de
+  materialização antiga continua `REJECTED`;
+- restart/bootstrap reproduzem byte a byte os estados finais de seleção e
+  rejeição;
+- PostgreSQL real com duas pools confirma serialização, hidratação da ordem pelo
+  banco e zero `booking_create` sem `BOOKABLE`.
+
+Os 4 P1 do review anterior de replay canônico acrescentaram:
+
+- legado sem ID explícito permanece `NONE`, sem fallback para projeção;
+- lista-fonte deve ser estrutural, confiável, completa, compatível e única;
+  seleção/projeção e continuações são rejeitadas como fonte;
+- todas as permutações de `A`, rejeição `B` de outra fonte e projeção
+  não autoritativa, inclusive com duplicatas, geram o mesmo estado;
+- live, reload e bootstrap após cada permutação são idênticos;
+- rejeição `B` que adquire o lock antes de materialização causal anterior `A`
+  não elimina `A`, mas permanece registrada;
+- marker/boundary participa do mesmo replay; marker sem boundary permanece
+  conservadoramente `INVALIDATED`;
+- história limitada e envelope atual não são autoridade de leitura;
+- modo PostgreSQL obrigatório falha sem URL e passa em PostgreSQL 16 real,
+  duas pools, lock invertido e `count=20`.
+
+Produção:
+
+```text
+apps/api/internal/chat/passenger_clarification_reducer.go
+apps/api/internal/chat/passenger_clarification_evidence.go
+apps/api/internal/chat/availability_invalidation_history.go
+apps/api/internal/chat/availability_selection_state_v1.go
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/availability_draft.go
+apps/api/internal/chat/booking_draft_context.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/tool_router.go
+```
+
+Testes:
+
+```text
+apps/api/internal/chat/passenger_clarification_gate_test.go
+apps/api/internal/chat/passenger_clarification_evidence_test.go
+apps/api/internal/chat/passenger_clarification_state_v1_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+apps/api/internal/chat/availability_selection_state_v1_test.go
+apps/api/internal/chat/availability_selection_repository_test.go
+apps/api/internal/chat/passenger_clarification_repository_test.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/booking_draft_context_test.go
+apps/api/internal/chat/chat_flow_guardrails_test.go
+apps/api/internal/chat/conversation_state_machine_test.go
+apps/api/internal/chat/handler_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/interpreter_test.go
+```
+
+Documentação:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+plans/README.md
+plans/00-plano-mestre-travel-semantic-v2.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+plans/h-2026-07-22a-fresh-session-passenger-gate.md
+```
+
+#### Validação e review
+
+A evidência das rodadas anteriores continua registrada abaixo. A matriz dos
+4 P1 do review anterior de replay canônico foi executada integralmente em `apps/api`, sem
+reduzir os comandos exigidos:
+
+```text
+RED NOVO — ASK_PASSENGER_COUNT com facts de continuidade reativou seleção: "1" trocou opção 2 pela 1 e "sim" virou fallback de availability
+RED NOVO — os quatro turnos mistos deíxis/índice + humano/cancelamento foram classificados antes de STRONG; houve fallback e até runner legado
+RED NOVO — resultado único exibido + índice bruto + documentos completos + "sim" produziu BookingCreateInput com índice 0 e chamou booking_create uma vez
+PASS PRESERVADO — identidade real do prompt, precedência STRONG e HasBookableSelection continuam corrigidos
+RED P1 DO REVIEW ANTERIOR — router recebeu opção 1 materializada antes do cancelamento/handoff STRONG
+RED P1 DO REVIEW ANTERIOR — marker/boundary preexistentes fizeram fallback de availability vencer cancelamento STRONG
+PASS — go test -count=20 ./internal/chat -run 'Test.*Strong.*Selection.*State|Test.*Mixed.*Strong.*Availability|Test.*Strong.*Preserves.*Bookable|Test.*Selection.*After.*Strong'
+RED P1 RESTANTE — baseline unitário com uma opção não selecionada manteve index=0/bookable=false, mas promoveu trip/board/alight, data, horário, preço e moeda do item
+RED P1 RESTANTE — os quatro turnos STRONG receberam o item único no router; ele reapareceu no router/interpreter do turno seguinte
+PASS CONTROLE — opção 2 bookable anterior permaneceu exata diante da nova lista unitária; "ok"/"1" puros materializaram a opção atual e produziram ASK_PASSENGER_COUNT
+PASS — go test -count=20 ./internal/chat -run 'Test.*Single.*Option.*Strong.*Baseline|Test.*Routing.*Baseline.*Unselected|Test.*Strong.*Preserves.*Bookable|Test.*Pure.*Single.*Option.*Materialize'
+RED P1 ATUAL 1 — rejeição posterior da opção 1 devolveu authority=false para a opção 2 bookable não rejeitada
+RED P1 ATUAL 2 — baseline preservou IDs/data/preço da opção 2, mas recebeu package-unselected-b do envelope posterior
+PASS — go test -count=20 ./internal/chat -run 'Test.*Single.*Option.*Strong.*Baseline|Test.*Routing.*Baseline.*Unselected|Test.*Strong.*Preserves.*Bookable|Test.*Pure.*Single.*Option.*Materialize|TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections|TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope|TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload'
+RED P1 ATUAL 1 — S1/A ressuscitou depois de S2/B materializada e rejeitada; booking_create permaneceu aberto com S1
+RED P1 ATUAL 2 — rejeição da opção 1/lista B removeu a seleção opção 1/lista A na colisão de índice e data
+RED P1 ATUAL 3 — envelope posterior compatível injetou package-b no snapshot legado antes do próprio evento/fonte A
+PASS — go test -count=20 ./internal/chat -run 'TestBookingDraft(ReducesBookableAuthorityWithoutResurrectingSupersededSelection|ScopesAvailabilityRejectionToPromptSource|LegacyRecoveryUsesOnlySelectionEventOrExactPromptSource|ResolvesBookableAuthorityAcrossLaterAvailabilityRejections)$|TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope$|TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload$|TestAvailabilitySelectionAfterSpecificRejected(Option|Date)OutOfTurnPayment$|TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWindow$'
+RED P1 DURÁVEL 1 — booking_create comparava a rejeição com o outbound unitário de passageiros, não com o prompt source original
+RED P1 DURÁVEL 2 — projeção propagada podia adquirir autoridade quando MATERIALIZE/tombstone saíam da janela
+RED P1 DURÁVEL 3 — rejeição simples perdia a fonte depois do truncamento porque nenhum evento a persistia
+RED P1 ANTERIOR 1 — bootstrap legado ignorou marker/boundary e restaurou seleção pré-boundary como BOOKABLE
+RED P1 ANTERIOR 2 — projeção PASSENGER_COUNT_REPLY sem autoridade explícita virou nova materialização
+RED P1 ANTERIOR 3 — seleção legada fabricou o outbound de seleção como prompt source e escapou da rejeição da lista original
+RED P1 ANTERIOR 4 — lock adquirido fora de ordem permitiu S1 antiga substituir S2 e materialização antiga reabrir rejeição nova
+PASS RODADA ANTERIOR — go test -count=20 ./internal/chat -run 'TestAvailabilitySelectionStateV1|TestBookingDraft(ReducesBookableAuthorityWithoutResurrectingSupersededSelection|ScopesAvailabilityRejectionToPromptSource|LegacyRecoveryUsesOnlySelectionEventOrExactPromptSource|ResolvesBookableAuthorityAcrossLaterAvailabilityRejections)$|TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope$|TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload$|TestAvailabilitySelectionAfterSpecificRejected(Option|Date)OutOfTurnPayment$|TestSelectedAvailabilitySelectionPassengerFailClosedPersistsBeyondHistoryWindow$'
+RED P1 REPLAY 1 — seleção legada sem selection_message_id recebeu identidade fabricada da projeção
+RED P1 REPLAY 2 — seleção/projeção anterior foi aceita como prompt source sem lista original
+RED P1 REPLAY 3 — evento durável atrasado foi descartado pelo cursor e live divergiu do restart
+RED P1 REPLAY 4 — URL PostgreSQL ausente ainda produziu SKIP com suíte verde
+PASS — go test -count=20 ./internal/chat -run 'Test.*AvailabilitySelection.*(Replay|Order|Legacy|Projection|Invalidation)'
+PASS — go test -race -count=1 ./internal/chat
+PASS — modo obrigatório falha quando CHAT_PASSENGER_STATE_POSTGRES_TEST_URL está ausente
+PASS SEM SKIP — CHAT_REQUIRE_PASSENGER_STATE_POSTGRES_TEST=1 + PostgreSQL 16 real efêmero + duas pools + count=20; lock invertido e live/restart idênticos
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./...
+PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
+PASS — git diff --check
+```
+
+Resultado do review atual: **5 P1 DE IDENTIDADE E REPLAY CANÔNICO**.
+O patch manual resolve a identidade da seleção contra o stream inbound da
+sessão, deriva a ordem do evento selecionado, exige lista-fonte explicitamente
+estrutural, remove duplicatas antes do ordinal e amplia a propriedade para os
+seis batches causais em 720 permutações. Os P1 anteriores permanecem no escopo
+de regressão.
+
+#### Reconciliação da suíte executada em 2026-07-27
+
+A primeira aplicação manual dos 5 P1 deixou `go test -race -count=1
+./internal/chat`, `go test -count=1 ./internal/chat` e `go test -count=1 ./...`
+em RED. As falhas convergiam para `HasBookableSelection=false` e
+`ROUTE_SELECTION`, enquanto a matriz canônica do patch passava isoladamente.
+A causa raiz confirmada foi incompatibilidade das fixtures: projeções
+`OUTBOUND` fabricavam `selection_message_id`/prompt source sem a mensagem
+`INBOUND` correspondente e listas antigas carregavam apenas `tool_context`, sem
+`intent`/`template_name` estrutural.
+
+A reconciliação ficou restrita a testes. Os helpers de seleção agora:
+
+- persistem estado/evento moderno explicitamente, com mensagem `INBOUND` real,
+  prompt source real e projeção sem autoridade;
+- representam bootstrap legado pela timeline completa lista `OUTBOUND` →
+  seleção `INBOUND` → projeção `OUTBOUND`;
+- exigem IDs explícitos quando a fixture declara `materializes_authority=true`;
+- reconstroem `materializePersistedAvailabilitySelectionForTest` somente pelo
+  replay estruturado e não por evidência projetada;
+- não criam seleção a partir do texto do wrapper de `booking_create`.
+
+Não houve RED independente que pudesse ocorrer no repository real. Portanto
+nenhum código de produção adicional foi alterado para acomodar a suíte; o único
+delta de produção permanece o patch manual em
+`availability_selection_state_v1.go`.
+
+Validação final realmente executada em `apps/api`:
+
+```text
+PASS — grupo de fixtures diretamente afetado
+PASS — go test -count=20 ./internal/chat -run 'Test.*AvailabilitySelection.*(Replay|Order|Legacy|Projection|Invalidation)' — 15.562s
+PASS — provas funcionais 1–10 em count=20 — 17.939s
+PASS — go test -race -count=1 ./internal/chat — 23.570s
+PASS — regressões H-012/document/lap-child/payment/human/out-of-turn — 1.682s
+PASS — regressões cancel/passenger/availability — 3.832s
+PASS SEM SKIP — PostgreSQL 16 real efêmero, duas pools, lock invertido, count=20, live/reload/restart — 9.895s
+PASS — go test -count=1 ./internal/chat — 4.243s
+PASS — go test -count=1 ./... — internal/chat 4.862s e demais pacotes verdes
+PASS — rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l => 54
+PASS — gofmt sem arquivos pendentes
+PASS — git diff --check
+```
+
+#### Checkpoint pré-review final — histórico/superseded
+
+No checkpoint imediatamente anterior ao review final, o PostgreSQL 16 havia
+sido criado somente para a prova e removido em seguida; ainda não existia
+declaração de review limpo, e commit, push, deploy, smoke e teste em produção
+não haviam sido executados. Esse status intermediário foi superseded pelo
+review final abaixo.
+
+#### Review final limpo — status vigente
+
+O review final concluiu que o patch está **seguro para commit** e não encontrou
+P1/P2. Foram confirmados os 10 controles: `count=20`, race, suítes amplas,
+PostgreSQL **16.14** real sem `SKIP`, inventário de 54 `regexp.MustCompile`,
+`gofmt` e `git diff --check`.
+
+Status vigente:
+
+```text
+H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
+DEPLOY E SMOKE PENDENTES
+```
+
+Commit, push, PR, merge/deploy e smoke ainda não foram executados. Deploy e
+smoke estão autorizados como próximos gates. Próxima ação única: commit, push,
+PR, merge/deploy autorizado e smoke operacional. H-B2 permanece
+**BLOQUEADA** até commit, push, deploy e smoke verdes; na fila, o desbloqueio
+só ocorre após o smoke verde.
 
 ---
 

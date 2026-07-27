@@ -544,8 +544,29 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 			ReceivedAt:       observedAt.Add(2 * time.Minute),
 		},
 	)
+	availabilitySnapshot, ok := availabilitySelectionSnapshotV1FromAvailability(&availability, 2)
+	if !ok {
+		t.Fatalf("expected assist selection snapshot for durable authority")
+	}
+	availabilityState := ReduceAvailabilitySelectionEventsV1(
+		newAvailabilitySelectionStateV1(),
+		[]AvailabilitySelectionEventV1{
+			materializedAvailabilitySelectionEventForTest(
+				"assist-selection-event",
+				"draft-assist-select-option",
+				"assist-availability-prompt",
+				availabilitySnapshot,
+			),
+		},
+	)
+	availabilityState.BootstrapCompleted = true
+	session := sessionWithPassengerClarificationStateForTest(
+		Session{},
+		completePassengerStateForTest(1, 0),
+	)
+	session = sessionWithAvailabilitySelectionStateForTest(session, availabilityState)
 	bookingDraft := collectBookingDraftContext(
-		sessionWithPassengerClarificationStateForTest(Session{}, completePassengerStateForTest(1, 0)),
+		session,
 		history,
 		"",
 	)

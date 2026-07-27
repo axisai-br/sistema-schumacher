@@ -261,7 +261,7 @@ func TestGuardrailAdvancedPhasesUseSafeFallbackInsteadOfFreeFormLLM(t *testing.T
 	}
 }
 
-func TestPassengerStrongGuardrailHumanSupportWinsUnsafeState(t *testing.T) {
+func TestPassengerGateStrongHumanSupportWinsUnsafeState(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
 	svc := NewService(store, config.Config{ChatDebounceWindowMS: 1500}, runner)
@@ -881,37 +881,16 @@ func seedPassengerCollectionPhase(t *testing.T, store *fakeStore) Session {
 	unknown := newPassengerClarificationStateV1()
 	unknown.BootstrapCompleted = true
 	seedPassengerClarificationStateV1ForTest(store, session.ID, unknown)
-	seedAvailabilityOutbound(t, store, session.ID, now.Add(-3*time.Minute))
-	seedInboundSent(t, store, session.ID, "opcao 1", now.Add(-2*time.Minute))
-	selected := map[string]interface{}{
-		"selected_option_index":    1,
-		"trip_id":                  "trip-jul-1",
-		"board_stop_id":            "board-jul-1",
-		"alight_stop_id":           "alight-jul-1",
-		"origin":                   "Santa Ines/MA",
-		"destination":              "Videira/SC",
-		"origin_display_name":      "Santa Ines/MA",
-		"destination_display_name": "Videira/SC",
-		"origin_depart_time":       "08:00",
-		"trip_date":                "2026-07-10",
-		"price":                    950,
-		"currency":                 "BRL",
-	}
-	prompt, err := store.CreateMessage(context.Background(), CreateMessageInput{
-		SessionID: session.ID, Direction: "OUTBOUND", Kind: "TEXT", Body: askPassengerCountReply,
-		ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-1 * time.Minute),
-		Payload: map[string]interface{}{
-			"intent": string(IntentSelectAvailabilityOption), "template_name": string(TemplateAskPassengerCount),
-			"selected_option_index": 1, selectedAvailabilityResultPayloadKey: cloneMap(selected),
-		},
-		NormalizedPayload: map[string]interface{}{
-			"intent": string(IntentSelectAvailabilityOption), "template_name": string(TemplateAskPassengerCount),
-			"selected_option_index": 1, selectedAvailabilityResultPayloadKey: cloneMap(selected),
-		},
-	})
-	if err != nil {
-		t.Fatalf("seed selected passenger prompt: %v", err)
-	}
+	fixture := seedCanonicalAvailabilitySelectionForTest(
+		t,
+		store,
+		session.ID,
+		guardrailAvailabilityResult(),
+		1,
+		now.Add(-3*time.Minute),
+		askPassengerCountReply,
+	)
+	prompt := fixture.Projection
 	if _, err := store.UpdateMessage(context.Background(), UpdateMessageInput{
 		MessageID: prompt.ID, ProcessingStatus: messageStatusAutomationSent,
 		NormalizedPayload: map[string]interface{}{
@@ -937,8 +916,15 @@ func seedBookingPendingPhase(t *testing.T, store *fakeStore) Session {
 	t.Helper()
 	now := time.Now().UTC()
 	session := seedSessionOnly(t, store, now)
-	seedAvailabilityOutbound(t, store, session.ID, now.Add(-5*time.Minute))
-	seedOutboundSent(t, store, session.ID, askPassengerCountReply, now.Add(-4*time.Minute))
+	seedCanonicalAvailabilitySelectionForTest(
+		t,
+		store,
+		session.ID,
+		guardrailAvailabilityResult(),
+		1,
+		now.Add(-6*time.Minute),
+		askPassengerCountReply,
+	)
 	seedInboundSent(t, store, session.ID, "sou eu mesmo, sem crianca", now.Add(-3*time.Minute))
 	seedOutboundSent(t, store, session.ID, "Perfeito. Agora pode enviar seu nome completo e o documento.", now.Add(-2*time.Minute))
 	seedInboundSent(t, store, session.ID, "Joao Vitor Messias CPF 52998224725", now.Add(-1*time.Minute))
@@ -1012,28 +998,36 @@ func seedSessionOnly(t *testing.T, store *fakeStore, now time.Time) Session {
 
 func seedAvailabilityOutbound(t *testing.T, store *fakeStore, sessionID string, at time.Time) {
 	t.Helper()
-	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
-		SessionID:        sessionID,
-		Direction:        "OUTBOUND",
-		Kind:             "TEXT",
-		Body:             "Encontrei estas opcoes:\n1. Santa Ines/MA para Videira/SC, 2026-07-10, saida 08:00, R$ 950\n\nQual opcao voce prefere?",
-		ProcessingStatus: messageStatusAutomationSent,
-		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-					Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Videira/SC", PackageName: packageToSantaCatarina, Qty: 1, Limit: 5},
-					Results: []AvailabilitySearchItem{{
-						TripID: "trip-jul-1", BoardStopID: "board-jul-1", AlightStopID: "alight-jul-1",
-						OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Videira/SC",
-						OriginDepartTime: "08:00", TripDate: "2026-07-10", SeatsAvailable: 5,
-						Price: 950, Currency: "BRL", Status: "ACTIVE", TripStatus: "SCHEDULED", PackageName: packageToSantaCatarina,
-					}},
-				}),
-			},
+	payload := map[string]interface{}{
+		"intent":        string(IntentAvailabilitySearch),
+		"template_name": string(TemplateAvailabilityList),
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(guardrailAvailabilityResult()),
 		},
-		ReceivedAt: at,
+	}
+	if _, err := store.CreateMessage(context.Background(), CreateMessageInput{
+		SessionID:         sessionID,
+		Direction:         "OUTBOUND",
+		Kind:              "TEXT",
+		Body:              "Encontrei estas opcoes:\n1. Santa Ines/MA para Videira/SC, 2026-07-10, saida 08:00, R$ 950\n\nQual opcao voce prefere?",
+		ProcessingStatus:  messageStatusAutomationSent,
+		Payload:           cloneMap(payload),
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        at,
 	}); err != nil {
 		t.Fatalf("seed availability outbound: %v", err)
+	}
+}
+
+func guardrailAvailabilityResult() AvailabilitySearchResult {
+	return AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{Origin: "Santa Ines/MA", Destination: "Videira/SC", PackageName: packageToSantaCatarina, Qty: 1, Limit: 5},
+		Results: []AvailabilitySearchItem{{
+			TripID: "trip-jul-1", BoardStopID: "board-jul-1", AlightStopID: "alight-jul-1",
+			OriginDisplayName: "Santa Ines/MA", DestinationDisplayName: "Videira/SC",
+			OriginDepartTime: "08:00", TripDate: "2026-07-10", SeatsAvailable: 5,
+			Price: 950, Currency: "BRL", Status: "ACTIVE", TripStatus: "SCHEDULED", PackageName: packageToSantaCatarina,
+		}},
 	}
 }
 
