@@ -35,3 +35,8 @@
 | 2026-04-01 | self | Endpoint de busca de cidades retornava erro quando Nominatim nao encontrava resultados e o front mostrava falha (500) durante digitacao. | Para autocomplete, retornar lista vazia ([]) quando nao houver candidatos; reservar erro para falha real de integracao. |
 | 2026-04-01 | self | Strings com acento em Go ficaram corrompidas por encoding de terminal no Windows. | Preferir escapes Unicode (\\uXXXX) em testes/normalizacao de acentos quando houver risco de codepage no shell. |
 
+- O atendimento WhatsApp usa Evolution -> `/webhooks/evolution` -> `chat.Ingest` -> buffer server-side -> `Reprocess`/OpenAI -> draft/auto-send -> Evolution; a tela `/atendimentos` consome `/chat/*` e SSE.
+- No fluxo WhatsApp, `CHAT_BUFFER_AUTO_FLUSH_ENABLED` e `CHAT_AUTO_SEND_RETRY_ENABLED` ficam desligados no `.env.example`; sem override no `/etc/schumacher/api.env`, mensagens podem permanecer pendentes e drafts não são enviados.
+- Ao revisar atendimento, conferir RBAC/identidade no contexto: rotas de chat e usuários estão apenas atrás de autenticação, enquanto owner IDs são aceitos no payload; handoff/resolve/reply precisam validar o usuário autenticado.
+- A revisão de drafts de automação, inclusive booking/payment, ainda não tem UI correspondente em `apps/app/src/pages/Atendimentos`; mudanças futuras devem expor draft, motivo de revisão e aprovação controlada.
+
