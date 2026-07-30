@@ -43,6 +43,26 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 	}
 
 	body := strings.TrimSpace(messageTurnText(message))
+	if messageMayCarryAvailabilityPromptV1(message) {
+		authority := classifyAvailabilityPromptCandidateV1(message)
+		switch authority.Class {
+		case availabilityPromptAuthorityValidStructuralV1:
+			if authority.Presented == nil {
+				return context
+			}
+			event := authority.Event
+			context.SourceMessageID = event.SourceMessageID
+			context.SourceMessageBody = body
+			context.SourceMessageReceivedAt = message.ReceivedAt
+			context.Kind = event.Kind
+			context.AvailabilityOptionCount = event.PresentedOptionCount
+			context.HasAvailabilityList = event.PresentedOptionCount > 0
+			return context
+		case availabilityPromptAuthorityAbsentLegacyV1:
+		default:
+			return context
+		}
+	}
 	context.SourceMessageID = strings.TrimSpace(message.ID)
 	context.SourceMessageBody = body
 	context.SourceMessageReceivedAt = message.ReceivedAt
@@ -68,17 +88,34 @@ func latestReliableAssistantMessageWithIndex(history []Message) (Message, int, b
 		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
 			continue
 		}
+		availabilityCandidate := messageMayCarryAvailabilityPromptV1(message)
+		authority := classifyAvailabilityPromptCandidateV1(message)
+		if availabilityCandidate {
+			switch authority.Class {
+			case availabilityPromptAuthorityInvalidV1:
+				return Message{}, -1, false
+			case availabilityPromptAuthorityUndeliveredV1:
+				continue
+			}
+		}
 		if strings.TrimSpace(messageTurnText(message)) == "" {
 			continue
 		}
 		if !isReliableActivePromptOutbound(message) {
 			continue
 		}
-		if isBotAutoReplyMessage(message) {
-			if source, sourceIndex, ok := resolveBotAutoReplyPromptSourceMessageWithIndex(history, i, message); ok {
+		if isDeliveredPromptProjectionMessageV1(message) {
+			if source, sourceIndex, ok := resolveDeliveredPromptSourceMessageWithIndex(history, i, message); ok {
 				return source, sourceIndex, true
 			}
+			if messageHasAvailabilityPromptEventV1(message) {
+				continue
+			}
 			return withoutPromptToolContext(message), i, true
+		}
+		if authority.Class == availabilityPromptAuthorityValidStructuralV1 &&
+			authority.Presented == nil {
+			continue
 		}
 		return message, i, true
 	}
@@ -91,41 +128,235 @@ func resolveBotAutoReplyPromptSourceMessage(history []Message, mirrorIndex int, 
 }
 
 func resolveBotAutoReplyPromptSourceMessageWithIndex(history []Message, mirrorIndex int, mirror Message) (Message, int, bool) {
-	draftID := botAutoReplyDraftMessageID(mirror)
-	if draftID == "" {
+	if !isBotAutoReplyMessage(mirror) {
 		return Message{}, -1, false
 	}
-	mirrorBody := messageTurnText(mirror)
-	for i := mirrorIndex - 1; i >= 0; i-- {
+	return resolveDeliveredPromptSourceMessageWithIndex(history, mirrorIndex, mirror)
+}
+
+type deliveredPromptProjectionKindV1 string
+
+const (
+	deliveredPromptProjectionBotAutoReplyV1 deliveredPromptProjectionKindV1 = "BOT_AUTO_REPLY"
+	deliveredPromptProjectionDraftReviewV1  deliveredPromptProjectionKindV1 = "DRAFT_REVIEW"
+)
+
+func resolveDeliveredPromptSourceMessageWithIndex(
+	history []Message,
+	deliveredIndex int,
+	delivered Message,
+) (Message, int, bool) {
+	draftID, projectionKind, ok := deliveredPromptSourceReferenceV1(delivered)
+	if !ok || !isTrustedDeliveredPromptOutboundV1(delivered) {
+		return Message{}, -1, false
+	}
+	for i := deliveredIndex - 1; i >= 0; i-- {
 		candidate := history[i]
 		if strings.TrimSpace(candidate.ID) != draftID {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(candidate.Direction), "OUTBOUND") {
+		if !deliveredPromptSourceTrustworthyV1(candidate, projectionKind) {
 			return Message{}, -1, false
 		}
-		if strings.TrimSpace(messageTurnText(candidate)) == "" {
+
+		sourceHasEvent := messageHasAvailabilityPromptEventV1(candidate)
+		deliveredHasEvent := messageHasAvailabilityPromptEventV1(delivered)
+		if sourceHasEvent || deliveredHasEvent {
+			if !sourceHasEvent || !deliveredHasEvent {
+				return Message{}, -1, false
+			}
+			resolved, eventOK := availabilityPromptMessageFromDeliveredSourceV1(candidate, delivered)
+			if !eventOK {
+				return Message{}, -1, false
+			}
+			return resolved, deliveredIndex, true
+		}
+
+		if !equivalentAssistantPromptBody(messageTurnText(candidate), messageTurnText(delivered)) {
 			return Message{}, -1, false
 		}
-		if isBotAutoReplyMessage(candidate) || !isReliableActivePromptOutbound(candidate) {
-			return Message{}, -1, false
-		}
-		if !equivalentAssistantPromptBody(messageTurnText(candidate), mirrorBody) {
-			return Message{}, -1, false
-		}
-		return candidate, i, true
+		return effectiveDeliveredPromptMessageV1(candidate, delivered), deliveredIndex, true
 	}
 	return Message{}, -1, false
+}
+
+func deliveredPromptSourceTrustworthyV1(
+	source Message,
+	projectionKind deliveredPromptProjectionKindV1,
+) bool {
+	if !strings.EqualFold(strings.TrimSpace(source.Direction), "OUTBOUND") ||
+		strings.TrimSpace(messageTurnText(source)) == "" ||
+		isDeliveredPromptProjectionMessageV1(source) {
+		return false
+	}
+	mode, ok := consistentPromptMetadataStringV1(source, "mode")
+	if !ok || !strings.EqualFold(mode, messageStatusAutomationDraft) {
+		return false
+	}
+
+	switch projectionKind {
+	case deliveredPromptProjectionBotAutoReplyV1:
+		return isReliableActivePromptOutbound(source)
+	case deliveredPromptProjectionDraftReviewV1:
+		if !strings.EqualFold(
+			strings.TrimSpace(source.ProcessingStatus),
+			messageStatusAutomationReviewed,
+		) {
+			return false
+		}
+		reviewAction, actionOK := consistentPromptMetadataStringV1(source, "review_action")
+		return actionOK && strings.EqualFold(reviewAction, "APPROVED_AS_IS")
+	default:
+		return false
+	}
+}
+
+func deliveredPromptSourceReferenceV1(
+	message Message,
+) (string, deliveredPromptProjectionKindV1, bool) {
+	mode, ok := consistentPromptMetadataStringV1(message, "mode")
+	if !ok {
+		return "", "", false
+	}
+	switch {
+	case strings.EqualFold(mode, string(deliveredPromptProjectionBotAutoReplyV1)):
+		draftID := botAutoReplyDraftMessageID(message)
+		if draftID == "" {
+			return "", "", false
+		}
+		return draftID, deliveredPromptProjectionBotAutoReplyV1, true
+	case strings.EqualFold(mode, string(deliveredPromptProjectionDraftReviewV1)):
+		draftID, draftOK := consistentPromptMetadataStringV1(message, "draft_message_id")
+		if !draftOK {
+			return "", "", false
+		}
+		reviewAction, actionOK := consistentPromptMetadataStringV1(message, "review_action")
+		if !actionOK || !strings.EqualFold(reviewAction, "APPROVED_AS_IS") {
+			return "", "", false
+		}
+		return draftID, deliveredPromptProjectionDraftReviewV1, true
+	default:
+		return "", "", false
+	}
+}
+
+func isDeliveredPromptProjectionMessageV1(message Message) bool {
+	if isBotAutoReplyMessage(message) {
+		return true
+	}
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if strings.EqualFold(
+			strings.TrimSpace(asString(payload["mode"])),
+			string(deliveredPromptProjectionDraftReviewV1),
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func consistentPromptMetadataStringV1(message Message, key string) (string, bool) {
+	value := ""
+	found := false
+	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+		if payload == nil {
+			continue
+		}
+		raw, exists := payload[key]
+		if !exists {
+			continue
+		}
+		candidate := strings.TrimSpace(asString(raw))
+		if candidate == "" {
+			return "", false
+		}
+		if found && !strings.EqualFold(value, candidate) {
+			return "", false
+		}
+		value = candidate
+		found = true
+	}
+	return value, found
+}
+
+func isTrustedDeliveredPromptOutboundV1(message Message) bool {
+	switch classifyAvailabilityPromptCandidateV1(message).Class {
+	case availabilityPromptAuthorityAbsentLegacyV1, availabilityPromptAuthorityValidStructuralV1:
+		return true
+	default:
+		return false
+	}
+}
+
+func confirmedOutboundDeliveryV1(message Message) bool {
+	effectiveStatus := HighestDeliveryStatusV1(
+		message.ProcessingStatus,
+		asString(message.NormalizedPayload["provider_status"]),
+	)
+	if !DeliveryStatusConfirmsOutboundV1(effectiveStatus) {
+		return false
+	}
+	return strings.TrimSpace(asString(message.NormalizedPayload["delivery_recorded_at"])) != ""
+}
+
+func effectiveDeliveredPromptMessageV1(source Message, delivered Message) Message {
+	resolved := source
+	resolved.ID = delivered.ID
+	resolved.SessionID = delivered.SessionID
+	resolved.Direction = delivered.Direction
+	resolved.Kind = delivered.Kind
+	resolved.ProviderMessageID = delivered.ProviderMessageID
+	resolved.IdempotencyKey = delivered.IdempotencyKey
+	resolved.SenderName = delivered.SenderName
+	resolved.SenderPhone = delivered.SenderPhone
+	resolved.Body = delivered.Body
+	resolved.ProcessingStatus = delivered.ProcessingStatus
+	resolved.ReceivedAt = delivered.ReceivedAt
+	resolved.CreatedAt = delivered.CreatedAt
+	resolved.SentAt = delivered.SentAt
+	resolved.Payload = cloneMap(source.Payload)
+	if resolved.Payload == nil {
+		resolved.Payload = map[string]interface{}{}
+	}
+	resolved.NormalizedPayload = cloneMap(source.NormalizedPayload)
+	if resolved.NormalizedPayload == nil {
+		resolved.NormalizedPayload = map[string]interface{}{}
+	}
+	copyDeliveredPromptProvenanceV1(resolved.Payload, delivered.Payload)
+	copyDeliveredPromptProvenanceV1(resolved.NormalizedPayload, delivered.NormalizedPayload)
+	return resolved
+}
+
+func copyDeliveredPromptProvenanceV1(target map[string]interface{}, source map[string]interface{}) {
+	for _, key := range []string{
+		"mode",
+		"draft_message_id",
+		"review_mode",
+		"review_action",
+		"draft_reviewed",
+		"draft_auto_sent",
+		"sender_name",
+		"auto_send_status",
+		"delivery_mode",
+		"delivery_recorded_at",
+		"provider_status",
+		passengerPromptEventV1MessageKey,
+	} {
+		if value, exists := source[key]; exists {
+			target[key] = value
+		}
+	}
 }
 
 func botAutoReplyDraftMessageID(message Message) string {
 	if !isBotAutoReplyMessage(message) {
 		return ""
 	}
-	return strings.TrimSpace(firstNonEmpty(
-		asString(message.Payload["draft_message_id"]),
-		asString(message.NormalizedPayload["draft_message_id"]),
-	))
+	draftID, ok := consistentPromptMetadataStringV1(message, "draft_message_id")
+	if !ok {
+		return ""
+	}
+	return draftID
 }
 
 func equivalentAssistantPromptBody(left string, right string) bool {
@@ -161,7 +392,7 @@ func isReliableActivePromptOutbound(message Message) bool {
 	status := strings.ToUpper(strings.TrimSpace(message.ProcessingStatus))
 	switch status {
 	case messageStatusAutomationDraft, messageStatusAutomationReviewed, messageStatusAutomationPending,
-		"MANUAL_PENDING", "SEND_FAILED", "REVIEW_REQUIRED", "PENDING_REVIEW", "BLOCKED_BY_REVIEW":
+		"PENDING", "MANUAL_PENDING", "SEND_FAILED", "REVIEW_REQUIRED", "PENDING_REVIEW", "BLOCKED_BY_REVIEW":
 		return false
 	}
 	if strings.Contains(status, "REVIEW_REQUIRED") ||
@@ -381,6 +612,22 @@ func activePromptLooksLikeReservationRoute(folded string) bool {
 }
 
 func activePromptAvailabilityOptionCount(message Message, history []Message, state CanonicalConversationState) int {
+	if messageMayCarryAvailabilityPromptV1(message) {
+		authority := classifyAvailabilityPromptCandidateV1(message)
+		switch authority.Class {
+		case availabilityPromptAuthorityValidStructuralV1:
+			if authority.Presented != nil {
+				return authority.Event.PresentedOptionCount
+			}
+			return 0
+		case availabilityPromptAuthorityAbsentLegacyV1:
+		default:
+			return 0
+		}
+	}
+	if messageHasAvailabilityPromptEventV1(message) {
+		return 0
+	}
 	if count := availabilityOptionCountFromMessage(message); count > 0 {
 		return count
 	}

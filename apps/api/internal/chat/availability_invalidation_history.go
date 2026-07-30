@@ -124,6 +124,7 @@ func availabilityInferenceHistory(
 }
 
 func availabilityInferenceHistoryForSession(session Session, history []Message) []Message {
+	history = availabilityPromptBarrierInferenceHistoryV1(history)
 	if !canonicalAvailabilityFactsInvalidatedInMetadata(session.Metadata) {
 		return history
 	}
@@ -131,6 +132,23 @@ func availabilityInferenceHistoryForSession(session Session, history []Message) 
 		history,
 		canonicalAvailabilityFactsInvalidationBoundaryInMetadata(session.Metadata),
 	)
+}
+
+func availabilityPromptBarrierInferenceHistoryV1(history []Message) []Message {
+	barrierIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(history, len(history))
+	if barrierIndex < 0 {
+		return history
+	}
+	overlay := append([]Message(nil), history...)
+	for index := 0; index <= barrierIndex; index++ {
+		message := history[index]
+		if !messageHasAvailabilityInferenceArtifacts(message) &&
+			!messageMayCarryAvailabilityPromptV1(message) {
+			continue
+		}
+		overlay[index] = withoutAvailabilityInferenceArtifacts(message)
+	}
+	return overlay
 }
 
 func canonicalAvailabilityHistoryMessageAtOrBeforeBoundary(
@@ -178,7 +196,25 @@ func payloadHasAvailabilityInferenceArtifacts(payload map[string]interface{}) bo
 	if len(payload) == 0 {
 		return false
 	}
+	if _, exists := payload[availabilityPromptEventV1MessageKey]; exists {
+		return true
+	}
+	if _, exists := payload[availabilitySelectionEventsV1MessageKey]; exists {
+		return true
+	}
 	if asInt(payload["selected_option_index"]) > 0 || len(asMap(payload[selectedAvailabilityResultPayloadKey])) > 0 {
+		return true
+	}
+	if strings.EqualFold(
+		payloadMetadataString(payload, "intent"),
+		string(IntentAvailabilitySearch),
+	) || strings.EqualFold(
+		payloadMetadataString(payload, "intent"),
+		string(IntentSelectAvailabilityOption),
+	) || strings.EqualFold(
+		payloadMetadataString(payload, "template_name"),
+		string(TemplateAvailabilityList),
+	) {
 		return true
 	}
 	if availability := asMap(asMap(payload["tool_context"])[toolNameAvailabilitySearch]); len(availability) > 0 {
@@ -242,6 +278,23 @@ func withoutAvailabilityInferencePayloadArtifacts(payload map[string]interface{}
 	filtered := cloneMap(payload)
 	delete(filtered, "selected_option_index")
 	delete(filtered, selectedAvailabilityResultPayloadKey)
+	delete(filtered, availabilitySelectionEventsV1MessageKey)
+	delete(filtered, availabilityPromptEventV1MessageKey)
+	if strings.EqualFold(
+		payloadMetadataString(filtered, "intent"),
+		string(IntentAvailabilitySearch),
+	) || strings.EqualFold(
+		payloadMetadataString(filtered, "intent"),
+		string(IntentSelectAvailabilityOption),
+	) {
+		delete(filtered, "intent")
+	}
+	if strings.EqualFold(
+		payloadMetadataString(filtered, "template_name"),
+		string(TemplateAvailabilityList),
+	) {
+		delete(filtered, "template_name")
+	}
 
 	if toolContext := asMap(filtered["tool_context"]); len(toolContext) > 0 {
 		filteredToolContext := cloneMap(toolContext)

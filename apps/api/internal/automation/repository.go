@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+
+	"schumacher-tur/api/internal/chat"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,52 +30,170 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) RecordEvolutionStatus(ctx context.Context, input RecordEvolutionStatusInput) (RecordEvolutionStatusResult, error) {
 	result := RecordEvolutionStatusResult{}
-
-	payload, err := encodePayload(input.Payload)
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return RecordEvolutionStatusResult{}, err
 	}
-	messageTag, err := encodePayload(map[string]interface{}{
-		"latest_provider_status": input.ProviderStatus,
-		"status_event":           input.Event,
-		"status_observed_at":     input.ObservedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-	})
-	if err != nil {
-		return RecordEvolutionStatusResult{}, err
-	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
-	res, err := r.pool.Exec(ctx, `
-		update chat_messages
-		set processing_status = $2,
-				normalized_payload = coalesce(normalized_payload, '{}'::jsonb) || $3::jsonb
+	incomingStatus := chat.NormalizeDeliveryStatusV1(input.ProviderStatus)
+	observedAt := input.ObservedAt.UTC()
+	chatRows, err := tx.Query(ctx, `
+		select id::text, processing_status, normalized_payload
+		from chat_messages
 		where provider_message_id = $1
-	`, input.ProviderMessageID, input.ProviderStatus, messageTag)
+		for update
+	`, input.ProviderMessageID)
 	if err != nil {
 		return RecordEvolutionStatusResult{}, err
 	}
-	result.MatchedChatMessages = res.RowsAffected()
+	type chatStatusRecord struct {
+		ID                string
+		ProcessingStatus  string
+		NormalizedPayload map[string]interface{}
+	}
+	chatRecords := []chatStatusRecord{}
+	for chatRows.Next() {
+		var record chatStatusRecord
+		var normalizedPayload []byte
+		if err := chatRows.Scan(
+			&record.ID,
+			&record.ProcessingStatus,
+			&normalizedPayload,
+		); err != nil {
+			chatRows.Close()
+			return RecordEvolutionStatusResult{}, err
+		}
+		record.NormalizedPayload = decodePayload(normalizedPayload)
+		chatRecords = append(chatRecords, record)
+	}
+	if err := chatRows.Err(); err != nil {
+		chatRows.Close()
+		return RecordEvolutionStatusResult{}, err
+	}
+	chatRows.Close()
 
-	res, err = r.pool.Exec(ctx, `
-		update outbound_messages
-		set status = $2,
-				updated_at = now(),
-				sent_at = case
-					when $2 in ('SERVER_ACK', 'SENT', 'DELIVERY_ACK', 'DELIVERED', 'READ') then coalesce(sent_at, $3)
-					else sent_at
-				end,
-				delivered_at = case
-					when $2 in ('DELIVERY_ACK', 'DELIVERED', 'READ') then coalesce(delivered_at, $3)
-					else delivered_at
-				end,
-				payload = coalesce(payload, '{}'::jsonb) || $4::jsonb
+	for _, record := range chatRecords {
+		effectiveStatus := chat.AdvanceDeliveryStatusV1(
+			record.ProcessingStatus,
+			incomingStatus,
+		)
+		messageTag := map[string]interface{}{
+			"latest_provider_status": incomingStatus,
+			"status_event":           strings.TrimSpace(input.Event),
+			"status_observed_at":     observedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+		if _, known := chat.DeliveryStatusRankV1(effectiveStatus); known {
+			messageTag["provider_status"] = effectiveStatus
+		}
+		if chat.DeliveryStatusConfirmsOutboundV1(effectiveStatus) &&
+			strings.TrimSpace(stringValue(record.NormalizedPayload["delivery_recorded_at"])) == "" {
+			messageTag["delivery_recorded_at"] = observedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+		messageTagJSON, encodeErr := encodePayload(messageTag)
+		if encodeErr != nil {
+			return RecordEvolutionStatusResult{}, encodeErr
+		}
+		if _, err := tx.Exec(ctx, `
+			update chat_messages
+			set processing_status = $2,
+					normalized_payload = coalesce(normalized_payload, '{}'::jsonb) || $3::jsonb
+			where id = $1::uuid
+		`, record.ID, effectiveStatus, messageTagJSON); err != nil {
+			return RecordEvolutionStatusResult{}, err
+		}
+		result.MatchedChatMessages++
+	}
+
+	outboundRows, err := tx.Query(ctx, `
+		select id::text, status
+		from outbound_messages
 		where provider_message_id = $1
-	`, input.ProviderMessageID, input.ProviderStatus, input.ObservedAt.UTC(), payload)
+		for update
+	`, input.ProviderMessageID)
 	if err != nil {
 		return RecordEvolutionStatusResult{}, err
 	}
-	result.MatchedOutboundMessages = res.RowsAffected()
+	type outboundStatusRecord struct {
+		ID     string
+		Status string
+	}
+	outboundRecords := []outboundStatusRecord{}
+	for outboundRows.Next() {
+		var record outboundStatusRecord
+		if err := outboundRows.Scan(&record.ID, &record.Status); err != nil {
+			outboundRows.Close()
+			return RecordEvolutionStatusResult{}, err
+		}
+		outboundRecords = append(outboundRecords, record)
+	}
+	if err := outboundRows.Err(); err != nil {
+		outboundRows.Close()
+		return RecordEvolutionStatusResult{}, err
+	}
+	outboundRows.Close()
 
+	for _, record := range outboundRecords {
+		effectiveStatus := chat.AdvanceDeliveryStatusV1(record.Status, incomingStatus)
+		payload := clonePayload(input.Payload)
+		delete(payload, "delivery_recorded_at")
+		delete(payload, "provider_status")
+		payload["latest_provider_status"] = incomingStatus
+		payload["status_event"] = strings.TrimSpace(input.Event)
+		payload["status_observed_at"] = observedAt.Format("2006-01-02T15:04:05Z07:00")
+		if _, known := chat.DeliveryStatusRankV1(effectiveStatus); known {
+			payload["provider_status"] = effectiveStatus
+		}
+		payloadJSON, encodeErr := encodePayload(payload)
+		if encodeErr != nil {
+			return RecordEvolutionStatusResult{}, encodeErr
+		}
+		if _, err := tx.Exec(ctx, `
+			update outbound_messages
+			set status = $2,
+					updated_at = now(),
+					sent_at = case when $4 then coalesce(sent_at, $3) else sent_at end,
+					delivered_at = case when $5 then coalesce(delivered_at, $3) else delivered_at end,
+					payload = coalesce(payload, '{}'::jsonb) || $6::jsonb
+			where id = $1::uuid
+		`,
+			record.ID,
+			effectiveStatus,
+			observedAt,
+			chat.DeliveryStatusRecordsSentAtV1(effectiveStatus),
+			chat.DeliveryStatusRecordsDeliveredAtV1(effectiveStatus),
+			payloadJSON,
+		); err != nil {
+			return RecordEvolutionStatusResult{}, err
+		}
+		result.MatchedOutboundMessages++
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return RecordEvolutionStatusResult{}, err
+	}
 	return result, nil
+}
+
+func decodePayload(raw []byte) map[string]interface{} {
+	payload := map[string]interface{}{}
+	if len(raw) == 0 {
+		return payload
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return map[string]interface{}{}
+	}
+	return payload
+}
+
+func clonePayload(input map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(input)+4)
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (r *Repository) CreateJobRun(ctx context.Context, input CreateJobRunInput) (JobRun, error) {

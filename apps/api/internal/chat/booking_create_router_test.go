@@ -24,7 +24,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 		CustomerName:  "Messias",
 	}
 	session = sessionWithPassengerClarificationStateForTest(session, completePassengerStateForTest(2, 1))
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Achei estas opcoes para Petrolandia/SC.",
@@ -119,7 +119,7 @@ func TestParseBookingCreateInputBlocksLapChildWithoutAssignment(t *testing.T) {
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-30 * time.Second),
 		},
-	}
+	})
 
 	if input, ok := parseBookingCreateInput(session, history, "isso", nil); ok {
 		t.Fatalf("expected booking create to be blocked until lap child assignment, got %+v", input)
@@ -646,7 +646,7 @@ func TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection(t *test
 			MaterializesAuthority: true,
 		},
 	)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		availabilityAuthorityPromptMessageForTest(
 			"persisted-availability-prompt-2",
 			availability,
@@ -667,7 +667,7 @@ func TestFindLatestSelectedOptionIndexUsesPersistedAvailabilitySelection(t *test
 			NormalizedPayload: cloneMap(selectionPayload),
 		},
 		{Direction: "INBOUND", Body: "1", ProcessingStatus: "PROCESSED", ReceivedAt: now.Add(-1 * time.Minute)},
-	}
+	})
 
 	if got := findLatestSelectedOptionIndex(history); got != 2 {
 		t.Fatalf("expected persisted trip selection 2 to beat passenger count reply, got %d", got)
@@ -2008,7 +2008,7 @@ func appendExplicitSoloPassengerDeclaration(history []Message, receivedAt time.T
 }
 
 func singleAvailabilitySearchHistory(now time.Time, item AvailabilitySearchItem) []Message {
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Achei uma opcao para Santa Ines/MA. Qual opcao voce prefere?",
@@ -2023,11 +2023,11 @@ func singleAvailabilitySearchHistory(now time.Time, item AvailabilitySearchItem)
 				},
 			},
 		},
-	}
+	})
 }
 
 func metadataOnlyAvailabilitySelectionMessage(receivedAt time.Time, index int) Message {
-	return Message{
+	return markAvailabilityPromptDeliveredForTest(Message{
 		Direction:        "OUTBOUND",
 		Body:             askPassengerCountReply,
 		ProcessingStatus: messageStatusAutomationSent,
@@ -2037,7 +2037,7 @@ func metadataOnlyAvailabilitySelectionMessage(receivedAt time.Time, index int) M
 			"template_name":         string(TemplateAskPassengerCount),
 			"selected_option_index": index,
 		},
-	}
+	})
 }
 
 func TestBuildBookingContinuationDraftRunDoesNotPersistMetadataOnlySelectedOptionIndex(t *testing.T) {
@@ -2246,7 +2246,7 @@ func TestParseBookingCreateInputIgnoresInvisibleAvailabilityFactsWhenResolvingSe
 }
 
 func bookingCreateAvailabilityHistory(now time.Time, visibleResult AvailabilitySearchResult, hiddenResult AvailabilitySearchResult, hiddenStatus string) []Message {
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             buildAvailabilityListReply(visibleResult),
@@ -2269,7 +2269,7 @@ func bookingCreateAvailabilityHistory(now time.Time, visibleResult AvailabilityS
 				},
 			},
 		},
-	}
+	})
 }
 
 func bookingCreateSelectionAvailabilityResult(tripID string, boardStopID string, alightStopID string) AvailabilitySearchResult {

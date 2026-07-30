@@ -176,7 +176,7 @@ func TestValidateStructuredInterpretationRejectsBotAutoReplyWithoutDraftSource(t
 		},
 	})
 
-	assertInterpretationRejected(t, got, "availability_selection_missing_current_facts", TemplateContextFallbackAvailabilityOption)
+	assertInterpretationRejected(t, got, "active_prompt_required", TemplateContextFallbackAvailabilityOption)
 }
 
 func TestValidateStructuredInterpretationUsesReliableAvailabilityPromptWhenInvisibleDraftFollows(t *testing.T) {
@@ -496,7 +496,7 @@ func validationAvailabilityHistory(result AvailabilitySearchResult, withFacts bo
 			},
 		}
 	}
-	return []Message{message}
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{message})
 }
 
 func validationAvailabilityResult(count int) AvailabilitySearchResult {

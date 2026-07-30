@@ -467,7 +467,7 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 	}
 	availability := availabilityOptionPromptTwoOptionsFutureResultAt(observedAt)
 	selectedOption := availability.Results[1]
-	history := []Message{{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		Direction:        "OUTBOUND",
 		Body:             buildAvailabilityListReply(availability),
 		ProcessingStatus: messageStatusAutomationSent,
@@ -477,7 +477,7 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 			},
 		},
 		ReceivedAt: observedAt,
-	}}
+	}})
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "2")
 	activePrompt := InferActivePromptContext(history, state)
 
@@ -594,12 +594,12 @@ func TestOpenAIInterpreterAssistSelectionWithoutAvailabilityFactsIsRejected(t *t
 		},
 	}
 	availability := availabilityOptionPromptTwoOptionsFutureResult()
-	history := []Message{{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		Direction:        "OUTBOUND",
 		Body:             buildAvailabilityListReply(availability),
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       observedAt,
-	}}
+	}})
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "2")
 	activePrompt := InferActivePromptContext(history, state)
 

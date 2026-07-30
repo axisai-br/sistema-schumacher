@@ -1506,10 +1506,18 @@ func assertNoActiveAvailabilityPendingQuestion(t *testing.T, session Session) {
 func markSessionMessagesAutomationSent(t *testing.T, store *fakeStore, sessionID string) {
 	t.Helper()
 	for id, message := range store.messages {
-		if message.SessionID != sessionID {
+		if message.SessionID != sessionID ||
+			!strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
 			continue
 		}
 		message.ProcessingStatus = messageStatusAutomationSent
+		message.Payload = cloneMap(message.Payload)
+		message.NormalizedPayload = cloneMap(message.NormalizedPayload)
+		for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+			delete(payload, "mode")
+			delete(payload, "auto_send_status")
+		}
+		message.NormalizedPayload["delivery_recorded_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 		store.messages[id] = message
 	}
 }

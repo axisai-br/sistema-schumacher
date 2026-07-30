@@ -1041,13 +1041,13 @@ func TestValidateTravelQueryMeaningV2RejectsAbsentOrStaleAvailabilityFacts(t *te
 
 	t.Run("stale source message", func(t *testing.T) {
 		input := travelQueryV2SelectionInput(2)
-		input.History = append(input.History, Message{
+		input.History = append(input.History, markAvailabilityPromptDeliveredForTest(Message{
 			ID:               "prompt-newer",
 			Direction:        "OUTBOUND",
 			Body:             "1. Nova opcao\n\nQual opcao voce prefere?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       input.AvailabilityFacts.SourceMessageReceivedAt.Add(time.Minute),
-		})
+		}))
 
 		got := ValidateTravelQueryMeaningV2(input)
 
@@ -1787,13 +1787,13 @@ func travelQueryV2SelectionInput(optionCount int) TravelQueryValidationInputV2 {
 			AvailabilityOptionCount: optionCount,
 			HasAvailabilityList:     true,
 		},
-		History: []Message{{
+		History: markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 			ID:               "prompt-current-v2",
 			Direction:        "OUTBOUND",
 			Body:             body,
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       receivedAt,
-		}},
+		}}),
 		ObservedAt: observedAt,
 		AvailabilityFacts: TravelQueryAvailabilityFactsV2{
 			SourceMessageID:         "prompt-current-v2",

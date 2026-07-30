@@ -3,15 +3,21 @@
 ## Status atual no tracker
 
 ```text
-BLOQUEADA por H-2026-07-22A / gate operacional de H-2026-07-16B1.
+BLOQUEADA por H-2026-07-27A / gate operacional de H-2026-07-16B1.
 ```
 
-O review local histórico de B1 foi limpo, mas evidência operacional posterior
-mostrou o bootstrap `UNKNOWN` bloqueando sessões novas antes de existir contexto
-de passageiros. H-2026-07-22A está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
-REVIEW**. Este PR não implementa contrato, validator,
-corpus ou shadow de B2. B3 permanece bloqueada por B2, e
-3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+H-2026-07-22A corrigiu o bootstrap `UNKNOWN`, passou por review, foi implantado
+e removeu o problema original. O smoke real posterior ficou RED na transição
+availability → passageiros: oito resultados brutos foram confundidos com a
+única opção apresentada, não existia `availability_prompt_event_v1` e a
+confirmação `"sim"` terminou em `SAFE_PHASE_FALLBACK`, sem `booking_create`.
+H-2026-07-27A está **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA
+TEMPORAL E PROVENIÊNCIA**. A correção local tornou o delivery monotônico,
+tratou `INVALID` entregue como barreira temporal, fechou `DRAFT_REVIEW` não
+aprovado e provou metadata hostil no `Repository.CreateReply` real com
+PostgreSQL obrigatório. Novo review dirigido continua pendente. Este diff não
+implementa contrato, validator, corpus ou shadow de B2. B3 permanece bloqueada
+por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 ## Objetivo
 
@@ -21,7 +27,7 @@ user-visible.
 
 ## Pré-condições
 
-- H-2026-07-22A revisado sem P1/P2, implantado e com smoke verde;
+- H-2026-07-27A revisado sem P1/P2, implantado e com smoke verde;
 - gate operacional de B1 novamente concluído;
 - serialização concorrente comprovada em PostgreSQL;
 - estado e eventos estruturais são autoridade;

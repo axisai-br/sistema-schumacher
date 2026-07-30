@@ -320,8 +320,8 @@ func collectBookingDraftContextWithPassengerStateProjection(
 	passengerState PassengerClarificationStateV1,
 	projection bookingDraftTurnProjection,
 ) BookingDraftContext {
-	history = availabilityInferenceHistoryForSession(session, history)
 	selectionState := availabilitySelectionStateV1ForRead(session, history)
+	history = availabilityInferenceHistoryForSession(session, history)
 	context := applyAvailabilitySelectionStateV1ToBookingDraft(BookingDraftContext{}, selectionState)
 	context = applyPassengerClarificationStateToBookingDraft(context, passengerState)
 
@@ -343,11 +343,16 @@ func collectBookingDraftContextWithPassengerStateProjection(
 			context.HasAvailabilityShown = true
 		}
 
-		for _, toolContext := range messageToolContexts(message) {
-			if availability := asMap(toolContext[toolNameAvailabilitySearch]); availability != nil && shouldMergeAvailabilityFactsFromMessage(message) {
+		classifiedMessage, _, classifiedOK := classifiedAvailabilityPromptMessageAtV1(history, i)
+		if classifiedOK {
+			availability, availabilityOK := availabilityPromptClassifiedContextV1(classifiedMessage)
+			if availabilityOK && availability != nil {
 				context.HasAvailabilityShown = true
 				if !context.HasBookableSelection {
-					mergeAvailabilityEnvelopeIntoBookingDraft(&context, availability)
+					mergeAvailabilityEnvelopeIntoBookingDraft(
+						&context,
+						buildAvailabilityToolResponsePayload(*availability),
+					)
 				}
 			}
 		}
@@ -619,9 +624,11 @@ func availabilityPromptSourceMessageIDBefore(history []Message, beforeIndex int)
 		beforeIndex = len(history)
 	}
 	for i := beforeIndex - 1; i >= 0; i-- {
-		message := history[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
-			!shouldMergeAvailabilityFactsFromMessage(message) {
+		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+			return ""
+		}
+		message, _, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
+		if !ok {
 			continue
 		}
 		if context := availabilitySelectionPromptContextFromMessage(message); context.OptionCount > 0 {

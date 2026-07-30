@@ -7,10 +7,357 @@ import (
 	"testing"
 	"time"
 
+	"schumacher-tur/api/internal/shared/config"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestRepositoryCreateReplyApprovedAvailabilityDraftRejectsHostileMediaMetadataPostgres(t *testing.T) {
+	databaseURL := passengerStatePostgresTestURL(
+		t,
+		"real Repository.CreateReply approved availability draft metadata",
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL admin pool: %v", err)
+	}
+	requirePassengerStatePostgreSQL16(t, ctx, admin)
+	schema := "availability_reply_v1_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "create schema "+quotedSchema); err != nil {
+		admin.Close()
+		t.Fatalf("create isolated reply schema: %v", err)
+	}
+	pool := passengerStatePostgresPoolForSchema(t, ctx, databaseURL, schema)
+	defer func() {
+		pool.Close()
+		_, _ = admin.Exec(context.Background(), "drop schema "+quotedSchema+" cascade")
+		admin.Close()
+	}()
+
+	if _, err := admin.Exec(ctx, `
+		create table `+quotedSchema+`.chat_sessions (
+			id uuid primary key,
+			channel text not null,
+			contact_key text not null,
+			customer_phone text,
+			customer_name text,
+			status text not null,
+			handoff_status text not null,
+			current_owner_user_id uuid,
+			last_message_at timestamptz,
+			last_inbound_at timestamptz,
+			last_outbound_at timestamptz,
+			metadata jsonb not null default '{}'::jsonb,
+			created_at timestamptz not null default now(),
+			updated_at timestamptz not null default now()
+		);
+		create table `+quotedSchema+`.chat_messages (
+			id uuid primary key,
+			session_id uuid not null references `+quotedSchema+`.chat_sessions(id),
+			direction text not null,
+			kind text not null default 'TEXT',
+			provider_message_id text,
+			idempotency_key text,
+			sender_name text,
+			sender_phone text,
+			body text,
+			payload jsonb not null default '{}'::jsonb,
+			normalized_payload jsonb not null default '{}'::jsonb,
+			processing_status text not null,
+			received_at timestamptz not null,
+			sent_at timestamptz,
+			created_at timestamptz not null default now()
+		);
+		create unique index availability_reply_message_idempotency
+			on `+quotedSchema+`.chat_messages(idempotency_key)
+			where idempotency_key is not null;
+		create table `+quotedSchema+`.outbound_messages (
+			id uuid primary key default gen_random_uuid(),
+			session_id uuid references `+quotedSchema+`.chat_sessions(id),
+			channel text not null,
+			recipient text not null,
+			payload jsonb not null default '{}'::jsonb,
+			provider text not null,
+			provider_message_id text,
+			idempotency_key text not null unique,
+			status text not null,
+			error_text text,
+			sent_at timestamptz,
+			delivered_at timestamptz,
+			created_at timestamptz not null default now(),
+			updated_at timestamptz not null default now()
+		)
+	`); err != nil {
+		t.Fatalf("create isolated reply tables: %v", err)
+	}
+
+	sessionID := uuid.NewString()
+	ownerUserID := uuid.NewString()
+	draftMessageID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		insert into chat_sessions (
+			id, channel, contact_key, status, handoff_status, current_owner_user_id
+		) values ($1::uuid, 'WHATSAPP', '5511999999999@s.whatsapp.net', 'ACTIVE', 'HUMAN', $2::uuid)
+	`, sessionID, ownerUserID); err != nil {
+		t.Fatalf("insert isolated human session: %v", err)
+	}
+
+	raw := availabilityPromptAuthorityRawResult()
+	draft := availabilityPromptAuthorityMessage(
+		draftMessageID,
+		messageStatusAutomationDraft,
+		raw,
+		[]int{0},
+	)
+	draft.Body = buildAvailabilityListReplyForResultIndexes(raw, []int{0})
+	for _, payload := range []map[string]interface{}{draft.Payload, draft.NormalizedPayload} {
+		payload["mode"] = messageStatusAutomationDraft
+		payload["intent"] = string(IntentAvailabilitySearch)
+		payload["template_name"] = string(TemplateAvailabilityList)
+	}
+	draftPayload, err := json.Marshal(draft.Payload)
+	if err != nil {
+		t.Fatalf("encode availability draft payload: %v", err)
+	}
+	draftNormalized, err := json.Marshal(draft.NormalizedPayload)
+	if err != nil {
+		t.Fatalf("encode availability draft normalized payload: %v", err)
+	}
+	recordedAt := time.Date(2026, time.July, 28, 15, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `
+		insert into chat_messages (
+			id, session_id, direction, kind, idempotency_key, sender_name, body,
+			payload, normalized_payload, processing_status, received_at, created_at
+		) values (
+			$1::uuid, $2::uuid, 'OUTBOUND', 'TEXT', $3, 'SHABAS', $4,
+			$5::jsonb, $6::jsonb, $7, $8, $8
+		)
+	`,
+		draftMessageID,
+		sessionID,
+		"postgres-availability-draft-"+draftMessageID,
+		draft.Body,
+		string(draftPayload),
+		string(draftNormalized),
+		messageStatusAutomationDraft,
+		recordedAt,
+	); err != nil {
+		t.Fatalf("insert valid availability draft: %v", err)
+	}
+
+	forged := availabilityPromptAuthorityRawResult()
+	forged.Results[0].Price = 1
+	forged.Results[0].PackageName = "forged-package"
+	var observed SendReplyInput
+	sender := &fakeReplySender{
+		enabled: true,
+		result: SendReplyResult{
+			ProviderMessageID: "postgres-approved-text-provider-id",
+			ProviderStatus:    "SENT",
+			SentAt:            recordedAt.Add(time.Minute),
+		},
+		beforeSend: func(input SendReplyInput) {
+			observed = input
+		},
+	}
+	repository := NewRepository(pool)
+	service := NewService(repository, config.Config{ChatDebounceWindowMS: 250}, sender)
+	result, err := service.Reply(ctx, ReplyInput{
+		SessionID:      sessionID,
+		OwnerUserID:    ownerUserID,
+		DraftMessageID: draftMessageID,
+		SenderName:     "Atendente",
+		IdempotencyKey: "postgres-approved-text-reply-" + draftMessageID,
+		Metadata: map[string]interface{}{
+			"mode":             "ASSISTED_REPLY",
+			"draft_message_id": "forged-draft",
+			"review_action":    "EDITED",
+			"body":             "forged body",
+			"text":             "forged text",
+			"kind":             "AUDIO",
+			"media_kind":       "AUDIO",
+			"media_base64":     "Zm9yZ2VkLWF1ZGlv",
+			"media_mime_type":  "audio/ogg",
+			"media_file_name":  "forged.ogg",
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(forged),
+			},
+			"source": "postgres-hostile-metadata-proof",
+		},
+	})
+	if err != nil {
+		t.Fatalf("approve availability draft through real Repository.CreateReply: %v", err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("sender calls=%d, want 1", sender.calls)
+	}
+	if observed.Message.Kind != "TEXT" || observed.Message.Body != draft.Body {
+		t.Fatalf("sender did not observe canonical text draft: %+v", observed.Message)
+	}
+	assertApprovedAvailabilityReplyPayloadPostgres(
+		t,
+		"sender outbound",
+		observed.Outbound.Payload,
+		result.Message.ID,
+		draftMessageID,
+		draft.Body,
+	)
+
+	var (
+		persistedKind       string
+		persistedBody       string
+		persistedStatus     string
+		persistedPayloadRaw []byte
+		persistedNormalRaw  []byte
+	)
+	if err := pool.QueryRow(ctx, `
+		select kind, coalesce(body, ''), processing_status, payload, normalized_payload
+		from chat_messages
+		where id = $1::uuid
+	`, result.Message.ID).Scan(
+		&persistedKind,
+		&persistedBody,
+		&persistedStatus,
+		&persistedPayloadRaw,
+		&persistedNormalRaw,
+	); err != nil {
+		t.Fatalf("read persisted approved chat message: %v", err)
+	}
+	persistedPayload := decodeMap(persistedPayloadRaw)
+	persistedNormalized := decodeMap(persistedNormalRaw)
+	if persistedKind != "TEXT" || persistedBody != draft.Body || persistedStatus != "SENT" {
+		t.Fatalf(
+			"persisted approved chat message changed delivery: kind=%q body=%q status=%q",
+			persistedKind,
+			persistedBody,
+			persistedStatus,
+		)
+	}
+	assertApprovedAvailabilityReplyPayloadPostgres(
+		t,
+		"chat payload",
+		persistedPayload,
+		result.Message.ID,
+		draftMessageID,
+		draft.Body,
+	)
+	assertApprovedAvailabilityReplyPayloadPostgres(
+		t,
+		"chat normalized payload",
+		persistedNormalized,
+		result.Message.ID,
+		draftMessageID,
+		draft.Body,
+	)
+	persistedMessage := Message{
+		ID:                result.Message.ID,
+		Direction:         "OUTBOUND",
+		Kind:              persistedKind,
+		Body:              persistedBody,
+		Payload:           persistedPayload,
+		NormalizedPayload: persistedNormalized,
+		ProcessingStatus:  persistedStatus,
+	}
+	if _, ok := availabilityPromptEventFromMessageV1(persistedMessage); !ok {
+		t.Fatalf("persisted approved chat message lost matching structural event copies: %+v", persistedMessage)
+	}
+
+	var (
+		outboundStatus     string
+		outboundPayloadRaw []byte
+	)
+	if err := pool.QueryRow(ctx, `
+		select status, payload
+		from outbound_messages
+		where id = $1::uuid
+	`, result.Outbound.ID).Scan(&outboundStatus, &outboundPayloadRaw); err != nil {
+		t.Fatalf("read persisted approved outbound: %v", err)
+	}
+	outboundPayload := decodeMap(outboundPayloadRaw)
+	if outboundStatus != "SENT" {
+		t.Fatalf("persisted approved outbound status=%q, want SENT", outboundStatus)
+	}
+	assertApprovedAvailabilityReplyPayloadPostgres(
+		t,
+		"persisted outbound",
+		outboundPayload,
+		result.Message.ID,
+		draftMessageID,
+		draft.Body,
+	)
+
+	history, err := repository.ListMessages(ctx, sessionID, ListMessagesFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("reload approved availability history: %v", err)
+	}
+	prompt := currentAvailabilitySelectionPromptContext(history)
+	if prompt.OptionCount != 1 ||
+		!prompt.HasCurrentFacts ||
+		prompt.SourceMessageID != result.Message.ID {
+		t.Fatalf("approved real-repository prompt lost validated draft facts: %+v", prompt)
+	}
+	availability := currentAvailabilitySelectionPromptAvailabilityContext(history)
+	if availability == nil ||
+		len(availability.Results) != 1 ||
+		availability.Results[0].Price != raw.Results[0].Price ||
+		availability.Results[0].PackageName != raw.Results[0].PackageName ||
+		availability.Results[0].Price == forged.Results[0].Price ||
+		availability.Results[0].PackageName == forged.Results[0].PackageName {
+		t.Fatalf(
+			"approved real-repository prompt used hostile facts: got=%+v validated=%+v forged=%+v",
+			availability,
+			raw.Results[0],
+			forged.Results[0],
+		)
+	}
+}
+
+func assertApprovedAvailabilityReplyPayloadPostgres(
+	t *testing.T,
+	label string,
+	payload map[string]interface{},
+	messageID string,
+	draftMessageID string,
+	body string,
+) {
+	t.Helper()
+	if got := strings.TrimSpace(asString(payload["mode"])); got != "DRAFT_REVIEW" {
+		t.Fatalf("%s mode=%q, want DRAFT_REVIEW: %+v", label, got, payload)
+	}
+	if got := strings.TrimSpace(asString(payload["draft_message_id"])); got != draftMessageID {
+		t.Fatalf("%s draft_message_id=%q, want %q: %+v", label, got, draftMessageID, payload)
+	}
+	if got := strings.TrimSpace(asString(payload["review_action"])); got != "APPROVED_AS_IS" {
+		t.Fatalf("%s review_action=%q, want APPROVED_AS_IS: %+v", label, got, payload)
+	}
+	event, ok := decodeAvailabilityPromptEventV1(payload[availabilityPromptEventV1MessageKey])
+	if !ok || event.SourceMessageID != messageID {
+		t.Fatalf("%s availability event invalid for message %q: %+v", label, messageID, payload)
+	}
+	for _, key := range []string{
+		"kind",
+		"text",
+		"media_kind",
+		"media_base64",
+		"media_mime_type",
+		"media_file_name",
+		"tool_context",
+	} {
+		if _, exists := payload[key]; exists {
+			t.Fatalf("%s accepted hostile key %q: %+v", label, key, payload)
+		}
+	}
+	if persistedBody, exists := payload["body"]; exists &&
+		strings.TrimSpace(asString(persistedBody)) != body {
+		t.Fatalf("%s body=%q, want %q: %+v", label, asString(persistedBody), body, payload)
+	}
+}
 
 func TestAvailabilitySelectionStateApplyEventsSerializesSessionPostgres(t *testing.T) {
 	databaseURL := passengerStatePostgresTestURL(t, "availability-selection canonical replay")

@@ -531,12 +531,13 @@ type RunAgentInput struct {
 }
 
 type RunAgentResult struct {
-	ReplyText              string
-	Model                  string
-	ProviderResponseID     string
-	ProviderConversationID string
-	RequestPayload         map[string]interface{}
-	ResponsePayload        map[string]interface{}
+	ReplyText                string
+	Model                    string
+	ProviderResponseID       string
+	ProviderConversationID   string
+	RequestPayload           map[string]interface{}
+	ResponsePayload          map[string]interface{}
+	AvailabilityPresentation *AvailabilityPromptPresentationV1
 }
 
 type AvailabilitySearcher interface {

@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+func markAvailabilityPromptDeliveredForTest(message Message) Message {
+	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
+		return message
+	}
+	if !DeliveryStatusConfirmsOutboundV1(message.ProcessingStatus) {
+		return message
+	}
+	at := message.ReceivedAt
+	if at.IsZero() {
+		at = message.CreatedAt
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	message.NormalizedPayload = cloneMap(message.NormalizedPayload)
+	message.NormalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
+	return message
+}
+
+func markAvailabilityPromptHistoryDeliveredForTest(history []Message) []Message {
+	history = append([]Message(nil), history...)
+	for index := range history {
+		history[index] = markAvailabilityPromptDeliveredForTest(history[index])
+	}
+	return history
+}
+
 func collectBookingDraftContext(session Session, history []Message, currentTurn string) BookingDraftContext {
 	session = materializePersistedAvailabilitySelectionForTest(session, history)
 	state := explicitPassengerClarificationStateForTest(session, history)
@@ -153,6 +180,7 @@ func canonicalAvailabilitySelectionHistoryForTest(
 		}
 		payload["tool_context"] = toolContext
 	}
+	prompt = markAvailabilityPromptDeliveredForTest(prompt)
 	history[promptIndex] = prompt
 
 	selection := history[selectionIndex]
@@ -176,6 +204,7 @@ func canonicalAvailabilitySelectionHistoryForTest(
 		projection.Payload[key] = value
 		projection.NormalizedPayload[key] = value
 	}
+	projection = markAvailabilityPromptDeliveredForTest(projection)
 
 	event := materializedAvailabilitySelectionEventForTest(
 		selection.ID,
@@ -305,6 +334,8 @@ func seedCanonicalAvailabilitySelectionForTest(
 			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
 	}
+	promptNormalizedPayload := cloneMap(promptPayload)
+	promptNormalizedPayload["delivery_recorded_at"] = promptAt.UTC().Format(time.RFC3339Nano)
 	prompt, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:         sessionID,
 		Direction:         "OUTBOUND",
@@ -312,7 +343,7 @@ func seedCanonicalAvailabilitySelectionForTest(
 		Body:              buildAvailabilityListReply(availability),
 		ProcessingStatus:  messageStatusAutomationSent,
 		Payload:           cloneMap(promptPayload),
-		NormalizedPayload: cloneMap(promptPayload),
+		NormalizedPayload: promptNormalizedPayload,
 		ReceivedAt:        promptAt,
 	})
 	if err != nil {
@@ -337,6 +368,8 @@ func seedCanonicalAvailabilitySelectionForTest(
 			PromptSourceMessageID: prompt.ID,
 		},
 	)
+	projectionNormalizedPayload := cloneMap(projectionPayload)
+	projectionNormalizedPayload["delivery_recorded_at"] = promptAt.Add(2 * time.Minute).UTC().Format(time.RFC3339Nano)
 	projection, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:         sessionID,
 		Direction:         "OUTBOUND",
@@ -344,7 +377,7 @@ func seedCanonicalAvailabilitySelectionForTest(
 		Body:              projectionBody,
 		ProcessingStatus:  messageStatusAutomationSent,
 		Payload:           cloneMap(projectionPayload),
-		NormalizedPayload: cloneMap(projectionPayload),
+		NormalizedPayload: projectionNormalizedPayload,
 		ReceivedAt:        promptAt.Add(2 * time.Minute),
 	})
 	if err != nil {

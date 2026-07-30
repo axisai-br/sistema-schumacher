@@ -20,11 +20,225 @@ backend executa somente ações autorizadas
 3.6F-C concluída em código; H-2026-07-16A teve smoke operacional verde
 H-2026-07-16B em andamento
 H-2026-07-16B1 concluída em código, com gate operacional reaberto
-H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
-DEPLOY E SMOKE PENDENTES
-H-2026-07-16B2 bloqueada até commit, push, deploy e smoke verdes do hotfix
+H-2026-07-22A — problema original corrigido e deployado;
+smoke RED na transição availability → passageiros
+H-2026-07-27A — EM CORREÇÃO APÓS REVIEW —
+3 P1 + 1 P2 DE ENTREGA TEMPORAL E PROVENIÊNCIA
+H-2026-07-16B2 bloqueada por H-2026-07-27A e pelo gate operacional de B1
 3.6F-D bloqueada por H-B
 ```
+
+## Incidente H-2026-07-27A
+
+O smoke real posterior ao deploy de H-2026-07-22A comprovou uma lacuna nova:
+
+```text
+availability_search: 8 resultados brutos no tool_context
+resposta ao cliente: somente 03/08/2026 + confirmação de opção única
+availability_prompt_event_v1: ausente
+availability_option_count: 8
+resposta do cliente: "sim"
+AvailabilitySelectionStateV1: NONE
+resposta final: SAFE_PHASE_FALLBACK
+booking_create: zero chamadas
+```
+
+O runtime confundia resultados brutos da tool com opções apresentadas e
+dependia do body para reconhecer a identidade do prompt. H-2026-07-27A separa
+agora três camadas:
+
+```text
+raw tool results
+presented options
+selected/bookable option
+```
+
+`AvailabilityPromptEventV1` persiste a projeção apresentada no draft e no
+outbound efetivamente enviado. O evento contém `version`,
+`kind=AVAILABILITY_OPTION_CHOICE`, `source_message_id`,
+`presented_option_count` e, por opção, `display_index`, `result_index`,
+`trip_id`, `board_stop_id`, `alight_stop_id` e `trip_date`.
+
+O backend realiza deterministicamente a apresentação de
+`EARLIEST_AVAILABLE`, escolhe o primeiro resultado estruturalmente válido e
+produz a resposta unitária. `InferActivePromptContext`, o router, o interpreter
+e a materialização preferem o evento; o body permanece fallback legado.
+`display_index` é resolvido contra `presented_options`, não contra a posição
+bruta. O evento sozinho não concede `BOOKABLE`: somente confirmação válida e
+`SELECTION_MATERIALIZED` materializam snapshot completo.
+
+Não houve parser/regex novo, B2, migration, provider, commit, push, deploy ou
+smoke nesta rodada. O inventário de produção permanece em 54
+`regexp.MustCompile`.
+
+RED/PASS reais:
+
+```text
+RED — go test -count=1 ./internal/chat -run '^TestAvailabilityPromptEventV1'
+      runner=1, evento ausente e confirmação podendo repetir availability_search
+PASS — focused count=20 — 1.485s
+PASS — focused race — 1.539s
+PASS — availability/passenger/booking/human/cancel — 0.129s
+PASS — go test -count=1 ./internal/chat — 4.121s
+PASS — go test -count=1 ./... — internal/chat 4.145s; demais pacotes verdes
+PASS — regexp.MustCompile produção = 54
+PASS — gofmt
+PASS — git diff --check
+```
+
+A matriz cobre A–I, inclusive 8 resultados brutos/1 apresentado, 5
+apresentados com `"sim"` ambíguo, `display_index=1 → result_index=3`, status
+invisíveis, não reabertura durante `ASK_PASSENGER_COUNT`, precedência
+humano/cancelamento, zero booking sem materialização e reload/restart.
+
+O review seguinte encontrou três P1 na proveniência da apresentação:
+
+- `BOT_AUTO_REPLY` exigia body equivalente antes de reconciliar eventos
+  estruturais equivalentes;
+- o bootstrap legado lia evento/facts de mensagem `INBOUND` marcada
+  `PROCESSED`;
+- `DRAFT_REVIEW / APPROVED_AS_IS` carregava o evento entregue, mas não
+  resolvia o `tool_context` do draft validado.
+
+Agora `resolveDeliveredPromptSourceMessageWithIndex` é a abstração comum dos
+dois modos de entrega e também alimenta a busca do bootstrap legado. O outbound
+entregue define ID, `source_message_id`, body, status e evento; somente o draft
+`OUTBOUND`, ligado por `draft_message_id` e validado, fornece facts. A
+comparação estrutural normaliza e compara kind, option count e todos os campos
+das opções. Body é fallback apenas se os dois lados não possuem evento.
+
+Evento inválido, ausente ou divergente, source não confiável, entrega pending e
+revisão `EDITED` não herdam facts. Um draft vinculado não volta a ser candidato
+do bootstrap se a entrega falhar na reconciliação. `APPROVED_AS_IS` preserva a
+referência durável e projeta o evento para a identidade entregue, sem copiar
+`tool_context` para o outbound.
+
+RED/PASS da correção após review:
+
+```text
+RED — body diferente: HasCurrentFacts=false
+RED — evento divergente: facts antigos herdados
+RED — APPROVED_AS_IS: HasCurrentFacts=false
+RED — prompt INBOUND fabricado: AvailabilitySelectionStateV1=BOOKABLE
+PASS — revisão EDITED já falhava fechado
+PASS — testes novos dirigidos, count=20 — 1.325s
+PASS — go test -race -count=1 ./internal/chat — 23.499s
+PASS — availability/passenger/booking/human/cancel — 3.185s
+PASS — go test -count=1 ./internal/chat — 4.289s
+PASS — go test -count=1 ./... — internal/chat 4.290s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt
+PASS — git diff --check
+```
+
+O segundo review dirigido encontrou mais três P1. A correção local agora:
+
+- exige status `SENT`, `DELIVERED`, `READ` ou `AUTOMATION_SENT` junto do
+  `delivery_recorded_at` canônico;
+- falha fechado quando a chave `availability_prompt_event_v1` está presente,
+  mas o evento não decodifica ou diverge, sem retorno ao legado;
+- filtra metadata reservada do cliente, preservando a proveniência
+  `DRAFT_REVIEW / APPROVED_AS_IS` e impedindo `tool_context` injetado.
+
+RED real:
+
+```text
+FAIL — statuses não confirmados e status enviado sem evidência abriam prompt e podiam reconstruir BOOKABLE
+FAIL — evento malformado caía em intent/template/tool_context legado e virava BOOKABLE
+FAIL — metadata do cliente substituía mode/draft/review e persistia facts forjados
+```
+
+PASS local:
+
+```text
+PASS — focused count=20 — 3.582s
+PASS — go test -race -count=1 ./internal/chat — 24.519s
+PASS — availability/passenger/booking/human/cancel — 2.918s
+PASS — go test -count=1 ./internal/chat — 4.311s
+PASS — go test -count=1 ./... — internal/chat 4.306s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt
+PASS — git diff --check
+```
+
+O terceiro review dirigido encontrou cinco P1 adicionais. A correção local
+centraliza toda mensagem candidata de availability em quatro classes:
+`UNDELIVERED`, `ABSENT_LEGACY`, `VALID_STRUCTURAL` e `INVALID`.
+
+- `UNDELIVERED` e `INVALID` nunca abrem prompt, fornecem facts, participam do
+  bootstrap ou chegam aos gates de booking;
+- fallback legado existe somente para `ABSENT_LEGACY` entregue;
+- o allowlist único é `SENT`, `DELIVERY_ACK`, `DELIVERED`, `READ` e
+  `AUTOMATION_SENT`, sempre com `delivery_recorded_at`;
+- evento estrutural exige as duas cópias, decode, igualdade e consistência com
+  source/count/options/facts;
+- todos os readers de active prompt, facts, selection, enriquecimento de
+  snapshot, booking draft e `booking_create` usam a classificação;
+- `APPROVED_AS_IS` preserva body, kind/canal, evento e facts do draft validado,
+  bloqueando metadata reservada e campos/aliases de mídia; mídia humana
+  legítima fora da revisão continua verde.
+
+RED/PASS reais desta rodada:
+
+```text
+RED — approved TEXT virou AUDIO; legado não entregue abriu prompt; DELIVERY_ACK virou UNKNOWN; cópias inválidas vazaram facts e enriqueceram snapshot
+PASS — testes novos count=20 — 0.650s
+PASS — go test -race -count=1 ./internal/chat — 28.873s
+PASS — availability/passenger/booking/human/cancel/review/autosend/delivery — 3.740s
+PASS — go test -count=1 ./internal/chat — 5.114s
+PASS — go test -count=1 ./... — internal/chat 6.579s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt; gofmt -l sem saída
+PASS — git diff --check
+```
+
+A primeira tentativa do race parou antes dos testes por quota de `/tmp`; após
+limpar somente o cache Go temporário desta tarefa, o mesmo comando passou
+integralmente.
+
+O quarto review dirigido encontrou 3 P1 + 1 P2:
+
+- o webhook podia regredir `DELIVERY_ACK` para `SERVER_ACK` tardio;
+- `INVALID` entregue mais novo podia ressuscitar uma lista legada anterior;
+- `DRAFT_REVIEW` não aprovado ou divergente podia virar fallback legado;
+- a proteção contra metadata de mídia hostil ainda não estava provada pelo
+  `Repository.CreateReply` real.
+
+A correção usa uma política monotônica compartilhada entre webhook, sender e
+readers; preserva o maior status/evidência; transforma `INVALID` entregue em
+barreira temporal de active prompt, facts, replay, booking draft e
+`booking_create`; e aceita `DRAFT_REVIEW` somente com
+`APPROVED_AS_IS` consistente nas duas cópias.
+
+A prova P2 percorreu `Service.Reply`, `Repository.CreateReply`, sender e
+`MarkReplyDeliverySent` reais em PostgreSQL 16.14. Mesmo com
+`media_kind=AUDIO`, base64 e facts forjados, o sender e as linhas reais de
+`chat_messages`/`outbound_messages` permaneceram texto e resolveram os facts
+do draft validado. O modo PostgreSQL obrigatório falha explicitamente sem URL.
+
+RED/PASS desta rodada:
+
+```text
+RED — ACK regrediu, INVALID entregue reviveu legado e DRAFT_REVIEW não aprovado virou ABSENT_LEGACY
+PASS — testes focados count=20 — 1.891s
+PASS — go test -race -count=1 ./internal/chat — 26.423s
+PASS — regressões delivery/review/availability/passenger/booking/human/cancel/media — chat 0.674s; automation 0.008s
+PASS SEM SKIP — PostgreSQL 16.14 obrigatório — chat 1.245s; automation 0.151s
+PASS — go test -count=1 ./internal/chat — 4.682s
+PASS — go test -count=1 ./... — internal/chat 7.017s; automation 0.244s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt; gofmt -l sem saída
+PASS — git diff --check
+```
+
+A primeira tentativa do race parou antes dos testes por cota de disco. Somente
+o cache Go temporário desta tarefa foi limpo; a repetição e a execução final
+passaram.
+
+O status vigente é **H-2026-07-27A — EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2
+DE ENTREGA TEMPORAL E PROVENIÊNCIA**. A correção local está verde, mas não há
+declaração de review limpo nem segurança para commit. B2 e 3.6F-D continuam
+bloqueadas.
 
 ## Incidente H-2026-07-22A
 
@@ -371,24 +585,23 @@ Esse era o checkpoint pré-review final: o contêiner PostgreSQL efêmero havia
 sido removido e ainda não existia declaração de review limpo. O estado está
 preservado como histórico/superseded pelo resultado seguinte.
 
-### Review final limpo
+### Review final limpo de H-2026-07-22A — histórico
 
 O review final considerou H-2026-07-22A **seguro para commit** e não encontrou
 P1/P2. Confirmou os 10 controles, incluindo `count=20`, race, suítes amplas,
 PostgreSQL **16.14** real sem `SKIP`, inventário de 54
 `regexp.MustCompile`, `gofmt` e `git diff --check`.
 
-Status vigente:
+Status naquele checkpoint:
 
 ```text
 H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT;
 DEPLOY E SMOKE PENDENTES
 ```
 
-Commit, push, PR, merge/deploy e smoke ainda não foram executados. Deploy e
-smoke estão autorizados como próximos gates. B2 permanece bloqueada até
-commit, push, deploy e smoke verdes e só pode ser liberada depois do smoke
-verde.
+Esse checkpoint foi seguido por commit, push e deploy. O smoke real posterior
+ficou RED na transição availability → passageiros e é a evidência que abriu
+H-2026-07-27A. O estado canônico atual está no início deste handoff.
 
 ## Bug H-2026-07-16B
 
@@ -402,21 +615,17 @@ Esse bug é determinístico e separado de TravelQueryMeaningV2.
 
 ## Próxima ação
 
-Executar somente a cadeia:
+Executar somente:
 
 ```text
-commit
-push
-PR
-merge/deploy autorizado
-smoke operacional
+novo /review dirigido aos 3 P1 + 1 P2 de entrega temporal e proveniência de H-2026-07-27A
 ```
 
-A correção manual dos 5 P1, a reconciliação das fixtures e o review final sem
-P1/P2 estão concluídos. A próxima ação única é commit, push, PR, merge/deploy
-autorizado e smoke operacional. O status vigente é
-`H-2026-07-22A — REVIEW FINAL SEM P1/P2 — SEGURO PARA COMMIT; DEPLOY E SMOKE
-PENDENTES`. B2 permanece bloqueada até o smoke verde.
+H-2026-07-22A está corrigido e deployado, mas o smoke real reabriu o gate com
+H-2026-07-27A. A correção dos 3 P1 + 1 P2 e os testes locais estão verdes; ainda
+não há novo review limpo, commit, push, deploy ou novo smoke.
+B2 permanece bloqueada até review, deploy e smoke verdes de H-2026-07-27A.
+3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 ## Arquivos que a nova sessão deve ler
 

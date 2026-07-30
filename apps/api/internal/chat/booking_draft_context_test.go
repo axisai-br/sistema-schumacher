@@ -28,7 +28,7 @@ func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(
 		availability,
 		now.Add(-4*time.Minute),
 	)
-	selectedMessage := Message{
+	selectedMessage := markAvailabilityPromptDeliveredForTest(Message{
 		ID:                "selected-option-2",
 		Direction:         "OUTBOUND",
 		Body:              askPassengerCountReply,
@@ -37,7 +37,7 @@ func TestBookingDraftResolvesBookableAuthorityAcrossLaterAvailabilityRejections(
 		NormalizedPayload: cloneMap(selectionPayload),
 		ReceivedAt:        now.Add(-3 * time.Minute),
 		CreatedAt:         now.Add(-3 * time.Minute),
-	}
+	})
 
 	tests := []struct {
 		name                    string
@@ -445,7 +445,7 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 				"selection-a",
 				now.Add(-150*time.Second),
 			))
-			history = append(history, Message{
+			history = append(history, markAvailabilityPromptDeliveredForTest(Message{
 				ID:                "selection-a-projection",
 				Direction:         "OUTBOUND",
 				Body:              askPassengerCountReply,
@@ -454,7 +454,7 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 				NormalizedPayload: cloneMap(selectionPayload),
 				ReceivedAt:        now.Add(-2 * time.Minute),
 				CreatedAt:         now.Add(-2 * time.Minute),
-			})
+			}))
 			history = append(history, availabilityAuthorityPromptMessageForTest(
 				"later-unselected-envelope-b",
 				availabilityB,
@@ -500,7 +500,7 @@ func availabilityAuthoritySelectionMessageForTest(
 			MaterializesAuthority: true,
 		},
 	)
-	return Message{
+	return markAvailabilityPromptDeliveredForTest(Message{
 		ID:                messageID + "-projection",
 		Direction:         "OUTBOUND",
 		Body:              askPassengerCountReply,
@@ -509,7 +509,7 @@ func availabilityAuthoritySelectionMessageForTest(
 		NormalizedPayload: cloneMap(payload),
 		ReceivedAt:        at,
 		CreatedAt:         at,
-	}
+	})
 }
 
 func availabilityAuthoritySelectionInboundForTest(
@@ -566,7 +566,7 @@ func availabilityAuthorityProjectionMessageForTest(
 		},
 	)
 	payload["intent"] = string(IntentPassengerCountReply)
-	return Message{
+	return markAvailabilityPromptDeliveredForTest(Message{
 		ID:                messageID,
 		Direction:         "OUTBOUND",
 		Body:              askPassengerCountReply,
@@ -575,7 +575,7 @@ func availabilityAuthorityProjectionMessageForTest(
 		NormalizedPayload: cloneMap(payload),
 		ReceivedAt:        at,
 		CreatedAt:         at,
-	}
+	})
 }
 
 func availabilityAuthorityPromptMessageForTest(
@@ -590,13 +590,15 @@ func availabilityAuthorityPromptMessageForTest(
 			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
 	}
+	normalizedPayload := cloneMap(payload)
+	normalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
 	return Message{
 		ID:                messageID,
 		Direction:         "OUTBOUND",
 		Body:              buildAvailabilityListReply(availability),
 		ProcessingStatus:  messageStatusAutomationSent,
 		Payload:           cloneMap(payload),
-		NormalizedPayload: cloneMap(payload),
+		NormalizedPayload: normalizedPayload,
 		ReceivedAt:        at,
 		CreatedAt:         at,
 	}

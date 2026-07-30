@@ -31,7 +31,7 @@ func TestConversationStateMachinePaymentRequiresToolStatus(t *testing.T) {
 
 func TestDeriveCanonicalConversationStateKeepsLatestAvailabilityFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Encontrei estas opcoes antigas.",
@@ -54,7 +54,7 @@ func TestDeriveCanonicalConversationStateKeepsLatestAvailabilityFacts(t *testing
 				},
 			},
 		},
-	}
+	})
 
 	got := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
@@ -116,7 +116,7 @@ func TestDeriveCanonicalConversationStateInvisibleAvailabilityFactsDoNotOverwrit
 		messageStatusAutomationPending,
 	} {
 		t.Run(status, func(t *testing.T) {
-			history := []Message{
+			history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 				{
 					Direction:        "OUTBOUND",
 					Body:             buildAvailabilityListReply(visibleResult),
@@ -139,7 +139,7 @@ func TestDeriveCanonicalConversationStateInvisibleAvailabilityFactsDoNotOverwrit
 						},
 					},
 				},
-			}
+			})
 
 			got := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
@@ -170,7 +170,7 @@ func TestDeriveCanonicalConversationStateInvisibleSingleOptionAvailabilityDoesNo
 		messageStatusAutomationPending,
 	} {
 		t.Run(status, func(t *testing.T) {
-			history := []Message{
+			history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 				{
 					Direction:        "OUTBOUND",
 					Body:             buildAvailabilityListReply(visibleResult),
@@ -193,7 +193,7 @@ func TestDeriveCanonicalConversationStateInvisibleSingleOptionAvailabilityDoesNo
 						},
 					},
 				},
-			}
+			})
 
 			got := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
@@ -269,7 +269,7 @@ func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope
 			unselectedAvailability := availabilityOptionPromptFutureResultAt(now.Add(30 * 24 * time.Hour))
 			unselectedAvailability.Filter.PackageName = unselectedPackage
 			unselectedAvailability.Results[0].PackageName = unselectedPackage
-			history := []Message{
+			history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 				availabilityAuthorityPromptMessageForTest(
 					"selected-option-2-prompt",
 					selectedAvailability,
@@ -302,7 +302,7 @@ func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope
 					ReceivedAt: now.Add(-time.Minute),
 					CreatedAt:  now.Add(-time.Minute),
 				},
-			}
+			})
 
 			session := sessionWithReplayedAvailabilitySelectionForTest(
 				Session{ID: "selected-package-session", HandoffStatus: "BOT"},

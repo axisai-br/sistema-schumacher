@@ -1115,7 +1115,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	}
 	preApplyActivePrompt := InferActivePromptContext(inferenceHistory, preApplyCanonicalState)
 	preApplyDecision := routeDeterministicIntent(inferenceHistory, currentTurn, preApplyCanonicalState, observedAt)
-	selectionStateBeforeTurn := availabilitySelectionStateV1ForRead(session, inferenceHistory)
+	selectionStateBeforeTurn := availabilitySelectionStateV1ForRead(session, history)
 	strongGuardrailBeforeSelection := shouldPrioritizeStrongGuardrailBeforeAvailabilitySelection(
 		preApplyActivePrompt,
 		currentTurn,
@@ -2752,6 +2752,7 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	runAt := time.Now().UTC()
 	run = attachAvailabilitySelectionMessageIDToTemplateRun(run, draftMessageID)
 	pendingPassengerPromptEvent, hasPendingPassengerPromptEvent := passengerClarificationPromptEventForRunV1(run, draftMessageID, passengerState)
+	availabilityPromptEvent, hasAvailabilityPromptEvent := availabilityPromptEventForRunV1(run, draftMessageID)
 	autoSendPolicy := evaluateDraftAutoSendPolicy(candidates, toolContext.Calls, run)
 	draftAgentState := buildDraftGeneratedAgentState(persisted.Session.Metadata, candidates, draftID, run, toolContext.Calls, autoSendPolicy, runAt)
 	if availabilityFactsInvalidated {
@@ -2772,6 +2773,10 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	if hasPendingPassengerPromptEvent {
 		draftPayload[passengerPendingPromptEventV1MessageKey] = pendingPassengerPromptEvent
 		draftNormalizedPayload[passengerPendingPromptEventV1MessageKey] = pendingPassengerPromptEvent
+	}
+	if hasAvailabilityPromptEvent {
+		draftPayload[availabilityPromptEventV1MessageKey] = availabilityPromptEvent
+		draftNormalizedPayload[availabilityPromptEventV1MessageKey] = availabilityPromptEvent
 	}
 	if len(openAIAssistMetadata) > 0 {
 		draftAgentState[openAIInterpreterAssistMetadataKey] = openAIAssistMetadata
@@ -2985,11 +2990,11 @@ func availabilityContextFromOutOfTurnActivePromptSource(history []Message, decis
 		if strings.TrimSpace(message.ID) != sourceID {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
-			!shouldMergeAvailabilityFactsFromMessage(message) {
+		classified, _, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
+		if !ok {
 			return nil
 		}
-		return visibleAvailabilityContextFromPromptMessage(message)
+		return visibleAvailabilityContextFromPromptMessage(classified)
 	}
 	return nil
 }
@@ -2999,6 +3004,14 @@ func visibleAvailabilityContextFromPromptMessage(message Message) *AvailabilityS
 }
 
 func visibleAvailabilityContextFromPromptMessageAt(message Message, observedAt time.Time) *AvailabilitySearchResult {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		return authority.Presented
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return nil
+	}
 	promptContext := availabilitySelectionPromptContextFromMessage(message)
 	if promptContext.OptionCount <= 0 || !promptContext.HasCurrentFacts {
 		return nil
@@ -3024,6 +3037,14 @@ func visibleAvailabilityContextFromPromptMessageAt(message Message, observedAt t
 }
 
 func trustedAvailabilityContextFromPromptMessage(message Message) *AvailabilitySearchResult {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		return authority.Presented
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return nil
+	}
 	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
 	if currentFactsCount <= 0 {
 		return nil
@@ -4231,7 +4252,7 @@ func (s *Service) blockAutoSendAttempt(ctx context.Context, result ReplyResult, 
 }
 
 func normalizeReplyProviderStatus(status string) string {
-	normalized := strings.ToUpper(strings.TrimSpace(status))
+	normalized := NormalizeDeliveryStatusV1(status)
 	if normalized == "" {
 		return "SENT"
 	}

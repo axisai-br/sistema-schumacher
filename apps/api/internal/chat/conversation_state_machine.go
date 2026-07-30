@@ -62,11 +62,13 @@ type CanonicalPaymentState struct {
 
 func deriveCanonicalConversationState(session Session, history []Message, currentTurn string) CanonicalConversationState {
 	draft := collectBookingDraftContextFromState(session, history, currentTurn)
+	history = availabilityInferenceHistoryForSession(session, history)
 	return deriveCanonicalConversationStateFromBookingDraft(session, history, draft)
 }
 
 func deriveCanonicalConversationStateForRoutingBaseline(session Session, history []Message) CanonicalConversationState {
 	draft := collectBookingDraftContextForRoutingBaseline(session, history)
+	history = availabilityInferenceHistoryForSession(session, history)
 	return deriveCanonicalConversationStateFromBookingDraft(session, history, draft)
 }
 
@@ -155,13 +157,19 @@ func mergeMessageToolFactsIntoCanonicalState(state *CanonicalConversationState, 
 }
 
 func shouldMergeAvailabilityFactsFromMessage(message Message) bool {
-	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") {
-		return true
-	}
 	if isBotAutoReplyMessage(message) {
 		return false
 	}
-	return isReliableActivePromptOutbound(message)
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityAbsentLegacyV1:
+		return legacyAvailabilityPromptFactsV1(message) ||
+			legacyAvailabilitySelectionProjectionFactsV1(message)
+	case availabilityPromptAuthorityValidStructuralV1:
+		return authority.Presented != nil
+	default:
+		return false
+	}
 }
 
 func withoutAvailabilityToolFacts(toolContext map[string]interface{}) map[string]interface{} {

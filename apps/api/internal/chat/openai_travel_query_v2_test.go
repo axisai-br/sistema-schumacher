@@ -786,7 +786,7 @@ func TestTravelQueryV2ShadowFactsUseOnlyCurrentReliableVisibleList(t *testing.T)
 	visibleResult := AvailabilitySearchResult{Results: travelQueryV2TestAvailabilityFacts(observedAt, 2).VisibleOptions}
 	invisibleResult := AvailabilitySearchResult{Results: travelQueryV2TestAvailabilityFacts(observedAt, 3).VisibleOptions}
 	visibleBody := buildAvailabilityListReply(visibleResult)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			ID:               "visible-sent-list",
 			Direction:        "OUTBOUND",
@@ -807,7 +807,7 @@ func TestTravelQueryV2ShadowFactsUseOnlyCurrentReliableVisibleList(t *testing.T)
 				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(invisibleResult),
 			}},
 		},
-	}
+	})
 	state := CanonicalConversationState{Phase: ConversationPhaseTripSelection}
 	activePrompt := InferActivePromptContext(history, state)
 	facts := buildTravelQueryV2ShadowAvailabilityFacts(StructuredInterpreterInput{
@@ -2249,13 +2249,13 @@ func travelQueryV2AttachSelectionContext(input *TravelQueryV2ShadowInput, observ
 	body += "Qual opção você prefere?"
 	receivedAt := observedAt.Add(-time.Minute)
 	input.StructuredInput.State.Phase = ConversationPhaseTripSelection
-	input.StructuredInput.History = []Message{{
+	input.StructuredInput.History = markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		ID:               "prompt-travel-v2",
 		Direction:        "OUTBOUND",
 		Body:             body,
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       receivedAt,
-	}}
+	}})
 	input.ActivePrompt = ActivePromptContext{
 		Kind:                    ActivePromptAvailabilityOptionChoice,
 		Phase:                   ConversationPhaseTripSelection,

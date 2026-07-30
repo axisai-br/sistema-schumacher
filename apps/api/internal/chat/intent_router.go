@@ -571,6 +571,14 @@ func currentAvailabilitySelectionPromptContext(history []Message) availabilitySe
 }
 
 func availabilityPromptSourceMessageIDFromMessage(message Message) string {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		return authority.Event.SourceMessageID
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return ""
+	}
 	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
 		sourceMessageID := strings.TrimSpace(
 			asString(asMap(payload["template_data"])[outOfTurnActivePromptSourceIDDataKey]),
@@ -583,6 +591,20 @@ func availabilityPromptSourceMessageIDFromMessage(message Message) string {
 }
 
 func availabilitySelectionPromptContextFromMessage(message Message) availabilitySelectionPromptContext {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		event := authority.Event
+		return availabilitySelectionPromptContext{
+			OptionCount:        event.PresentedOptionCount,
+			HasCurrentFacts:    authority.Presented != nil,
+			SourceHistoryIndex: -1,
+			SourceMessageID:    event.SourceMessageID,
+		}
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return availabilitySelectionPromptContext{}
+	}
 	body := messageTurnText(message)
 	renderedCount := availabilityOptionCountFromRenderedPrompt(body)
 	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
@@ -611,7 +633,6 @@ func currentAvailabilitySelectionPromptAvailabilityContextAt(history []Message, 
 	if !ok {
 		return nil
 	}
-
 	return visibleAvailabilityContextFromPromptMessageAt(message, observedAt)
 }
 

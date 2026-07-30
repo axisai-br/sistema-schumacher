@@ -151,6 +151,7 @@ func parseBookingCreateInputWithPassengerState(
 	currentAvailability *AvailabilitySearchResult,
 	passengerState PassengerClarificationStateV1,
 ) (BookingCreateInput, bool) {
+	authorityHistory := history
 	history = availabilityInferenceHistoryForSession(session, history)
 	body := strings.TrimSpace(text)
 	if body == "" {
@@ -164,13 +165,18 @@ func parseBookingCreateInputWithPassengerState(
 		return BookingCreateInput{}, false
 	}
 
-	selectionState := availabilitySelectionStateV1ForRead(session, history)
+	selectionState := availabilitySelectionStateV1ForRead(session, authorityHistory)
 	selectedOptionIndex, selected, ok := resolveBookingCreateSelectionFromState(body, selectionState)
 	if !ok {
 		return BookingCreateInput{}, false
 	}
 
-	context := collectBookingDraftContextWithPassengerState(session, history, body, passengerState)
+	context := collectBookingDraftContextWithPassengerState(
+		session,
+		authorityHistory,
+		body,
+		passengerState,
+	)
 	if !context.HasBookableSelection {
 		return BookingCreateInput{}, false
 	}
@@ -3257,20 +3263,33 @@ func findLatestAvailabilityContextWithSource(history []Message) (*AvailabilitySe
 
 func latestVisibleAvailabilitySelectionContextWithSource(history []Message) (*AvailabilitySearchResult, int, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
-			!shouldMergeAvailabilityFactsFromMessage(message) {
+		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+			return nil, -1, false
+		}
+		message, sourceIndex, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
+		if !ok {
 			continue
 		}
 		visible := visibleAvailabilitySelectionContextFromHistoryMessage(message)
 		if visible != nil && len(visible.Results) > 0 {
-			return visible, i, true
+			return visible, sourceIndex, true
 		}
 	}
 	return nil, -1, false
 }
 
 func visibleAvailabilitySelectionContextFromHistoryMessage(message Message) *AvailabilitySearchResult {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented == nil {
+			return nil
+		}
+		return authority.Presented
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return nil
+	}
 	observedAt := message.ReceivedAt
 	if observedAt.IsZero() {
 		observedAt = time.Now()
@@ -3315,23 +3334,45 @@ func findLatestAvailabilityContextWithSourceBefore(history []Message, beforeInde
 		beforeIndex = len(history)
 	}
 	for i := beforeIndex - 1; i >= 0; i-- {
-		message := history[i]
-		if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
-			!shouldMergeAvailabilityFactsFromMessage(message) {
+		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+			return nil, -1, false
+		}
+		message, sourceIndex, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
+		if !ok {
 			continue
 		}
-		for _, toolContext := range messageToolContexts(message) {
-			payload := asMap(toolContext[toolNameAvailabilitySearch])
-			if len(payload) == 0 {
-				continue
-			}
-			result := parseAvailabilityContextPayload(payload)
-			if len(result.Results) > 0 {
-				return &result, i, true
-			}
+		result, factsOK := availabilityPromptClassifiedContextV1(message)
+		if factsOK && result != nil && len(result.Results) > 0 {
+			return result, sourceIndex, true
 		}
 	}
 	return nil, -1, false
+}
+
+func classifiedAvailabilityPromptMessageAtV1(
+	history []Message,
+	index int,
+) (Message, int, bool) {
+	if index < 0 || index >= len(history) {
+		return Message{}, -1, false
+	}
+	message := history[index]
+	if isDeliveredPromptProjectionMessageV1(message) {
+		resolved, sourceIndex, ok := resolveDeliveredPromptSourceMessageWithIndex(
+			history,
+			index,
+			message,
+		)
+		if !ok {
+			return Message{}, -1, false
+		}
+		message = resolved
+		index = sourceIndex
+	}
+	if _, ok := availabilityPromptClassifiedContextV1(message); !ok {
+		return Message{}, -1, false
+	}
+	return message, index, true
 }
 
 func parseAvailabilityContextPayload(payload map[string]interface{}) AvailabilitySearchResult {

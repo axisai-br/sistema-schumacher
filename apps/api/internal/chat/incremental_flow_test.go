@@ -3581,7 +3581,7 @@ func seedOutboundDraftSent(t *testing.T, store *fakeStore, sessionID string, dra
 func availabilitySelectionHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Now().UTC()
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Tenho duas opcoes. Qual opcao voce prefere?",
@@ -3609,7 +3609,7 @@ func availabilitySelectionHistory(t *testing.T) []Message {
 				},
 			},
 		},
-	}
+	})
 }
 
 func activePromptFlowAvailabilityResult() AvailabilitySearchResult {

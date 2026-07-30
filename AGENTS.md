@@ -104,6 +104,12 @@ tipo(escopo): ação objetiva
   - próxima ação recomendada.
 - Não faça commit nem push, salvo pedido explícito.
 
+### Gate operacional atual
+
+- H-2026-07-27A está **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA TEMPORAL E PROVENIÊNCIA**.
+- A única próxima ação é um novo `/review` dirigido ao hotfix; evidência local verde não declara review limpo nem autoriza commit, push, deploy ou smoke.
+- H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
 ### Validação padrão para mudanças em `apps/api/internal/chat`
 
 ```bash
