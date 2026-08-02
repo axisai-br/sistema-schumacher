@@ -11,8 +11,8 @@
 7. `h-2026-07-16a-travel-v2-shadow-operacional.md`
 8. `h-2026-07-16b-passenger-child-state.md` — umbrella não executável
 9. `h-2026-07-16b1-passenger-state-foundation.md`
-10. `h-2026-07-22a-fresh-session-passenger-gate.md` — EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW
-11. `h-2026-07-16b2-passenger-meaning-v1.md` — bloqueada pelo gate operacional de B1
+10. `h-2026-07-22a-fresh-session-passenger-gate.md` — H-2026-07-22A corrigido e deployado; H-2026-07-27A em correção após review por 3 P1 + 1 P2 de entrega temporal e proveniência
+11. `h-2026-07-16b2-passenger-meaning-v1.md` — bloqueada por H-2026-07-27A e pelo gate operacional de B1
 12. `h-2026-07-16b3-passenger-meaning-runtime.md`
 13. `3.6f-d-corpus-evaluator-v2.md`
 14. `3.6f-e-observabilidade-v2.md`
@@ -40,8 +40,12 @@ O Codex recebe somente:
 
 Não executar múltiplos slices ou hotfixes no mesmo `/goal` ou PR.
 
-H-2026-07-16B é somente umbrella. H-2026-07-22A interrompe a sequência como
-hotfix ativo, **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW**; B2 permanece
-bloqueada até review, deploy e smoke verdes do
-hotfix. B2 não pode ser incluído no diff do hotfix e B3 não pode ser incluído
-no diff de B2.
+H-2026-07-16B é somente umbrella. H-2026-07-22A corrigiu o incidente original
+e foi deployado, mas o smoke real ficou RED na transição
+availability → passageiros. H-2026-07-27A interrompe a sequência como hotfix
+ativo, **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA TEMPORAL E
+PROVENIÊNCIA**, com correção local verde e novo review dirigido pendente, e é
+registrado no mesmo plano de H-2026-07-22A. B2
+permanece bloqueada até review, deploy e smoke verdes de H-2026-07-27A. B2 não
+pode ser incluído no diff do hotfix e B3 não pode ser incluído no diff de B2.
+3.6F-D permanece bloqueada pelo fechamento integral de H-B.

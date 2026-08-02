@@ -900,6 +900,201 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		}
 	})
 
+	t.Run("structural prompt without canonical delivery never becomes bookable", func(t *testing.T) {
+		for _, test := range []struct {
+			name                string
+			status              string
+			hasDeliveryEvidence bool
+		}{
+			{name: "empty status with evidence", hasDeliveryEvidence: true},
+			{name: "received status with evidence", status: "RECEIVED", hasDeliveryEvidence: true},
+			{name: "processed status with evidence", status: "PROCESSED", hasDeliveryEvidence: true},
+			{name: "unknown status with evidence", status: "UNKNOWN_STATUS", hasDeliveryEvidence: true},
+			{name: "sent status without evidence", status: "SENT"},
+			{name: "automation sent without evidence", status: messageStatusAutomationSent},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				source := availabilityPromptAuthorityMessage(
+					"unconfirmed-structural-"+strings.ReplaceAll(test.name, " ", "-"),
+					test.status,
+					availability,
+					[]int{0},
+				)
+				if test.hasDeliveryEvidence {
+					source.NormalizedPayload["delivery_recorded_at"] = now.UTC().Format(time.RFC3339Nano)
+				} else {
+					delete(source.NormalizedPayload, "delivery_recorded_at")
+				}
+				state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+					[]Message{source, selectionInbound, selection},
+				)
+				if state.Status != AvailabilitySelectionStatusNone ||
+					state.AvailabilityPromptSourceMessageID != "" ||
+					state.SelectionEventMessageID != "" ||
+					state.Snapshot != (AvailabilitySelectionSnapshotV1{}) {
+					t.Fatalf("unconfirmed status %q reconstructed BOOKABLE: %+v", test.status, state)
+				}
+			})
+		}
+	})
+
+	t.Run("malformed structural event never falls back to legacy facts", func(t *testing.T) {
+		mutators := map[string]func(*Message){
+			"payload normalized divergence": func(source *Message) {
+				event := availabilityPromptAuthorityEventMap(
+					t,
+					source.NormalizedPayload[testAvailabilityPromptEventV1MessageKey],
+				)
+				asInterfaceSliceMaps(event["presented_options"])[0]["trip_id"] = "divergent-trip"
+				source.NormalizedPayload[testAvailabilityPromptEventV1MessageKey] = event
+			},
+			"wrong source message id": func(source *Message) {
+				for _, payload := range []map[string]interface{}{source.Payload, source.NormalizedPayload} {
+					event := availabilityPromptAuthorityEventMap(
+						t,
+						payload[testAvailabilityPromptEventV1MessageKey],
+					)
+					event["source_message_id"] = "forged-source"
+					payload[testAvailabilityPromptEventV1MessageKey] = event
+				}
+			},
+			"decode failure": func(source *Message) {
+				source.Payload[testAvailabilityPromptEventV1MessageKey] = "malformed"
+				source.NormalizedPayload[testAvailabilityPromptEventV1MessageKey] = "malformed"
+			},
+		}
+		for name, mutate := range mutators {
+			t.Run(name, func(t *testing.T) {
+				source := availabilityPromptAuthorityMessage(
+					"malformed-structural-"+strings.ReplaceAll(name, " ", "-"),
+					messageStatusAutomationSent,
+					availability,
+					[]int{0},
+				)
+				for _, payload := range []map[string]interface{}{source.Payload, source.NormalizedPayload} {
+					payload["intent"] = string(IntentAvailabilitySearch)
+					payload["template_name"] = string(TemplateAvailabilityList)
+				}
+				source.NormalizedPayload["delivery_recorded_at"] = now.UTC().Format(time.RFC3339Nano)
+				mutate(&source)
+
+				state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+					[]Message{source, selectionInbound, selection},
+				)
+				if state.Status != AvailabilitySelectionStatusNone ||
+					state.AvailabilityPromptSourceMessageID != "" ||
+					state.SelectionEventMessageID != "" ||
+					state.Snapshot != (AvailabilitySelectionSnapshotV1{}) {
+					t.Fatalf("malformed event fell back to legacy authority: %+v", state)
+				}
+			})
+		}
+	})
+
+	t.Run("bot delivery resolves structural draft with delivered identity", func(t *testing.T) {
+		source := availabilityPromptAuthorityMessage(
+			"legacy-structural-bot-draft",
+			messageStatusAutomationSent,
+			availability,
+			[]int{0},
+		)
+		source.ReceivedAt = now
+		source.CreatedAt = now
+		source.Payload["mode"] = messageStatusAutomationDraft
+		source.NormalizedPayload["mode"] = messageStatusAutomationDraft
+		delivered := deliveredAvailabilityPromptProjectionForStateTest(
+			t,
+			source,
+			"legacy-structural-bot-delivery",
+			"BOT_AUTO_REPLY",
+			"",
+			"Texto entregue diferente do draft, com a mesma apresentação estrutural.",
+			now.Add(time.Second),
+		)
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{source, delivered, selectionInbound, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusBookable ||
+			state.AvailabilityPromptSourceMessageID != delivered.ID ||
+			state.SelectionProjectionMessageID != selection.ID ||
+			state.SelectionEventMessageID != selectionInbound.ID {
+			t.Fatalf("legacy replay did not reconcile BOT delivery identity and draft facts: %+v", state)
+		}
+	})
+
+	t.Run("divergent bot delivery suppresses linked draft fallback", func(t *testing.T) {
+		source := availabilityPromptAuthorityMessage(
+			"legacy-divergent-bot-draft",
+			messageStatusAutomationSent,
+			availability,
+			[]int{0},
+		)
+		source.ReceivedAt = now
+		source.CreatedAt = now
+		source.Payload["mode"] = messageStatusAutomationDraft
+		source.NormalizedPayload["mode"] = messageStatusAutomationDraft
+		delivered := deliveredAvailabilityPromptProjectionForStateTest(
+			t,
+			source,
+			"legacy-divergent-bot-delivery",
+			"BOT_AUTO_REPLY",
+			"",
+			source.Body,
+			now.Add(time.Second),
+		)
+		divergentEvent := availabilityPromptAuthorityEventMap(
+			t,
+			delivered.Payload[testAvailabilityPromptEventV1MessageKey],
+		)
+		asInterfaceSliceMaps(divergentEvent["presented_options"])[0]["trip_id"] = "divergent-trip"
+		delivered.Payload[testAvailabilityPromptEventV1MessageKey] =
+			cloneMap(divergentEvent)
+		delivered.NormalizedPayload[testAvailabilityPromptEventV1MessageKey] =
+			cloneMap(divergentEvent)
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{source, delivered, selectionInbound, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusNone ||
+			state.AvailabilityPromptSourceMessageID != "" ||
+			state.SelectionEventMessageID != "" ||
+			state.Snapshot != (AvailabilitySelectionSnapshotV1{}) {
+			t.Fatalf("divergent delivery fell back to linked draft authority: %+v", state)
+		}
+	})
+
+	t.Run("approved draft review resolves structural draft with delivered identity", func(t *testing.T) {
+		source := availabilityPromptAuthorityMessage(
+			"legacy-structural-reviewed-draft",
+			messageStatusAutomationReviewed,
+			availability,
+			[]int{0},
+		)
+		source.ReceivedAt = now
+		source.CreatedAt = now
+		source.Payload["mode"] = messageStatusAutomationDraft
+		source.Payload["review_action"] = "APPROVED_AS_IS"
+		source.NormalizedPayload["mode"] = messageStatusAutomationDraft
+		source.NormalizedPayload["review_action"] = "APPROVED_AS_IS"
+		delivered := deliveredAvailabilityPromptProjectionForStateTest(
+			t,
+			source,
+			"legacy-structural-reviewed-delivery",
+			"DRAFT_REVIEW",
+			"APPROVED_AS_IS",
+			source.Body,
+			now.Add(time.Second),
+		)
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{source, delivered, selectionInbound, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusBookable ||
+			state.AvailabilityPromptSourceMessageID != delivered.ID ||
+			state.SelectionProjectionMessageID != selection.ID ||
+			state.SelectionEventMessageID != selectionInbound.ID {
+			t.Fatalf("legacy replay did not reconcile approved review identity and draft facts: %+v", state)
+		}
+	})
+
 	t.Run("missing explicit selection identity stays none", func(t *testing.T) {
 		identityMissing := legacyAvailabilitySelectionMessageForStateTest(
 			"legacy-selection-missing-id",
@@ -1004,6 +1199,52 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("generic outbound carrying availability facts became prompt authority: %+v", state)
+		}
+	})
+
+	t.Run("inbound structural event followed by projection stays none", func(t *testing.T) {
+		inboundPrompt := availabilityPromptAuthorityMessage(
+			"inbound-structural-prompt",
+			"PROCESSED",
+			availability,
+			[]int{0},
+		)
+		inboundPrompt.Direction = "INBOUND"
+		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
+			[]Message{inboundPrompt, selectionInbound, selection},
+		)
+		if state.Status != AvailabilitySelectionStatusNone ||
+			state.AvailabilityPromptSourceMessageID != "" ||
+			state.SelectionEventMessageID != "" ||
+			state.Snapshot != (AvailabilitySelectionSnapshotV1{}) {
+			t.Fatalf("inbound structural prompt became BOOKABLE through later projection: %+v", state)
+		}
+		if _, _, ok := resolveBookingCreateSelectionFromState(
+			"quero reservar opção 1",
+			state,
+		); ok {
+			t.Fatal("booking_create opened from inbound structural prompt")
+		}
+		session := sessionWithAvailabilitySelectionStateForTest(
+			Session{
+				CustomerName:  "Cliente Teste",
+				CustomerPhone: "5500000000000",
+			},
+			state,
+		)
+		if input, ok := parseBookingCreateInputWithPassengerState(
+			session,
+			[]Message{inboundPrompt, selectionInbound, selection},
+			"quero reservar opção 1",
+			&availability,
+			completePassengerStateForTest(1, 0),
+		); ok ||
+			input.SelectedOptionIndex != 0 ||
+			input.TripID != "" ||
+			input.BoardStopID != "" ||
+			input.AlightStopID != "" ||
+			len(input.Passengers) != 0 {
+			t.Fatalf("inbound structural prompt produced BookingCreateInput: ok=%t input=%+v", ok, input)
 		}
 	})
 
@@ -1687,12 +1928,14 @@ func legacyAvailabilityPromptMessageForStateTest(
 			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 		},
 	}
+	normalizedPayload := cloneMap(payload)
+	normalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
 	return Message{
 		ID:                messageID,
 		Direction:         "OUTBOUND",
 		ProcessingStatus:  messageStatusAutomationSent,
 		Payload:           payload,
-		NormalizedPayload: cloneMap(payload),
+		NormalizedPayload: normalizedPayload,
 		ReceivedAt:        at,
 		CreatedAt:         at,
 	}
@@ -1730,12 +1973,50 @@ func legacyAvailabilitySelectionMessageForStateTest(
 	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "legacy-selection-event-" + messageID
 	delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
 	delete(snapshot, availabilitySelectionMaterializesAuthorityPayloadKey)
+	normalizedPayload := cloneMap(payload)
+	normalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
 	return Message{
 		ID:                messageID,
 		Direction:         "OUTBOUND",
 		ProcessingStatus:  messageStatusAutomationSent,
 		Payload:           payload,
-		NormalizedPayload: cloneMap(payload),
+		NormalizedPayload: normalizedPayload,
+		ReceivedAt:        at,
+		CreatedAt:         at,
+	}
+}
+
+func deliveredAvailabilityPromptProjectionForStateTest(
+	t *testing.T,
+	source Message,
+	messageID string,
+	mode string,
+	reviewAction string,
+	body string,
+	at time.Time,
+) Message {
+	t.Helper()
+	event, ok := availabilityPromptEventForOutboundV1(source, messageID, true)
+	if !ok {
+		t.Fatalf("project availability prompt event from source %q", source.ID)
+	}
+	payload := map[string]interface{}{
+		"mode":                                  mode,
+		"draft_message_id":                      source.ID,
+		testAvailabilityPromptEventV1MessageKey: event,
+	}
+	if reviewAction != "" {
+		payload["review_action"] = reviewAction
+	}
+	normalizedPayload := cloneMap(payload)
+	normalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
+	return Message{
+		ID:                messageID,
+		Direction:         "OUTBOUND",
+		Body:              body,
+		Payload:           cloneMap(payload),
+		NormalizedPayload: normalizedPayload,
+		ProcessingStatus:  messageStatusAutomationSent,
 		ReceivedAt:        at,
 		CreatedAt:         at,
 	}

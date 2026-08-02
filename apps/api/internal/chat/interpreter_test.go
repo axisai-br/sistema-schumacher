@@ -723,7 +723,7 @@ func structuredReasonsContain(got StructuredInterpretation, reason string) bool 
 
 func availabilitySelectionStructuredHistory(t *testing.T) []Message {
 	t.Helper()
-	return []Message{{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		Direction:        "OUTBOUND",
 		Body:             "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC. Qual opcao voce prefere?",
 		ProcessingStatus: messageStatusAutomationSent,
@@ -760,5 +760,5 @@ func availabilitySelectionStructuredHistory(t *testing.T) []Message {
 				}),
 			},
 		},
-	}}
+	}})
 }

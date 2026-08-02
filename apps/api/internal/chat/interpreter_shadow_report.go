@@ -155,6 +155,7 @@ var structuredInterpreterShadowFallbackTemplateMetricKeys = map[string]struct{}{
 	string(TemplateAskReservationRouteSC):               {},
 	string(TemplatePublicSCTable):                       {},
 	string(TemplateAvailabilityList):                    {},
+	string(TemplateAvailabilityEarliest):                {},
 	string(TemplateNoAvailability):                      {},
 	string(TemplateUnsupportedCargo):                    {},
 	string(TemplateUnsupportedPackage):                  {},

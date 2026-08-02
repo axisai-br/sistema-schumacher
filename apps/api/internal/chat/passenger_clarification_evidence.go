@@ -93,12 +93,7 @@ func passengerClarificationPromptEventFromMessageV1(message Message) (PassengerC
 }
 
 func passengerPromptDeliveryConfirmedV1(message Message) bool {
-	switch strings.ToUpper(strings.TrimSpace(message.ProcessingStatus)) {
-	case "SENT", "DELIVERED", "READ", messageStatusAutomationSent:
-	default:
-		return false
-	}
-	return strings.TrimSpace(asString(message.NormalizedPayload["delivery_recorded_at"])) != ""
+	return confirmedOutboundDeliveryV1(message)
 }
 
 func passengerPendingPromptEventFromDraftV1(draft Message) (PassengerClarificationEventV1, bool) {

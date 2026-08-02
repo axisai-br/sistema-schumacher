@@ -270,11 +270,14 @@ func TestGetCurrentDraftReturnsObservabilityForGeneratedDraft(t *testing.T) {
 	if out.AgentStatus != agentStatusDraftGenerated {
 		t.Fatalf("expected agent status %s, got %s", agentStatusDraftGenerated, out.AgentStatus)
 	}
-	if out.Model != "gpt-test" {
-		t.Fatalf("expected model gpt-test, got %s", out.Model)
+	if out.Model != "template_realizer" {
+		t.Fatalf("expected model template_realizer, got %s", out.Model)
 	}
-	if out.ProviderResponseID != "resp-draft-view-1" {
-		t.Fatalf("expected provider response id resp-draft-view-1, got %s", out.ProviderResponseID)
+	if out.ProviderResponseID != "" {
+		t.Fatalf("expected no provider response id for deterministic template, got %s", out.ProviderResponseID)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic availability presentation without LLM, got calls=%d", runner.calls)
 	}
 	if out.AutoSendStatus != draftAutoSendStatusEligible {
 		t.Fatalf("expected auto_send_status %s, got %s", draftAutoSendStatusEligible, out.AutoSendStatus)
@@ -3704,11 +3707,14 @@ func TestListSessionsIncludesDraftReviewSummary(t *testing.T) {
 	if sessions[0].DraftToolCallCount != 1 {
 		t.Fatalf("expected draft tool call count 1, got %d", sessions[0].DraftToolCallCount)
 	}
-	if sessions[0].DraftModel != "gpt-test" {
-		t.Fatalf("expected draft model gpt-test, got %s", sessions[0].DraftModel)
+	if sessions[0].DraftModel != "template_realizer" {
+		t.Fatalf("expected draft model template_realizer, got %s", sessions[0].DraftModel)
 	}
-	if sessions[0].DraftProviderResponseID != "resp-session-summary-1" {
-		t.Fatalf("expected provider response id resp-session-summary-1, got %s", sessions[0].DraftProviderResponseID)
+	if sessions[0].DraftProviderResponseID != "" {
+		t.Fatalf("expected no provider response id for deterministic template, got %s", sessions[0].DraftProviderResponseID)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic availability presentation without LLM, got calls=%d", runner.calls)
 	}
 	if sessions[0].DraftAutoSendStatus != draftAutoSendStatusEligible {
 		t.Fatalf("expected draft auto send status %s, got %s", draftAutoSendStatusEligible, sessions[0].DraftAutoSendStatus)
@@ -6883,6 +6889,8 @@ func TestReprocessUsesPackageAvailabilityForBroadStateDateLookup(t *testing.T) {
 					SegmentID:              "seg-sc-1",
 					TripID:                 "trip-sc-1",
 					RouteID:                "route-sc-1",
+					BoardStopID:            "board-sc-1",
+					AlightStopID:           "alight-sc-1",
 					OriginDisplayName:      "Santa Ines/MA",
 					DestinationDisplayName: "Videira/SC",
 					OriginDepartTime:       "18:30",
@@ -6940,11 +6948,28 @@ func TestReprocessUsesPackageAvailabilityForBroadStateDateLookup(t *testing.T) {
 	if searcher.lastInput.Origin != "" || searcher.lastInput.Destination != "" {
 		t.Fatalf("expected package-level search without fixed route, got %+v", searcher.lastInput)
 	}
-	if !strings.Contains(runner.lastInput.UserPrompt, `"package_name":"`+packageToSantaCatarina+`"`) {
-		t.Fatalf("expected prompt to expose package-level availability context")
+	if runner.calls != 0 {
+		t.Fatalf("expected deterministic availability presentation without LLM, got calls=%d", runner.calls)
 	}
-	if strings.Contains(runner.lastInput.UserPrompt, "priorize listar ate 5 datas futuras") {
-		t.Fatalf("expected prompt not to include legacy date-listing prose")
+	if out.Draft == nil {
+		t.Fatalf("expected deterministic availability draft")
+	}
+	if got := strings.TrimSpace(asString(out.Draft.NormalizedPayload["model"])); got != "template_realizer" {
+		t.Fatalf("expected template model, got %q", got)
+	}
+	event, ok := availabilityPromptEventFromMessageV1(*out.Draft)
+	if !ok {
+		t.Fatalf("expected structural availability prompt event, got payload=%+v", out.Draft.NormalizedPayload)
+	}
+	if event.PresentedOptionCount != 1 || len(event.PresentedOptions) != 1 {
+		t.Fatalf("expected exactly one presented package option, got %+v", event)
+	}
+	if event.PresentedOptions[0].TripID != "trip-sc-1" || event.PresentedOptions[0].ResultIndex != 0 {
+		t.Fatalf("expected package result 0 to be presented structurally, got %+v", event.PresentedOptions[0])
+	}
+	raw := rawAvailabilityContextFromPromptMessage(*out.Draft)
+	if raw == nil || raw.Filter.PackageName != packageToSantaCatarina {
+		t.Fatalf("expected raw package-level availability context, got %+v", raw)
 	}
 }
 
@@ -8928,7 +8953,7 @@ func TestReprocessAsksDocumentsWhenCustomerChoosesPreviousOptionWithKnownPasseng
 				}),
 			},
 		},
-		NormalizedPayload: map[string]interface{}{"mode": "AUTOMATION_DRAFT"},
+		NormalizedPayload: map[string]interface{}{},
 		Agent:             map[string]interface{}{"status": agentStatusDraftGenerated},
 		Buffer:            map[string]interface{}{},
 		RecordedAt:        now.Add(-90 * time.Second),
@@ -10351,6 +10376,7 @@ func (s *fakeStore) CreateMessage(_ context.Context, input CreateMessageInput) (
 		SentAt:            input.SentAt,
 		CreatedAt:         now,
 	}
+	item = markAvailabilityPromptDeliveredForTest(item)
 
 	s.messages[item.ID] = item
 	s.messageOrder = append(s.messageOrder, item.ID)
@@ -10743,8 +10769,11 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 	replyMode := "ASSISTED_REPLY"
 	reviewAction := ""
 	replyKind := "TEXT"
-	if mediaKind := strings.ToUpper(strings.TrimSpace(asString(input.Metadata["media_kind"]))); mediaKind == "IMAGE" || mediaKind == "AUDIO" || mediaKind == "DOCUMENT" {
-		replyKind = mediaKind
+	if input.DraftMessageID == "" {
+		mediaKind := strings.ToUpper(strings.TrimSpace(asString(input.Metadata["media_kind"])))
+		if mediaKind == "IMAGE" || mediaKind == "AUDIO" || mediaKind == "DOCUMENT" {
+			replyKind = mediaKind
+		}
 	}
 	var reviewedDraft *Message
 	if input.DraftMessageID != "" {
@@ -10822,12 +10851,14 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 				message.Payload[passengerPromptEventV1MessageKey] = event
 				message.NormalizedPayload[passengerPromptEventV1MessageKey] = event
 			}
+			if event, eventOK := availabilityPromptEventForOutboundV1(*reviewedDraft, message.ID, true); eventOK {
+				message.Payload[availabilityPromptEventV1MessageKey] = event
+				message.NormalizedPayload[availabilityPromptEventV1MessageKey] = event
+			}
 		}
 	}
-	for key, value := range input.Metadata {
-		message.Payload[key] = value
-		message.NormalizedPayload[key] = value
-	}
+	mergeReplyMetadataV1(message.Payload, input.Metadata, reviewedDraft != nil)
+	mergeReplyMetadataV1(message.NormalizedPayload, input.Metadata, reviewedDraft != nil)
 	s.messages[message.ID] = message
 	s.messageOrder = append(s.messageOrder, message.ID)
 	s.byIdempotencyKey[message.IdempotencyKey] = message.ID
@@ -10865,9 +10896,10 @@ func (s *fakeStore) CreateReply(_ context.Context, input ReplyInput, debounceWin
 	if event, eventOK := message.Payload[passengerPromptEventV1MessageKey]; eventOK {
 		outbound.Payload[passengerPromptEventV1MessageKey] = event
 	}
-	for key, value := range input.Metadata {
-		outbound.Payload[key] = value
+	if event, eventOK := message.Payload[availabilityPromptEventV1MessageKey]; eventOK {
+		outbound.Payload[availabilityPromptEventV1MessageKey] = event
 	}
+	mergeReplyMetadataV1(outbound.Payload, input.Metadata, reviewedDraft != nil)
 	s.outbounds[outbound.ID] = outbound
 
 	return ReplyResult{
@@ -10932,10 +10964,12 @@ func (s *fakeStore) CreateAutomationReply(_ context.Context, input CreateAutomat
 		message.Payload[passengerPromptEventV1MessageKey] = event
 		message.NormalizedPayload[passengerPromptEventV1MessageKey] = event
 	}
-	for key, value := range input.Metadata {
-		message.Payload[key] = value
-		message.NormalizedPayload[key] = value
+	if event, eventOK := availabilityPromptEventForOutboundV1(draft, message.ID, true); eventOK {
+		message.Payload[availabilityPromptEventV1MessageKey] = event
+		message.NormalizedPayload[availabilityPromptEventV1MessageKey] = event
 	}
+	mergeReplyMetadataV1(message.Payload, input.Metadata, true)
+	mergeReplyMetadataV1(message.NormalizedPayload, input.Metadata, true)
 	s.messages[message.ID] = message
 	s.messageOrder = append(s.messageOrder, message.ID)
 	s.byIdempotencyKey[message.IdempotencyKey] = message.ID
@@ -10967,9 +11001,10 @@ func (s *fakeStore) CreateAutomationReply(_ context.Context, input CreateAutomat
 	if event, eventOK := message.Payload[passengerPromptEventV1MessageKey]; eventOK {
 		outbound.Payload[passengerPromptEventV1MessageKey] = event
 	}
-	for key, value := range input.Metadata {
-		outbound.Payload[key] = value
+	if event, eventOK := message.Payload[availabilityPromptEventV1MessageKey]; eventOK {
+		outbound.Payload[availabilityPromptEventV1MessageKey] = event
 	}
+	mergeReplyMetadataV1(outbound.Payload, input.Metadata, true)
 	s.outbounds[outbound.ID] = outbound
 
 	return ReplyResult{
@@ -11048,13 +11083,26 @@ func (s *fakeStore) MarkReplyDeliverySent(_ context.Context, input MarkReplyDeli
 		message.NormalizedPayload = map[string]interface{}{}
 	}
 	for key, value := range input.Payload {
+		switch key {
+		case "delivery_mode", "delivery_recorded_at", "provider_status":
+			continue
+		}
 		message.NormalizedPayload[key] = value
 	}
+	providerStatus := AdvanceDeliveryStatusV1(
+		AdvanceDeliveryStatusV1(message.ProcessingStatus, outbound.Status),
+		NormalizeDeliveryStatusV1(input.ProviderStatus),
+	)
+	deliveryMode := deliveryModeForPayload(message.Payload)
 	message.ProviderMessageID = input.ProviderMessageID
-	message.ProcessingStatus = input.ProviderStatus
+	message.ProcessingStatus = providerStatus
 	message.SentAt = timePointer(input.SentAt)
-	message.NormalizedPayload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
-	message.NormalizedPayload["provider_status"] = input.ProviderStatus
+	message.NormalizedPayload["delivery_mode"] = deliveryMode
+	message.NormalizedPayload["provider_status"] = providerStatus
+	if DeliveryStatusConfirmsOutboundV1(providerStatus) &&
+		strings.TrimSpace(asString(message.NormalizedPayload["delivery_recorded_at"])) == "" {
+		message.NormalizedPayload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
+	}
 	s.messages[message.ID] = message
 	if input.ProviderMessageID != "" {
 		s.byProviderID[input.ProviderMessageID] = message.ID
@@ -11064,11 +11112,24 @@ func (s *fakeStore) MarkReplyDeliverySent(_ context.Context, input MarkReplyDeli
 		outbound.Payload = map[string]interface{}{}
 	}
 	for key, value := range input.Payload {
+		switch key {
+		case "delivery_mode", "delivery_recorded_at", "provider_status":
+			continue
+		}
 		outbound.Payload[key] = value
 	}
+	outbound.Payload["delivery_mode"] = deliveryMode
+	outbound.Payload["provider_status"] = providerStatus
+	if DeliveryStatusConfirmsOutboundV1(providerStatus) &&
+		strings.TrimSpace(asString(outbound.Payload["delivery_recorded_at"])) == "" {
+		outbound.Payload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
+	}
 	outbound.ProviderMessageID = input.ProviderMessageID
-	outbound.Status = input.ProviderStatus
+	outbound.Status = providerStatus
 	outbound.SentAt = timePointer(input.SentAt)
+	if DeliveryStatusRecordsDeliveredAtV1(providerStatus) && outbound.DeliveredAt == nil {
+		outbound.DeliveredAt = timePointer(input.SentAt)
+	}
 	outbound.UpdatedAt = time.Now().UTC()
 	s.outbounds[outbound.ID] = outbound
 
@@ -11149,20 +11210,32 @@ func (s *fakeStore) MarkReplyDeliveryFailure(_ context.Context, input MarkReplyD
 	if message.NormalizedPayload == nil {
 		message.NormalizedPayload = map[string]interface{}{}
 	}
-	message.NormalizedPayload["delivery_error_text"] = input.ErrorText
-	message.ProcessingStatus = "SEND_FAILED"
+	effectiveDeliveryStatus := AdvanceDeliveryStatusV1(message.ProcessingStatus, outbound.Status)
+	deliveryAlreadyConfirmed := DeliveryStatusConfirmsOutboundV1(effectiveDeliveryStatus)
+	if deliveryAlreadyConfirmed {
+		message.NormalizedPayload["delivery_failure_ignored_after_confirmed"] = true
+		message.ProcessingStatus = effectiveDeliveryStatus
+	} else {
+		message.NormalizedPayload["delivery_error_text"] = input.ErrorText
+		message.ProcessingStatus = "SEND_FAILED"
+	}
 	s.messages[message.ID] = message
 
 	if outbound.Payload == nil {
 		outbound.Payload = map[string]interface{}{}
 	}
-	outbound.Payload["delivery_error_text"] = input.ErrorText
-	outbound.Status = "SEND_FAILED"
+	if deliveryAlreadyConfirmed {
+		outbound.Payload["delivery_failure_ignored_after_confirmed"] = true
+		outbound.Status = effectiveDeliveryStatus
+	} else {
+		outbound.Payload["delivery_error_text"] = input.ErrorText
+		outbound.Status = "SEND_FAILED"
+	}
 	outbound.UpdatedAt = time.Now().UTC()
 	s.outbounds[outbound.ID] = outbound
 
 	var draft *Message
-	if strings.EqualFold(asString(message.Payload["mode"]), "BOT_AUTO_REPLY") {
+	if !deliveryAlreadyConfirmed && strings.EqualFold(asString(message.Payload["mode"]), "BOT_AUTO_REPLY") {
 		if draftID := strings.TrimSpace(firstNonEmpty(asString(message.Payload["draft_message_id"]), asString(message.NormalizedPayload["draft_message_id"]))); draftID != "" {
 			item := s.messages[draftID]
 			if item.Payload == nil {
@@ -11268,6 +11341,7 @@ func (s *fakeStore) SaveAgentDraft(_ context.Context, input SaveAgentDraftInput)
 		ReceivedAt:        input.RecordedAt,
 		CreatedAt:         input.RecordedAt,
 	}
+	message = markAvailabilityPromptDeliveredForTest(message)
 	s.messages[message.ID] = message
 	s.messageOrder = append(s.messageOrder, message.ID)
 	s.byIdempotencyKey[message.IdempotencyKey] = message.ID

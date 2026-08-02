@@ -438,6 +438,17 @@ func structuredAvailabilitySelectionOptionCount(history []Message) (int, bool) {
 }
 
 func availabilityOptionCountFromMessage(message Message) int {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented != nil {
+			return authority.Event.PresentedOptionCount
+		}
+		return 0
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return 0
+	}
 	if count := availabilityOptionCountFromRenderedPrompt(messageTurnText(message)); count > 0 {
 		return count
 	}
@@ -445,6 +456,17 @@ func availabilityOptionCountFromMessage(message Message) int {
 }
 
 func availabilityOptionCountFromMessageToolContext(message Message) int {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented != nil {
+			return authority.Event.PresentedOptionCount
+		}
+		return 0
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	default:
+		return 0
+	}
 	for _, toolContext := range messageToolContexts(message) {
 		payload := asMap(toolContext[toolNameAvailabilitySearch])
 		if len(payload) == 0 {

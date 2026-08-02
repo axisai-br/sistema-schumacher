@@ -55,9 +55,20 @@ func TestPassengerStateApplyEventsSerializesSessionPostgres(t *testing.T) {
 			metadata jsonb not null default '{}'::jsonb,
 			created_at timestamptz not null default now(),
 			updated_at timestamptz not null default now()
+		);
+		create table `+quotedSchema+`.chat_messages (
+			id uuid primary key,
+			session_id uuid not null references `+quotedSchema+`.chat_sessions(id),
+			direction text not null,
+			payload jsonb not null default '{}'::jsonb,
+			normalized_payload jsonb not null default '{}'::jsonb,
+			processing_status text not null,
+			sent_at timestamptz,
+			received_at timestamptz not null,
+			created_at timestamptz not null default now()
 		)
 	`); err != nil {
-		t.Fatalf("create isolated chat_sessions: %v", err)
+		t.Fatalf("create isolated chat state tables: %v", err)
 	}
 
 	sessionID := uuid.NewString()
@@ -189,6 +200,17 @@ func TestPassengerPostBookingAuthorityIgnoresInactivePassengersPostgres(t *testi
 			metadata jsonb not null default '{}'::jsonb,
 			created_at timestamptz not null default now(),
 			updated_at timestamptz not null default now()
+		);
+		create table `+quotedSchema+`.chat_messages (
+			id uuid primary key,
+			session_id uuid not null references `+quotedSchema+`.chat_sessions(id),
+			direction text not null,
+			payload jsonb not null default '{}'::jsonb,
+			normalized_payload jsonb not null default '{}'::jsonb,
+			processing_status text not null,
+			sent_at timestamptz,
+			received_at timestamptz not null,
+			created_at timestamptz not null default now()
 		);
 		create table `+quotedSchema+`.bookings (
 			id uuid primary key

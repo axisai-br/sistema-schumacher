@@ -177,14 +177,14 @@ func TestIntentRouterPaymentTimingNegationWithAffirmativeOptionStillSelects(t *t
 
 func TestIntentRouterDoesNotSelectEssaMsmFromRenderedSingleAvailabilityOptionWithStaleFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-1 * time.Minute),
 		},
-	}
+	})
 	state := CanonicalConversationState{
 		Phase: ConversationPhaseTripSelection,
 		LastToolFacts: map[string]interface{}{
@@ -205,7 +205,7 @@ func TestIntentRouterDoesNotSelectEssaMsmFromRenderedSingleAvailabilityOptionWit
 
 func TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurrentFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
@@ -217,7 +217,7 @@ func TestIntentRouterSelectsEssaMsmFromRenderedSingleAvailabilityOptionWithCurre
 				},
 			},
 		},
-	}
+	})
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
 	got := routeDeterministicIntent(history, "essa msm", state, now)
@@ -285,13 +285,15 @@ func TestIntentRouterBotAutoReplyWithoutDraftSourceDoesNotAuthorizeAvailabilityS
 	if got.SelectedOptionIndex != 0 {
 		t.Fatalf("BOT_AUTO_REPLY without source draft must not set selected index: %+v", got)
 	}
-	assertContextualFallbackDecision(t, got, TemplateContextFallbackAvailabilityOption)
+	if got.Intent != IntentUnknown || got.Action != "" || got.TemplateName != "" {
+		t.Fatalf("isolated PENDING BOT_AUTO_REPLY must not open availability routing: %+v", got)
+	}
 }
 
 func TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	availability := availabilityDateSelectionEightOptionsTestResult()
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             buildAvailabilityListReply(availability),
@@ -303,7 +305,7 @@ func TestIntentRouterSelectsExplicitOptionFromCappedCurrentAvailabilityFacts(t *
 				},
 			},
 		},
-	}
+	})
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 
 	for _, text := range []string{"1", "5"} {
@@ -421,7 +423,7 @@ func TestIntentRouterRejectsOutOfRangeOptionWithActivePrompt(t *testing.T) {
 
 func TestIntentRouterDoesNotSelectEssaMsmFromRenderedMultipleAvailabilityOptions(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction: "OUTBOUND",
 			Body: "Encontrei estas opcoes:\n" +
@@ -431,7 +433,7 @@ func TestIntentRouterDoesNotSelectEssaMsmFromRenderedMultipleAvailabilityOptions
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-1 * time.Minute),
 		},
-	}
+	})
 	state := CanonicalConversationState{Phase: ConversationPhaseTripSelection}
 
 	got := routeDeterministicIntent(history, "essa msm", state, now)
@@ -2198,7 +2200,7 @@ func TestSCDestinationFollowUpAfterPublicSCTableItuporanga(t *testing.T) {
 func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "De qual cidade do Maranhao voce vai sair?",
@@ -2216,7 +2218,7 @@ func availabilityDateSelectionAfterRouteQuestionHistory(t *testing.T) []Message 
 				},
 			},
 		},
-	}
+	})
 }
 
 func availabilitySingleOptionHistoryWithInvisibleFollowUp(now time.Time, invisibleStatus string, invisibleResult AvailabilitySearchResult, withInvisibleFacts bool) []Message {
@@ -2235,7 +2237,7 @@ func availabilitySingleOptionHistoryWithInvisibleFollowUp(now time.Time, invisib
 			},
 		}
 	}
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			ID:               "sent-availability",
 			Direction:        "OUTBOUND",
@@ -2249,38 +2251,58 @@ func availabilitySingleOptionHistoryWithInvisibleFollowUp(now time.Time, invisib
 			},
 		},
 		invisible,
-	}
+	})
 }
 
 func availabilityDeliveryMirrorHistory(now time.Time, result AvailabilitySearchResult, withSourceDraft bool) []Message {
 	body := buildAvailabilityListReply(result)
-	mirror := Message{
-		ID:               "mirror-list",
-		Direction:        "OUTBOUND",
-		Body:             body,
-		ProcessingStatus: "PENDING",
-		ReceivedAt:       now.Add(-1 * time.Minute),
-		Payload: map[string]interface{}{
-			"mode":             "BOT_AUTO_REPLY",
-			"draft_message_id": "draft-list",
-		},
+	resultIndexes := make([]int, visibleAvailabilityOptionCount(result))
+	for index := range resultIndexes {
+		resultIndexes[index] = index
 	}
+	presentation := availabilityPromptPresentationV1(result, resultIndexes)
+	sourceEvent, ok := availabilityPromptEventForRunV1(
+		RunAgentResult{AvailabilityPresentation: presentation},
+		"draft-list",
+	)
+	if !ok {
+		panic("invalid availability delivery mirror source fixture")
+	}
+	mirrorEvent := sourceEvent
+	mirrorEvent.SourceMessageID = "mirror-list"
+	mirrorPayload := map[string]interface{}{
+		"mode":                              "BOT_AUTO_REPLY",
+		"draft_message_id":                  "draft-list",
+		availabilityPromptEventV1MessageKey: mirrorEvent,
+	}
+	mirror := markAvailabilityPromptDeliveredForTest(Message{
+		ID:                "mirror-list",
+		Direction:         "OUTBOUND",
+		Body:              body,
+		ProcessingStatus:  "SENT",
+		ReceivedAt:        now.Add(-1 * time.Minute),
+		Payload:           cloneMap(mirrorPayload),
+		NormalizedPayload: cloneMap(mirrorPayload),
+	})
 	if !withSourceDraft {
 		return []Message{mirror}
 	}
+	sourcePayload := map[string]interface{}{
+		"mode":                              messageStatusAutomationDraft,
+		availabilityPromptEventV1MessageKey: sourceEvent,
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+		},
+	}
 	return []Message{
 		{
-			ID:               "draft-list",
-			Direction:        "OUTBOUND",
-			Body:             body,
-			ProcessingStatus: messageStatusAutomationSent,
-			ReceivedAt:       now.Add(-2 * time.Minute),
-			Payload: map[string]interface{}{
-				"mode": messageStatusAutomationDraft,
-				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
-				},
-			},
+			ID:                "draft-list",
+			Direction:         "OUTBOUND",
+			Body:              body,
+			ProcessingStatus:  messageStatusAutomationSent,
+			ReceivedAt:        now.Add(-2 * time.Minute),
+			Payload:           cloneMap(sourcePayload),
+			NormalizedPayload: cloneMap(sourcePayload),
 		},
 		mirror,
 	}
@@ -2307,7 +2329,7 @@ func lapChildAssignmentHistoryWithPassengers(t *testing.T, passengerCount int) [
 func availabilityDateSelectionWithFiveOptionsHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "De qual cidade do Maranhao voce vai sair?",
@@ -2331,13 +2353,13 @@ func availabilityDateSelectionWithFiveOptionsHistory(t *testing.T) []Message {
 				},
 			},
 		},
-	}
+	})
 }
 
 func availabilityDateChoiceAfterRouteQuestionHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	return []Message{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "De qual cidade do Maranhao voce vai sair?",
@@ -2355,7 +2377,7 @@ func availabilityDateChoiceAfterRouteQuestionHistory(t *testing.T) []Message {
 				},
 			},
 		},
-	}
+	})
 }
 
 func availabilityDateSelectionTestResult() AvailabilitySearchResult {
@@ -2386,7 +2408,7 @@ func availabilityDateSelectionTestResult() AvailabilitySearchResult {
 }
 
 func availabilityOptionPromptHistory(now time.Time, result AvailabilitySearchResult) []Message {
-	return []Message{{
+	return markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		Direction:        "OUTBOUND",
 		Body:             buildAvailabilityListReply(result),
 		ProcessingStatus: messageStatusAutomationSent,
@@ -2396,7 +2418,7 @@ func availabilityOptionPromptHistory(now time.Time, result AvailabilitySearchRes
 				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
 			},
 		},
-	}}
+	}})
 }
 
 func availabilityOptionPromptFutureResult() AvailabilitySearchResult {

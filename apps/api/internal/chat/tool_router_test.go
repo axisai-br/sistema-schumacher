@@ -140,14 +140,14 @@ func TestNormalizeLocationDisplayNameSupportsParentheses(t *testing.T) {
 }
 
 func TestLastConfirmedRouteFromHistoryParsesBotConfirmation(t *testing.T) {
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			Body:             "Confirmando: saída de Santa Inês (MA) para Fraiburgo (SC). Qual data você pretende viajar?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       time.Now().UTC().Add(-2 * time.Minute),
 		},
-	}
+	})
 
 	origin, destination, ok := lastConfirmedRouteFromHistory(history)
 	if !ok {
@@ -295,7 +295,7 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 			},
 		},
 	}
-	history := []Message{
+	history := markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
 			ProcessingStatus: messageStatusAutomationSent,
@@ -306,7 +306,7 @@ func TestParseAvailabilitySearchInputKeepsRouteWhenUserSelectsListedDate(t *test
 				},
 			},
 		},
-	}
+	})
 
 	cases := []string{
 		"Eu quero a primeira data do dia 11/05/2026.",

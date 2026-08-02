@@ -89,7 +89,16 @@ func TestInferActivePromptContextKindsFromLatestReliablePrompt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			history := []Message{
 				{ID: "old", Direction: "OUTBOUND", Body: "De qual cidade voce vai sair?", ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-2 * time.Minute)},
-				{ID: "current", Direction: "OUTBOUND", Body: tc.body, ProcessingStatus: messageStatusAutomationSent, ReceivedAt: now.Add(-1 * time.Minute)},
+				{
+					ID:               "current",
+					Direction:        "OUTBOUND",
+					Body:             tc.body,
+					ProcessingStatus: messageStatusAutomationSent,
+					NormalizedPayload: map[string]interface{}{
+						"delivery_recorded_at": now.Add(-time.Minute).Format(time.RFC3339Nano),
+					},
+					ReceivedAt: now.Add(-1 * time.Minute),
+				},
 			}
 
 			got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseRouteSelection})
@@ -366,11 +375,16 @@ func TestInferActivePromptContextResolvesBotAutoReplyMirrorToDraftSource(t *test
 			ID:               "mirror-list",
 			Direction:        "OUTBOUND",
 			Body:             body,
-			ProcessingStatus: "PENDING",
+			ProcessingStatus: "SENT",
 			ReceivedAt:       now.Add(-1 * time.Minute),
 			Payload: map[string]interface{}{
 				"mode":             "BOT_AUTO_REPLY",
 				"draft_message_id": "draft-list",
+			},
+			NormalizedPayload: map[string]interface{}{
+				"mode":                 "BOT_AUTO_REPLY",
+				"draft_message_id":     "draft-list",
+				"delivery_recorded_at": now.Add(-time.Minute).Format(time.RFC3339Nano),
 			},
 		},
 	}
@@ -381,8 +395,8 @@ func TestInferActivePromptContextResolvesBotAutoReplyMirrorToDraftSource(t *test
 	if got.Kind != ActivePromptAvailabilityOptionChoice {
 		t.Fatalf("expected availability option prompt, got %+v", got)
 	}
-	if got.SourceMessageID != "draft-list" {
-		t.Fatalf("expected draft source message, got %+v", got)
+	if got.SourceMessageID != "mirror-list" {
+		t.Fatalf("expected delivered source message, got %+v", got)
 	}
 	if got.AvailabilityOptionCount != 1 || !got.HasAvailabilityList {
 		t.Fatalf("expected source draft availability count, got %+v", got)
@@ -392,7 +406,7 @@ func TestInferActivePromptContextResolvesBotAutoReplyMirrorToDraftSource(t *test
 	}
 }
 
-func TestInferActivePromptContextBotAutoReplyWithoutDraftSourceDoesNotExposeCurrentFacts(t *testing.T) {
+func TestInferActivePromptContextPendingBotAutoReplyWithoutDraftSourceDoesNotOpenPrompt(t *testing.T) {
 	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 	result := availabilityDateSelectionTestResult()
 	body := buildAvailabilityListReply(result)
@@ -416,17 +430,11 @@ func TestInferActivePromptContextBotAutoReplyWithoutDraftSourceDoesNotExposeCurr
 	got := InferActivePromptContext(history, CanonicalConversationState{Phase: ConversationPhaseTripSelection})
 	promptContext := currentAvailabilitySelectionPromptContext(history)
 
-	if got.Kind != ActivePromptAvailabilityOptionChoice {
-		t.Fatalf("expected rendered availability prompt to be recognized, got %+v", got)
+	if got.Kind != ActivePromptUnknown || got.SourceMessageID != "" {
+		t.Fatalf("isolated PENDING BOT_AUTO_REPLY must not open an active prompt, got %+v", got)
 	}
-	if got.SourceMessageID != "mirror-list" {
-		t.Fatalf("expected unresolved mirror as prompt body source, got %+v", got)
-	}
-	if promptContext.OptionCount != 1 {
-		t.Fatalf("expected rendered option count from mirror body, got %+v", promptContext)
-	}
-	if promptContext.HasCurrentFacts {
-		t.Fatalf("BOT_AUTO_REPLY without draft source must not expose current facts, got %+v", promptContext)
+	if promptContext.OptionCount != 0 || promptContext.HasCurrentFacts {
+		t.Fatalf("isolated PENDING BOT_AUTO_REPLY must not expose availability context, got %+v", promptContext)
 	}
 }
 
@@ -525,6 +533,9 @@ func TestInferActivePromptContextReadsAvailabilityOptionCount(t *testing.T) {
 					},
 				},
 			},
+			NormalizedPayload: map[string]interface{}{
+				"delivery_recorded_at": now.Format(time.RFC3339Nano),
+			},
 		},
 	}
 
@@ -550,6 +561,9 @@ func TestInferActivePromptContextReadsAvailabilityOptionCountFromRenderedPrompt(
 			Body:             "Encontrei estas opcoes:\n1. Videira/SC para Santa Ines/MA, 2026-07-13, saida 13:00, R$ 950\n\nQual opcao voce prefere?",
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now,
+			NormalizedPayload: map[string]interface{}{
+				"delivery_recorded_at": now.Format(time.RFC3339Nano),
+			},
 		},
 	}
 	state := CanonicalConversationState{

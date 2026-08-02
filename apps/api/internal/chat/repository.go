@@ -1279,6 +1279,89 @@ func (r *Repository) FindReplyByIdempotency(ctx context.Context, sessionID strin
 	}, nil
 }
 
+func mergeReplyMetadataV1(
+	payload map[string]interface{},
+	metadata map[string]interface{},
+	preserveApprovedContent bool,
+) {
+	for key, value := range metadata {
+		if replyMetadataKeyReservedV1(key, preserveApprovedContent) {
+			continue
+		}
+		payload[key] = value
+	}
+}
+
+func replyMetadataKeyReservedV1(key string, preserveApprovedContent bool) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "mode",
+		"shadow_mode",
+		"owner_user_id",
+		"sender_name",
+		"session_channel",
+		"contact_key",
+		"message_id",
+		"draft_message_id",
+		"draft_auto_sent",
+		"review_mode",
+		"review_action",
+		"draft_reviewed",
+		"auto_send_status",
+		"auto_send_reasons",
+		"intent",
+		"template_name",
+		"template_data",
+		"tool_context",
+		"request_payload",
+		"response_payload",
+		"selected_option_index",
+		selectedAvailabilityResultPayloadKey,
+		availabilitySelectionMaterializesAuthorityPayloadKey,
+		availabilitySelectionEventsV1MessageKey,
+		availabilityPromptEventV1MessageKey,
+		passengerPendingPromptEventV1MessageKey,
+		passengerPromptEventV1MessageKey,
+		passengerClarificationEventsV1MessageKey,
+		"delivery_mode",
+		"delivery_recorded_at",
+		"provider_status":
+		return true
+	default:
+		if !preserveApprovedContent {
+			return false
+		}
+	}
+
+	switch normalized {
+	case "body",
+		"text",
+		"text_message",
+		"textmessage",
+		"message",
+		"caption",
+		"kind",
+		"media_kind",
+		"media_type",
+		"mediatype",
+		"media_base64",
+		"media",
+		"media_mime_type",
+		"media_mimetype",
+		"mime_type",
+		"mimetype",
+		"media_file_name",
+		"file_name",
+		"filename",
+		"media_caption",
+		"audio_mimetype",
+		"document_file_name":
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounceWindow time.Duration) (ReplyResult, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1429,13 +1512,14 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 		replyPayload["review_action"] = reviewAction
 		replyPayload["draft_reviewed"] = true
 	}
-	for key, value := range input.Metadata {
-		replyPayload[key] = value
-	}
+	mergeReplyMetadataV1(replyPayload, input.Metadata, reviewedDraft != nil)
 	replyMessageID := uuid.NewString()
 	if reviewedDraft != nil && reviewAction == "APPROVED_AS_IS" {
 		if event, ok := passengerPromptEventForOutboundV1(*reviewedDraft, replyMessageID, true); ok {
 			replyPayload[passengerPromptEventV1MessageKey] = event
+		}
+		if event, ok := availabilityPromptEventForOutboundV1(*reviewedDraft, replyMessageID, true); ok {
+			replyPayload[availabilityPromptEventV1MessageKey] = event
 		}
 	}
 	replyKind := "TEXT"
@@ -1564,9 +1648,10 @@ func (r *Repository) CreateReply(ctx context.Context, input ReplyInput, debounce
 	if event, ok := replyPayload[passengerPromptEventV1MessageKey]; ok {
 		outboundPayload[passengerPromptEventV1MessageKey] = event
 	}
-	for key, value := range input.Metadata {
-		outboundPayload[key] = value
+	if event, ok := replyPayload[availabilityPromptEventV1MessageKey]; ok {
+		outboundPayload[availabilityPromptEventV1MessageKey] = event
 	}
+	mergeReplyMetadataV1(outboundPayload, input.Metadata, reviewedDraft != nil)
 
 	outboundPayloadBytes, err := encodeMap(outboundPayload)
 	if err != nil {
@@ -1718,12 +1803,13 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 	if reasons := firstNonEmptyStringSlice(asStringSlice(draft.NormalizedPayload["auto_send_reasons"]), asStringSlice(draft.Payload["auto_send_reasons"])); len(reasons) > 0 {
 		replyPayload["auto_send_reasons"] = reasons
 	}
-	for key, value := range input.Metadata {
-		replyPayload[key] = value
-	}
+	mergeReplyMetadataV1(replyPayload, input.Metadata, true)
 	replyMessageID := uuid.NewString()
 	if event, ok := passengerPromptEventForOutboundV1(draft, replyMessageID, true); ok {
 		replyPayload[passengerPromptEventV1MessageKey] = event
+	}
+	if event, ok := availabilityPromptEventForOutboundV1(draft, replyMessageID, true); ok {
+		replyPayload[availabilityPromptEventV1MessageKey] = event
 	}
 
 	messagePayload, err := encodeMap(replyPayload)
@@ -1839,9 +1925,10 @@ func (r *Repository) CreateAutomationReply(ctx context.Context, input CreateAuto
 	if event, ok := replyPayload[passengerPromptEventV1MessageKey]; ok {
 		outboundPayload[passengerPromptEventV1MessageKey] = event
 	}
-	for key, value := range input.Metadata {
-		outboundPayload[key] = value
+	if event, ok := replyPayload[availabilityPromptEventV1MessageKey]; ok {
+		outboundPayload[availabilityPromptEventV1MessageKey] = event
 	}
+	mergeReplyMetadataV1(outboundPayload, input.Metadata, true)
 
 	outboundPayloadBytes, err := encodeMap(outboundPayload)
 	if err != nil {
@@ -2045,10 +2132,23 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 		return ReplyResult{}, err
 	}
 
-	messageBefore, err := r.scanMessageByID(ctx, tx, input.MessageID)
+	messageBefore, err := r.scanMessageByIDForUpdate(ctx, tx, input.MessageID)
 	if err != nil {
 		return ReplyResult{}, err
 	}
+	var outboundStatus string
+	if err := tx.QueryRow(ctx, `
+		select status
+		from outbound_messages
+		where id = $1::uuid
+		for update
+	`, input.OutboundID).Scan(&outboundStatus); err != nil {
+		return ReplyResult{}, err
+	}
+	providerStatus := AdvanceDeliveryStatusV1(
+		AdvanceDeliveryStatusV1(messageBefore.ProcessingStatus, outboundStatus),
+		NormalizeDeliveryStatusV1(input.ProviderStatus),
+	)
 
 	deliveryMode := deliveryModeForPayload(messageBefore.Payload)
 	payload := map[string]interface{}{}
@@ -2057,9 +2157,15 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 	}
 	// Reserved delivery evidence is written only by this canonical sender
 	// transition and cannot be replaced by provider payload fields.
+	delete(payload, "delivery_mode")
+	delete(payload, "delivery_recorded_at")
+	delete(payload, "provider_status")
 	payload["delivery_mode"] = deliveryMode
-	payload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
-	payload["provider_status"] = input.ProviderStatus
+	payload["provider_status"] = providerStatus
+	if DeliveryStatusConfirmsOutboundV1(providerStatus) &&
+		strings.TrimSpace(asString(messageBefore.NormalizedPayload["delivery_recorded_at"])) == "" {
+		payload["delivery_recorded_at"] = input.SentAt.UTC().Format(time.RFC3339Nano)
+	}
 	payloadBytes, err := encodeMap(payload)
 	if err != nil {
 		return ReplyResult{}, err
@@ -2089,7 +2195,7 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 			received_at,
 			sent_at,
 			created_at
-	`, input.MessageID, input.ProviderMessageID, input.ProviderStatus, payloadBytes, input.SentAt.UTC())
+	`, input.MessageID, input.ProviderMessageID, providerStatus, payloadBytes, input.SentAt.UTC())
 
 	message, err := scanMessage(messageRow)
 	if err != nil {
@@ -2103,6 +2209,7 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 				payload = coalesce(payload, '{}'::jsonb) || $4::jsonb,
 				error_text = null,
 				sent_at = coalesce(sent_at, $5),
+				delivered_at = case when $6 then coalesce(delivered_at, $5) else delivered_at end,
 				updated_at = now()
 		where id = $1::uuid
 		returning
@@ -2119,7 +2226,14 @@ func (r *Repository) MarkReplyDeliverySent(ctx context.Context, input MarkReplyD
 			delivered_at,
 			created_at,
 			updated_at
-	`, input.OutboundID, input.ProviderMessageID, input.ProviderStatus, payloadBytes, input.SentAt.UTC())
+	`,
+		input.OutboundID,
+		input.ProviderMessageID,
+		providerStatus,
+		payloadBytes,
+		input.SentAt.UTC(),
+		DeliveryStatusRecordsDeliveredAtV1(providerStatus),
+	)
 
 	outbound, err := scanReplyOutbound(outboundRow)
 	if err != nil {
@@ -2250,17 +2364,41 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 		return ReplyResult{}, err
 	}
 
-	messageBefore, err := r.scanMessageByID(ctx, tx, input.MessageID)
+	messageBefore, err := r.scanMessageByIDForUpdate(ctx, tx, input.MessageID)
 	if err != nil {
 		return ReplyResult{}, err
 	}
-
-	payloadBytes, err := encodeMap(map[string]interface{}{
+	var outboundStatus string
+	if err := tx.QueryRow(ctx, `
+		select status
+		from outbound_messages
+		where id = $1::uuid
+		for update
+	`, input.OutboundID).Scan(&outboundStatus); err != nil {
+		return ReplyResult{}, err
+	}
+	effectiveDeliveryStatus := AdvanceDeliveryStatusV1(
+		messageBefore.ProcessingStatus,
+		outboundStatus,
+	)
+	deliveryAlreadyConfirmed := DeliveryStatusConfirmsOutboundV1(effectiveDeliveryStatus)
+	failureStatus := "SEND_FAILED"
+	failurePayload := map[string]interface{}{
 		"delivery_mode":       deliveryModeForPayload(messageBefore.Payload),
 		"delivery_failed":     true,
 		"delivery_failed_at":  time.Now().UTC().Format(time.RFC3339Nano),
 		"delivery_error_text": strings.TrimSpace(input.ErrorText),
-	})
+	}
+	if deliveryAlreadyConfirmed {
+		failureStatus = effectiveDeliveryStatus
+		failurePayload = map[string]interface{}{
+			"delivery_mode": deliveryModeForPayload(messageBefore.Payload),
+			"delivery_failure_ignored_after_confirmed": true,
+			"delivery_error_observed_at":               time.Now().UTC().Format(time.RFC3339Nano),
+		}
+	}
+
+	payloadBytes, err := encodeMap(failurePayload)
 	if err != nil {
 		return ReplyResult{}, err
 	}
@@ -2268,7 +2406,7 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 	messageRow := tx.QueryRow(ctx, `
 		update chat_messages
 		set normalized_payload = coalesce(normalized_payload, '{}'::jsonb) || $2::jsonb,
-				processing_status = 'SEND_FAILED'
+				processing_status = $3
 		where id = $1::uuid
 		returning
 			id::text,
@@ -2286,7 +2424,7 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 			received_at,
 			sent_at,
 			created_at
-	`, input.MessageID, payloadBytes)
+	`, input.MessageID, payloadBytes, failureStatus)
 
 	message, err := scanMessage(messageRow)
 	if err != nil {
@@ -2295,8 +2433,8 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 
 	outboundRow := tx.QueryRow(ctx, `
 		update outbound_messages
-		set status = 'SEND_FAILED',
-				error_text = nullif($2, ''),
+		set status = $4,
+				error_text = case when $5 then error_text else nullif($2, '') end,
 				payload = coalesce(payload, '{}'::jsonb) || $3::jsonb,
 				updated_at = now()
 		where id = $1::uuid
@@ -2314,7 +2452,7 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 			delivered_at,
 			created_at,
 			updated_at
-	`, input.OutboundID, input.ErrorText, payloadBytes)
+	`, input.OutboundID, input.ErrorText, payloadBytes, failureStatus, deliveryAlreadyConfirmed)
 
 	outbound, err := scanReplyOutbound(outboundRow)
 	if err != nil {
@@ -2322,7 +2460,7 @@ func (r *Repository) MarkReplyDeliveryFailure(ctx context.Context, input MarkRep
 	}
 
 	var updatedDraft *Message
-	if strings.EqualFold(asString(message.Payload["mode"]), "BOT_AUTO_REPLY") {
+	if !deliveryAlreadyConfirmed && strings.EqualFold(asString(message.Payload["mode"]), "BOT_AUTO_REPLY") {
 		draftID := strings.TrimSpace(firstNonEmpty(asString(message.Payload["draft_message_id"]), asString(message.NormalizedPayload["draft_message_id"])))
 		if draftID != "" {
 			draft, draftErr := r.scanMessageByID(ctx, tx, draftID)
@@ -3351,6 +3489,33 @@ func (r *Repository) scanMessageByID(ctx context.Context, querier interface {
 			created_at
 		from chat_messages
 		where id = $1::uuid
+	`, id)
+	return scanMessage(row)
+}
+
+func (r *Repository) scanMessageByIDForUpdate(ctx context.Context, querier interface {
+	QueryRow(context.Context, string, ...interface{}) pgx.Row
+}, id string) (Message, error) {
+	row := querier.QueryRow(ctx, `
+		select
+			id::text,
+			session_id::text,
+			direction,
+			kind,
+			coalesce(provider_message_id, ''),
+			coalesce(idempotency_key, ''),
+			coalesce(sender_name, ''),
+			coalesce(sender_phone, ''),
+			coalesce(body, ''),
+			payload,
+			normalized_payload,
+			processing_status,
+			received_at,
+			sent_at,
+			created_at
+		from chat_messages
+		where id = $1::uuid
+		for update
 	`, id)
 	return scanMessage(row)
 }

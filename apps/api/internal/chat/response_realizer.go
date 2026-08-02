@@ -22,6 +22,7 @@ const (
 	TemplateAskReservationRouteSC    ResponseTemplateName = "ASK_RESERVATION_ROUTE_SC"
 	TemplatePublicSCTable            ResponseTemplateName = "PUBLIC_SC_TABLE"
 	TemplateAvailabilityList         ResponseTemplateName = "AVAILABILITY_LIST"
+	TemplateAvailabilityEarliest     ResponseTemplateName = "AVAILABILITY_EARLIEST"
 	TemplateNoAvailability           ResponseTemplateName = "NO_AVAILABILITY"
 	TemplateUnsupportedCargo         ResponseTemplateName = "UNSUPPORTED_CARGO"
 	TemplateUnsupportedPackage       ResponseTemplateName = "UNSUPPORTED_PACKAGE"
@@ -188,7 +189,19 @@ func buildTemplateDraftRunFromDecision(decision IntentDecision, reply string) Ru
 
 func buildAvailabilityTemplateDraftRun(decision IntentDecision, availability AvailabilitySearchResult) RunAgentResult {
 	templateName := TemplateAvailabilityList
-	reply := buildAvailabilityListReply(availability)
+	resultIndexes := availabilityPresentedResultIndexes(availability, time.Now())
+	if availabilityDecisionPresentsEarliest(decision) && len(resultIndexes) > 1 {
+		resultIndexes = resultIndexes[:1]
+	}
+	reply := ""
+	if len(resultIndexes) > 0 {
+		if availabilityDecisionPresentsEarliest(decision) {
+			templateName = TemplateAvailabilityEarliest
+			reply = buildEarliestAvailabilityReply(availability.Results[resultIndexes[0]])
+		} else {
+			reply = buildAvailabilityListReplyForResultIndexes(availability, resultIndexes)
+		}
+	}
 	if strings.TrimSpace(reply) == "" {
 		templateName = TemplateNoAvailability
 		reply = buildNoAvailabilityReply(availability)
@@ -197,7 +210,102 @@ func buildAvailabilityTemplateDraftRun(decision IntentDecision, availability Ava
 	decision.Action = "tool_template"
 	run := buildTemplateDraftRunFromDecision(decision, reply)
 	run.ResponsePayload["result_count"] = len(availability.Results)
+	if templateName != TemplateNoAvailability {
+		run.ResponsePayload["presented_option_count"] = len(resultIndexes)
+		run.AvailabilityPresentation = availabilityPromptPresentationV1(availability, resultIndexes)
+	}
 	return run
+}
+
+func availabilityDecisionPresentsEarliest(decision IntentDecision) bool {
+	if decision.AvailabilityInput == nil {
+		return false
+	}
+	if strings.TrimSpace(decision.Source) != "deterministic" {
+		return false
+	}
+	input := decision.AvailabilityInput
+	if strings.TrimSpace(input.Origin) == "" || strings.TrimSpace(input.Destination) == "" {
+		return false
+	}
+	return input.TripDate == nil && input.DateFrom == nil && input.DateTo == nil
+}
+
+func availabilityPresentedResultIndexes(result AvailabilitySearchResult, observedAt time.Time) []int {
+	if len(result.Results) == 0 {
+		return nil
+	}
+	today := time.Date(observedAt.Year(), observedAt.Month(), observedAt.Day(), 0, 0, 0, 0, observedAt.Location())
+	future := make([]int, 0, len(result.Results))
+	fallback := make([]int, 0, len(result.Results))
+	for index, item := range result.Results {
+		if !hasCompleteAvailabilitySearchItemFacts(item) ||
+			strings.TrimSpace(item.TripDate) == "" {
+			continue
+		}
+		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(item.TripDate))
+		if err != nil {
+			continue
+		}
+		fallback = append(fallback, index)
+		if !parsed.Before(today) {
+			future = append(future, index)
+		}
+	}
+	indexes := future
+	if len(indexes) == 0 {
+		indexes = fallback
+	}
+	if len(indexes) > 5 {
+		indexes = indexes[:5]
+	}
+	return indexes
+}
+
+func buildAvailabilityListReplyForResultIndexes(
+	result AvailabilitySearchResult,
+	resultIndexes []int,
+) string {
+	if len(resultIndexes) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("Encontrei estas opcoes:\n")
+	for displayOffset, resultIndex := range resultIndexes {
+		if resultIndex < 0 || resultIndex >= len(result.Results) {
+			return ""
+		}
+		builder.WriteString(formatAvailabilityOptionLine(displayOffset+1, result.Results[resultIndex]))
+		if displayOffset < len(resultIndexes)-1 {
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("\n\nQual opcao voce prefere?")
+	return builder.String()
+}
+
+func buildEarliestAvailabilityReply(item AvailabilitySearchItem) string {
+	date := strings.TrimSpace(item.TripDate)
+	if parsed, err := time.Parse("2006-01-02", date); err == nil {
+		date = parsed.Format("02/01/2006")
+	}
+	details := make([]string, 0, 4)
+	if date != "" {
+		details = append(details, "A data mais próxima é "+date)
+	}
+	if departureTime := strings.TrimSpace(item.OriginDepartTime); departureTime != "" {
+		details = append(details, "com saída às "+departureTime)
+	}
+	if route := formatRouteText(item.OriginDisplayName, item.DestinationDisplayName); route != "" {
+		details = append(details, "de "+route)
+	}
+	if price := formatTemplatePrice(item.Price); price != "" {
+		details = append(details, "por "+price)
+	}
+	if len(details) == 0 {
+		return ""
+	}
+	return strings.Join(details, ", ") + ". Deseja seguir com essa opção?"
 }
 
 func buildAvailabilityListReply(result AvailabilitySearchResult) string {
@@ -320,7 +428,10 @@ func canRealizeWithoutLLM(decision IntentDecision, state CanonicalConversationSt
 	if decision.TemplateName == "" {
 		return false
 	}
-	if decision.TemplateName == TemplateAvailabilityList || decision.TemplateName == TemplateNoAvailability || decision.TemplateName == TemplateBookingCreated {
+	if decision.TemplateName == TemplateAvailabilityList ||
+		decision.TemplateName == TemplateAvailabilityEarliest ||
+		decision.TemplateName == TemplateNoAvailability ||
+		decision.TemplateName == TemplateBookingCreated {
 		return false
 	}
 	if decision.Intent == IntentSelectAvailabilityOption {
@@ -369,7 +480,11 @@ func canRealizeAvailabilityToolDecisionWithoutLLM(decision IntentDecision, conte
 		return false
 	}
 	switch strings.TrimSpace(decision.Source) {
-	case "deterministic_availability_date_selection", "deterministic_ma_destination_followup", "deterministic_origin_followup", "deterministic_verify_all_options":
+	case "deterministic",
+		"deterministic_availability_date_selection",
+		"deterministic_ma_destination_followup",
+		"deterministic_origin_followup",
+		"deterministic_verify_all_options":
 		return true
 	default:
 		return false

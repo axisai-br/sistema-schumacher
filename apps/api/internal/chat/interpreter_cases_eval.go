@@ -233,6 +233,9 @@ func interpreterCaseOutboundPrompt(body string, receivedAt time.Time, availabili
 		Body:             body,
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       receivedAt,
+		NormalizedPayload: map[string]interface{}{
+			"delivery_recorded_at": receivedAt.UTC().Format(time.RFC3339Nano),
+		},
 	}
 	if len(availabilityPayload) > 0 {
 		message.Payload = map[string]interface{}{

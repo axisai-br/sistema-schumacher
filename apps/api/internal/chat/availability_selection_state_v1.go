@@ -127,16 +127,62 @@ func availabilitySelectionStateV1ValueFromSession(session Session) (interface{},
 	return value, ok
 }
 
-func availabilitySelectionStateV1ForRead(session Session, _ []Message) AvailabilitySelectionStateV1 {
-	if value, present := availabilitySelectionStateV1ValueFromSession(session); present {
-		if state, ok := decodeAvailabilitySelectionStateV1(value); ok {
-			return state
-		}
-		return invalidAvailabilitySelectionStateV1("INVALID_PERSISTED_STATE")
-	}
+func availabilitySelectionStateV1ForRead(session Session, history []Message) AvailabilitySelectionStateV1 {
 	state := newAvailabilitySelectionStateV1()
 	state.BootstrapCompleted = true
+	if value, present := availabilitySelectionStateV1ValueFromSession(session); present {
+		persisted, ok := decodeAvailabilitySelectionStateV1(value)
+		if !ok {
+			return invalidAvailabilitySelectionStateV1("INVALID_PERSISTED_STATE")
+		}
+		state = persisted
+	}
+	barrierIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(history, len(history))
+	if barrierIndex < 0 {
+		return state
+	}
+	barrierOrder := availabilitySelectionEventOrderFromMessageV1(history[barrierIndex], 0)
+	if !state.LastAppliedEventOrder.known() ||
+		compareAvailabilitySelectionEventOrderV1(state.LastAppliedEventOrder, barrierOrder) <= 0 ||
+		state.Status == AvailabilitySelectionStatusBookable &&
+			!availabilitySelectionBookableAuthorityAfterBarrierV1(state, history, barrierIndex) {
+		state = newAvailabilitySelectionStateV1()
+		state.BootstrapCompleted = true
+	}
 	return state
+}
+
+func availabilitySelectionBookableAuthorityAfterBarrierV1(
+	state AvailabilitySelectionStateV1,
+	history []Message,
+	barrierIndex int,
+) bool {
+	sourceMessageID := strings.TrimSpace(state.AvailabilityPromptSourceMessageID)
+	selectionMessageID := strings.TrimSpace(state.SelectionEventMessageID)
+	if sourceMessageID == "" || selectionMessageID == "" {
+		return false
+	}
+	sourceIndex := -1
+	selectionIndex := -1
+	for index := barrierIndex + 1; index < len(history); index++ {
+		message := history[index]
+		messageID := strings.TrimSpace(message.ID)
+		if messageID == sourceMessageID {
+			classified, _, ok := classifiedAvailabilityPromptMessageAtV1(history, index)
+			if !ok ||
+				availabilityPromptSourceMessageIDFromMessage(classified) != sourceMessageID {
+				return false
+			}
+			sourceIndex = index
+		}
+		if messageID == selectionMessageID {
+			if !strings.EqualFold(strings.TrimSpace(message.Direction), "INBOUND") {
+				return false
+			}
+			selectionIndex = index
+		}
+	}
+	return sourceIndex >= 0 && selectionIndex > sourceIndex
 }
 
 func decodeAvailabilitySelectionStateV1(value interface{}) (AvailabilitySelectionStateV1, bool) {
@@ -796,7 +842,9 @@ func availabilitySelectionEventOrderFromMessageV1(
 
 func availabilitySelectionStructuredEventsV1(messages []Message) []AvailabilitySelectionEventV1 {
 	events := make([]AvailabilitySelectionEventV1, 0, len(messages))
-	for index, message := range messages {
+	startIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(messages, len(messages)) + 1
+	for index := startIndex; index < len(messages); index++ {
+		message := messages[index]
 		if strings.TrimSpace(message.ID) == "" {
 			message.ID = availabilitySelectionLegacyMessageIDV1(message, index)
 		}
@@ -941,6 +989,26 @@ func availabilitySelectionSnapshotCandidatesFromMessageV1(
 	message Message,
 	index int,
 ) []AvailabilitySelectionSnapshotV1 {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	switch authority.Class {
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented == nil {
+			return nil
+		}
+		snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(authority.Presented, index)
+		if !ok {
+			return nil
+		}
+		return []AvailabilitySelectionSnapshotV1{snapshot}
+	case availabilityPromptAuthorityAbsentLegacyV1:
+		if !legacyAvailabilityPromptFactsV1(message) &&
+			!legacyAvailabilitySelectionProjectionFactsV1(message) {
+			return nil
+		}
+	default:
+		return nil
+	}
+
 	candidates := make([]AvailabilitySelectionSnapshotV1, 0, 3)
 	if selected := selectedAvailabilityResultFromMessage(message); len(selected) > 0 {
 		if snapshot, ok := availabilitySelectionSnapshotV1FromPayload(selected); ok {
@@ -1167,15 +1235,65 @@ func exactLegacyAvailabilitySelectionPromptSourceV1(
 	if beforeIndex > len(messages) {
 		beforeIndex = len(messages)
 	}
-	candidates := make(map[string]struct{})
-	for index := 0; index < beforeIndex; index++ {
+	preferredCandidates := make(map[string]struct{})
+	fallbackCandidates := make(map[string]struct{})
+	linkedDraftIDs := deliveredPromptLinkedDraftMessageIDsV1(messages, beforeIndex)
+	startIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(messages, beforeIndex) + 1
+	for index := startIndex; index < beforeIndex; index++ {
 		message := messages[index]
 		messageID := strings.TrimSpace(message.ID)
-		if messageID == "" || !legacyAvailabilityListPromptSourceV1(message) {
+		if messageID == "" {
+			continue
+		}
+		candidate := message
+		candidateID := messageID
+		resolvedDelivery := false
+		if isDeliveredPromptProjectionMessageV1(message) {
+			resolved, _, resolvedOK := resolveDeliveredPromptSourceMessageWithIndex(
+				messages,
+				index,
+				message,
+			)
+			if !resolvedOK {
+				continue
+			}
+			candidate = resolved
+			candidateID = strings.TrimSpace(resolved.ID)
+			resolvedDelivery = true
+		} else if _, linked := linkedDraftIDs[messageID]; linked {
+			continue
+		}
+		authority := classifyAvailabilityPromptCandidateV1(candidate)
+		switch authority.Class {
+		case availabilityPromptAuthorityValidStructuralV1:
+			selected, selectedOK := selectedAvailabilityItemForMaterialization(
+				authority.Presented,
+				selectedOptionIndex,
+			)
+			if authority.Presented != nil && selectedOK &&
+				strings.TrimSpace(selected.TripID) == snapshot.TripID &&
+				strings.TrimSpace(selected.BoardStopID) == snapshot.BoardStopID &&
+				strings.TrimSpace(selected.AlightStopID) == snapshot.AlightStopID {
+				mode := strings.ToUpper(strings.TrimSpace(firstNonEmpty(
+					asString(candidate.Payload["mode"]),
+					asString(candidate.NormalizedPayload["mode"]),
+				)))
+				if !resolvedDelivery && mode == messageStatusAutomationDraft {
+					fallbackCandidates[authority.Event.SourceMessageID] = struct{}{}
+				} else {
+					preferredCandidates[authority.Event.SourceMessageID] = struct{}{}
+				}
+			}
+			continue
+		case availabilityPromptAuthorityAbsentLegacyV1:
+		default:
+			continue
+		}
+		if !legacyAvailabilityListPromptSourceV1(candidate) {
 			continue
 		}
 		matches := false
-		for _, toolContext := range messageToolContexts(message) {
+		for _, toolContext := range messageToolContexts(candidate) {
 			availability := asMap(toolContext[toolNameAvailabilitySearch])
 			if !legacyAvailabilityListPayloadCompleteV1(availability) {
 				continue
@@ -1192,8 +1310,16 @@ func exactLegacyAvailabilitySelectionPromptSourceV1(
 			}
 		}
 		if matches {
-			candidates[messageID] = struct{}{}
+			if resolvedDelivery {
+				preferredCandidates[candidateID] = struct{}{}
+			} else {
+				fallbackCandidates[candidateID] = struct{}{}
+			}
 		}
+	}
+	candidates := preferredCandidates
+	if len(candidates) == 0 {
+		candidates = fallbackCandidates
 	}
 	if len(candidates) != 1 {
 		return "", false
@@ -1204,10 +1330,32 @@ func exactLegacyAvailabilitySelectionPromptSourceV1(
 	return "", false
 }
 
+func deliveredPromptLinkedDraftMessageIDsV1(
+	messages []Message,
+	beforeIndex int,
+) map[string]struct{} {
+	if beforeIndex > len(messages) {
+		beforeIndex = len(messages)
+	}
+	linked := make(map[string]struct{})
+	for index := 0; index < beforeIndex; index++ {
+		message := messages[index]
+		if !isDeliveredPromptProjectionMessageV1(message) {
+			continue
+		}
+		for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+			draftID := strings.TrimSpace(asString(payload["draft_message_id"]))
+			if draftID != "" {
+				linked[draftID] = struct{}{}
+			}
+		}
+	}
+	return linked
+}
+
 func legacyAvailabilityListPromptSourceV1(message Message) bool {
-	if !strings.EqualFold(strings.TrimSpace(message.Direction), "OUTBOUND") ||
-		isBotAutoReplyMessage(message) ||
-		!isReliableActivePromptOutbound(message) {
+	if classifyAvailabilityPromptCandidateV1(message).Class !=
+		availabilityPromptAuthorityAbsentLegacyV1 {
 		return false
 	}
 	explicitListPrompt := false
