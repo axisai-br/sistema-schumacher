@@ -3667,6 +3667,184 @@ PR, merge/deploy autorizado e smoke operacional. H-B2 permanece
 **BLOQUEADA** até commit, push, deploy e smoke verdes; na fila, o desbloqueio
 só ocorre após o smoke verde.
 
+### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
+
+**Status:** EM CORREÇÃO APÓS REVIEW — 1 P1 + 1 P2 DE REDAÇÃO DE CREDENCIAL E
+LIFECYCLE JWKS; correção local verde e aguardando novo `/review`. O gate
+transversal permanece vermelho por quebra preexistente comprovada no
+commit-base.
+
+Este slice foi executado somente no worktree/branch dedicado
+`sec/supabase-key-migration`, sem alterar a fila arquitetural, os status de
+H-2026-07-27A, H-2026-07-16B2 ou 3.6F-D, infraestrutura, Supabase remoto ou
+produção.
+
+Comportamento local implementado:
+
+- `SUPABASE_JWT_SECRET` e `SUPABASE_JWKS_URL` podem coexistir;
+- somente `HS256` usa o secret simétrico e somente `ES256` usa JWKS; qualquer
+  outro algoritmo falha fechado;
+- falha inicial do JWKS não impede a validação de HS256 e inicia uma única
+  recuperação concorrente segura, com timeout e backoff explícitos, capaz de
+  habilitar ES256 sem restart quando o endpoint volta;
+- `kid` desconhecido dispara refresh do JWKS com rate limit, sem tempestade de
+  requests;
+- issuer, audience, subject, expiração, compatibilidade temporária de issuer e
+  service tokens permanecem no fluxo existente;
+- `SUPABASE_SECRET_KEY` é a credencial administrativa preferida e
+  `SUPABASE_SERVICE_ROLE_KEY` permanece como fallback;
+- a credencial administrativa e sua proveniência são resolvidas uma vez no
+  construtor do handler e reutilizadas no readiness e nos requests;
+- a chave opaca nova usa somente `apikey`; o fallback JWT legado preserva
+  `apikey` e `Authorization: Bearer`, sem mudança operacional no ambiente
+  atual;
+- requests administrativos falham fechado em qualquer redirect antes de
+  reenviar `apikey` ou `Authorization`;
+- erros administrativos de transporte, leitura ou resposta remota são
+  redigidos antes de chegar a handlers/clientes, cobrindo secret nova, legacy
+  e formas bearer sem remover status e diagnóstico sanitizado;
+- `SUPABASE_SECRET_KEY` presente só é aceita no formato `sb_secret_...`;
+  valor inválido não cai silenciosamente para o service role;
+- `Close` aguarda `Keyfunc` ES256 já ativo, impede nova consulta JWKS depois do
+  início efetivo do fechamento e só então encerra o background; HS256 não
+  depende desse lifecycle.
+
+Arquivos alterados:
+
+```text
+apps/api/.env.example
+apps/api/cmd/api/main.go
+apps/api/internal/auth/middleware.go
+apps/api/internal/auth/middleware_test.go
+apps/api/internal/shared/config/config.go
+apps/api/internal/shared/config/config_test.go
+apps/api/internal/users/handler.go
+apps/api/internal/users/handler_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+Testes e gates executados:
+
+```text
+PASS — go test -count=1 ./internal/auth ./internal/shared/config ./internal/users
+PASS — go test -race -count=1 ./internal/auth ./internal/shared/config ./internal/users
+PASS — pacotes isolados auth/config/users também ficaram verdes durante go test -count=1 ./...
+PASS — gofmt aplicado aos arquivos Go alterados
+PASS — git diff --check
+FAIL BASELINE — go test -count=1 ./internal/chat ./internal/automation ./cmd/api
+FAIL BASELINE — go test -count=1 ./...
+```
+
+O erro transversal é anterior ao slice e foi reproduzido em clone limpo de
+`HEAD` (`1533596`): `internal/chat` referencia
+`AvailabilityPromptPresentationV1`, `classifyAvailabilityPromptCandidateV1` e
+outros símbolos ausentes da árvore versionada. O mesmo erro impede a
+compilação de `internal/automation` e `cmd/api`. A correção de chat não foi
+incluída para não misturar responsabilidades nem violar o escopo deste slice.
+
+O primeiro review dirigido encontrou 4 P1 e 1 P2:
+
+- indisponibilidade ES256 permanente após falha inicial do JWKS;
+- janela de até uma hora para rotação com `kid` novo;
+- allowlist assimétrica mais ampla que o contrato ES256;
+- possível reenvio de `apikey` em redirect cross-origin;
+- aceitação silenciosa de valor incompatível em `SUPABASE_SECRET_KEY`.
+
+A correção local adiciona ciclo único de recuperação com mutex, cancelamento,
+timeout de 10 segundos e backoff de 5 segundos até o teto de 1 minuto. O
+`keyfunc` v1.9.0 permanece inalterado e agora usa `RefreshUnknownKID` com rate
+limit de 5 segundos. `Authenticator.Close` encerra o retry e o background do
+JWKS; `cmd/api` registra esse encerramento.
+
+A política de algoritmo compara as instâncias exatas de `HS256` e `ES256`.
+HS384/512, ES384/512, RS*, PS*, EdDSA, `none` e método desconhecido são
+rejeitados antes da escolha da chave. Um ES384 corretamente assinado por uma
+chave publicada no JWKS também é rejeitado.
+
+O cliente HTTP administrativo possui `CheckRedirect` fail-closed para qualquer
+3xx. A resolução da credencial reutiliza validação sanitizada de
+`SUPABASE_SECRET_KEY`; valor presente e inválido bloqueia readiness e request,
+mesmo quando o service role legado também existe. Erros não contêm o valor da
+credencial.
+
+RED antes da correção:
+
+```text
+FAIL de compilação dirigido — recuperação/configuração runtime JWKS e allowlist exata ainda inexistentes
+FAIL conceitual confirmado pelo review — startup 503 nunca recuperava ES256
+FAIL conceitual confirmado pelo review — kid novo aguardava refresh de até 1 hora
+FAIL conceitual confirmado pelo review — redirects podiam reenviar apikey
+FAIL conceitual confirmado pelo review — secret inválida vencia legacy silenciosamente
+```
+
+PASS local após a correção:
+
+```text
+PASS — go test -count=1 ./internal/auth ./internal/shared/config ./internal/users — auth 0.229s; config 0.003s; users 0.005s
+PASS — adversariais count=20, inclusive lifecycle do retry/Close — auth 4.332s; config 0.003s; users 0.025s
+PASS — go test -race -count=1 ./internal/auth ./internal/shared/config ./internal/users — auth 1.296s; config 1.021s; users 1.029s
+PASS — gofmt; gofmt -l sem saída
+PASS — git diff --check; git diff --cached --check
+FAIL BASELINE PREEXISTENTE — go test -count=1 ./... — mesmos símbolos ausentes de chat em HEAD limpo; auth/config/users verdes
+```
+
+Resultado do review: os 4 P1 + 1 P2 possuem correção local e regressão
+dirigida, mas o novo review ainda não foi executado; não há declaração de
+review limpo nem segurança para commit.
+
+O segundo review dirigido encontrou 1 P1 + 1 P2 restantes:
+
+- body remoto não-2xx podia refletir `apikey`/bearer e alcançar
+  `err.Error()`, o body dos handlers e eventuais logs do fluxo;
+- `Close` podia executar `EndBackground` enquanto uma `Keyfunc` de `kid`
+  desconhecido ainda aguardava o worker de refresh.
+
+A correção redige todas as credenciais administrativas configuradas antes de
+propagar erros de readiness, marshal, criação do request, transporte, leitura
+do body ou resposta remota. Valor puro, `Bearer <credencial>`, bearer em caixa
+baixa, texto misto e campo JSON são substituídos por `[REDACTED]`. O erro
+preserva o status HTTP e a parte não sensível do diagnóstico. Esse fluxo não
+produz logs próprios com body ou erro remoto.
+
+Para o lifecycle, o `RLock` permanece adquirido durante toda a chamada
+`jwks.Keyfunc`. `Close` solicita o writer lock, o que bloqueia novos readers,
+aguarda validações iniciadas, marca o autenticador como fechado e só depois
+chama `EndBackground`. Nova validação ES256 falha fechado; HS256 permanece
+independente. Retry, double-close e encerramento continuam cobertos pelo
+`closeOnce`, cancelamento e wait group existentes.
+
+RED real antes da correção:
+
+```text
+FAIL — Close retornou enquanto Keyfunc de kid desconhecido ainda estava ativa
+FAIL — 8/8 reflexões secret/legacy (pura, bearer, texto misto e JSON) apareceram em err.Error()
+```
+
+PASS local após a correção:
+
+```text
+PASS — dirigido P1/P2 — auth 0.029s; users 0.005s
+PASS — go test -count=1 ./internal/auth ./internal/shared/config ./internal/users — auth 0.253s; config 0.003s; users 0.007s
+PASS — adversariais count=20 — auth 4.817s; config 0.003s; users 0.078s
+PASS — go test -race -count=1 ./internal/auth ./internal/shared/config ./internal/users — auth 1.302s; config 1.011s; users 1.031s
+PASS — gofmt; gofmt -l sem saída
+PASS — git diff --check; git diff --cached --check
+FAIL BASELINE PREEXISTENTE — go test -count=1 ./... — mesmos símbolos ausentes de chat em HEAD limpo; auth/config/users verdes
+```
+
+Resultado do review atual: o 1 P1 + 1 P2 possuem correção local e regressão
+dirigida, mas o próximo review ainda não foi executado; não há declaração de
+review limpo nem segurança para commit.
+
+Necessidade de teste em produção: sim, após review limpo e autorização futura
+de publicação, com smoke separado para token HS256 legado, token ES256/JWKS e
+request administrativo via `SUPABASE_SECRET_KEY`. Nenhum smoke foi executado
+nesta rodada.
+
+Não houve commit, push, PR, deploy, migration ou alteração de secret/ambiente.
+A próxima ação única deste slice é `/review` dirigido ao 1 P1 + 1 P2 de
+redação de credencial administrativa e lifecycle JWKS.
+
 ---
 
 ## H-2026-07-16A — Travel V2 Shadow operacional

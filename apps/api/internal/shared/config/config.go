@@ -14,6 +14,7 @@ type Config struct {
 	DatabaseURL                string
 	SupabaseURL                string
 	SupabaseAnonKey            string
+	SupabaseSecretKey          string
 	SupabaseServiceRoleKey     string
 	SupabaseJWKSURL            string
 	SupabaseJWTSecret          string
@@ -75,6 +76,7 @@ func Load() (Config, error) {
 		DatabaseURL:                        os.Getenv("DATABASE_URL"),
 		SupabaseURL:                        os.Getenv("SUPABASE_URL"),
 		SupabaseAnonKey:                    os.Getenv("SUPABASE_ANON_KEY"),
+		SupabaseSecretKey:                  os.Getenv("SUPABASE_SECRET_KEY"),
 		SupabaseServiceRoleKey:             os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 		SupabaseJWKSURL:                    os.Getenv("SUPABASE_JWKS_URL"),
 		SupabaseJWTSecret:                  os.Getenv("SUPABASE_JWT_SECRET"),
@@ -135,7 +137,29 @@ func Load() (Config, error) {
 	if cfg.SupabaseIssuer == "" {
 		return cfg, errors.New("SUPABASE_ISSUER is required")
 	}
+	if err := ValidateSupabaseSecretKey(cfg.SupabaseSecretKey); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
+}
+
+func ValidateSupabaseSecretKey(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	const prefix = "sb_secret_"
+	if !strings.HasPrefix(trimmed, prefix) || len(trimmed) == len(prefix) {
+		return errors.New("SUPABASE_SECRET_KEY has invalid format")
+	}
+	for _, char := range trimmed[len(prefix):] {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' {
+			continue
+		}
+		return errors.New("SUPABASE_SECRET_KEY has invalid format")
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {
