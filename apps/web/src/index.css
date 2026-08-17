@@ -5,6 +5,7 @@
 @layer base {
   html {
     scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
     font-family: 'Inter', sans-serif;
   }
 
@@ -21,6 +22,7 @@
     font-family: 'Outfit', sans-serif;
     @apply font-bold text-dark-900;
   }
+
 }
 
 @layer components {
@@ -62,6 +64,21 @@
 
   .gold-accent {
     @apply text-gold-500 font-semibold;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

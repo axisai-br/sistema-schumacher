@@ -1,7 +1,7 @@
 import { Navbar, NavbarBrand, NavbarContent, NavbarItem, NavbarMenuToggle, NavbarMenu, NavbarMenuItem, Button, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, MapPin } from 'lucide-react'
+import { ChevronDown, MapPin, Menu, X } from 'lucide-react'
 
 const menuItems = [
     { name: 'Sobre', href: '#sobre', isAnchor: true },
@@ -15,23 +15,41 @@ const destinations = [
     { name: '🎢 Santa Catarina', href: '/viagens/santa-catarina', badge: null },
 ]
 
+function scrollToElement(selector) {
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    document.querySelector(selector)?.scrollIntoView({ behavior })
+}
+
 export default function Header() {
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const location = useLocation()
     const navigate = useNavigate()
     const isHome = location.pathname === '/'
 
+    useEffect(() => {
+        const scrollTarget = location.state?.scrollTarget
+        if (!isHome || !scrollTarget) return undefined
+
+        let secondFrame
+        const firstFrame = window.requestAnimationFrame(() => {
+            secondFrame = window.requestAnimationFrame(() => {
+                scrollToElement(scrollTarget)
+                navigate(location.pathname, { replace: true, state: null })
+            })
+        })
+
+        return () => {
+            window.cancelAnimationFrame(firstFrame)
+            window.cancelAnimationFrame(secondFrame)
+        }
+    }, [isHome, location.pathname, location.state, navigate])
+
     const handleNavigation = (item) => {
         if (item.isAnchor) {
             if (!isHome) {
-                navigate('/')
-                setTimeout(() => {
-                    const element = document.querySelector(item.href)
-                    element?.scrollIntoView({ behavior: 'smooth' })
-                }, 100)
+                navigate('/', { state: { scrollTarget: item.href } })
             } else {
-                const element = document.querySelector(item.href)
-                element?.scrollIntoView({ behavior: 'smooth' })
+                scrollToElement(item.href)
             }
         } else {
             navigate(item.href)
@@ -43,22 +61,28 @@ export default function Header() {
         <Navbar
             isMenuOpen={isMenuOpen}
             onMenuOpenChange={setIsMenuOpen}
-            className="bg-white/90 backdrop-blur-lg border-b border-gold-100 fixed top-0 z-50"
+            className="fixed top-0 z-50 h-16 border-b border-gold-100 bg-white/90 backdrop-blur-lg"
+            classNames={{ wrapper: 'h-full', srOnly: 'sr-only' }}
             maxWidth="xl"
         >
-            <NavbarContent>
+            <NavbarContent className="h-full min-w-0 gap-2" justify="start">
                 <NavbarMenuToggle
                     aria-label={isMenuOpen ? "Fechar menu" : "Abrir menu"}
-                    className="sm:hidden text-gold-500"
+                    className="lg:hidden shrink-0 text-gold-500"
+                    icon={(open) => open ? <X aria-hidden="true" size={24} /> : <Menu aria-hidden="true" size={24} />}
                 />
-                <NavbarBrand>
-                    <Link to="/" className="font-heading font-bold text-2xl text-dark-900">
+                <NavbarBrand className="min-w-0">
+                    <Link
+                        to="/"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="whitespace-nowrap font-heading font-bold text-xl text-dark-900 sm:text-2xl"
+                    >
                         Schumacher <span className="text-gold-500">Tur</span>
                     </Link>
                 </NavbarBrand>
             </NavbarContent>
 
-            <NavbarContent className="hidden sm:flex gap-6" justify="center">
+            <NavbarContent className="hidden h-full gap-6 lg:flex" justify="center">
                 {/* Dropdown Viagens */}
                 <Dropdown
                     classNames={{
@@ -109,7 +133,7 @@ export default function Header() {
                     <NavbarItem key={item.name}>
                         <button
                             onClick={() => handleNavigation(item)}
-                            className="text-dark-600 hover:text-gold-500 font-medium transition-colors duration-200"
+                            className="rounded text-dark-600 hover:text-gold-500 font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-4"
                         >
                             {item.name}
                         </button>
@@ -117,7 +141,7 @@ export default function Header() {
                 ))}
             </NavbarContent>
 
-            <NavbarContent justify="end">
+            <NavbarContent className="hidden h-full lg:flex" justify="end">
                 <NavbarItem>
                     <Button
                         size="sm"
@@ -130,7 +154,7 @@ export default function Header() {
             </NavbarContent>
 
             {/* Mobile Menu */}
-            <NavbarMenu className="bg-white/95 backdrop-blur-lg pt-6">
+            <NavbarMenu className="bg-white/95 backdrop-blur-lg pt-6 lg:hidden">
                 {/* Viagens no mobile */}
                 <NavbarMenuItem>
                     <p className="text-xs uppercase tracking-wider text-dark-400 mb-2 mt-2">Viagens</p>
@@ -160,12 +184,24 @@ export default function Header() {
                     <NavbarMenuItem key={`${item.name}-${index}`}>
                         <button
                             onClick={() => handleNavigation(item)}
-                            className="w-full text-left py-3 text-lg text-dark-700 hover:text-gold-500 font-medium transition-colors"
+                            className="w-full rounded-lg px-2 py-3 text-left text-lg text-dark-700 hover:text-gold-500 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400"
                         >
                             {item.name}
                         </button>
                     </NavbarMenuItem>
                 ))}
+
+                <NavbarMenuItem className="pt-4">
+                    <Button
+                        className="w-full bg-gold-400 text-white font-semibold hover:bg-gold-500 transition-colors"
+                        onClick={() => {
+                            navigate('/orcamento')
+                            setIsMenuOpen(false)
+                        }}
+                    >
+                        Solicitar Orçamento
+                    </Button>
+                </NavbarMenuItem>
             </NavbarMenu>
         </Navbar>
     )
