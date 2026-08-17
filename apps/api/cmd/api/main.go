@@ -77,6 +77,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("auth error: %v", err)
 	}
+	defer authMiddleware.Close()
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

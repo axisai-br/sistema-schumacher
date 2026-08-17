@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MicahParks/keyfunc"
@@ -41,7 +42,14 @@ type AuthUser struct {
 
 // Authenticator validates Supabase JWTs and service tokens.
 type Authenticator struct {
+	jwksMu             sync.RWMutex
 	jwks               *keyfunc.JWKS
+	jwksURL            string
+	jwksRuntime        jwksRuntimeConfig
+	jwksRetryCancel    context.CancelFunc
+	jwksRetryWG        sync.WaitGroup
+	closeOnce          sync.Once
+	closed             bool
 	jwtSecret          []byte
 	issuer             string
 	audience           string
@@ -51,7 +59,27 @@ type Authenticator struct {
 	skip               bool
 }
 
+type jwksRuntimeConfig struct {
+	refreshInterval  time.Duration
+	refreshRateLimit time.Duration
+	refreshTimeout   time.Duration
+	retryInitial     time.Duration
+	retryMaximum     time.Duration
+}
+
+var defaultJWKSRuntimeConfig = jwksRuntimeConfig{
+	refreshInterval:  time.Hour,
+	refreshRateLimit: 5 * time.Second,
+	refreshTimeout:   10 * time.Second,
+	retryInitial:     5 * time.Second,
+	retryMaximum:     time.Minute,
+}
+
 func NewAuthenticator(cfg Config) (*Authenticator, error) {
+	return newAuthenticator(cfg, defaultJWKSRuntimeConfig)
+}
+
+func newAuthenticator(cfg Config, runtime jwksRuntimeConfig) (*Authenticator, error) {
 	if cfg.Skip {
 		debugUID := strings.TrimSpace(os.Getenv("AUTH_DEBUG_USER_ID"))
 		if debugUID == "" {
@@ -71,26 +99,99 @@ func NewAuthenticator(cfg Config) (*Authenticator, error) {
 
 	auth := &Authenticator{
 		jwtSecret:          []byte(strings.TrimSpace(cfg.JWTSecret)),
+		jwksURL:            strings.TrimSpace(cfg.JWKSURL),
+		jwksRuntime:        runtime,
 		issuer:             strings.TrimSpace(cfg.Issuer),
 		audience:           strings.TrimSpace(cfg.Audience),
 		allowMissingIssuer: cfg.AllowMissingIssuer,
 		services:           services,
 	}
-	if len(auth.jwtSecret) > 0 {
-		return auth, nil
+	if len(auth.jwtSecret) == 0 && auth.jwksURL == "" {
+		return nil, fmt.Errorf("JWT secret or JWKS URL is required")
 	}
 
-	options := keyfunc.Options{
-		RefreshInterval:     time.Hour,
-		RefreshErrorHandler: func(err error) {},
-		RefreshTimeout:      10 * time.Second,
+	if auth.jwksURL != "" {
+		jwks, err := auth.loadJWKS()
+		if err != nil {
+			if len(auth.jwtSecret) == 0 {
+				return nil, err
+			}
+			auth.startJWKSRecovery()
+		} else {
+			auth.jwks = jwks
+		}
 	}
-	jwks, err := keyfunc.Get(cfg.JWKSURL, options)
-	if err != nil {
-		return nil, err
-	}
-	auth.jwks = jwks
 	return auth, nil
+}
+
+func (a *Authenticator) loadJWKS() (*keyfunc.JWKS, error) {
+	return keyfunc.Get(a.jwksURL, keyfunc.Options{
+		RefreshInterval:     a.jwksRuntime.refreshInterval,
+		RefreshRateLimit:    a.jwksRuntime.refreshRateLimit,
+		RefreshTimeout:      a.jwksRuntime.refreshTimeout,
+		RefreshUnknownKID:   true,
+		RefreshErrorHandler: func(error) {},
+	})
+}
+
+func (a *Authenticator) startJWKSRecovery() {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.jwksRetryCancel = cancel
+	a.jwksRetryWG.Add(1)
+	go func() {
+		defer a.jwksRetryWG.Done()
+		interval := a.jwksRuntime.retryInitial
+		for {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			case <-timer.C:
+			}
+
+			jwks, err := a.loadJWKS()
+			if err == nil {
+				a.jwksMu.Lock()
+				if a.closed {
+					a.jwksMu.Unlock()
+					jwks.EndBackground()
+					return
+				}
+				a.jwks = jwks
+				a.jwksMu.Unlock()
+				return
+			}
+			if interval < a.jwksRuntime.retryMaximum {
+				interval *= 2
+				if interval > a.jwksRuntime.retryMaximum {
+					interval = a.jwksRuntime.retryMaximum
+				}
+			}
+		}
+	}()
+}
+
+func (a *Authenticator) Close() {
+	a.closeOnce.Do(func() {
+		a.jwksMu.Lock()
+		a.closed = true
+		cancel := a.jwksRetryCancel
+		jwks := a.jwks
+		a.jwksMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		a.jwksRetryWG.Wait()
+		if jwks != nil {
+			jwks.EndBackground()
+		}
+	})
 }
 
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
@@ -190,15 +291,35 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 }
 
 func (a *Authenticator) parseToken(tokenString string) (*jwt.Token, error) {
-	if len(a.jwtSecret) > 0 {
-		return jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
-			if token.Method != jwt.SigningMethodHS256 {
-				return nil, fmt.Errorf("unexpected signing method: %s", token.Header["alg"])
+	return jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if !allowedJWTSigningMethod(token.Method) {
+			return nil, fmt.Errorf("unexpected signing method: %s", token.Header["alg"])
+		}
+		switch token.Method {
+		case jwt.SigningMethodHS256:
+			if len(a.jwtSecret) == 0 {
+				return nil, fmt.Errorf("HS256 signing source is not configured")
 			}
 			return a.jwtSecret, nil
-		})
-	}
-	return jwt.Parse(tokenString, a.jwks.Keyfunc)
+		case jwt.SigningMethodES256:
+			a.jwksMu.RLock()
+			defer a.jwksMu.RUnlock()
+			if a.closed {
+				return nil, fmt.Errorf("asymmetric signing source is closed")
+			}
+			jwks := a.jwks
+			if jwks == nil {
+				return nil, fmt.Errorf("asymmetric signing source is not available")
+			}
+			return jwks.Keyfunc(token)
+		default:
+			return nil, fmt.Errorf("unsupported signing source")
+		}
+	})
+}
+
+func allowedJWTSigningMethod(method jwt.SigningMethod) bool {
+	return method == jwt.SigningMethodHS256 || method == jwt.SigningMethodES256
 }
 
 func (a *Authenticator) compatibleMissingIssuerClaims(claims jwt.MapClaims) bool {

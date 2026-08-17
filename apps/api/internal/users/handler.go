@@ -24,10 +24,17 @@ import (
 )
 
 type Handler struct {
-	pool     *pgxpool.Pool
-	cfg      config.Config
-	http     *http.Client
-	profiles userProfileService
+	pool                    *pgxpool.Pool
+	cfg                     config.Config
+	supabaseAdminCredential supabaseAdminCredential
+	supabaseAdminConfigErr  error
+	http                    *http.Client
+	profiles                userProfileService
+}
+
+type supabaseAdminCredential struct {
+	key                 string
+	usesLegacyJWTBearer bool
 }
 
 type userProfileService interface {
@@ -91,12 +98,37 @@ func NewHandler(pool *pgxpool.Pool, cfg config.Config, profiles ...userProfileSe
 	if len(profiles) > 0 && profiles[0] != nil {
 		profileSvc = profiles[0]
 	}
+	adminCredential, adminConfigErr := resolveSupabaseAdminCredential(cfg)
 	return &Handler{
-		pool:     pool,
-		cfg:      cfg,
-		http:     &http.Client{Timeout: 15 * time.Second},
+		pool:                    pool,
+		cfg:                     cfg,
+		supabaseAdminCredential: adminCredential,
+		supabaseAdminConfigErr:  adminConfigErr,
+		http: &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return errors.New("Supabase administrative redirects are not allowed")
+			},
+		},
 		profiles: profileSvc,
 	}
+}
+
+func resolveSupabaseAdminCredential(cfg config.Config) (supabaseAdminCredential, error) {
+	if secretKey := strings.TrimSpace(cfg.SupabaseSecretKey); secretKey != "" {
+		if err := config.ValidateSupabaseSecretKey(secretKey); err != nil {
+			return supabaseAdminCredential{}, err
+		}
+		return supabaseAdminCredential{key: secretKey}, nil
+	}
+	credential := supabaseAdminCredential{
+		key:                 strings.TrimSpace(cfg.SupabaseServiceRoleKey),
+		usesLegacyJWTBearer: true,
+	}
+	if credential.key == "" {
+		return supabaseAdminCredential{}, errors.New("Supabase administrative credential is required")
+	}
+	return credential, nil
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -623,8 +655,8 @@ func (h *Handler) ensureAdminReady() error {
 	if strings.TrimSpace(h.cfg.SupabaseURL) == "" {
 		return errors.New("SUPABASE_URL is required for users admin operations")
 	}
-	if strings.TrimSpace(h.cfg.SupabaseServiceRoleKey) == "" {
-		return errors.New("SUPABASE_SERVICE_ROLE_KEY is required for users admin operations")
+	if h.supabaseAdminConfigErr != nil {
+		return h.supabaseAdminConfigErr
 	}
 	return nil
 }
@@ -682,11 +714,14 @@ func (h *Handler) supabaseAdminResetPassword(ctx context.Context, userID, passwo
 }
 
 func (h *Handler) doSupabaseAdminRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
+	if err := h.ensureAdminReady(); err != nil {
+		return nil, h.sanitizeSupabaseAdminError(err)
+	}
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, h.sanitizeSupabaseAdminError(err)
 		}
 		reader = bytes.NewReader(payload)
 	}
@@ -694,21 +729,23 @@ func (h *Handler) doSupabaseAdminRequest(ctx context.Context, method, path strin
 	endpoint := strings.TrimRight(h.cfg.SupabaseURL, "/") + path
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
-		return nil, err
+		return nil, h.sanitizeSupabaseAdminError(err)
 	}
-	req.Header.Set("apikey", h.cfg.SupabaseServiceRoleKey)
-	req.Header.Set("Authorization", "Bearer "+h.cfg.SupabaseServiceRoleKey)
+	req.Header.Set("apikey", h.supabaseAdminCredential.key)
+	if h.supabaseAdminCredential.usesLegacyJWTBearer {
+		req.Header.Set("Authorization", "Bearer "+h.supabaseAdminCredential.key)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := h.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, h.sanitizeSupabaseAdminError(err)
 	}
 	defer res.Body.Close()
 
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return nil, h.sanitizeSupabaseAdminError(err)
 	}
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return data, nil
@@ -724,7 +761,38 @@ func (h *Handler) doSupabaseAdminRequest(ctx context.Context, method, path strin
 			}
 		}
 	}
+	message = h.redactSupabaseAdminCredentials(message)
 	return nil, fmt.Errorf("supabase admin returned status %d: %s", res.StatusCode, message)
+}
+
+func (h *Handler) sanitizeSupabaseAdminError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(h.redactSupabaseAdminCredentials(err.Error()))
+}
+
+func (h *Handler) redactSupabaseAdminCredentials(message string) string {
+	redacted := message
+	candidates := []string{
+		strings.TrimSpace(h.cfg.SupabaseSecretKey),
+		strings.TrimSpace(h.cfg.SupabaseServiceRoleKey),
+		h.supabaseAdminCredential.key,
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	for _, credential := range candidates {
+		if credential == "" {
+			continue
+		}
+		if _, ok := seen[credential]; ok {
+			continue
+		}
+		seen[credential] = struct{}{}
+		redacted = strings.ReplaceAll(redacted, "Bearer "+credential, "Bearer [REDACTED]")
+		redacted = strings.ReplaceAll(redacted, "bearer "+credential, "bearer [REDACTED]")
+		redacted = strings.ReplaceAll(redacted, credential, "[REDACTED]")
+	}
+	return redacted
 }
 
 func (h *Handler) updateUserProfileName(ctx context.Context, userID, fullName string) error {

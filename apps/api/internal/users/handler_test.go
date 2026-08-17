@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -98,6 +99,192 @@ func TestMeRequiresAuth(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestSupabaseAdminRequestsPreferSecretKey(t *testing.T) {
+	testSupabaseAdminCredential(t, config.Config{
+		SupabaseSecretKey:      "sb_secret_preferred-key",
+		SupabaseServiceRoleKey: "legacy-service-role-key",
+	}, "sb_secret_preferred-key", "")
+}
+
+func TestSupabaseAdminRequestsFallBackToServiceRoleKey(t *testing.T) {
+	testSupabaseAdminCredential(t, config.Config{
+		SupabaseServiceRoleKey: "legacy-service-role-key",
+	}, "legacy-service-role-key", "Bearer legacy-service-role-key")
+}
+
+func TestSupabaseAdminReadinessRequiresResolvedCredential(t *testing.T) {
+	handler := NewHandler(nil, config.Config{SupabaseURL: "https://supabase.example.com"})
+	if err := handler.ensureAdminReady(); err == nil {
+		t.Fatal("expected missing administrative credential to fail readiness")
+	}
+}
+
+func TestSupabaseAdminRejectsInvalidSecretKeyWithoutLegacyFallback(t *testing.T) {
+	for _, invalid := range []string{"service-role.jwt.value", "arbitrary text", "sb_secret_"} {
+		t.Run(invalid, func(t *testing.T) {
+			handler := NewHandler(nil, config.Config{
+				SupabaseURL:            "https://supabase.example.com",
+				SupabaseSecretKey:      invalid,
+				SupabaseServiceRoleKey: "legacy-service-role-key",
+			})
+			err := handler.ensureAdminReady()
+			if err == nil {
+				t.Fatal("expected invalid SUPABASE_SECRET_KEY to fail closed")
+			}
+			if strings.Contains(err.Error(), invalid) {
+				t.Fatal("configuration error must not include credential value")
+			}
+		})
+	}
+}
+
+func TestSupabaseAdminWhitespaceSecretFallsBackToLegacy(t *testing.T) {
+	testSupabaseAdminCredential(t, config.Config{
+		SupabaseSecretKey:      "  ",
+		SupabaseServiceRoleKey: "legacy-service-role-key",
+	}, "legacy-service-role-key", "Bearer legacy-service-role-key")
+}
+
+func TestSupabaseAdminRequestsNeverFollowRedirectsWithCredential(t *testing.T) {
+	credentials := []config.Config{
+		{SupabaseSecretKey: "sb_secret_redirect-test"},
+		{SupabaseServiceRoleKey: "legacy-service-role-key"},
+	}
+	for index, cfg := range credentials {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			var destinationHeaders http.Header
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				destinationHeaders = r.Header.Clone()
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			t.Cleanup(destination.Close)
+
+			var sourceAPIKey string
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sourceAPIKey = r.Header.Get("apikey")
+				http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(source.Close)
+
+			cfg.SupabaseURL = source.URL
+			handler := NewHandler(nil, cfg)
+			if _, err := handler.doSupabaseAdminRequest(context.Background(), http.MethodGet, "/auth/v1/admin/users", nil); err == nil {
+				t.Fatal("expected administrative redirect to fail closed")
+			}
+			if sourceAPIKey == "" {
+				t.Fatal("expected original Supabase endpoint to receive apikey")
+			}
+			if destinationHeaders != nil && (destinationHeaders.Get("apikey") != "" || destinationHeaders.Get("Authorization") != "") {
+				t.Fatal("redirect destination received administrative credential")
+			}
+		})
+	}
+}
+
+func TestSupabaseAdminErrorsRedactReflectedCredentials(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        config.Config
+		credential string
+	}{
+		{
+			name: "secret",
+			cfg: config.Config{
+				SupabaseSecretKey:      "sb_secret_reflected-value",
+				SupabaseServiceRoleKey: "legacy-not-selected",
+			},
+			credential: "sb_secret_reflected-value",
+		},
+		{
+			name:       "legacy",
+			cfg:        config.Config{SupabaseServiceRoleKey: "legacy-reflected-value"},
+			credential: "legacy-reflected-value",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			responseBody := ""
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(responseBody))
+			}))
+			t.Cleanup(server.Close)
+
+			test.cfg.SupabaseURL = server.URL
+			handler := NewHandler(nil, test.cfg)
+			bodies := []string{
+				test.credential,
+				"Bearer " + test.credential,
+				"upstream reflected " + test.credential + " among diagnostic text",
+				`{"message":"upstream reflected Bearer ` + test.credential + `"}`,
+			}
+			for index, body := range bodies {
+				t.Run(strconv.Itoa(index), func(t *testing.T) {
+					responseBody = body
+					_, err := handler.doSupabaseAdminRequest(context.Background(), http.MethodGet, "/auth/v1/admin/users", nil)
+					assertSanitizedAdminError(t, err, test.credential)
+
+					request := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{
+						"email":"operator@example.com",
+						"full_name":"Operator",
+						"password":"password-123"
+					}`))
+					recorder := httptest.NewRecorder()
+					handler.create(recorder, request)
+					if recorder.Code != http.StatusBadGateway {
+						t.Fatalf("expected handler status %d, got %d", http.StatusBadGateway, recorder.Code)
+					}
+					response := recorder.Body.String()
+					if strings.Contains(response, test.credential) || strings.Contains(response, "Bearer "+test.credential) {
+						t.Fatalf("handler response leaked administrative credential: %q", response)
+					}
+					if !strings.Contains(response, "[REDACTED]") || !strings.Contains(response, "502") {
+						t.Fatalf("expected sanitized diagnostic details in handler response, got %q", response)
+					}
+				})
+			}
+		})
+	}
+}
+
+func assertSanitizedAdminError(t *testing.T, err error, credential string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected Supabase administrative error")
+	}
+	message := err.Error()
+	if strings.Contains(message, credential) || strings.Contains(message, "Bearer "+credential) {
+		t.Fatalf("administrative error leaked credential: %q", message)
+	}
+	if !strings.Contains(message, "[REDACTED]") || !strings.Contains(message, "502") {
+		t.Fatalf("expected useful sanitized diagnostics, got %q", message)
+	}
+}
+
+func testSupabaseAdminCredential(t *testing.T, cfg config.Config, expectedAPIKey, expectedAuthorization string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("apikey"); got != expectedAPIKey {
+			t.Errorf("expected apikey %q, got %q", expectedAPIKey, got)
+		}
+		if got := r.Header.Get("Authorization"); got != expectedAuthorization {
+			t.Errorf("expected Authorization %q, got %q", expectedAuthorization, got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+
+	cfg.SupabaseURL = server.URL
+	handler := NewHandler(nil, cfg)
+	if err := handler.ensureAdminReady(); err != nil {
+		t.Fatalf("expected administrative configuration to be ready: %v", err)
+	}
+	if _, err := handler.doSupabaseAdminRequest(context.Background(), http.MethodGet, "/auth/v1/admin/users", nil); err != nil {
+		t.Fatalf("administrative request: %v", err)
 	}
 }
 
