@@ -2,11 +2,65 @@ package chat
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"schumacher-tur/api/internal/shared/config"
 )
+
+func TestParseAvailabilityDateSelectionInputResolvedProjectionKeepsDeliveredPromptIdentity(t *testing.T) {
+	for _, projectionKind := range []struct {
+		name         string
+		mode         string
+		reviewAction string
+	}{
+		{name: "bot auto reply", mode: string(deliveredPromptProjectionBotAutoReplyV1)},
+		{name: "approved review", mode: string(deliveredPromptProjectionDraftReviewV1), reviewAction: "APPROVED_AS_IS"},
+	} {
+		t.Run(projectionKind.name, func(t *testing.T) {
+			history, projection, raw := resolvedAvailabilityProjectionIdentityHistoryForTest(
+				t,
+				projectionKind.mode,
+				projectionKind.reviewAction,
+				"tool-router-"+strings.ReplaceAll(projectionKind.name, " ", "-"),
+			)
+			observedAt := projection.ReceivedAt
+			selectedDate := raw.Results[2].TripDate
+			currentTurn := "05/08"
+			input, ok := parseAvailabilityDateSelectionInput(history, currentTurn, observedAt)
+			if !ok || input.TripDate == nil || input.TripDate.Format("2006-01-02") != selectedDate {
+				t.Fatalf("valid resolved date selection failed: ok=%t input=%+v", ok, input)
+			}
+
+			rejected := append(append([]Message(nil), history...), Message{
+				ID:         "reject-date-" + projection.ID,
+				Direction:  "INBOUND",
+				Body:       "não quero 05/08",
+				ReceivedAt: projection.ReceivedAt.Add(time.Minute),
+				CreatedAt:  projection.CreatedAt.Add(time.Minute),
+			})
+			if input, ok := parseAvailabilityDateSelectionInput(rejected, currentTurn, observedAt); ok {
+				t.Fatalf("date rejection tied to delivered projection identity was ignored: %+v", input)
+			}
+
+			old := availabilityPromptAuthorityMessage("other-date-prompt-"+projection.ID, "SENT", raw, []int{0})
+			old.ReceivedAt = projection.ReceivedAt.Add(-2 * time.Hour)
+			old.CreatedAt = old.ReceivedAt
+			otherRejection := Message{
+				ID:         "reject-other-date-" + projection.ID,
+				Direction:  "INBOUND",
+				Body:       "não quero 03/08",
+				ReceivedAt: old.ReceivedAt.Add(time.Minute),
+				CreatedAt:  old.CreatedAt.Add(time.Minute),
+			}
+			current := append([]Message{old, otherRejection}, history...)
+			if input, ok := parseAvailabilityDateSelectionInput(current, currentTurn, observedAt); !ok || input.TripDate == nil || input.TripDate.Format("2006-01-02") != selectedDate {
+				t.Fatalf("rejection tied to another prompt blocked current date: ok=%t input=%+v", ok, input)
+			}
+		})
+	}
+}
 
 func TestReprocessAvailabilitySearchUsesConfirmedRouteFromHistory(t *testing.T) {
 	cases := []struct {

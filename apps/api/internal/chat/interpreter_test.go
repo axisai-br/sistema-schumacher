@@ -723,41 +723,42 @@ func structuredReasonsContain(got StructuredInterpretation, reason string) bool 
 
 func availabilitySelectionStructuredHistory(t *testing.T) []Message {
 	t.Helper()
+	availability := AvailabilitySearchResult{
+		Filter: AvailabilitySearchInput{
+			Origin:      "Santa Ines/MA",
+			Destination: "Fraiburgo/SC",
+			Qty:         1,
+			Limit:       2,
+		},
+		Results: []AvailabilitySearchItem{
+			{
+				TripID:                 "trip-1",
+				BoardStopID:            "board-1",
+				AlightStopID:           "alight-1",
+				OriginDisplayName:      "Santa Ines/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "08:00",
+				TripDate:               "2026-06-20",
+			},
+			{
+				TripID:                 "trip-2",
+				BoardStopID:            "board-2",
+				AlightStopID:           "alight-2",
+				OriginDisplayName:      "Santa Ines/MA",
+				DestinationDisplayName: "Fraiburgo/SC",
+				OriginDepartTime:       "12:00",
+				TripDate:               "2026-06-21",
+			},
+		},
+	}
 	return markAvailabilityPromptHistoryDeliveredForTest([]Message{{
 		Direction:        "OUTBOUND",
-		Body:             "Achei duas opcoes para Santa Ines/MA -> Fraiburgo/SC. Qual opcao voce prefere?",
+		Body:             buildAvailabilityListReply(availability),
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       time.Now().UTC().Add(-2 * time.Minute),
 		Payload: map[string]interface{}{
 			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-					Filter: AvailabilitySearchInput{
-						Origin:      "Santa Ines/MA",
-						Destination: "Fraiburgo/SC",
-						Qty:         1,
-						Limit:       2,
-					},
-					Results: []AvailabilitySearchItem{
-						{
-							TripID:                 "trip-1",
-							BoardStopID:            "board-1",
-							AlightStopID:           "alight-1",
-							OriginDisplayName:      "Santa Ines/MA",
-							DestinationDisplayName: "Fraiburgo/SC",
-							OriginDepartTime:       "08:00",
-							TripDate:               "2026-06-20",
-						},
-						{
-							TripID:                 "trip-2",
-							BoardStopID:            "board-2",
-							AlightStopID:           "alight-2",
-							OriginDisplayName:      "Santa Ines/MA",
-							DestinationDisplayName: "Fraiburgo/SC",
-							OriginDepartTime:       "12:00",
-							TripDate:               "2026-06-21",
-						},
-					},
-				}),
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 			},
 		},
 	}})

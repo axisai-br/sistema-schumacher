@@ -233,16 +233,17 @@ func interpreterCaseOutboundPrompt(body string, receivedAt time.Time, availabili
 		Body:             body,
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       receivedAt,
+		Payload:          map[string]interface{}{},
 		NormalizedPayload: map[string]interface{}{
 			"delivery_recorded_at": receivedAt.UTC().Format(time.RFC3339Nano),
 		},
 	}
 	if len(availabilityPayload) > 0 {
-		message.Payload = map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: availabilityPayload,
-			},
+		toolContext := map[string]interface{}{
+			toolNameAvailabilitySearch: availabilityPayload,
 		}
+		message.Payload["tool_context"] = cloneMap(toolContext)
+		message.NormalizedPayload["tool_context"] = cloneMap(toolContext)
 	}
 	return message
 }
@@ -261,15 +262,15 @@ func interpreterCaseAvailabilityOptionCount(item InterpreterCase) int {
 }
 
 func interpreterCaseAvailabilityOptionPrompt(count int) string {
-	if count <= 1 {
-		return "Encontrei esta opcao:\n1. Santa Ines/MA para Videira/SC, 06/07 as 08:00\n\nQual opcao voce prefere?"
-	}
 	var builder strings.Builder
-	builder.WriteString("Encontrei estas opcoes:\n")
+	builder.WriteString(availabilityListReplyHeader)
 	for index := 1; index <= count; index++ {
-		builder.WriteString(fmt.Sprintf("%d. Santa Ines/MA para Videira/SC, 06/07 as %02d:00\n", index, 7+index))
+		builder.WriteString(fmt.Sprintf("%d. Santa Ines/MA para Videira/SC, 2026-07-06, saida %02d:00, R$ 950", index, 7+index))
+		if index < count {
+			builder.WriteString("\n")
+		}
 	}
-	builder.WriteString("\nQual opcao voce prefere?")
+	builder.WriteString(availabilityListReplyQuestion)
 	return builder.String()
 }
 

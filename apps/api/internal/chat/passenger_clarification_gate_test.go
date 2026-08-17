@@ -134,32 +134,8 @@ func TestFreshSessionSelectionPersistsCompleteOptionThenAsksPassengers(t *testin
 	}
 
 	want := availability.Results[0]
-	for _, payload := range []map[string]interface{}{second.Draft.Payload, second.Draft.NormalizedPayload} {
-		if got := readInt(payload["selected_option_index"]); got != 1 {
-			t.Fatalf("expected selected_option_index=1, got %d payload=%+v", got, payload)
-		}
-		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-		for key, expected := range map[string]string{
-			"trip_id":            want.TripID,
-			"board_stop_id":      want.BoardStopID,
-			"alight_stop_id":     want.AlightStopID,
-			"origin":             want.OriginDisplayName,
-			"destination":        want.DestinationDisplayName,
-			"origin_depart_time": want.OriginDepartTime,
-			"trip_date":          want.TripDate,
-			"currency":           want.Currency,
-		} {
-			if got := strings.TrimSpace(asString(snapshot[key])); got != expected {
-				t.Fatalf("expected complete selected option %s=%q, got %q snapshot=%+v", key, expected, got, snapshot)
-			}
-		}
-		if got := readInt(snapshot["selected_option_index"]); got != 1 {
-			t.Fatalf("expected snapshot selected_option_index=1, got %d snapshot=%+v", got, snapshot)
-		}
-		if got := asFloat64(snapshot["price"]); got != want.Price {
-			t.Fatalf("expected selected price %.2f, got %.2f snapshot=%+v", want.Price, got, snapshot)
-		}
-	}
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.Payload, "fresh selection payload")
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.NormalizedPayload, "fresh selection normalized payload")
 	if _, ok := second.Draft.NormalizedPayload[passengerPendingPromptEventV1MessageKey]; !ok {
 		t.Fatalf("passenger question must carry the pending structural prompt event, payload=%+v", second.Draft.NormalizedPayload)
 	}
@@ -231,19 +207,10 @@ func TestFreshSessionSingleOptionConfirmationMaterializesBeforePassengerPrompt(t
 			runnerCallsAfterSearch, runner.calls, searcher.calls, second.ToolCalls)
 	}
 	want := availability.Results[0]
-	for label, payload := range map[string]map[string]interface{}{
-		"payload": second.Draft.Payload, "normalized_payload": second.Draft.NormalizedPayload,
-	} {
-		if index := payloadSelectedOptionIndex(payload); index != 1 {
-			t.Fatalf("%s selected index=%d, want 1: %+v", label, index, payload)
-		}
-		snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-		if strings.TrimSpace(asString(snapshot["trip_id"])) != want.TripID ||
-			strings.TrimSpace(asString(snapshot["board_stop_id"])) != want.BoardStopID ||
-			strings.TrimSpace(asString(snapshot["alight_stop_id"])) != want.AlightStopID {
-			t.Fatalf("%s did not persist the complete single option: %+v", label, snapshot)
-		}
-	}
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.Payload, "single-option passenger payload")
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.NormalizedPayload, "single-option passenger normalized payload")
+	canonical := canonicalConversationStateFromTestValue(t, second.Memory["canonical_state"], "single-option canonical state")
+	assertCanonicalRouteSelectionForTest(t, canonical.Route, 1, want, "single-option canonical route")
 	if canonicalAvailabilityFactsInvalidatedInMetadata(store.sessions[second.Session.ID].Metadata) {
 		t.Fatalf("complete single-option confirmation left availability invalidated: %+v", store.sessions[second.Session.ID].Metadata)
 	}
@@ -297,13 +264,8 @@ func TestPassengerPromptAvailabilityFactsDoNotReactivateSelectionGate(t *testing
 			if selected.Draft == nil || strings.TrimSpace(asString(selected.Draft.NormalizedPayload["template_name"])) != string(TemplateAskPassengerCount) {
 				t.Fatalf("expected option 2 to materialize before passenger collection, draft=%+v", selected.Draft)
 			}
-			if got := payloadSelectedOptionIndex(selected.Draft.NormalizedPayload); got != 2 {
-				t.Fatalf("expected materialized option 2, got %d payload=%+v", got, selected.Draft.NormalizedPayload)
-			}
-			facts := asMap(asMap(selected.Draft.Payload["tool_context"])[toolNameAvailabilitySearch])
-			if len(asInterfaceSliceMaps(facts["results"])) != len(availability.Results) {
-				t.Fatalf("passenger prompt must carry continuity facts for both options: %+v", selected.Draft.Payload)
-			}
+			assertDraftOmitsAvailabilityAuthorityForTest(t, selected.Draft.Payload, "selected passenger payload")
+			assertDraftOmitsAvailabilityAuthorityForTest(t, selected.Draft.NormalizedPayload, "selected passenger normalized payload")
 
 			outbound, err := store.CreateAutomationReply(context.Background(), CreateAutomationReplyInput{
 				SessionID: selected.Session.ID, DraftMessageID: selected.Draft.ID,
@@ -737,15 +699,9 @@ func TestAmbiguousAvailabilityClarificationPreservesCompleteOptionsForLaterIndex
 	if second.Draft == nil || strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])) != string(TemplateAskPassengerCount) {
 		t.Fatalf("index after clarification must select normally, draft=%+v", second.Draft)
 	}
-	if index := payloadSelectedOptionIndex(second.Draft.NormalizedPayload); index != 1 {
-		t.Fatalf("later explicit index=%d, want 1: %+v", index, second.Draft.NormalizedPayload)
-	}
-	snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if strings.TrimSpace(asString(snapshot["trip_id"])) != availability.Results[0].TripID ||
-		strings.TrimSpace(asString(snapshot["board_stop_id"])) != availability.Results[0].BoardStopID ||
-		strings.TrimSpace(asString(snapshot["alight_stop_id"])) != availability.Results[0].AlightStopID {
-		t.Fatalf("later explicit index selected the wrong option: %+v", snapshot)
-	}
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.NormalizedPayload, "later explicit passenger projection")
+	canonical := canonicalConversationStateFromTestValue(t, second.Memory["canonical_state"], "later explicit canonical state")
+	assertCanonicalRouteSelectionForTest(t, canonical.Route, 1, availability.Results[0], "later explicit canonical route")
 }
 
 func TestOutOfRangeAvailabilityClarificationDoesNotContaminateLaterIndex(t *testing.T) {
@@ -789,15 +745,9 @@ func TestOutOfRangeAvailabilityClarificationDoesNotContaminateLaterIndex(t *test
 	if second.Draft == nil || strings.TrimSpace(asString(second.Draft.NormalizedPayload["template_name"])) != string(TemplateAskPassengerCount) {
 		t.Fatalf("valid index after out-of-range clarification must select normally, draft=%+v", second.Draft)
 	}
-	if index := payloadSelectedOptionIndex(second.Draft.NormalizedPayload); index != 1 {
-		t.Fatalf("later valid index=%d, want 1: %+v", index, second.Draft.NormalizedPayload)
-	}
-	snapshot := asMap(second.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	if strings.TrimSpace(asString(snapshot["trip_id"])) != availability.Results[0].TripID ||
-		strings.TrimSpace(asString(snapshot["board_stop_id"])) != availability.Results[0].BoardStopID ||
-		strings.TrimSpace(asString(snapshot["alight_stop_id"])) != availability.Results[0].AlightStopID {
-		t.Fatalf("later valid index selected the wrong option: %+v", snapshot)
-	}
+	assertDraftOmitsAvailabilityAuthorityForTest(t, second.Draft.NormalizedPayload, "later valid passenger projection")
+	canonical := canonicalConversationStateFromTestValue(t, second.Memory["canonical_state"], "later valid canonical state")
+	assertCanonicalRouteSelectionForTest(t, canonical.Route, 1, availability.Results[0], "later valid canonical route")
 }
 
 func TestFallbackSelectionMaterializationInvalidationBlocksRawIndexOnLaterTurn(t *testing.T) {
@@ -1564,20 +1514,8 @@ func TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload(t *
 		t.Fatal("expected materialized replacement draft")
 	}
 	want := replacementAvailability.Results[0]
-	assertDraftSelectionForTest(t, out.Draft.Payload, 1, want, "replacement payload")
-	assertDraftSelectionForTest(t, out.Draft.NormalizedPayload, 1, want, "replacement normalized payload")
-	replacementSnapshot := asMap(out.Draft.NormalizedPayload[selectedAvailabilityResultPayloadKey])
-	wantSelectionMessageID := strings.TrimSpace(asString(replacementSnapshot[selectedAvailabilitySelectionMessageIDPayloadKey]))
-	wantPromptSourceMessageID := strings.TrimSpace(asString(replacementSnapshot[availabilityPromptSourceMessageIDPayloadKey]))
-	if wantSelectionMessageID != out.Draft.ID || wantPromptSourceMessageID == "" {
-		t.Fatalf(
-			"replacement authority IDs not persisted: selection=%q want=%q prompt_source=%q snapshot=%+v",
-			wantSelectionMessageID,
-			out.Draft.ID,
-			wantPromptSourceMessageID,
-			replacementSnapshot,
-		)
-	}
+	assertDraftOmitsAvailabilityAuthorityForTest(t, out.Draft.Payload, "replacement payload")
+	assertDraftOmitsAvailabilityAuthorityForTest(t, out.Draft.NormalizedPayload, "replacement normalized payload")
 
 	memoryCanonical := canonicalConversationStateFromTestValue(
 		t, out.Memory["canonical_state"], "replacement memory canonical state",
@@ -1620,13 +1558,17 @@ func TestMaterializeReplacesPriorBookableSelectionAggregateAndSurvivesReload(t *
 	reloadedBaseline := deriveCanonicalConversationStateForRoutingBaseline(reloaded, history)
 	assertCanonicalRouteSelectionForTest(t, reloadedBaseline.Route, 1, want, "replacement baseline after reload")
 	reloadedDraft := collectBookingDraftContextForRoutingBaseline(reloaded, history)
+	reloadedSelection, ok := availabilitySelectionStateV1FromSession(reloaded)
+	if !ok || reloadedSelection.Status != AvailabilitySelectionStatusBookable {
+		t.Fatalf("replacement selection authority missing after reload: %+v exists=%t", reloadedSelection, ok)
+	}
 	if !reloadedDraft.HasBookableSelection || reloadedDraft.SelectedOptionIndex != 1 ||
 		reloadedDraft.TripID != want.TripID ||
 		reloadedDraft.BoardStopID != want.BoardStopID ||
 		reloadedDraft.AlightStopID != want.AlightStopID ||
 		reloadedDraft.PackageName != want.PackageName ||
-		reloadedDraft.SelectionMessageID != wantSelectionMessageID ||
-		reloadedDraft.AvailabilityPromptSourceMessageID != wantPromptSourceMessageID ||
+		reloadedDraft.SelectionMessageID != reloadedSelection.SelectionProjectionMessageID ||
+		reloadedDraft.AvailabilityPromptSourceMessageID != reloadedSelection.AvailabilityPromptSourceMessageID ||
 		reloadedDraft.TripDate != want.TripDate ||
 		reloadedDraft.DepartureTime != want.OriginDepartTime ||
 		reloadedDraft.Price != want.Price ||
@@ -1757,8 +1699,8 @@ func TestPureSingleOptionMaterializePersistsSelection(t *testing.T) {
 				t.Fatalf("pure MATERIALIZE must ask passengers, got template=%q payload=%+v", got, out.Draft.NormalizedPayload)
 			}
 			want := availability.Results[0]
-			assertDraftSelectionForTest(t, out.Draft.Payload, 1, want, "pure selection payload")
-			assertDraftSelectionForTest(t, out.Draft.NormalizedPayload, 1, want, "pure selection normalized payload")
+			assertDraftOmitsAvailabilityAuthorityForTest(t, out.Draft.Payload, "pure selection payload")
+			assertDraftOmitsAvailabilityAuthorityForTest(t, out.Draft.NormalizedPayload, "pure selection normalized payload")
 			if _, exists := out.Draft.NormalizedPayload[passengerPendingPromptEventV1MessageKey]; !exists {
 				t.Fatalf("pure materialized selection did not create passenger prompt event: %+v", out.Draft.NormalizedPayload)
 			}
@@ -1909,29 +1851,14 @@ func assertCanonicalRouteHasNoSingleOptionItemForTest(t *testing.T, route Canoni
 	}
 }
 
-func assertDraftSelectionForTest(
+func assertDraftOmitsAvailabilityAuthorityForTest(
 	t *testing.T,
 	payload map[string]interface{},
-	index int,
-	want AvailabilitySearchItem,
 	label string,
 ) {
 	t.Helper()
-	if got := payloadSelectedOptionIndex(payload); got != index {
-		t.Fatalf("%s selected_option_index=%d, want %d: %+v", label, got, index, payload)
-	}
-	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
-	if strings.TrimSpace(asString(snapshot["trip_id"])) != want.TripID ||
-		strings.TrimSpace(asString(snapshot["board_stop_id"])) != want.BoardStopID ||
-		strings.TrimSpace(asString(snapshot["alight_stop_id"])) != want.AlightStopID ||
-		strings.TrimSpace(asString(snapshot["origin_display_name"])) != want.OriginDisplayName ||
-		strings.TrimSpace(asString(snapshot["destination_display_name"])) != want.DestinationDisplayName ||
-		strings.TrimSpace(asString(snapshot["package_name"])) != want.PackageName ||
-		strings.TrimSpace(asString(snapshot["trip_date"])) != want.TripDate ||
-		strings.TrimSpace(asString(snapshot["origin_depart_time"])) != want.OriginDepartTime ||
-		asFloat64(snapshot["price"]) != want.Price ||
-		strings.TrimSpace(asString(snapshot["currency"])) != want.Currency {
-		t.Fatalf("%s incomplete selected snapshot: got=%+v want=%+v", label, snapshot, want)
+	if payloadHasAvailabilityInferenceArtifacts(payload) {
+		t.Fatalf("%s must not duplicate availability authority: %+v", label, payload)
 	}
 }
 

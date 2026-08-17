@@ -1047,6 +1047,9 @@ func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time
 	rejectedDateMetadata := availabilityTestDayMonthMetadata(t, availability.Results[0].TripDate)
 	rejectionBody := "não quero " + rejectedDateInput + ", paga agora?"
 	history := availabilityOptionPromptHistory(now, availability)
+	history[len(history)-1].ID = "rejected-date-availability-source"
+	history[len(history)-1].ReceivedAt = now.Add(-time.Minute)
+	history[len(history)-1].CreatedAt = now.Add(-time.Minute)
 	state := deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, "")
 	activePrompt := InferActivePromptContext(history, state)
 	decision, ok := buildOutOfTurnInfoDecision(rejectionBody, activePrompt)
@@ -1062,27 +1065,32 @@ func availabilityRejectedDateOutOfTurnPaymentHistory(t *testing.T, now time.Time
 		t.Fatalf("expected rejected trip date metadata [%s], got %+v data=%+v", rejectedDateMetadata, got, templateData)
 	}
 
-	return append(history,
+	outOfTurnPayload := map[string]interface{}{
+		"template_name": string(TemplatePaymentOptionsInfo),
+		"intent":        string(IntentPaymentInfoQuestion),
+		"template_data": templateData,
+	}
+	outOfTurn := markAvailabilityPromptDeliveredForTest(Message{
+		Direction:         "OUTBOUND",
+		Body:              reply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		ReceivedAt:        now.Add(-20 * time.Second),
+		Payload:           cloneMap(outOfTurnPayload),
+		NormalizedPayload: cloneMap(outOfTurnPayload),
+	})
+	history = append(history,
 		Message{
 			Direction:  "INBOUND",
 			Body:       rejectionBody,
 			ReceivedAt: now.Add(-30 * time.Second),
 		},
-		Message{
-			Direction:        "OUTBOUND",
-			Body:             reply,
-			ProcessingStatus: messageStatusAutomationSent,
-			ReceivedAt:       now.Add(-20 * time.Second),
-			Payload: map[string]interface{}{
-				"template_name": string(TemplatePaymentOptionsInfo),
-				"intent":        string(IntentPaymentInfoQuestion),
-				"template_data": templateData,
-				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
-				},
-			},
-		},
-	), rejectedDateInput
+		outOfTurn,
+	)
+	active := InferActivePromptContext(history, deriveCanonicalConversationState(Session{ID: "session-1", HandoffStatus: "BOT"}, history, ""))
+	if active.Kind != ActivePromptAvailabilityOptionChoice {
+		t.Fatalf("sanitized out-of-turn reminder lost availability source: active=%+v history=%+v", active, history)
+	}
+	return history, rejectedDateInput
 }
 
 func sameIntSlice(left []int, right []int) bool {
@@ -2359,6 +2367,9 @@ func availabilityDateSelectionWithFiveOptionsHistory(t *testing.T) []Message {
 func availabilityDateChoiceAfterRouteQuestionHistory(t *testing.T) []Message {
 	t.Helper()
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	toolContext := map[string]interface{}{
+		toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
+	}
 	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
@@ -2372,9 +2383,12 @@ func availabilityDateChoiceAfterRouteQuestionHistory(t *testing.T) []Message {
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-2 * time.Minute),
 			Payload: map[string]interface{}{
-				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availabilityDateSelectionTestResult()),
-				},
+				outOfTurnActivePromptTemplateDataKey: string(ActivePromptAvailabilityDateChoice),
+				"tool_context":                       toolContext,
+			},
+			NormalizedPayload: map[string]interface{}{
+				outOfTurnActivePromptTemplateDataKey: string(ActivePromptAvailabilityDateChoice),
+				"tool_context":                       cloneMap(toolContext),
 			},
 		},
 	})
@@ -2408,15 +2422,20 @@ func availabilityDateSelectionTestResult() AvailabilitySearchResult {
 }
 
 func availabilityOptionPromptHistory(now time.Time, result AvailabilitySearchResult) []Message {
+	toolContext := map[string]interface{}{
+		toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
+	}
 	return markAvailabilityPromptHistoryDeliveredForTest([]Message{{
+		ID:               "availability-option-prompt",
 		Direction:        "OUTBOUND",
 		Body:             buildAvailabilityListReply(result),
 		ProcessingStatus: messageStatusAutomationSent,
 		ReceivedAt:       now.Add(-1 * time.Minute),
 		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(result),
-			},
+			"tool_context": toolContext,
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": cloneMap(toolContext),
 		},
 	}})
 }

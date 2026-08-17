@@ -104,11 +104,11 @@ tipo(escopo): ação objetiva
   - próxima ação recomendada.
 - Não faça commit nem push, salvo pedido explícito.
 
-### Gate operacional atual
+### Gate operacional
 
-- H-2026-07-27A está **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA TEMPORAL E PROVENIÊNCIA**.
-- A única próxima ação é um novo `/review` dirigido ao hotfix; evidência local verde não declara review limpo nem autoriza commit, push, deploy ou smoke.
-- H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+- Consulte sempre `docs/EXECUTION_TRACKER.md` para o status, o gate e a próxima ação operacional vigentes.
+- Não duplique em `AGENTS.md` contagens de findings, status de slices ou bloqueios temporários; o tracker é a única fonte canônica desse estado.
+- Evidência local verde não declara review limpo nem autoriza commit, push, deploy ou smoke.
 
 ### Validação padrão para mudanças em `apps/api/internal/chat`
 

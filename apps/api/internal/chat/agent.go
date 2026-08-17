@@ -877,10 +877,15 @@ func buildAgentDraftPayload(session Session, candidates []Message, draftID strin
 	if len(autoSend.Reasons) > 0 {
 		normalized["auto_send_reasons"] = autoSend.Reasons
 	}
+	normalizedToolContext := map[string]interface{}{}
+	if tools.Availability != nil {
+		normalizedToolContext[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(*tools.Availability)
+	}
 	if tools.BookingPassengerSnapshot != nil {
-		normalized["tool_context"] = map[string]interface{}{
-			toolNameBookingPassengerSnapshot: buildBookingPassengerSnapshotPayload(*tools.BookingPassengerSnapshot),
-		}
+		normalizedToolContext[toolNameBookingPassengerSnapshot] = buildBookingPassengerSnapshotPayload(*tools.BookingPassengerSnapshot)
+	}
+	if len(normalizedToolContext) > 0 {
+		normalized["tool_context"] = normalizedToolContext
 	}
 	return payload, normalized
 }

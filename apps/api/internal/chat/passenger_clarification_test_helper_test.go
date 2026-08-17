@@ -23,6 +23,13 @@ func markAvailabilityPromptDeliveredForTest(message Message) Message {
 		at = time.Now().UTC()
 	}
 	message.NormalizedPayload = cloneMap(message.NormalizedPayload)
+	if payloadToolContext := asMap(message.Payload["tool_context"]); payloadToolContext != nil {
+		if _, hasAvailability := payloadToolContext[toolNameAvailabilitySearch]; hasAvailability {
+			if _, alreadyPresent := message.NormalizedPayload["tool_context"]; !alreadyPresent {
+				message.NormalizedPayload["tool_context"] = cloneMap(payloadToolContext)
+			}
+		}
+	}
 	message.NormalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)
 	return message
 }
@@ -138,7 +145,6 @@ func persistedAvailabilitySelectionPayloadForTest(
 	}
 	return map[string]interface{}{
 		"intent":                             string(IntentSelectAvailabilityOption),
-		"template_name":                      string(TemplateAskPassengerCount),
 		"selected_option_index":              index,
 		selectedAvailabilityResultPayloadKey: snapshot,
 		"tool_context": map[string]interface{}{
@@ -161,7 +167,7 @@ func canonicalAvailabilitySelectionHistoryForTest(
 		!(promptIndex < selectionIndex && selectionIndex < projectionIndex) {
 		panic("invalid canonical availability fixture indexes")
 	}
-	snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(&availability, index)
+	snapshot, _, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(&availability, index)
 	if !ok {
 		panic("invalid canonical availability fixture snapshot")
 	}
@@ -175,9 +181,7 @@ func canonicalAvailabilitySelectionHistoryForTest(
 		payload["intent"] = string(IntentAvailabilitySearch)
 		payload["template_name"] = string(TemplateAvailabilityList)
 		toolContext := cloneMap(asMap(payload["tool_context"]))
-		if len(asMap(toolContext[toolNameAvailabilitySearch])) == 0 {
-			toolContext[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(availability)
-		}
+		toolContext[toolNameAvailabilitySearch] = buildAvailabilityToolResponsePayload(availability)
 		payload["tool_context"] = toolContext
 	}
 	prompt = markAvailabilityPromptDeliveredForTest(prompt)
@@ -190,20 +194,8 @@ func canonicalAvailabilitySelectionHistoryForTest(
 
 	projection := history[projectionIndex]
 	projection.ID = firstNonEmpty(strings.TrimSpace(projection.ID), "test-selection-projection-"+identity)
-	projectionPayload := persistedAvailabilitySelectionPayloadForTest(
-		availability,
-		index,
-		availabilitySelectionProjectionAuthorityForTest{
-			SelectionMessageID:    selection.ID,
-			PromptSourceMessageID: prompt.ID,
-		},
-	)
 	projection.Payload = cloneMap(projection.Payload)
 	projection.NormalizedPayload = cloneMap(projection.NormalizedPayload)
-	for key, value := range projectionPayload {
-		projection.Payload[key] = value
-		projection.NormalizedPayload[key] = value
-	}
 	projection = markAvailabilityPromptDeliveredForTest(projection)
 
 	event := materializedAvailabilitySelectionEventForTest(
@@ -360,23 +352,15 @@ func seedCanonicalAvailabilitySelectionForTest(
 	if err != nil {
 		t.Fatalf("seed canonical availability selection inbound: %v", err)
 	}
-	projectionPayload := persistedAvailabilitySelectionPayloadForTest(
-		availability,
-		index,
-		availabilitySelectionProjectionAuthorityForTest{
-			SelectionMessageID:    selection.ID,
-			PromptSourceMessageID: prompt.ID,
-		},
-	)
-	projectionNormalizedPayload := cloneMap(projectionPayload)
-	projectionNormalizedPayload["delivery_recorded_at"] = promptAt.Add(2 * time.Minute).UTC().Format(time.RFC3339Nano)
+	projectionNormalizedPayload := map[string]interface{}{
+		"delivery_recorded_at": promptAt.Add(2 * time.Minute).UTC().Format(time.RFC3339Nano),
+	}
 	projection, err := store.CreateMessage(context.Background(), CreateMessageInput{
 		SessionID:         sessionID,
 		Direction:         "OUTBOUND",
 		Kind:              "TEXT",
 		Body:              projectionBody,
 		ProcessingStatus:  messageStatusAutomationSent,
-		Payload:           cloneMap(projectionPayload),
 		NormalizedPayload: projectionNormalizedPayload,
 		ReceivedAt:        promptAt.Add(2 * time.Minute),
 	})

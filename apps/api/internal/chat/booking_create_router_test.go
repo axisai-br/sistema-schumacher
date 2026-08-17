@@ -1207,7 +1207,7 @@ func TestAvailabilityDraftHasSelectedTripAllowsFreshAvailabilityAfterOldSelectio
 	}
 }
 
-func TestAvailabilityDraftHasSelectedTripBlocksOldAvailabilityWhenSelectionBlockerIsNewer(t *testing.T) {
+func TestAvailabilityDraftHasSelectedTripStopsAtConflictingMetadataOnlySelection(t *testing.T) {
 	now := time.Now().UTC()
 	oldAvailability := singleAvailabilitySearchHistory(now, AvailabilitySearchItem{
 		TripID:                 "trip-2026-07-13",
@@ -1222,7 +1222,7 @@ func TestAvailabilityDraftHasSelectedTripBlocksOldAvailabilityWhenSelectionBlock
 	history := []Message{oldAvailability, blocker}
 
 	if availabilityDraftHasSelectedTrip(Session{}, history, "1") {
-		t.Fatalf("expected newer blocker to prevent current index from resolving against stale availability")
+		t.Fatalf("conflicting metadata-only selection must form a barrier to prior availability authority")
 	}
 }
 
@@ -2008,18 +2008,19 @@ func appendExplicitSoloPassengerDeclaration(history []Message, receivedAt time.T
 }
 
 func singleAvailabilitySearchHistory(now time.Time, item AvailabilitySearchItem) []Message {
+	availability := AvailabilitySearchResult{
+		Filter:  AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 1},
+		Results: []AvailabilitySearchItem{item},
+	}
 	return markAvailabilityPromptHistoryDeliveredForTest([]Message{
 		{
 			Direction:        "OUTBOUND",
-			Body:             "Achei uma opcao para Santa Ines/MA. Qual opcao voce prefere?",
+			Body:             buildAvailabilityListReply(availability),
 			ProcessingStatus: messageStatusAutomationSent,
 			ReceivedAt:       now.Add(-3 * time.Minute),
 			Payload: map[string]interface{}{
 				"tool_context": map[string]interface{}{
-					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(AvailabilitySearchResult{
-						Filter:  AvailabilitySearchInput{Origin: "Videira/SC", Destination: "Santa Ines/MA", Qty: 1, Limit: 1},
-						Results: []AvailabilitySearchItem{item},
-					}),
+					toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
 				},
 			},
 		},
@@ -2027,16 +2028,18 @@ func singleAvailabilitySearchHistory(now time.Time, item AvailabilitySearchItem)
 }
 
 func metadataOnlyAvailabilitySelectionMessage(receivedAt time.Time, index int) Message {
+	payload := map[string]interface{}{
+		"intent":                string(IntentSelectAvailabilityOption),
+		"template_name":         string(TemplateAskPassengerCount),
+		"selected_option_index": index,
+	}
 	return markAvailabilityPromptDeliveredForTest(Message{
-		Direction:        "OUTBOUND",
-		Body:             askPassengerCountReply,
-		ProcessingStatus: messageStatusAutomationSent,
-		ReceivedAt:       receivedAt,
-		Payload: map[string]interface{}{
-			"intent":                string(IntentSelectAvailabilityOption),
-			"template_name":         string(TemplateAskPassengerCount),
-			"selected_option_index": index,
-		},
+		Direction:         "OUTBOUND",
+		Body:              askPassengerCountReply,
+		ProcessingStatus:  messageStatusAutomationSent,
+		ReceivedAt:        receivedAt,
+		Payload:           cloneMap(payload),
+		NormalizedPayload: cloneMap(payload),
 	})
 }
 

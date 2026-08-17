@@ -51,6 +51,11 @@ const (
 )
 
 const (
+	availabilityListReplyHeader       = "Encontrei estas opcoes:\n"
+	availabilityListReplyQuestion     = "\n\nQual opcao voce prefere?"
+	earliestAvailabilityReplyPrefix   = "A data mais próxima é "
+	earliestAvailabilityReplyQuestion = ". Deseja seguir com essa opção?"
+
 	askPassengerCountReply        = "Perfeito. A passagem e so para voce ou vai mais alguem junto?"
 	askChildUnder5Reply           = "Tem crianca de 5 anos ou menos viajando?"
 	askReservationRouteSCReply    = "Para fazer a reserva, primeiro preciso saber o trecho da viagem. Me diga de qual cidade você vai sair e para qual cidade de Santa Catarina quer ir."
@@ -270,7 +275,7 @@ func buildAvailabilityListReplyForResultIndexes(
 		return ""
 	}
 	var builder strings.Builder
-	builder.WriteString("Encontrei estas opcoes:\n")
+	builder.WriteString(availabilityListReplyHeader)
 	for displayOffset, resultIndex := range resultIndexes {
 		if resultIndex < 0 || resultIndex >= len(result.Results) {
 			return ""
@@ -280,7 +285,7 @@ func buildAvailabilityListReplyForResultIndexes(
 			builder.WriteString("\n")
 		}
 	}
-	builder.WriteString("\n\nQual opcao voce prefere?")
+	builder.WriteString(availabilityListReplyQuestion)
 	return builder.String()
 }
 
@@ -291,7 +296,7 @@ func buildEarliestAvailabilityReply(item AvailabilitySearchItem) string {
 	}
 	details := make([]string, 0, 4)
 	if date != "" {
-		details = append(details, "A data mais próxima é "+date)
+		details = append(details, earliestAvailabilityReplyPrefix+date)
 	}
 	if departureTime := strings.TrimSpace(item.OriginDepartTime); departureTime != "" {
 		details = append(details, "com saída às "+departureTime)
@@ -305,7 +310,7 @@ func buildEarliestAvailabilityReply(item AvailabilitySearchItem) string {
 	if len(details) == 0 {
 		return ""
 	}
-	return strings.Join(details, ", ") + ". Deseja seguir com essa opção?"
+	return strings.Join(details, ", ") + earliestAvailabilityReplyQuestion
 }
 
 func buildAvailabilityListReply(result AvailabilitySearchResult) string {
@@ -314,7 +319,7 @@ func buildAvailabilityListReply(result AvailabilitySearchResult) string {
 		return ""
 	}
 	var builder strings.Builder
-	builder.WriteString("Encontrei estas opcoes:\n")
+	builder.WriteString(availabilityListReplyHeader)
 	limit := len(options)
 	if limit > 5 {
 		limit = 5
@@ -326,7 +331,7 @@ func buildAvailabilityListReply(result AvailabilitySearchResult) string {
 			builder.WriteString("\n")
 		}
 	}
-	builder.WriteString("\n\nQual opcao voce prefere?")
+	builder.WriteString(availabilityListReplyQuestion)
 	return builder.String()
 }
 

@@ -230,9 +230,9 @@ func TestRoutingBaselineKeepsSelectedPackageAtomicAgainstLaterUnselectedEnvelope
 			wantPackage: selectedPackage,
 		},
 		{
-			name:                  "legacy snapshot recovers from matching item",
+			name:                  "legacy snapshot does not recover package from prompt source",
 			removeSnapshotPackage: true,
-			wantPackage:           selectedPackage,
+			wantPackage:           "",
 		},
 		{
 			name:                      "legacy snapshot never recovers from filter",
