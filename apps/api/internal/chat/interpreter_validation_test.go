@@ -500,6 +500,7 @@ func validationAvailabilityHistory(result AvailabilitySearchResult, withFacts bo
 }
 
 func validationAvailabilityResult(count int) AvailabilitySearchResult {
+	firstTripDate := time.Now().UTC().AddDate(0, 0, 1)
 	result := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
 			Origin:      "Santa Ines/MA",
@@ -518,6 +519,7 @@ func validationAvailabilityResult(count int) AvailabilitySearchResult {
 			OriginDisplayName:      "Santa Ines/MA",
 			DestinationDisplayName: "Videira/SC",
 			OriginDepartTime:       fmt.Sprintf("%02d:00", 7+index),
+			TripDate:               firstTripDate.AddDate(0, 0, index-1).Format("2006-01-02"),
 			SeatsAvailable:         8,
 			Price:                  950,
 			Currency:               "BRL",

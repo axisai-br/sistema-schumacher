@@ -3263,7 +3263,7 @@ func findLatestAvailabilityContextWithSource(history []Message) (*AvailabilitySe
 
 func latestVisibleAvailabilitySelectionContextWithSource(history []Message) (*AvailabilitySearchResult, int, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
-		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+		if deliveredInvalidAvailabilityPromptBarrierAtV1(history, i) {
 			return nil, -1, false
 		}
 		message, sourceIndex, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
@@ -3290,38 +3290,34 @@ func visibleAvailabilitySelectionContextFromHistoryMessage(message Message) *Ava
 	default:
 		return nil
 	}
+	if !authority.Candidate || !authority.Prompt || authority.Facts == nil {
+		return nil
+	}
 	observedAt := message.ReceivedAt
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
-	renderedCount := availabilityOptionCountFromRenderedPrompt(messageTurnText(message))
-	for _, toolContext := range messageToolContexts(message) {
-		payload := asMap(toolContext[toolNameAvailabilitySearch])
-		if len(payload) == 0 {
-			continue
-		}
-		result := parseAvailabilityContextPayload(payload)
-		options := futureAvailabilityOptions(result.Results, observedAt)
-		if len(options) > 5 {
-			options = options[:5]
-		}
-		if renderedCount > 0 {
-			if renderedCount > len(options) {
-				continue
-			}
-			options = options[:renderedCount]
-		} else if len(options) != 1 {
-			continue
-		}
-		if len(options) == 0 {
-			continue
-		}
-		visible := result
-		visible.Results = append([]AvailabilitySearchItem(nil), options...)
-		visible.Filter.Limit = len(visible.Results)
-		return &visible
+	renderedCount := authority.OptionCount
+	result := *authority.Facts
+	options := futureAvailabilityOptions(result.Results, observedAt)
+	if len(options) > 5 {
+		options = options[:5]
 	}
-	return nil
+	if renderedCount > 0 {
+		if renderedCount > len(options) {
+			return nil
+		}
+		options = options[:renderedCount]
+	} else if len(options) != 1 {
+		return nil
+	}
+	if len(options) == 0 {
+		return nil
+	}
+	visible := result
+	visible.Results = append([]AvailabilitySearchItem(nil), options...)
+	visible.Filter.Limit = len(visible.Results)
+	return &visible
 }
 
 func hasPriorAvailabilityContextBefore(history []Message, beforeIndex int) bool {
@@ -3334,7 +3330,7 @@ func findLatestAvailabilityContextWithSourceBefore(history []Message, beforeInde
 		beforeIndex = len(history)
 	}
 	for i := beforeIndex - 1; i >= 0; i-- {
-		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+		if deliveredInvalidAvailabilityPromptBarrierAtV1(history, i) {
 			return nil, -1, false
 		}
 		message, sourceIndex, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
@@ -3375,7 +3371,7 @@ func classifiedAvailabilityPromptMessageAtV1(
 	return message, index, true
 }
 
-func parseAvailabilityContextPayload(payload map[string]interface{}) AvailabilitySearchResult {
+func parseAvailabilityContextPayloadWithValidityV1(payload map[string]interface{}) (AvailabilitySearchResult, bool) {
 	result := AvailabilitySearchResult{
 		Filter: AvailabilitySearchInput{
 			Origin:      strings.TrimSpace(asString(payload["origin"])),
@@ -3386,13 +3382,31 @@ func parseAvailabilityContextPayload(payload map[string]interface{}) Availabilit
 		},
 		Results: []AvailabilitySearchItem{},
 	}
-	if rawDate := strings.TrimSpace(asString(payload["trip_date"])); rawDate != "" {
-		if parsed, err := time.Parse("2006-01-02", rawDate); err == nil {
-			parsed = parsed.UTC()
-			result.Filter.TripDate = &parsed
+	valid := true
+	for _, filterDate := range []struct {
+		key    string
+		target **time.Time
+	}{
+		{key: "trip_date", target: &result.Filter.TripDate},
+		{key: "date_from", target: &result.Filter.DateFrom},
+		{key: "date_to", target: &result.Filter.DateTo},
+	} {
+		parsed, ok := parsePersistedAvailabilityFilterDateV1(payload, filterDate.key)
+		if !ok {
+			valid = false
+			continue
 		}
+		*filterDate.target = parsed
+	}
+	if valid && result.Filter.DateFrom != nil && result.Filter.DateTo != nil &&
+		result.Filter.DateFrom.After(*result.Filter.DateTo) {
+		valid = false
 	}
 	for _, item := range asInterfaceSliceMaps(payload["results"]) {
+		tripDate, tripDateValid := parsePersistedAvailabilityResultTripDateV1(item)
+		if !tripDateValid {
+			valid = false
+		}
 		result.Results = append(result.Results, AvailabilitySearchItem{
 			SegmentID:              strings.TrimSpace(asString(item["segment_id"])),
 			TripID:                 strings.TrimSpace(asString(item["trip_id"])),
@@ -3404,7 +3418,7 @@ func parseAvailabilityContextPayload(payload map[string]interface{}) Availabilit
 			OriginDisplayName:      strings.TrimSpace(asString(item["origin_display_name"])),
 			DestinationDisplayName: strings.TrimSpace(asString(item["destination_display_name"])),
 			OriginDepartTime:       strings.TrimSpace(asString(item["origin_depart_time"])),
-			TripDate:               strings.TrimSpace(asString(item["trip_date"])),
+			TripDate:               tripDate,
 			SeatsAvailable:         asInt(item["seats_available"]),
 			Price:                  asFloat64(item["price"]),
 			Currency:               strings.TrimSpace(asString(item["currency"])),
@@ -3413,7 +3427,39 @@ func parseAvailabilityContextPayload(payload map[string]interface{}) Availabilit
 			PackageName:            strings.TrimSpace(asString(item["package_name"])),
 		})
 	}
-	return result
+	return result, valid
+}
+
+func parsePersistedAvailabilityResultTripDateV1(item map[string]interface{}) (string, bool) {
+	raw, present := item["trip_date"]
+	if !present {
+		return "", true
+	}
+	text, isString := raw.(string)
+	if !isString || !availabilityPromptTripDateValidV1(text) {
+		return "", false
+	}
+	return text, true
+}
+
+func parsePersistedAvailabilityFilterDateV1(payload map[string]interface{}, key string) (*time.Time, bool) {
+	raw, present := payload[key]
+	if !present {
+		return nil, true
+	}
+	text, isString := raw.(string)
+	if !isString {
+		return nil, false
+	}
+	if text == "" {
+		return nil, false
+	}
+	parsed, err := time.Parse("2006-01-02", text)
+	if err != nil || parsed.Format("2006-01-02") != text {
+		return nil, false
+	}
+	parsed = parsed.UTC()
+	return &parsed, true
 }
 
 func buildBookingCreateRequestPayload(input BookingCreateInput) map[string]interface{} {

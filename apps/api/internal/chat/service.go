@@ -902,7 +902,7 @@ func availabilitySelectionEventsForTurnV1(
 	}
 	switch gate.Class {
 	case availabilitySelectionGateMaterialize:
-		snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(
+		snapshot, snapshotPresence, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(
 			gate.Availability,
 			gate.SelectedOptionIndex,
 		)
@@ -923,6 +923,8 @@ func availabilitySelectionEventsForTurnV1(
 			Snapshot:                          snapshot,
 			MaterializesAuthority:             true,
 			ReasonCode:                        "CURRENT_TURN_SELECTION_MATERIALIZED",
+			snapshotPresence:                  snapshotPresence,
+			snapshotPresenceKnown:             true,
 		}}
 	case availabilitySelectionGateFailClosedInvalidate:
 		return []AvailabilitySelectionEventV1{{
@@ -1454,6 +1456,12 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 				source,
 				TemplateContextFallbackAvailabilityOption,
 			)
+			if promptContext, ok := activeAvailabilitySelectionPromptContext(activePrompt, inferenceHistory); ok {
+				decision.TemplateData = map[string]interface{}{
+					outOfTurnActivePromptTemplateDataKey: string(ActivePromptAvailabilityOptionChoice),
+					outOfTurnActivePromptSourceIDDataKey: strings.TrimSpace(promptContext.SourceMessageID),
+				}
+			}
 			if reply, ok := realizeIntentResponseTemplate(decision); ok && strings.TrimSpace(reply) != "" {
 				run := buildTemplateDraftRunFromDecision(decision, reply)
 				deterministicBookingRun = &run
@@ -2767,6 +2775,23 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 	writeCanonicalAvailabilityFactsInvalidationMetadata(draftAgentState, availabilityFactsInvalidated, availabilityInvalidationBoundary)
 	draftBuffer := buildDraftGeneratedBufferState(persisted.Session.Metadata, candidates, draftID, runAt)
 	draftPayload, draftNormalizedPayload := buildAgentDraftPayload(persisted.Session, candidates, draftID, systemPrompt, userPrompt, run, toolContext, autoSendPolicy, runAt)
+	templateDomain, templateDomainKnown := availabilityPromptTemplateDomainV1(firstNonEmpty(
+		asString(run.ResponsePayload["template_name"]),
+		asString(run.RequestPayload["template_name"]),
+	))
+	keepAvailabilityArtifacts := hasAvailabilityPromptEvent ||
+		templateDomainKnown && templateDomain == availabilityPromptDomainAvailabilityV1
+	if !keepAvailabilityArtifacts {
+		// Selection state/events are the authority outside an availability prompt.
+		// Keep other domain projections free of decoded availability artifacts so
+		// they cannot become conflicting availability candidates on a later replay.
+		draftPayload = withoutAvailabilityInferencePayloadArtifacts(draftPayload)
+		draftNormalizedPayload = withoutAvailabilityInferencePayloadArtifacts(draftNormalizedPayload)
+	}
+	if templateData := asMap(asMap(draftPayload["request_payload"])["template_data"]); len(templateData) > 0 {
+		draftPayload["template_data"] = cloneMap(templateData)
+		draftNormalizedPayload["template_data"] = cloneMap(templateData)
+	}
 	draftAgentState[structuredInterpreterShadowKey] = shadow
 	draftPayload[structuredInterpreterShadowKey] = shadow
 	draftNormalizedPayload[structuredInterpreterShadowKey] = shadow
@@ -2985,18 +3010,11 @@ func availabilityContextFromOutOfTurnActivePromptSource(history []Message, decis
 	if sourceID == "" {
 		return nil
 	}
-	for i := len(history) - 1; i >= 0; i-- {
-		message := history[i]
-		if strings.TrimSpace(message.ID) != sourceID {
-			continue
-		}
-		classified, _, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
-		if !ok {
-			return nil
-		}
-		return visibleAvailabilityContextFromPromptMessage(classified)
+	source, _, ok := resolveAvailabilityPromptEffectiveSourceByIDV1(history, sourceID, len(history))
+	if !ok {
+		return nil
 	}
-	return nil
+	return visibleAvailabilityContextFromPromptMessage(source)
 }
 
 func visibleAvailabilityContextFromPromptMessage(message Message) *AvailabilitySearchResult {
@@ -3010,6 +3028,9 @@ func visibleAvailabilityContextFromPromptMessageAt(message Message, observedAt t
 		return authority.Presented
 	case availabilityPromptAuthorityAbsentLegacyV1:
 	default:
+		return nil
+	}
+	if !authority.Candidate || !authority.Prompt || authority.Facts == nil {
 		return nil
 	}
 	promptContext := availabilitySelectionPromptContextFromMessage(message)
@@ -3045,23 +3066,20 @@ func trustedAvailabilityContextFromPromptMessage(message Message) *AvailabilityS
 	default:
 		return nil
 	}
-	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
+	if !authority.Candidate || authority.Facts == nil {
+		return nil
+	}
+	currentFactsCount := visibleAvailabilityOptionCount(*authority.Facts)
 	if currentFactsCount <= 0 {
 		return nil
 	}
-	renderedCount := availabilityOptionCountFromRenderedPrompt(messageTurnText(message))
+	renderedCount := authority.OptionCount
 	if renderedCount > 0 && renderedCount != currentFactsCount {
 		return nil
 	}
-	for _, toolContext := range messageToolContexts(message) {
-		payload := asMap(toolContext[toolNameAvailabilitySearch])
-		if len(payload) == 0 {
-			continue
-		}
-		result := parseAvailabilityContextPayload(payload)
-		if len(result.Results) > 0 && visibleAvailabilityOptionCount(result) == currentFactsCount {
-			return &result
-		}
+	result := *authority.Facts
+	if len(result.Results) > 0 && visibleAvailabilityOptionCount(result) == currentFactsCount {
+		return &result
 	}
 	return nil
 }

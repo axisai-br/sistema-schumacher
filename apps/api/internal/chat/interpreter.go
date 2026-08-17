@@ -442,17 +442,23 @@ func availabilityOptionCountFromMessage(message Message) int {
 	switch authority.Class {
 	case availabilityPromptAuthorityValidStructuralV1:
 		if authority.Presented != nil {
-			return authority.Event.PresentedOptionCount
+			return authority.OptionCount
 		}
 		return 0
 	case availabilityPromptAuthorityAbsentLegacyV1:
 	default:
 		return 0
 	}
-	if count := availabilityOptionCountFromRenderedPrompt(messageTurnText(message)); count > 0 {
-		return count
+	if !authority.Candidate || !authority.Prompt || authority.Kind != ActivePromptAvailabilityOptionChoice {
+		return 0
 	}
-	return availabilityOptionCountFromMessageToolContext(message)
+	if authority.OptionCount > 0 {
+		return authority.OptionCount
+	}
+	if authority.Facts != nil {
+		return visibleAvailabilityOptionCount(*authority.Facts)
+	}
+	return 0
 }
 
 func availabilityOptionCountFromMessageToolContext(message Message) int {
@@ -460,24 +466,17 @@ func availabilityOptionCountFromMessageToolContext(message Message) int {
 	switch authority.Class {
 	case availabilityPromptAuthorityValidStructuralV1:
 		if authority.Presented != nil {
-			return authority.Event.PresentedOptionCount
+			return authority.OptionCount
 		}
 		return 0
 	case availabilityPromptAuthorityAbsentLegacyV1:
 	default:
 		return 0
 	}
-	for _, toolContext := range messageToolContexts(message) {
-		payload := asMap(toolContext[toolNameAvailabilitySearch])
-		if len(payload) == 0 {
-			continue
-		}
-		result := parseAvailabilityContextPayload(payload)
-		if count := visibleAvailabilityOptionCount(result); count > 0 {
-			return count
-		}
+	if !authority.Candidate || authority.Facts == nil {
+		return 0
 	}
-	return 0
+	return visibleAvailabilityOptionCount(*authority.Facts)
 }
 
 func visibleAvailabilityOptionCount(result AvailabilitySearchResult) int {
@@ -492,26 +491,11 @@ func visibleAvailabilityOptionCount(result AvailabilitySearchResult) int {
 }
 
 func availabilityOptionCountFromRenderedPrompt(body string) int {
-	folded := normalizeStructuredFolded(body)
-	if folded == "" {
+	_, count, ok := legacyAvailabilityPromptBodyV1(body)
+	if !ok {
 		return 0
 	}
-	if !strings.Contains(folded, "encontrei estas opcoes") &&
-		!strings.Contains(folded, "encontrei essas opcoes") &&
-		!strings.Contains(folded, "qual opcao voce prefere") &&
-		!strings.Contains(folded, "qual opcao prefere") &&
-		!looksLikeAvailabilitySelectionPrompt(folded) {
-		return 0
-	}
-
-	maxIndex := 0
-	for _, line := range strings.Split(body, "\n") {
-		index, ok := parseLeadingNumberedListIndex(line)
-		if ok && index > maxIndex {
-			maxIndex = index
-		}
-	}
-	return maxIndex
+	return count
 }
 
 func looksLikeAvailabilitySelectionPrompt(folded string) bool {

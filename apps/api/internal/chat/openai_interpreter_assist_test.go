@@ -544,7 +544,7 @@ func TestOpenAIInterpreterAssistSelectionTemplateDraftRequiresAtomicAttach(t *te
 			ReceivedAt:       observedAt.Add(2 * time.Minute),
 		},
 	)
-	availabilitySnapshot, ok := availabilitySelectionSnapshotV1FromAvailability(&availability, 2)
+	availabilitySnapshot, _, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(&availability, 2)
 	if !ok {
 		t.Fatalf("expected assist selection snapshot for durable authority")
 	}

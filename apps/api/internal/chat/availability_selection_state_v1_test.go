@@ -122,6 +122,909 @@ func TestAvailabilitySelectionStateV1ProjectionOnlyWindowHasNoAuthority(t *testi
 	}
 }
 
+func TestAvailabilitySelectionSnapshotEnrichmentRejectsUntrustedAuthorityClassesV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	fullSnapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &raw, 1)
+	selectionPayload := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	selectionPayload[selectedAvailabilitySelectionMessageIDPayloadKey] = "snapshot-selection-inbound"
+	selectionPayload[availabilityPromptSourceMessageIDPayloadKey] = "snapshot-prompt-source"
+
+	build := func(messageID, status string) Message {
+		message := availabilityPromptAuthorityMessage(messageID, status, raw, []int{0})
+		for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
+			payload["selected_option_index"] = 1
+			payload[selectedAvailabilityResultPayloadKey] = cloneMap(selectionPayload)
+		}
+		if status == "DELIVERED" {
+			passengerEvent, ok := passengerClarificationPromptEventV1(ActivePromptPassengerCount, message.ID)
+			if !ok {
+				t.Fatal("build passenger event")
+			}
+			message.Payload[passengerPromptEventV1MessageKey] = passengerEvent
+			message.NormalizedPayload[passengerPromptEventV1MessageKey] = passengerEvent
+		} else {
+			delete(message.NormalizedPayload, "delivery_recorded_at")
+		}
+		return message
+	}
+
+	for _, test := range []struct {
+		name  string
+		class availabilityPromptAuthorityClassV1
+		msg   Message
+	}{
+		{name: "invalid", class: availabilityPromptAuthorityInvalidV1, msg: build("snapshot-invalid", "DELIVERED")},
+		{name: "undelivered", class: availabilityPromptAuthorityUndeliveredV1, msg: build("snapshot-undelivered", "SEND_FAILED")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if authority := classifyAvailabilityPromptCandidateV1(test.msg); authority.Class != test.class {
+				t.Fatalf("class=%s, want %s", authority.Class, test.class)
+			}
+			if !legacyAvailabilitySelectionProjectionFactsV1(test.msg) {
+				t.Fatal("test precondition did not retain decodable reconciled facts/selection")
+			}
+			if candidates := availabilitySelectionSnapshotCandidatesFromMessageV1(test.msg, 1); len(candidates) != 0 {
+				t.Fatalf("untrusted authority produced snapshot candidates: %+v", candidates)
+			}
+
+			incomplete := AvailabilitySelectionSnapshotV1{
+				SelectedOptionIndex: 1,
+				TripID:              fullSnapshot.TripID,
+				BoardStopID:         fullSnapshot.BoardStopID,
+				AlightStopID:        fullSnapshot.AlightStopID,
+			}
+			event := AvailabilitySelectionEventV1{
+				Type:                              AvailabilitySelectionEventMaterialized,
+				MessageID:                         "snapshot-event-" + test.name,
+				ProjectionMessageID:               test.msg.ID,
+				AvailabilityPromptSourceMessageID: "snapshot-prompt-source",
+				SelectedOptionIndex:               1,
+				Snapshot:                          incomplete,
+				MaterializesAuthority:             true,
+			}
+			enriched := enrichLegacyAvailabilitySelectionEventSnapshotV1(event, []Message{test.msg})
+			if enriched.Snapshot != incomplete {
+				t.Fatalf("untrusted authority enriched legacy snapshot: got=%+v want=%+v", enriched.Snapshot, incomplete)
+			}
+		})
+	}
+
+	valid := availabilityPromptAuthorityMessage("snapshot-valid", "DELIVERED", raw, []int{0})
+	validCandidates := availabilitySelectionSnapshotCandidatesFromMessageV1(valid, 1)
+	if len(validCandidates) != 1 || validCandidates[0].PackageName != fullSnapshot.PackageName || validCandidates[0].TripDate != fullSnapshot.TripDate {
+		t.Fatalf("VALID_STRUCTURAL control lost Presented enrichment: %+v", validCandidates)
+	}
+	legacy := legacyAvailabilityPromptMessageForStateTest("snapshot-legacy", raw, valid.ReceivedAt)
+	legacyCandidates := availabilitySelectionSnapshotCandidatesFromMessageV1(legacy, 1)
+	if len(legacyCandidates) == 0 || legacyCandidates[0].TripID != fullSnapshot.TripID {
+		t.Fatalf("trusted ABSENT_LEGACY control lost enrichment: %+v", legacyCandidates)
+	}
+
+	mismatch := AvailabilitySelectionEventV1{
+		Type:                              AvailabilitySelectionEventMaterialized,
+		MessageID:                         "snapshot-mismatch-event",
+		ProjectionMessageID:               valid.ID,
+		AvailabilityPromptSourceMessageID: valid.ID,
+		SelectedOptionIndex:               1,
+		Snapshot: AvailabilitySelectionSnapshotV1{
+			SelectedOptionIndex: 1,
+			TripID:              "different-trip",
+			BoardStopID:         fullSnapshot.BoardStopID,
+			AlightStopID:        fullSnapshot.AlightStopID,
+		},
+		MaterializesAuthority: true,
+	}
+	mismatchEnriched := enrichLegacyAvailabilitySelectionEventSnapshotV1(mismatch, []Message{valid})
+	if mismatchEnriched.Snapshot.PackageName != "" || mismatchEnriched.Snapshot.TripDate != "" {
+		t.Fatalf("identity mismatch enriched snapshot: %+v", mismatchEnriched.Snapshot)
+	}
+}
+
+func TestAvailabilitySelectionSnapshotEnrichmentPreservesTrustedAbsentLegacySelectionV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	fullSnapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &raw, 1)
+	selected := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	selected[selectedAvailabilitySelectionMessageIDPayloadKey] = "trusted-legacy-selection-inbound"
+	selected[availabilityPromptSourceMessageIDPayloadKey] = "trusted-legacy-prompt-source"
+
+	build := func(messageID, status string, trustedIdentity bool) Message {
+		snapshot := cloneMap(selected)
+		if !trustedIdentity {
+			delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
+		}
+		payload := map[string]interface{}{
+			"intent":                             string(IntentSelectAvailabilityOption),
+			"selected_option_index":              1,
+			selectedAvailabilityResultPayloadKey: snapshot,
+		}
+		message := Message{
+			ID:                messageID,
+			Direction:         "OUTBOUND",
+			ProcessingStatus:  status,
+			Payload:           cloneMap(payload),
+			NormalizedPayload: cloneMap(payload),
+			ReceivedAt:        availabilityTestObservedAt(),
+			CreatedAt:         availabilityTestObservedAt(),
+		}
+		if DeliveryStatusConfirmsOutboundV1(status) {
+			message.NormalizedPayload["delivery_recorded_at"] = message.ReceivedAt.Format(time.RFC3339Nano)
+		}
+		return message
+	}
+
+	trusted := build("trusted-legacy-selection-projection", "DELIVERED", true)
+	trustedAuthority := classifyAvailabilityPromptCandidateV1(trusted)
+	if trustedAuthority.Class != availabilityPromptAuthorityAbsentLegacyV1 || trustedAuthority.Facts != nil || trustedAuthority.Selection == nil {
+		t.Fatalf("trusted selection precondition failed: %+v", trustedAuthority)
+	}
+	if !legacyAvailabilitySelectionProjectionFactsV1(trusted) {
+		t.Fatal("bilateral complete legacy selection was not recognized as trusted")
+	}
+	trustedCandidates := availabilitySelectionSnapshotCandidatesFromMessageV1(trusted, 1)
+	if len(trustedCandidates) != 1 || trustedCandidates[0].TripDate != fullSnapshot.TripDate ||
+		trustedCandidates[0].PackageName != fullSnapshot.PackageName || trustedCandidates[0].Price != fullSnapshot.Price {
+		t.Fatalf("trusted ABSENT_LEGACY selection lost snapshot enrichment: %+v", trustedCandidates)
+	}
+
+	incomplete := AvailabilitySelectionSnapshotV1{
+		SelectedOptionIndex: 1,
+		TripID:              fullSnapshot.TripID,
+		BoardStopID:         fullSnapshot.BoardStopID,
+		AlightStopID:        fullSnapshot.AlightStopID,
+	}
+	event := AvailabilitySelectionEventV1{
+		Type:                              AvailabilitySelectionEventMaterialized,
+		MessageID:                         "trusted-legacy-selection-inbound",
+		ProjectionMessageID:               trusted.ID,
+		AvailabilityPromptSourceMessageID: "trusted-legacy-prompt-source",
+		SelectedOptionIndex:               1,
+		Snapshot:                          incomplete,
+		MaterializesAuthority:             true,
+	}
+	trustedSource := availabilityPromptAuthorityMessage("trusted-legacy-prompt-source", "DELIVERED", raw, []int{0})
+	enriched := enrichLegacyAvailabilitySelectionEventSnapshotV1(event, []Message{trustedSource, trusted})
+	if enriched.Snapshot.TripDate != fullSnapshot.TripDate ||
+		enriched.Snapshot.PackageName != fullSnapshot.PackageName || enriched.Snapshot.Price != fullSnapshot.Price {
+		t.Fatalf("reload did not recover authorized legacy selection fields: %+v", enriched.Snapshot)
+	}
+	mismatchedSource := event
+	mismatchedSource.AvailabilityPromptSourceMessageID = "superseded-prompt-source"
+	mismatchedSource.Snapshot = incomplete
+	mismatchedEnrichment := enrichLegacyAvailabilitySelectionEventSnapshotV1(mismatchedSource, []Message{trustedSource, trusted})
+	if mismatchedEnrichment.Snapshot != incomplete {
+		t.Fatalf("legacy selection from a different prompt source enriched snapshot: %+v", mismatchedEnrichment.Snapshot)
+	}
+
+	invalid := build("trusted-legacy-selection-invalid", "DELIVERED", true)
+	passengerEvent, ok := passengerClarificationPromptEventV1(ActivePromptPassengerCount, invalid.ID)
+	if !ok {
+		t.Fatal("build passenger event")
+	}
+	invalid.Payload[passengerPromptEventV1MessageKey] = passengerEvent
+	invalid.NormalizedPayload[passengerPromptEventV1MessageKey] = passengerEvent
+	if authority := classifyAvailabilityPromptCandidateV1(invalid); authority.Class != availabilityPromptAuthorityInvalidV1 {
+		t.Fatalf("invalid control class=%s", authority.Class)
+	}
+	if candidates := availabilitySelectionSnapshotCandidatesFromMessageV1(invalid, 1); len(candidates) != 0 {
+		t.Fatalf("INVALID selection enriched snapshot: %+v", candidates)
+	}
+
+	undelivered := build("trusted-legacy-selection-undelivered", "SEND_FAILED", true)
+	if authority := classifyAvailabilityPromptCandidateV1(undelivered); authority.Class != availabilityPromptAuthorityUndeliveredV1 {
+		t.Fatalf("undelivered control class=%s", authority.Class)
+	}
+	if candidates := availabilitySelectionSnapshotCandidatesFromMessageV1(undelivered, 1); len(candidates) != 0 {
+		t.Fatalf("UNDELIVERED selection enriched snapshot: %+v", candidates)
+	}
+
+	untrusted := build("untrusted-legacy-selection-projection", "DELIVERED", false)
+	if legacyAvailabilitySelectionProjectionFactsV1(untrusted) {
+		t.Fatal("legacy selection without trusted identity passed the trust gate")
+	}
+	if candidates := availabilitySelectionSnapshotCandidatesFromMessageV1(untrusted, 1); len(candidates) != 0 {
+		t.Fatalf("legacy selection without trusted identity enriched snapshot: %+v", candidates)
+	}
+
+	valid := availabilityPromptAuthorityMessage("trusted-selection-valid-structural", "DELIVERED", raw, []int{0})
+	validCandidates := availabilitySelectionSnapshotCandidatesFromMessageV1(valid, 1)
+	if len(validCandidates) != 1 || validCandidates[0].TripDate != fullSnapshot.TripDate {
+		t.Fatalf("VALID_STRUCTURAL enrichment regressed: %+v", validCandidates)
+	}
+}
+
+func TestAvailabilitySelectionSnapshotEnrichmentUsesOnlyExactLegacyProjectionV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	fullSnapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &raw, 1)
+	selected := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	selected[selectedAvailabilitySelectionMessageIDPayloadKey] = "exclusive-selection-inbound"
+	selected[availabilityPromptSourceMessageIDPayloadKey] = "exclusive-structural-source"
+	delete(selected, "route_id")
+	delete(selected, "package_name")
+	delete(selected, "currency")
+	payload := map[string]interface{}{
+		"intent":                             string(IntentSelectAvailabilityOption),
+		"selected_option_index":              1,
+		selectedAvailabilityResultPayloadKey: selected,
+		"tool_context": map[string]interface{}{
+			toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(raw),
+		},
+	}
+	projection := Message{
+		ID:                "exclusive-legacy-projection",
+		Direction:         "OUTBOUND",
+		ProcessingStatus:  "DELIVERED",
+		Payload:           cloneMap(payload),
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        availabilityTestObservedAt(),
+		CreatedAt:         availabilityTestObservedAt(),
+	}
+	projection.NormalizedPayload["delivery_recorded_at"] = projection.ReceivedAt.Format(time.RFC3339Nano)
+	if authority := classifyAvailabilityPromptCandidateV1(projection); authority.Class != availabilityPromptAuthorityAbsentLegacyV1 || authority.Selection == nil {
+		t.Fatalf("projection precondition failed: %+v", authority)
+	}
+	source := availabilityPromptAuthorityMessage("exclusive-structural-source", "DELIVERED", raw, []int{0})
+	event := materializedAvailabilitySelectionEventForTest(
+		"exclusive-selection-inbound",
+		projection.ID,
+		source.ID,
+		AvailabilitySelectionSnapshotV1{
+			SelectedOptionIndex: 1,
+			TripID:              fullSnapshot.TripID,
+			BoardStopID:         fullSnapshot.BoardStopID,
+			AlightStopID:        fullSnapshot.AlightStopID,
+		},
+	)
+
+	enriched := enrichLegacyAvailabilitySelectionEventSnapshotV1(event, []Message{source, projection})
+	if !enriched.MaterializesAuthority || enriched.Snapshot.TripDate != fullSnapshot.TripDate ||
+		enriched.Snapshot.Price != fullSnapshot.Price {
+		t.Fatalf("exact projection did not provide its selected result: %+v", enriched)
+	}
+	if enriched.Snapshot.RouteID != "" || enriched.Snapshot.PackageName != "" || enriched.Snapshot.Currency != "" {
+		t.Fatalf("structural prompt source leaked extra facts into legacy snapshot: %+v", enriched.Snapshot)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*AvailabilitySelectionEventV1)
+	}{
+		{name: "projection", mutate: func(event *AvailabilitySelectionEventV1) { event.ProjectionMessageID = "other-projection" }},
+		{name: "selection message", mutate: func(event *AvailabilitySelectionEventV1) { event.MessageID = "other-selection" }},
+		{name: "prompt source", mutate: func(event *AvailabilitySelectionEventV1) { event.AvailabilityPromptSourceMessageID = "other-source" }},
+		{name: "index", mutate: func(event *AvailabilitySelectionEventV1) {
+			event.SelectedOptionIndex = 2
+			event.Snapshot.SelectedOptionIndex = 2
+		}},
+	} {
+		t.Run(test.name+" mismatch", func(t *testing.T) {
+			mismatched := event
+			test.mutate(&mismatched)
+			got := enrichLegacyAvailabilitySelectionEventSnapshotV1(mismatched, []Message{source, projection})
+			if got.MaterializesAuthority {
+				t.Fatalf("identity mismatch retained legacy authority: %+v", got)
+			}
+			state := ReduceAvailabilitySelectionEventsV1(
+				newAvailabilitySelectionStateV1(),
+				[]AvailabilitySelectionEventV1{got},
+			)
+			if state.Status == AvailabilitySelectionStatusBookable {
+				t.Fatalf("identity mismatch recovered BOOKABLE: %+v", state)
+			}
+			if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+				t.Fatal("identity mismatch reached booking_create")
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionSnapshotEnrichmentRequiresExplicitPromptSourceV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	fullSnapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &raw, 1)
+	baseSelected := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	baseSelected[selectedAvailabilitySelectionMessageIDPayloadKey] = "explicit-source-selection-inbound"
+	buildProjection := func(selected map[string]interface{}) Message {
+		payload := map[string]interface{}{
+			"intent":                             string(IntentSelectAvailabilityOption),
+			"selected_option_index":              1,
+			selectedAvailabilityResultPayloadKey: cloneMap(selected),
+			"tool_context": map[string]interface{}{
+				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(raw),
+			},
+		}
+		message := Message{
+			ID:                "explicit-source-legacy-projection",
+			Direction:         "OUTBOUND",
+			ProcessingStatus:  "DELIVERED",
+			Payload:           cloneMap(payload),
+			NormalizedPayload: cloneMap(payload),
+			ReceivedAt:        availabilityTestObservedAt(),
+			CreatedAt:         availabilityTestObservedAt(),
+		}
+		message.NormalizedPayload["delivery_recorded_at"] = message.ReceivedAt.Format(time.RFC3339Nano)
+		return message
+	}
+	buildEvent := func(projectionID string) AvailabilitySelectionEventV1 {
+		return materializedAvailabilitySelectionEventForTest(
+			"explicit-source-selection-inbound",
+			projectionID,
+			"explicit-source-prompt",
+			AvailabilitySelectionSnapshotV1{
+				SelectedOptionIndex: 1,
+				TripID:              fullSnapshot.TripID,
+				BoardStopID:         fullSnapshot.BoardStopID,
+				AlightStopID:        fullSnapshot.AlightStopID,
+			},
+		)
+	}
+	source := availabilityPromptAuthorityMessage("explicit-source-prompt", "DELIVERED", raw, []int{0})
+
+	for _, test := range []struct {
+		name          string
+		setSource     bool
+		sourceID      string
+		historySource []Message
+		wantAuthority bool
+	}{
+		{name: "omitted without history", historySource: nil},
+		{name: "explicit empty", setSource: true, sourceID: "", historySource: []Message{source}},
+		{name: "mismatch", setSource: true, sourceID: "other-source", historySource: []Message{source}},
+		{name: "exact", setSource: true, sourceID: source.ID, historySource: []Message{source}, wantAuthority: true},
+		{name: "compatible history cannot infer omitted id", historySource: []Message{source}},
+		{name: "duplicate exact source", setSource: true, sourceID: source.ID, historySource: []Message{source, source}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected := cloneMap(baseSelected)
+			if test.setSource {
+				selected[availabilityPromptSourceMessageIDPayloadKey] = test.sourceID
+			}
+			projection := buildProjection(selected)
+			history := append(append([]Message(nil), test.historySource...), projection)
+			got := enrichLegacyAvailabilitySelectionEventSnapshotV1(buildEvent(projection.ID), history)
+			if got.MaterializesAuthority != test.wantAuthority {
+				t.Fatalf("MaterializesAuthority=%t, want %t: %+v", got.MaterializesAuthority, test.wantAuthority, got)
+			}
+			state := ReduceAvailabilitySelectionEventsV1(
+				newAvailabilitySelectionStateV1(),
+				[]AvailabilitySelectionEventV1{got},
+			)
+			if !test.wantAuthority {
+				if state.Status == AvailabilitySelectionStatusBookable {
+					t.Fatalf("invalid prompt source recovered BOOKABLE: %+v", state)
+				}
+				if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+					t.Fatal("invalid prompt source reached booking_create")
+				}
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionLegacyProjectionUsesProjectionBarrierBoundaryV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	makeInvalid := func(messageID string, at time.Time) Message {
+		message := availabilityPromptAuthorityMessage(messageID, "DELIVERED", raw, []int{0})
+		message.Payload[testAvailabilityPromptEventV1MessageKey] = "malformed"
+		message.NormalizedPayload[testAvailabilityPromptEventV1MessageKey] = "malformed"
+		message.ReceivedAt = at
+		message.CreatedAt = at
+		message.NormalizedPayload["delivery_recorded_at"] = at.Format(time.RFC3339Nano)
+		if authority := classifyAvailabilityPromptCandidateV1(message); authority.Class != availabilityPromptAuthorityInvalidV1 {
+			t.Fatalf("invalid fixture class=%s, want INVALID", authority.Class)
+		}
+		return message
+	}
+	makeNonAvailability := func(messageID string, intent Intent, template ResponseTemplateName, at time.Time) Message {
+		payload := map[string]interface{}{
+			"intent":        string(intent),
+			"template_name": string(template),
+		}
+		normalized := cloneMap(payload)
+		normalized["delivery_recorded_at"] = at.Format(time.RFC3339Nano)
+		return Message{
+			ID:                messageID,
+			Direction:         "OUTBOUND",
+			ProcessingStatus:  "DELIVERED",
+			Payload:           payload,
+			NormalizedPayload: normalized,
+			ReceivedAt:        at,
+			CreatedAt:         at,
+		}
+	}
+
+	for _, test := range []struct {
+		name                    string
+		buildHistory            func(Message, Message, Message, time.Time) []Message
+		wantProjectionAuthority bool
+		wantFinalBookable       bool
+	}{
+		{
+			name: "INVALID between selection and projection",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				return []Message{source, selection, makeInvalid("barrier-after-selection", at.Add(2*time.Minute)), projection}
+			},
+		},
+		{
+			name: "INVALID between source and selection",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				return []Message{source, makeInvalid("barrier-before-selection", at.Add(time.Minute)), selection, projection}
+			},
+		},
+		{
+			name: "new source after old INVALID",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				return []Message{makeInvalid("old-barrier", at.Add(-time.Minute)), source, selection, projection}
+			},
+			wantProjectionAuthority: true,
+			wantFinalBookable:       true,
+		},
+		{
+			name: "INVALID after projection is not retroactive",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				return []Message{source, selection, projection, makeInvalid("posterior-barrier", at.Add(4*time.Minute))}
+			},
+			wantProjectionAuthority: true,
+		},
+		{
+			name: "UNDELIVERED availability is not a barrier",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				undelivered := availabilityPromptAuthorityMessage("undelivered-availability", "SEND_FAILED", raw, []int{0})
+				undelivered.ReceivedAt = at.Add(2 * time.Minute)
+				undelivered.CreatedAt = undelivered.ReceivedAt
+				delete(undelivered.NormalizedPayload, "delivery_recorded_at")
+				return []Message{source, selection, undelivered, projection}
+			},
+			wantProjectionAuthority: true,
+			wantFinalBookable:       true,
+		},
+		{
+			name: "passenger payment and document messages are not availability barriers",
+			buildHistory: func(source, selection, projection Message, at time.Time) []Message {
+				passenger := makeNonAvailability(
+					"passenger-between-selection-and-projection",
+					IntentPassengerCountReply,
+					TemplateAskPassengerCount,
+					at.Add(2*time.Minute),
+				)
+				payment := makeNonAvailability(
+					"payment-between-selection-and-projection",
+					IntentPaymentPreference,
+					TemplateAskPaymentChoice,
+					at.Add(3*time.Minute),
+				)
+				document := makeNonAvailability(
+					"document-between-selection-and-projection",
+					IntentPassengerDocumentsProvided,
+					TemplateAskDocuments,
+					at.Add(4*time.Minute),
+				)
+				return []Message{source, selection, passenger, payment, document, projection}
+			},
+			wantProjectionAuthority: true,
+			wantFinalBookable:       true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			suffix := strings.ReplaceAll(test.name, " ", "-")
+			source := availabilityPromptAuthorityMessage("projection-boundary-source-"+suffix, "DELIVERED", raw, []int{0})
+			at := source.ReceivedAt
+			projection := legacyAvailabilitySelectionMessageForStateTest(
+				"projection-boundary-"+suffix,
+				raw,
+				IntentSelectAvailabilityOption,
+				at.Add(5*time.Minute),
+				source.ID,
+			)
+			selection := legacyAvailabilitySelectionInboundForStateTest(projection, at.Add(time.Minute))
+			history := test.buildHistory(source, selection, projection, at)
+			projectionIndex := -1
+			for index := range history {
+				if history[index].ID == projection.ID {
+					projectionIndex = index
+					break
+				}
+			}
+			if projectionIndex < 0 {
+				t.Fatal("projection missing from fixture history")
+			}
+
+			event, materialized := legacyAvailabilitySelectionEventV1FromMessage(
+				projection,
+				projectionIndex,
+				history,
+			)
+			if materialized != test.wantProjectionAuthority || materialized && !event.MaterializesAuthority {
+				t.Fatalf(
+					"projection authority materialized=%t event=%+v, want %t",
+					materialized,
+					event,
+					test.wantProjectionAuthority,
+				)
+			}
+
+			state := bootstrapAvailabilitySelectionStateFromHistoryForTest(history)
+			if got := state.Status == AvailabilitySelectionStatusBookable; got != test.wantFinalBookable {
+				t.Fatalf("final BOOKABLE=%t, want %t: %+v", got, test.wantFinalBookable, state)
+			}
+			session := sessionWithAvailabilitySelectionStateForTest(Session{}, state)
+			draft := collectBookingDraftContextWithPassengerState(
+				session,
+				history,
+				"",
+				completePassengerStateForTest(1, 0),
+			)
+			if draft.HasBookableSelection != test.wantFinalBookable {
+				t.Fatalf("draft HasBookableSelection=%t, want %t: %+v", draft.HasBookableSelection, test.wantFinalBookable, draft)
+			}
+			if !test.wantFinalBookable {
+				if state.SelectedOptionIndex != 0 || availabilitySelectionStateHasAggregateV1(state) {
+					t.Fatalf("fail-closed state retained selection authority: %+v", state)
+				}
+				if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+					t.Fatal("fail-closed state reached booking_create selection")
+				}
+				assertNoBookingCreateInputFromAvailabilityHistoryV1(t, history)
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionSnapshotEnrichmentRejectsConflictingLegacySnapshotV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	fullSnapshot := mustAvailabilitySelectionSnapshotV1ForTest(t, &raw, 1)
+	selected := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	selected[selectedAvailabilitySelectionMessageIDPayloadKey] = "conflict-selection-inbound"
+	selected[availabilityPromptSourceMessageIDPayloadKey] = "conflict-prompt-source"
+	payload := map[string]interface{}{
+		"intent":                             string(IntentSelectAvailabilityOption),
+		"selected_option_index":              1,
+		selectedAvailabilityResultPayloadKey: selected,
+	}
+	projection := Message{
+		ID:                "conflict-legacy-projection",
+		Direction:         "OUTBOUND",
+		ProcessingStatus:  "DELIVERED",
+		Payload:           cloneMap(payload),
+		NormalizedPayload: cloneMap(payload),
+		ReceivedAt:        availabilityTestObservedAt(),
+		CreatedAt:         availabilityTestObservedAt(),
+	}
+	projection.NormalizedPayload["delivery_recorded_at"] = projection.ReceivedAt.Format(time.RFC3339Nano)
+	source := availabilityPromptAuthorityMessage("conflict-prompt-source", "DELIVERED", raw, []int{0})
+	base := materializedAvailabilitySelectionEventForTest(
+		"conflict-selection-inbound",
+		projection.ID,
+		"conflict-prompt-source",
+		AvailabilitySelectionSnapshotV1{
+			SelectedOptionIndex: 1,
+			TripID:              fullSnapshot.TripID,
+			BoardStopID:         fullSnapshot.BoardStopID,
+			AlightStopID:        fullSnapshot.AlightStopID,
+		},
+	)
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*AvailabilitySelectionSnapshotV1)
+	}{
+		{name: "segment", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.SegmentID = "other-segment" }},
+		{name: "trip date", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.TripDate = "2099-12-31" }},
+		{name: "route", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.RouteID = "other-route" }},
+		{name: "origin stop", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.OriginStopID = "other-origin-stop" }},
+		{name: "destination stop", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.DestinationStopID = "other-destination-stop" }},
+		{name: "origin", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.Origin = "Outra origem" }},
+		{name: "destination", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.Destination = "Outro destino" }},
+		{name: "package", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.PackageName = "Outro pacote" }},
+		{name: "origin display", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.OriginDisplayName = "Outra origem exibida" }},
+		{name: "destination display", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) {
+			snapshot.DestinationDisplayName = "Outro destino exibido"
+		}},
+		{name: "origin depart time", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.OriginDepartTime = "23:59" }},
+		{name: "seats available", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) {
+			snapshot.SeatsAvailable = fullSnapshot.SeatsAvailable + 1
+		}},
+		{name: "price", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.Price = fullSnapshot.Price + 1 }},
+		{name: "currency", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.Currency = "USD" }},
+		{name: "status", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.Status = "CLOSED" }},
+		{name: "trip status", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.TripStatus = "CANCELLED" }},
+		{name: "trip id", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.TripID = "other-trip" }},
+		{name: "board stop", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.BoardStopID = "other-board" }},
+		{name: "alight stop", mutate: func(snapshot *AvailabilitySelectionSnapshotV1) { snapshot.AlightStopID = "other-alight" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conflicting := base
+			test.mutate(&conflicting.Snapshot)
+			original := conflicting.Snapshot
+			got := enrichLegacyAvailabilitySelectionEventSnapshotV1(conflicting, []Message{source, projection})
+			if got.MaterializesAuthority {
+				t.Fatalf("conflicting snapshot retained authority: %+v", got)
+			}
+			if got.Snapshot != original {
+				t.Fatalf("conflicting snapshot was silently rewritten: got=%+v want=%+v", got.Snapshot, original)
+			}
+			state := ReduceAvailabilitySelectionEventsV1(
+				newAvailabilitySelectionStateV1(),
+				[]AvailabilitySelectionEventV1{got},
+			)
+			if state.Status == AvailabilitySelectionStatusBookable {
+				t.Fatalf("conflicting snapshot recovered BOOKABLE: %+v", state)
+			}
+			if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+				t.Fatal("conflicting snapshot reached booking_create")
+			}
+		})
+	}
+
+	compatible := base
+	compatible.Snapshot.TripDate = fullSnapshot.TripDate
+	got := enrichLegacyAvailabilitySelectionEventSnapshotV1(compatible, []Message{source, projection})
+	if !got.MaterializesAuthority || got.Snapshot.TripDate != fullSnapshot.TripDate ||
+		got.Snapshot.PackageName != fullSnapshot.PackageName || got.Snapshot.Price != fullSnapshot.Price {
+		t.Fatalf("compatible partial snapshot did not recover only missing fields: %+v", got)
+	}
+}
+
+func TestAvailabilitySelectionSnapshotEnrichmentPreservesPersistedFieldPresenceV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	selected := selectedAvailabilityResultPayloadFromAvailability(&raw, 1)
+	selected[selectedAvailabilitySelectionMessageIDPayloadKey] = "presence-selection-inbound"
+	selected[availabilityPromptSourceMessageIDPayloadKey] = "presence-prompt-source"
+	projectionPayload := map[string]interface{}{
+		"intent":                             string(IntentSelectAvailabilityOption),
+		"selected_option_index":              1,
+		selectedAvailabilityResultPayloadKey: cloneMap(selected),
+	}
+	projection := Message{
+		ID:                "presence-legacy-projection",
+		Direction:         "OUTBOUND",
+		ProcessingStatus:  "DELIVERED",
+		Payload:           cloneMap(projectionPayload),
+		NormalizedPayload: cloneMap(projectionPayload),
+		ReceivedAt:        availabilityTestObservedAt().Add(2 * time.Minute),
+		CreatedAt:         availabilityTestObservedAt().Add(2 * time.Minute),
+	}
+	projection.NormalizedPayload["delivery_recorded_at"] = projection.ReceivedAt.Format(time.RFC3339Nano)
+	source := availabilityPromptAuthorityMessage("presence-prompt-source", "DELIVERED", raw, []int{0})
+
+	decodePersistedEvent := func(t *testing.T, snapshot map[string]interface{}) AvailabilitySelectionEventV1 {
+		t.Helper()
+		message := Message{
+			ID:         "presence-selection-inbound",
+			Direction:  "INBOUND",
+			ReceivedAt: availabilityTestObservedAt().Add(time.Minute),
+			CreatedAt:  availabilityTestObservedAt().Add(time.Minute),
+			NormalizedPayload: map[string]interface{}{
+				availabilitySelectionEventsV1MessageKey: []interface{}{map[string]interface{}{
+					"type":                                  string(AvailabilitySelectionEventMaterialized),
+					"message_id":                            "presence-selection-inbound",
+					"projection_message_id":                 projection.ID,
+					"availability_prompt_source_message_id": source.ID,
+					"selected_option_index":                 1,
+					"snapshot":                              snapshot,
+					"materializes_authority":                true,
+				}},
+			},
+		}
+		events := availabilitySelectionEventsV1FromMessage(message)
+		if len(events) != 1 {
+			t.Fatalf("decoded events=%d, want 1", len(events))
+		}
+		return events[0]
+	}
+
+	for _, test := range []struct {
+		name          string
+		field         string
+		setPersisted  bool
+		persisted     interface{}
+		wantAuthority bool
+	}{
+		{name: "price absent is filled", field: "price", wantAuthority: true},
+		{name: "price zero is a conflict", field: "price", setPersisted: true, persisted: float64(0)},
+		{name: "price equal remains", field: "price", setPersisted: true, persisted: selected["price"], wantAuthority: true},
+		{name: "seats absent is filled", field: "seats_available", wantAuthority: true},
+		{name: "seats zero is a conflict", field: "seats_available", setPersisted: true, persisted: 0},
+		{name: "seats equal remains", field: "seats_available", setPersisted: true, persisted: selected["seats_available"], wantAuthority: true},
+		{name: "string absent is filled", field: "package_name", wantAuthority: true},
+		{name: "string empty is a conflict", field: "package_name", setPersisted: true, persisted: ""},
+		{name: "string equal remains", field: "package_name", setPersisted: true, persisted: selected["package_name"], wantAuthority: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := cloneMap(selected)
+			delete(snapshot, selectedAvailabilitySelectionMessageIDPayloadKey)
+			delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
+			delete(snapshot, test.field)
+			if test.setPersisted {
+				snapshot[test.field] = test.persisted
+			}
+			persistedValue, persistedPresent := snapshot[test.field]
+			got := enrichLegacyAvailabilitySelectionEventSnapshotV1(
+				decodePersistedEvent(t, snapshot),
+				[]Message{source, {
+					ID:         "presence-selection-inbound",
+					Direction:  "INBOUND",
+					ReceivedAt: availabilityTestObservedAt().Add(time.Minute),
+					CreatedAt:  availabilityTestObservedAt().Add(time.Minute),
+				}, projection},
+			)
+			if got.MaterializesAuthority != test.wantAuthority {
+				t.Fatalf("MaterializesAuthority=%t, want %t: %+v", got.MaterializesAuthority, test.wantAuthority, got)
+			}
+			if !test.wantAuthority {
+				gotPayload := got.Snapshot.payload()
+				if !persistedPresent || gotPayload[test.field] != persistedValue {
+					t.Fatalf("persisted conflict was rewritten: field=%s got=%v want=%v", test.field, gotPayload[test.field], persistedValue)
+				}
+			}
+			state := ReduceAvailabilitySelectionEventsV1(
+				newAvailabilitySelectionStateV1(),
+				[]AvailabilitySelectionEventV1{got},
+			)
+			if test.wantAuthority {
+				if state.Status != AvailabilitySelectionStatusBookable {
+					t.Fatalf("compatible reload lost BOOKABLE: %+v", state)
+				}
+				return
+			}
+			if state.Status == AvailabilitySelectionStatusBookable {
+				t.Fatalf("conflicting reload recovered BOOKABLE: %+v", state)
+			}
+			if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+				t.Fatal("conflicting reload reached booking_create")
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionSnapshotPresenceRejectsNullAndInvalidTypesV1(t *testing.T) {
+	selected := selectedAvailabilityResultPayloadFromAvailability(
+		func() *AvailabilitySearchResult {
+			raw := availabilityPromptAuthorityRawResult()
+			return &raw
+		}(),
+		1,
+	)
+	delete(selected, selectedAvailabilitySelectionMessageIDPayloadKey)
+	delete(selected, availabilityPromptSourceMessageIDPayloadKey)
+
+	for _, test := range []struct {
+		name  string
+		field string
+		value interface{}
+	}{
+		{name: "string null", field: "package_name", value: nil},
+		{name: "string invalid type", field: "package_name", value: 7},
+		{name: "float null", field: "price", value: nil},
+		{name: "float invalid type", field: "price", value: "0"},
+		{name: "integer null", field: "seats_available", value: nil},
+		{name: "integer non integral", field: "seats_available", value: 1.5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := cloneMap(selected)
+			snapshot[test.field] = test.value
+			if got, presence, ok := availabilitySelectionSnapshotV1FromPayloadWithPresence(snapshot); ok {
+				t.Fatalf("invalid typed field decoded: snapshot=%+v presence=%b", got, presence)
+			}
+
+			message := Message{
+				ID:         "invalid-presence-selection",
+				Direction:  "INBOUND",
+				ReceivedAt: availabilityTestObservedAt(),
+				CreatedAt:  availabilityTestObservedAt(),
+				NormalizedPayload: map[string]interface{}{
+					availabilitySelectionEventsV1MessageKey: []interface{}{map[string]interface{}{
+						"type":                                  string(AvailabilitySelectionEventMaterialized),
+						"message_id":                            "invalid-presence-selection",
+						"projection_message_id":                 "invalid-presence-projection",
+						"availability_prompt_source_message_id": "invalid-presence-source",
+						"selected_option_index":                 1,
+						"snapshot":                              snapshot,
+						"materializes_authority":                true,
+					}},
+				},
+			}
+			events := availabilitySelectionEventsV1FromMessage(message)
+			if len(events) != 0 {
+				t.Fatalf("invalid persisted field decoded events: %+v", events)
+			}
+			state := ReduceAvailabilitySelectionEventsV1(newAvailabilitySelectionStateV1(), events)
+			if state.Status == AvailabilitySelectionStatusBookable {
+				t.Fatalf("invalid persisted field recovered BOOKABLE: %+v", state)
+			}
+			if _, _, ok := resolveBookingCreateSelectionFromState("quero reservar opção 1", state); ok {
+				t.Fatal("invalid persisted field reached booking_create")
+			}
+		})
+	}
+}
+
+func TestAvailabilitySelectionLiveSnapshotPresenceSurvivesSerializationV1(t *testing.T) {
+	raw := availabilityPromptAuthorityRawResult()
+	raw.Results[0].Price = 0
+	raw.Results[0].SeatsAvailable = 0
+	raw.Results[0].PackageName = ""
+	raw.Filter.PackageName = ""
+	snapshot, presence, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(&raw, 1)
+	if !ok {
+		t.Fatal("build live zero-value availability snapshot")
+	}
+
+	for _, test := range []struct {
+		name            string
+		presence        availabilitySelectionSnapshotPresenceV1
+		wantZeroKeys    bool
+		wantEmptyString bool
+	}{
+		{
+			name:            "present zero and empty values",
+			presence:        presence,
+			wantZeroKeys:    true,
+			wantEmptyString: true,
+		},
+		{
+			name: "truly absent zero and empty values",
+			presence: presence &^ (availabilitySelectionSnapshotPricePresentV1 |
+				availabilitySelectionSnapshotSeatsAvailablePresentV1 |
+				availabilitySelectionSnapshotPackageNamePresentV1),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := AvailabilitySelectionEventV1{
+				Type:                              AvailabilitySelectionEventMaterialized,
+				MessageID:                         "live-presence-selection",
+				ProjectionMessageID:               "live-presence-projection",
+				AvailabilityPromptSourceMessageID: "live-presence-source",
+				SelectedOptionIndex:               1,
+				Snapshot:                          snapshot,
+				MaterializesAuthority:             true,
+				snapshotPresence:                  test.presence,
+				snapshotPresenceKnown:             true,
+			}
+			rawEvent, err := json.Marshal(event)
+			if err != nil {
+				t.Fatalf("marshal live event: %v", err)
+			}
+			var persisted map[string]interface{}
+			if err := json.Unmarshal(rawEvent, &persisted); err != nil {
+				t.Fatalf("decode persisted live event: %v", err)
+			}
+			persistedSnapshot := asMap(persisted["snapshot"])
+			_, pricePresent := persistedSnapshot["price"]
+			_, seatsPresent := persistedSnapshot["seats_available"]
+			_, packagePresent := persistedSnapshot["package_name"]
+			if pricePresent != test.wantZeroKeys || seatsPresent != test.wantZeroKeys || packagePresent != test.wantEmptyString {
+				t.Fatalf(
+					"serialized presence price=%t seats=%t package=%t, want zero=%t empty=%t: %s",
+					pricePresent,
+					seatsPresent,
+					packagePresent,
+					test.wantZeroKeys,
+					test.wantEmptyString,
+					string(rawEvent),
+				)
+			}
+
+			message := Message{
+				ID:                event.MessageID,
+				Direction:         "INBOUND",
+				ReceivedAt:        availabilityTestObservedAt(),
+				CreatedAt:         availabilityTestObservedAt(),
+				NormalizedPayload: map[string]interface{}{availabilitySelectionEventsV1MessageKey: []interface{}{persisted}},
+			}
+			reloaded := availabilitySelectionEventsV1FromMessage(message)
+			if len(reloaded) != 1 {
+				t.Fatalf("reloaded events=%d, want 1", len(reloaded))
+			}
+			if got := availabilitySelectionEventSnapshotPresenceV1(reloaded[0]); got != test.presence {
+				t.Fatalf("reloaded presence=%b, want %b", got, test.presence)
+			}
+			state := ReduceAvailabilitySelectionEventsV1(newAvailabilitySelectionStateV1(), reloaded)
+			if state.Status != AvailabilitySelectionStatusBookable {
+				t.Fatalf("live round-trip lost authority: %+v", state)
+			}
+		})
+	}
+}
+
 func TestAvailabilitySelectionStateV1SimpleRejectionPersistsSourceAndTombstone(t *testing.T) {
 	store := newFakeStore()
 	now := availabilityTestObservedAt()
@@ -498,6 +1401,9 @@ func TestAvailabilitySelectionStateV1UnitListRejectionDoesNotReopenBookingCreate
 		t.Fatalf("seed unit-list session: %v", err)
 	}
 	availability := availabilityOptionPromptFutureResultAt(now)
+	availabilityToolContext := map[string]interface{}{
+		toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
+	}
 	prompt, err := store.SaveAgentDraft(context.Background(), SaveAgentDraftInput{
 		SessionID:        session.ID,
 		IdempotencyKey:   "availability-unit-list-prompt",
@@ -505,9 +1411,10 @@ func TestAvailabilitySelectionStateV1UnitListRejectionDoesNotReopenBookingCreate
 		SenderName:       "SHABAS",
 		ProcessingStatus: messageStatusAutomationSent,
 		Payload: map[string]interface{}{
-			"tool_context": map[string]interface{}{
-				toolNameAvailabilitySearch: buildAvailabilityToolResponsePayload(availability),
-			},
+			"tool_context": availabilityToolContext,
+		},
+		NormalizedPayload: map[string]interface{}{
+			"tool_context": cloneMap(availabilityToolContext),
 		},
 		RecordedAt: now,
 	})
@@ -876,6 +1783,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		availability,
 		IntentSelectAvailabilityOption,
 		now.Add(3*time.Second),
+		promptA.ID,
 	)
 	selectionInbound := legacyAvailabilitySelectionInboundForStateTest(
 		selection,
@@ -1011,8 +1919,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			"Texto entregue diferente do draft, com a mesma apresentação estrutural.",
 			now.Add(time.Second),
 		)
+		botSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, delivered.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{source, delivered, selectionInbound, selection},
+			[]Message{source, delivered, selectionInbound, botSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusBookable ||
 			state.AvailabilityPromptSourceMessageID != delivered.ID ||
@@ -1051,8 +1960,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			cloneMap(divergentEvent)
 		delivered.NormalizedPayload[testAvailabilityPromptEventV1MessageKey] =
 			cloneMap(divergentEvent)
+		divergentSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, delivered.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{source, delivered, selectionInbound, selection},
+			[]Message{source, delivered, selectionInbound, divergentSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone ||
 			state.AvailabilityPromptSourceMessageID != "" ||
@@ -1084,8 +1994,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			source.Body,
 			now.Add(time.Second),
 		)
+		reviewedSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, delivered.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{source, delivered, selectionInbound, selection},
+			[]Message{source, delivered, selectionInbound, reviewedSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusBookable ||
 			state.AvailabilityPromptSourceMessageID != delivered.ID ||
@@ -1129,6 +2040,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			availability,
 			IntentSelectAvailabilityOption,
 			now.Add(3*time.Second),
+			promptA.ID,
 		)
 		for _, payload := range []map[string]interface{}{outboundIdentity.Payload, outboundIdentity.NormalizedPayload} {
 			asMap(payload[selectedAvailabilityResultPayloadKey])[selectedAvailabilitySelectionMessageIDPayloadKey] = promptA.ID
@@ -1167,20 +2079,21 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			availability,
 			now.Add(2500*time.Millisecond),
 		)
+		lateSourceSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, latePrompt.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{selectionInbound, latePrompt, selection},
+			[]Message{selectionInbound, latePrompt, lateSourceSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("legacy selection accepted a prompt emitted after the selection inbound: %+v", state)
 		}
 	})
 
-	t.Run("ambiguous source stays none", func(t *testing.T) {
+	t.Run("additional compatible source does not override explicit source", func(t *testing.T) {
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
 			[]Message{promptA, promptB, selectionInbound, selection},
 		)
-		if state.Status != AvailabilitySelectionStatusNone {
-			t.Fatalf("legacy selection with ambiguous sources became authoritative: %+v", state)
+		if state.Status != AvailabilitySelectionStatusBookable || state.AvailabilityPromptSourceMessageID != promptA.ID {
+			t.Fatalf("explicit prompt source did not remain authoritative: %+v", state)
 		}
 	})
 
@@ -1194,8 +2107,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			delete(payload, "intent")
 			delete(payload, "template_name")
 		}
+		genericSourceSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, genericPrompt.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{genericPrompt, selectionInbound, selection},
+			[]Message{genericPrompt, selectionInbound, genericSourceSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("generic outbound carrying availability facts became prompt authority: %+v", state)
@@ -1210,8 +2124,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			[]int{0},
 		)
 		inboundPrompt.Direction = "INBOUND"
+		inboundSourceSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, inboundPrompt.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{inboundPrompt, selectionInbound, selection},
+			[]Message{inboundPrompt, selectionInbound, inboundSourceSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone ||
 			state.AvailabilityPromptSourceMessageID != "" ||
@@ -1234,7 +2149,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 		)
 		if input, ok := parseBookingCreateInputWithPassengerState(
 			session,
-			[]Message{inboundPrompt, selectionInbound, selection},
+			[]Message{inboundPrompt, selectionInbound, inboundSourceSelection},
 			"quero reservar opção 1",
 			&availability,
 			completePassengerStateForTest(1, 0),
@@ -1255,8 +2170,9 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 			IntentPassengerCountReply,
 			now.Add(time.Second),
 		)
+		projectionSourceSelection := legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(selection, projectionSource.ID)
 		state := bootstrapAvailabilitySelectionStateFromHistoryForTest(
-			[]Message{projectionSource, selectionInbound, selection},
+			[]Message{projectionSource, selectionInbound, projectionSourceSelection},
 		)
 		if state.Status != AvailabilitySelectionStatusNone {
 			t.Fatalf("legacy selection projection became a prompt source: %+v", state)
@@ -1277,6 +2193,7 @@ func TestAvailabilitySelectionStateV1LegacyAuthorityRequiresExactStructuralSourc
 				availability,
 				test.intent,
 				now.Add(3*time.Second),
+				promptA.ID,
 			)
 			projectionInbound := legacyAvailabilitySelectionInboundForStateTest(
 				projection,
@@ -1824,7 +2741,7 @@ func mustAvailabilitySelectionSnapshotV1ForTest(
 	index int,
 ) AvailabilitySelectionSnapshotV1 {
 	t.Helper()
-	snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(availability, index)
+	snapshot, _, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(availability, index)
 	if !ok {
 		t.Fatalf("build availability selection snapshot index %d: %+v", index, availability)
 	}
@@ -1957,11 +2874,26 @@ func legacyAvailabilitySelectionInboundForStateTest(
 	}
 }
 
+func legacyAvailabilitySelectionProjectionWithPromptSourceForStateTest(
+	projection Message,
+	promptSourceMessageID string,
+) Message {
+	projection.Payload = cloneMap(projection.Payload)
+	projection.NormalizedPayload = cloneMap(projection.NormalizedPayload)
+	for _, payload := range []map[string]interface{}{projection.Payload, projection.NormalizedPayload} {
+		snapshot := cloneMap(asMap(payload[selectedAvailabilityResultPayloadKey]))
+		snapshot[availabilityPromptSourceMessageIDPayloadKey] = strings.TrimSpace(promptSourceMessageID)
+		payload[selectedAvailabilityResultPayloadKey] = snapshot
+	}
+	return projection
+}
+
 func legacyAvailabilitySelectionMessageForStateTest(
 	messageID string,
 	availability AvailabilitySearchResult,
 	intent Intent,
 	at time.Time,
+	promptSourceMessageID ...string,
 ) Message {
 	payload := persistedAvailabilitySelectionPayloadForTest(
 		availability,
@@ -1971,7 +2903,11 @@ func legacyAvailabilitySelectionMessageForStateTest(
 	payload["intent"] = string(intent)
 	snapshot := asMap(payload[selectedAvailabilityResultPayloadKey])
 	snapshot[selectedAvailabilitySelectionMessageIDPayloadKey] = "legacy-selection-event-" + messageID
-	delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
+	if len(promptSourceMessageID) == 1 && strings.TrimSpace(promptSourceMessageID[0]) != "" {
+		snapshot[availabilityPromptSourceMessageIDPayloadKey] = strings.TrimSpace(promptSourceMessageID[0])
+	} else {
+		delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
+	}
 	delete(snapshot, availabilitySelectionMaterializesAuthorityPayloadKey)
 	normalizedPayload := cloneMap(payload)
 	normalizedPayload["delivery_recorded_at"] = at.UTC().Format(time.RFC3339Nano)

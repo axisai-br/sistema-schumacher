@@ -290,7 +290,7 @@ Regras:
 | 8 | H-2026-07-16B | **EM ANDAMENTO — gate operacional de B1 reaberto** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; H-2026-07-27A interrompe a fila antes de B2. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-27A** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | H-2026-07-22A corrigiu o bootstrap e foi deployado; o smoke reabriu o gate na autoridade de opções apresentadas. |
 | 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE OPERACIONAL RED** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido, mas o smoke falhou na transição availability → passageiros. |
-| 11 | H-2026-07-27A | **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA TEMPORAL E PROVENIÊNCIA** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | progressão monotônica compartilhada, barreira temporal para `INVALID` entregue, revisão estritamente aprovada e prova real de `Repository.CreateReply`; novo review pendente. |
+| 11 | H-2026-07-27A | **EM CORREÇÃO APÓS REVIEW — 1 P1 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO REVIEW** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | o gate temporal recebe separadamente o limite causal do source e o índice da projeção/materialização; `INVALID` entre selection e projection falha fechado sem tornar barreira posterior retroativa; próxima ação única: novo `/review`. |
 | 12 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-27A / gate operacional de H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após review, deploy e smoke verdes do hotfix ativo. |
 | 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
@@ -299,6 +299,11 @@ Regras:
 | 17 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
 | 18 | 3.6F-H | **PENDENTE** | `plans/3.6f-h-route-coverage.md` | cobertura de rota read-only. |
 | 19 | 3.6F-I | **PENDENTE** | `plans/3.6f-i-arbitragem-runtime-weak.md` | arbitragem gated sobre `WEAK`/`FALLBACK`. |
+
+A fila acima é a única declaração canônica vigente. Status e próximas ações
+registrados nas seções cronológicas abaixo são históricos e estão
+**SUPERADOS** por esta tabela, salvo indicação explícita de que atualizam a
+própria fila.
 
 ### Regra de desbloqueio
 
@@ -1668,7 +1673,7 @@ superseded pelo review final sem P1/P2 de B1.
 | P1-08 | correção de total preserva `ChildUnder5AddsTraveler` incompatível | B1 | `TestPassengerAggregateCorrectionClearsDependentAddsTraveler` |
 | P1-09 | `Reprocess` concorrentes podem perder atualização do snapshot | B1 | `TestPassengerStateConcurrentReprocessPreservesBothEvents` e `TestPassengerStateApplyEventsSerializesSessionPostgres` |
 
-Decisão canônica:
+Decisão histórica — **SUPERADA** pela fila canônica no topo deste tracker:
 
 ```text
 H-B1 — CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO
@@ -1676,9 +1681,8 @@ H-B1 — CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO
   contexto de passageiros
 H-2026-07-22A — CORRIGIDO E DEPLOYADO; SMOKE OPERACIONAL RED
   bootstrap invalidado, autoridade explícita, source legado exato e ordem causal
-H-2026-07-27A — EM CORREÇÃO APÓS REVIEW —
-  5 P1 DE AUTORIDADE DE ENTREGA E VISIBILIDADE
-  correção local verde; novo review dirigido pendente
+H-2026-07-27A — registro operacional histórico; status e contagens SUPERADOS
+  consultar exclusivamente a fila canônica no topo deste tracker
 H-B2 — BLOQUEADA por H-2026-07-27A / gate operacional de H-B1
   PassengerClarificationMeaningV1 strict + validator + corpus + shadow;
   só inicia após review, deploy e smoke verdes do hotfix ativo
@@ -3671,8 +3675,9 @@ H-2026-07-27A abaixo. H-B2 permanece **BLOQUEADA**.
 
 ### 8.12 Incidente operacional — H-2026-07-27A (2026-07-27)
 
-**Status canônico:** H-2026-07-27A — EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2
-DE ENTREGA TEMPORAL E PROVENIÊNCIA.
+**Status histórico de abertura — SUPERADO PELA FILA CANÔNICA:**
+H-2026-07-27A — **EM CORREÇÃO APÓS REVIEW — 5 P1 + 1 P2 DE RESOLUÇÃO ÚNICA
+DE DOMÍNIO, FONTE E FACTS**.
 
 H-2026-07-22A corrigiu o bootstrap de sessão nova, passou pelo review final e
 foi deployado. O smoke real posterior reabriu o gate em uma fronteira diferente
@@ -4077,6 +4082,665 @@ Não houve B2, parser, regex, migration, mudança de contrato público, commit,
 push, deploy ou smoke. Não há declaração de review limpo nem segurança para
 commit. A única próxima ação é um novo `/review` dirigido aos 3 P1 + 1 P2 de
 H-2026-07-27A. H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o quinto review — 2 P1 + 1 P2 de autoridade factual, barreira resolvida e datas canônicas
+
+O review posterior preservou as correções anteriores e encontrou três lacunas
+adicionais no patch local:
+
+1. `availabilityPromptRawContextsV1` ignorava `tool_context` presente e
+   não-mapa em uma das cópias, permitindo que a outra cópia isolada fosse
+   tratada como `ABSENT_LEGACY` confiável;
+2. `deliveredInvalidAvailabilityPromptBarrierAtV1` removia a barreira assim
+   que o vínculo da projeção com o draft era resolvido, sem reclassificar a
+   mensagem efetiva e detectar facts `INVALID`;
+3. `parsePersistedAvailabilityFilterDateV1` aplicava `TrimSpace`, aceitando
+   representações persistidas diferentes do formato canônico exato
+   `YYYY-MM-DD`.
+
+As regressões dirigidas foram adicionadas antes da correção de produção e
+reproduziram os três defeitos no patch anterior usando `golang:1.23` em Docker:
+
+```text
+RED — 15 combinações de whitespace em trip_date/date_from/date_to foram aceitas como VALID_STRUCTURAL
+RED — tool_context não-mapa em NormalizedPayload retornou factsPresent=true, factsValid=true com a cópia de Payload isolada
+RED — a projeção DRAFT_REVIEW resolvida para facts INVALID removeu a barreira temporal
+FAIL esperado — go test dirigido anterior ao patch, exit 1; internal/chat 0.016s
+```
+
+A correção é mínima e permanece nos três pontos revisados:
+
+- `availabilityPromptRawContextsV1` preserva presença e marca `valid=false`
+  quando `tool_context` existe, mas não é mapa;
+- `deliveredInvalidAvailabilityPromptBarrierAtV1` reclassifica a mensagem
+  efetiva resolvida e só remove a barreira para `ABSENT_LEGACY` ou
+  `VALID_STRUCTURAL`; `INVALID` permanece terminal para o scan;
+- `parsePersistedAvailabilityFilterDateV1` não normaliza o texto e exige que
+  parse + format reproduzam exatamente `YYYY-MM-DD`.
+
+Validação local realmente executada:
+
+```text
+PASS — testes dirigidos pós-patch, count=1 — internal/chat 0.028s
+PASS — testes dirigidos pós-patch, count=20 — internal/chat 0.446s
+PASS — go test -race -count=1 ./internal/chat — 51.081s
+PASS — availability/passenger/booking/review/delivery/human/cancel — 6.436s
+PASS — go test -count=1 ./internal/chat — 9.164s
+PASS — go test -count=1 ./... — internal/chat 9.054s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt nos três arquivos tocados; gofmt -l internal/chat sem saída
+PASS — git diff --check
+PASS — git diff --cached --check
+```
+
+O host não possui `go` nem `gofmt`; os comandos Go e gofmt foram executados em
+`golang:1.23`, com o repositório montado e caches temporários isolados. Docker
+server 29.6.2 estava acessível; PostgreSQL não integra o escopo desta rodada.
+
+Não houve B2, Travel V2, parser, regex, migration, provider, funcionalidade
+nova, commit, push, PR, merge, deploy ou smoke. Não há declaração de review
+limpo nem segurança para commit. A única próxima ação é um novo `/review`
+dirigido aos 2 P1 + 1 P2 deste ciclo. H-2026-07-16B2 e 3.6F-D permanecem
+bloqueadas.
+
+#### Correção após o sexto review — 1 P1 + 1 P2 de domínio da barreira e data canônica nos resultados
+
+O review seguinte preservou as correções anteriores e encontrou duas lacunas:
+
+1. uma projeção `DRAFT_REVIEW/APPROVED_AS_IS` entregue podia resolver um draft
+   apenas de passageiros com `tool_context` não-mapa e transformar a
+   classificação factual `INVALID` em barreira de availability, apagando a
+   autoridade `BOOKABLE` anterior;
+2. `results[].trip_date` ainda era normalizado com `TrimSpace`, e o validador
+   compartilhado também aceitava whitespace ao redor da data.
+
+O RED dirigido foi registrado antes do patch de produção em `golang:1.23` via
+Docker:
+
+```text
+RED — projeção entregue resolvida para ASK_PASSENGER_COUNT criou barreira de availability
+RED — results[].trip_date aceitou whitespace bilateral, vazio, null, não-string, formato alternativo e data impossível no decode
+FAIL esperado — testes dirigidos, exit 1; internal/chat 0.021s
+```
+
+A correção permaneceu limitada aos dois achados:
+
+- `deliveredInvalidAvailabilityPromptBarrierAtV1` resolve a projeção e aplica
+  à mensagem efetiva o mesmo predicado de candidatura/barreira de
+  availability; `mode`, `APPROVED_AS_IS` e `tool_context` não-mapa isolados
+  não provam domínio;
+- `results[].trip_date` presente agora exige string exata `YYYY-MM-DD`, sem
+  normalização, com parse + format idênticos; valor inválido torna o contexto
+  factual `INVALID` e deixa `Presented=nil`;
+- a fixture de validação que persistia `trip_date=""` passou a usar data
+  futura canônica, sem alterar produção fora do contrato revisado.
+
+As regressões provam no mesmo histórico: zero barreira para o prompt de
+passageiros, `ActivePrompt=PASSENGER_COUNT`, option count zero na mensagem
+efetiva inválida, bootstrap/read state `BOOKABLE` preservados, finders sem
+publicar a mensagem como `ABSENT_LEGACY`, booking draft e `booking_create`
+preservados. Para `trip_date` inválida, active prompt, finders, option count,
+bootstrap, `AvailabilitySelectionStateV1`, booking draft e `booking_create`
+falham fechado. Projeção de availability com facts `INVALID`,
+`BOT_AUTO_REPLY` irresolvida, `UNDELIVERED`, projeção válida e precedência
+humano/cancelamento permanecem cobertas.
+
+Validação local realmente executada:
+
+```text
+PASS — testes dirigidos pós-patch, count=1 — internal/chat 0.042s
+PASS — testes dirigidos pós-patch, count=20 — internal/chat 0.893s
+RED intermediário do race — fixtures com trip_date vazio perderam o prompt; internal/chat 43.453s
+PASS — regressão isolada da fixture canônica — internal/chat 0.008s
+PASS — go test -race -count=1 ./internal/chat — 44.106s
+PASS — availability/passenger/booking/review/delivery/human/cancel — 5.711s
+PASS — go test -count=1 ./internal/chat — 8.121s
+PASS — go test -count=1 ./... — internal/chat 8.256s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt; gofmt -l internal/chat sem saída
+PASS — git diff --check; git diff --cached --check
+```
+
+A primeira tentativa de runner não chegou aos testes porque a shell do
+contêiner não expôs `gofmt` no `PATH`; a repetição usou os binários por caminho
+absoluto. O host continua sem Go/gofmt. Não houve PostgreSQL, B2, 3.6F-D,
+parser, regex, migration, provider, commit, push, PR, merge, deploy ou smoke.
+
+Arquivos alterados nesta rodada:
+
+```text
+apps/api/internal/chat/availability_prompt_event_v1.go
+apps/api/internal/chat/availability_prompt_event_v1_test.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/interpreter_validation_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Resultado do review: os dois achados (1 P1 + 1 P2) foram corrigidos localmente, mas ainda não
+há novo review limpo nem segurança para commit. Teste em produção continua
+pendente do fluxo posterior autorizado; não foi executado nesta rodada. A
+ausência de `results[].trip_date` mantém a semântica legada existente, enquanto
+qualquer chave presente inválida falha fechado; opções estruturais apresentadas
+continuam exigindo data. A única próxima ação é um novo `/review` dirigido a
+estes dois achados. H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o sétimo review — 1 P1 de domínio do fallback textual
+
+O review seguinte preservou os achados anteriores e encontrou uma brecha P1:
+o fallback textual genérico de `messageMayCarryAvailabilityPromptV1` tratava
+como availability uma projeção `BOT_AUTO_REPLY` ou
+`DRAFT_REVIEW/APPROVED_AS_IS` entregue e irresolvida que pertencia
+explicitamente a pagamento ou a outro domínio. O texto de pagamento
+`"Pode pagar no PIX ou no cartão. Qual opção você prefere?"` criava barreira,
+ocultava o contexto anterior e reduzia `BOOKABLE` para `NONE`.
+
+O RED final, adicionado antes do patch de produção, cobriu os dois modos de
+projeção e cinco sinais estruturais já existentes: intent de pagamento,
+template de passageiros, prompt kind documental, template humano e intent de
+cancelamento. Os 10 subcasos falharam com `candidate=true`:
+
+```text
+RED — TestAvailabilityPromptTextFallbackRejectsExplicitNonAvailabilityDomains
+FAIL esperado — internal/chat 0.008s
+```
+
+A correção ficou restrita ao fallback textual. Artefatos reais de availability
+continuam sendo avaliados primeiro: evento, `availability_search`, intents e
+templates canônicos, seleção/snapshot e marcador de autoridade não foram
+alterados. Somente antes da inferência pelo body, metadata com intent, template,
+`active_prompt_kind` ou evento de passageiros pertencente a outro domínio
+retorna `candidate=false`. Não foi adicionado vocabulário, regex ou parser.
+
+A matriz transversal prova `candidate=false`, zero barreira, finder anterior
+preservado, bootstrap e `AvailabilitySelectionStateV1` em `BOOKABLE`, booking
+draft e `booking_create` com a seleção anterior, metadata do domínio próprio
+preservada e zero publicação como `ABSENT_LEGACY`. A lista legada real sem
+metadata estrutural continua reconhecida pelo fallback; availability estrutural
+mantém precedência mesmo diante de metadata conflitante. Projeção de
+availability irresolvida, `INVALID`, `UNDELIVERED`, projeção válida,
+`results[].trip_date` canônica e precedência humano/cancelamento permanecem
+verdes.
+
+Validação local realmente executada em `golang:1.23` via Docker, pois o host
+não possui Go/gofmt:
+
+```text
+PASS — testes dirigidos pós-patch, count=1 — internal/chat 0.077s
+PASS — testes dirigidos e controles, count=20 — internal/chat 2.136s
+PASS — go test -race -count=1 ./internal/chat — 47.710s
+PASS — availability/payment/passenger/document/review/delivery/human/cancel — 6.672s
+PASS — go test -count=1 ./internal/chat — 9.280s
+PASS — go test -count=1 ./... — internal/chat 9.076s; demais pacotes verdes
+PASS — regexp.MustCompile de produção = 54
+PASS — gofmt; gofmt -l internal/chat sem saída
+PASS — git diff --check; git diff --cached --check
+```
+
+Arquivos alterados nesta rodada:
+
+```text
+apps/api/internal/chat/availability_prompt_event_v1.go
+apps/api/internal/chat/active_prompt_context_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Resultado do review: o P1 atual foi corrigido localmente, mas ainda não há novo
+review limpo nem segurança para commit. Teste em produção continua pendente do
+fluxo posterior autorizado; não foi executado nesta rodada. Não houve B2,
+3.6F-D, parser, regex, migration, provider, PostgreSQL, commit, push, PR,
+merge, deploy ou smoke. A única próxima ação é um novo `/review` dirigido a
+este P1. H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o oitavo review — 2 P1 + 2 P2 de reconciliação de domínio e fallback legado
+
+O review atual preservou as correções anteriores e encontrou quatro lacunas na
+decisão de domínio de `messageMayCarryAvailabilityPromptV1`:
+
+1. uma evidência positiva isolada em `Payload` era aceita antes de reconciliar
+   `NormalizedPayload`; cópia conflitante, vazia, desconhecida ou não-string
+   podia apagar uma autoridade `BOOKABLE` anterior;
+2. o fallback textual ainda aceitava perguntas genéricas de pagamento,
+   passageiros, documentos, suporte e cancelamento em projeções reais sem
+   `intent/template_name` quando o draft não resolvia;
+3. os templates `CONTEXT_FALLBACK_AVAILABILITY_OPTION/DATE` e os prompt kinds
+   `AVAILABILITY_OPTION_CHOICE/DATE_CHOICE` não eram reconhecidos como sinais
+   canônicos bilaterais;
+4. o body real produzido por `buildEarliestAvailabilityReply` não era
+   reconhecido pelo fallback legado.
+
+O RED foi executado antes do patch de produção. Ele usou o shape real das
+projeções persistidas, sem injetar metadata de domínio no outbound, e cobriu
+`BOT_AUTO_REPLY` e `DRAFT_REVIEW/APPROVED_AS_IS` com draft ausente, duplicado,
+posterior ou inválido para cinco domínios não-availability. Também reproduziu
+conflitos entre as cópias, os quatro sinais canônicos omitidos e o EARLIEST
+legado:
+
+```text
+RED — TestAvailabilityPromptDomainReconciliationV1
+RED — TestAvailabilityPromptTextFallbackUsesRealProjectionShapeV1
+RED — TestAvailabilityPromptLegacyBuilderFallbacksV1
+FAIL esperado — internal/chat 0.020s
+```
+
+A correção classifica cada cópia como `AVAILABILITY`, `NON_AVAILABILITY`,
+`ABSENT` ou `INVALID` e só decide depois da reconciliação. Evento, facts ou
+seleção bilateral válida mantêm precedência estrutural. Sem essa precedência,
+metadata precisa ser bilateral, reconhecida, internamente coerente e idêntica.
+Metadata availability bilateral continua identificando o domínio quando os
+facts são `INVALID`, de modo que a barreira fail-closed permanece; metadata de
+outro domínio ou qualquer divergência não cria candidatura.
+
+O fallback final agora aceita somente as formas reais dos builders: lista
+numerada sequencial e resposta unitária EARLIEST. `response_realizer.go`
+compartilha as constantes exatas desses bodies, e o option count renderizado
+usa o mesmo reconhecedor estrito. Nenhum regex, parser geral ou vocabulário
+novo foi adicionado.
+
+Respostas informativas out-of-turn não viram authority de availability. A
+continuidade do active prompt usa apenas `active_prompt_source_message_id` e
+`active_prompt_kind` bilaterais já persistidos em `template_data`: o body do
+lembrete permanece ativo, mas facts e option count são ancorados no prompt de
+availability anterior, único, entregue e sem barreira intermediária.
+
+As fixtures antigas que representavam writes canônicos passaram a persistir
+`tool_context` ou seleção nas duas cópias, como `buildAgentDraftPayload` já faz
+em produção. Isso preservou seleção por índice/data, out-of-turn payment,
+booking draft e `booking_create` sem relaxar a regra bilateral.
+
+Validação local realmente executada em `golang:1.23` via Docker:
+
+```text
+PASS — testes dirigidos e controles, count=20 — internal/chat 7.284s
+PASS — go test -race -count=1 ./internal/chat — 53.380s
+PASS — availability/payment/passenger/document/review/delivery/human/cancel — 7.144s
+PASS — go test -count=1 ./internal/chat — 9.710s
+PASS — go test -count=1 ./... — internal/chat 9.412s; demais pacotes verdes
+PASS — inventário de produção em internal/chat = 54 regexp.MustCompile
+PASS — gofmt -l internal/chat sem saída
+OBSERVAÇÃO — gofmt -l . ainda lista somente arquivos preexistentes fora de internal/chat
+PASS — git diff --check; git diff --cached --check
+```
+
+Arquivos alterados nesta rodada:
+
+```text
+apps/api/internal/chat/availability_prompt_event_v1.go
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/interpreter.go
+apps/api/internal/chat/response_realizer.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/passenger_clarification_test_helper_test.go
+apps/api/internal/chat/intent_router_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/availability_selection_state_v1_test.go
+apps/api/internal/chat/booking_create_router_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Status: **EM CORREÇÃO APÓS REVIEW — 2 P1 + 2 P2 DE RECONCILIAÇÃO DE DOMÍNIO
+E FALLBACK LEGADO**. Não há declaração de review limpo nem segurança para
+commit. Teste em produção continua pendente do fluxo posterior autorizado e
+não foi executado. Não houve B2, 3.6F-D, migration, provider, PostgreSQL,
+commit, push, PR, merge, deploy ou smoke. A única próxima ação é: `/review`
+dirigido aos 2 P1 + 2 P2. H-2026-07-16B2 e 3.6F-D permanecem
+bloqueadas.
+
+#### Correção após o nono review — 5 P1 + 1 P2 de resolução única de domínio, fonte e facts
+
+O review seguinte encontrou seis lacunas remanescentes na reconciliação e na
+continuidade de availability:
+
+1. evento bilateral de availability podia prevalecer antes de detectar evento
+   de passageiros coexistente, e facts válidos podiam mascarar outro artefato
+   availability malformado;
+2. readers legados ainda publicavam `availability_search` unilateral;
+3. o fallback aceitava listas e EARLIEST adulterados que os builders não
+   emitem;
+4. a âncora out-of-turn validava a projeção bruta em vez da mensagem efetiva
+   resolvida;
+5. a fonte era procurada somente no prefixo do histórico, sem unicidade global
+   nem causalidade pelo timestamp canônico;
+6. materialização, booking draft e `booking_create` ainda podiam reler facts do
+   lembrete em vez da fonte ancorada.
+
+As regressões foram adicionadas e executadas antes do patch de produção. O RED
+dirigido reproduziu: conflito availability + passenger aceito, facts válidos
+mascarando seleção malformada, facts unilaterais publicados como
+`ABSENT_LEGACY`, lista PIX/EARLIEST livre reconhecidos, projeção válida rejeitada
+como fonte, pagamento com facts copiados aceito como âncora, duplicata global e
+timestamp posterior ignorados e consumers lendo o `tool_context` do lembrete.
+
+A correção extrai uma única reconciliação por mensagem efetiva. Antes de
+conceder domínio, prompt ou facts, ela compara nas duas cópias:
+`availability_prompt_event_v1`, `availability_search`, seleção/snapshot,
+marcador de autoridade, eventos passenger/pending, intent, template e prompt
+kind. Artefato unilateral, divergente, malformado ou conflito entre domínios
+não publica prompt/facts; conflito com outro domínio não cria barreira de
+availability, enquanto evidência availability inválida e sem domínio
+concorrente permanece fail-closed.
+
+`ABSENT_LEGACY` publica facts somente quando existem exatamente duas cópias
+válidas e `DeepEqual`. O reconhecedor textual aceita somente a gramática
+fechada produzida por `buildAvailabilityListReply`,
+`buildAvailabilityListReplyForResultIndexes` e
+`buildEarliestAvailabilityReply`: header/suffix exatos, linhas sequenciais,
+rota, data, horário e preço nas formas emitidas. Não foi adicionado regex nem
+parser geral.
+
+`resolveAvailabilityPromptEffectiveSourceByIDV1` exige ID globalmente único,
+fonte anterior no slice e causal pelo timestamp canônico. Projeções
+`BOT_AUTO_REPLY` e `DRAFT_REVIEW/APPROVED_AS_IS` são resolvidas pelo índice e o
+domínio/autoridade é validado na mensagem efetiva. Active prompt,
+materialização, selection state, booking draft e `booking_create` usam somente
+`Presented`, facts e option count dessa fonte. O lembrete fornece apenas body e
+continuidade. Clarificações de índice persistem bilateralmente somente
+`active_prompt_kind` e `active_prompt_source_message_id`, sem transformar o
+lembrete em autoridade factual própria.
+
+O reader legado de prompt source que ainda percorria `tool_context`
+independentemente foi removido. A recuperação de seleção compara o snapshot
+somente contra o contexto visível devolvido pela autoridade reconciliada e,
+quando existe `availability_prompt_source_message_id` explícito, resolve
+exatamente essa fonte em vez de procurar envelopes semelhantes.
+
+RED/PASS reais executados em `golang:1.23` via Docker, pois o host não possui
+Go/gofmt:
+
+```text
+RED — sete testes dirigidos, exit 1, com falhas nos seis mecanismos acima
+PASS — sete testes dirigidos pós-patch, count=20 — internal/chat 0.381s
+PASS — go test -race -count=1 ./internal/chat — 63.755s
+PASS — H-012/document/lap-child/payment/human/out-of-turn — 3.608s
+PASS — cancel/passenger/availability/review/delivery/booking — 8.801s
+PASS — go test -count=1 ./internal/chat — 11.627s
+PASS — go test -count=1 ./... — internal/chat 11.281s; demais pacotes verdes
+PASS — inventário de produção em internal/chat = 54 regexp.MustCompile
+PASS — gofmt -l internal/chat sem saída
+PASS — git diff --check; git diff --cached --check
+```
+
+Arquivos alterados nesta rodada:
+
+```text
+apps/api/internal/chat/availability_prompt_event_v1.go
+apps/api/internal/chat/active_prompt_context.go
+apps/api/internal/chat/availability_selection_state_v1.go
+apps/api/internal/chat/booking_create_router.go
+apps/api/internal/chat/conversation_state_machine.go
+apps/api/internal/chat/intent_router.go
+apps/api/internal/chat/interpreter.go
+apps/api/internal/chat/interpreter_cases_eval.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/availability_prompt_event_v1_test.go
+apps/api/internal/chat/active_prompt_context_test.go
+apps/api/internal/chat/booking_create_router_test.go
+apps/api/internal/chat/incremental_flow_test.go
+apps/api/internal/chat/interpreter_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Status: **EM CORREÇÃO APÓS REVIEW — 5 P1 + 1 P2 DE RESOLUÇÃO ÚNICA DE
+DOMÍNIO, FONTE E FACTS**. Não há declaração de review limpo nem segurança para
+commit. Deploy e smoke continuam pendentes e não foram executados. Não houve
+B2, 3.6F-D, migration, provider, PostgreSQL, regex, parser geral, commit, push,
+PR ou merge. A única próxima ação é: `/review` dirigido aos 5 P1 + 1 P2.
+H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o décimo review — 3 P1 + 1 P2 de entrega temporal e proveniência
+
+O review mais recente encontrou quatro lacunas: candidatura apagada em
+reconciliação inválida com evidência availability, merge canônico aceitando
+`INVALID`/`UNDELIVERED`, enrichment de snapshot pelas mesmas classes e uma
+cópia stale do plano na raiz.
+
+Três REDs foram executados antes do patch e reproduziram exatamente os três
+mecanismos funcionais. A correção separa dados decodificados de autoridade:
+`reconciled.Facts/Selection` não autorizam consumo; somente
+`VALID_STRUCTURAL` e `ABSENT_LEGACY` entregue e confiável podem alimentar
+estado ou enrichment. `INVALID` entregue preserva `Candidate=true`, forma
+barreira e fornece zero autoridade. `UNDELIVERED` fornece zero autoridade e
+não forma barreira somente pela ausência de entrega.
+
+Durante a reconciliação da suíte, writers de passenger/payment/documento que
+copiavam facts availability para projeções de outro domínio passaram a formar
+barreira inválida no replay. A contenção remove esses artifacts das projeções
+não-availability e mantém a autoridade no evento/estado materializado. A
+continuidade out-of-turn passou a persistir bilateralmente apenas o link à
+fonte; `active_prompt_kind` desse link não é domínio factual da mensagem. Se o
+lembrete carregar facts/selection availability, ele continua candidato e
+inválido.
+
+Evidências locais em `golang:1.23` via Docker:
+
+```text
+RED — 3 testes dirigidos falharam nos mecanismos esperados antes do patch
+PASS — 3 REDs pós-patch, count=20 — 0.398s
+PASS — go test -race -count=1 ./internal/chat — 53.653s
+PASS — suíte transversal completa — 7.292s
+PASS — go test -count=1 ./internal/chat — 10.001s
+PASS — go test -count=1 ./... — internal/chat 9.603s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — inventário de produção = 54 regexp.MustCompile
+PASS — plano stale ausente; plano canônico presente
+PASS — git diff --check
+```
+
+Arquivos desta rodada corretiva: `availability_prompt_event_v1.go`,
+`conversation_state_machine.go`, `availability_selection_state_v1.go`,
+`service.go` e testes/fixtures de chat diretamente afetados; plano canônico,
+tracker e handoff foram atualizados. A cópia stale da raiz deixou de existir.
+
+Status: **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA TEMPORAL E
+PROVENIÊNCIA**. Resultado do review ainda é o finding de 3 P1 + 1 P2; os
+achados estão corrigidos localmente, mas não há novo review limpo nem segurança
+para commit. Teste em produção permanece necessário no fluxo posterior
+autorizado e não foi executado. Não houve commit, push, deploy ou smoke. A
+próxima ação única é `/review` dirigido a estes 3 P1 + 1 P2. H-2026-07-16B2 e
+3.6F-D permanecem bloqueadas.
+
+#### Correção após o décimo primeiro review — 2 P1 de body canônico e enrichment ABSENT_LEGACY
+
+O review atual encontrou duas lacunas remanescentes: body canônico de
+availability perdia candidatura ao coexistir com passenger/payment, e o
+enrichment `ABSENT_LEGACY` descartava seleção bilateral confiável quando não
+havia `availability_search`.
+
+Os REDs reproduziram `Candidate=false` nos três conflitos canônicos e zero
+candidatos para a seleção legada confiável. A correção preserva o body como
+evidência positiva, converte o conflito entregue em candidata `INVALID` com
+barreira e zero autoridade, e permite que somente o ramo `ABSENT_LEGACY`
+comprovado use seu próprio `Selection.SelectedResult` reconciliado. `INVALID` e
+`UNDELIVERED` continuam fechados; passenger/payment normais e linguagem genérica
+não criam barreira. Uma reprodução adicional de source mismatch comprovou e
+fechou a exigência de projection, selection message, prompt source e índice
+exatos antes do enrichment.
+
+Arquivos desta rodada: `internal/chat/availability_prompt_event_v1.go`, seus
+testes, `internal/chat/availability_selection_state_v1.go`, seus testes, plano
+canônico, tracker e handoff.
+
+```text
+PASS — REDs dirigidos pós-patch, count=20 — 0.472s
+PASS — race internal/chat — 53.650s
+PASS — regressões transversais — 7.962s
+PASS — internal/chat — 7.838s
+PASS — ./... — internal/chat 9.373s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — regexp.MustCompile = 54
+PASS — plano stale ausente; plano canônico presente
+PASS — git diff --check; git diff --cached --check
+```
+
+Status: **EM CORREÇÃO APÓS REVIEW — 2 P1 DE BODY CANÔNICO E ENRICHMENT
+ABSENT_LEGACY**. O resultado observado ainda não é um review limpo e não
+autoriza commit. Teste em produção permanece necessário no fluxo posterior e
+não foi executado. Não houve commit, push, PR, deploy ou smoke. Próxima ação
+única: novo `/review` dirigido aos dois P1. H-2026-07-16B2 e 3.6F-D permanecem
+bloqueadas.
+
+#### Correção após o décimo segundo review — 2 P1 + 1 P2 de provenance exclusiva, compatibilidade e status
+
+O review atual confirmou o body canônico e encontrou dois desvios no
+enrichment `ABSENT_LEGACY`: o prompt source estrutural ainda podia fornecer
+campos ausentes, e snapshots com campos preenchidos conflitantes permaneciam
+materializando autoridade. Também encontrou declarações canônicas concorrentes
+no tracker/handoff.
+
+Os REDs reproduziram o vazamento de route/package/currency pelo source e a
+preservação de autoridade para conflitos em trip date, route, origin,
+destination, package, price, currency, trip, board e alight. O patch agora:
+
+- resolve uma única projeção exata;
+- usa o prompt source somente para validar causalidade, índice e IDs;
+- usa exclusivamente o `Selection.SelectedResult` reconciliado da projeção;
+- compara todos os campos já preenchidos antes do merge;
+- remove `MaterializesAuthority` diante de mismatch, impedindo `BOOKABLE` e
+  `booking_create`;
+- mantém `VALID_STRUCTURAL` e `INVALID`/`UNDELIVERED` nos gates anteriores.
+
+Fixtures antigas que recuperavam package do prompt source foram alinhadas ao
+contrato: package sobrevive apenas quando está no `SelectedResult`. A fila
+canônica passou a ser a única declaração vigente; os estados antigos são
+cronologia explicitamente superada.
+
+```text
+PASS — REDs e controles dirigidos pós-patch, count=20 — 1.071s
+PASS — race internal/chat — 49.026s
+PASS — regressões transversais — 7.418s
+PASS — internal/chat — 7.587s
+PASS — ./... — internal/chat 9.007s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — regexp.MustCompile = 54
+PASS — plano stale ausente; plano canônico presente
+PASS — git diff --check; git diff --cached --check
+```
+
+O status vigente permanece exclusivamente na fila canônica: não há review
+limpo nem segurança para commit. Teste em produção
+continua pendente no fluxo posterior autorizado. Não houve B2, 3.6F-D, parser,
+regex, migration, refactor amplo, commit, push, PR, deploy ou smoke. Próxima
+ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o décimo terceiro review — 2 P1 + 1 P2 de source explícito, presença e gate canônico
+
+O review confirmou todos os gates da rodada anterior e encontrou três pontos
+restritos: source ID vazio/ausente ainda podia ser descoberto no histórico;
+zero numérico e string vazia persistidos ainda eram tratados como ausência; e
+`AGENTS.md` mantinha status operacional volátil concorrente com este tracker.
+
+Os REDs reproduziram o fallback para prompt compatível e a sobrescrita de
+`price=0`, `seats_available=0` e `package_name=""`. O patch agora:
+
+- exige source ID não vazio no `SelectedResult` e igualdade exata com o evento;
+- resolve apenas esse ID, com unicidade e causalidade, sem scan de fallback;
+- preserva presença dos 20 campos durante decode e enrichment;
+- preenche somente campo ausente e falha fechado para qualquer campo presente
+  divergente, mantendo o valor persistido;
+- impede `BOOKABLE` e `BookingCreateInput` em conflito;
+- mantém o tracker como única fonte de status operacional atual.
+
+Fixtures positivas que dependiam da inferência histórica foram alinhadas para
+persistir o source explícito. A rodada anterior e suas próximas ações estão
+**SUPERADAS** por esta correção e pela fila canônica acima.
+
+```text
+PASS — REDs dirigidos pós-patch, count=20 — 0.884s
+PASS — race internal/chat — 60.441s
+PASS — regressões transversais — chat 11.605s; demais pacotes verdes
+PASS — internal/chat — 11.477s
+PASS — ./... — internal/chat 11.110s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — regexp.MustCompile = 54
+PASS — git diff --check; git diff --cached --check
+```
+
+H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Não há review limpo nem
+segurança para commit. Teste em produção continua pendente no fluxo posterior
+autorizado. Não houve B2, 3.6F-D, parser, regex, migration, refactor amplo,
+commit, push, PR, deploy ou smoke. Próxima ação única: novo `/review`;
+H-2026-07-16B2 e 3.6F-D permanecem bloqueadas.
+
+#### Correção após o décimo quarto review — 3 P1 + 1 P2 de barreira, tipos e serialização
+
+O review confirmou os gates anteriores e reproduziu três lacunas restritas:
+um source explícito anterior a um prompt entregue `INVALID` ainda podia
+materializar a seleção; a máscara marcava presença antes de validar `null` ou
+tipo; e a serialização live perdia os bits de `price=0` e
+`seats_available=0`. O bloco antigo chamado “Decisão canônica” ainda mantinha
+uma contagem operacional superada.
+
+Os REDs reproduziram os três caminhos. O patch agora:
+
+- consulta a barreira `INVALID` central ao resolver o source exato e rejeita
+  qualquer source anterior à barreira aplicável;
+- classifica os 20 campos do snapshot como string, inteiro ou float e só
+  marca presença após validação estrita; `null`, tipo incorreto, float não
+  integral em campo inteiro e número não finito falham fechados;
+- transporta a máscara no evento materializado live e serializa somente as
+  chaves presentes, preservando zero/vazio presente e omitindo chave ausente;
+- marca a antiga decisão do tracker como histórica e superada, sem contagem
+  volátil concorrente.
+
+```text
+PASS — REDs dirigidos pós-patch, count=20 — internal/chat 0.105s
+PASS — go test -race -count=1 ./internal/chat — 63.006s
+PASS — regressões transversais — chat 11.888s; demais pacotes verdes
+PASS — go test -count=1 ./internal/chat — 11.847s
+PASS — go test -count=1 ./... — internal/chat 11.156s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — regexp.MustCompile = 54
+PASS — git diff --check; git diff --cached --check
+```
+
+H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Evidência local
+verde não declara review limpo nem segurança para commit. Teste em produção
+continua pendente no fluxo posterior autorizado. Não houve B2, 3.6F-D,
+parser, regex, migration, refactor amplo, commit, push, PR, deploy ou smoke.
+Próxima ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem
+bloqueadas.
+
+#### Correção após o décimo quinto review — 1 P1 no limite causal da projeção
+
+O review confirmou todos os gates anteriores e encontrou um único P1: no
+bootstrap legado, o resolver de source usava o índice da selection tanto para
+causalidade quanto para limitar a barreira. Assim, um `INVALID` entregue entre
+selection e projection não era observado.
+
+O RED reproduziu exatamente `[source, selection, INVALID, projection]` com
+`MaterializesAuthority=true`, `BOOKABLE` e caminho de booking antes do patch.
+A correção agora propaga explicitamente dois limites ao mesmo gate central:
+
+- `sourceBeforeIndex` preserva a exigência de source anterior à selection;
+- `materializationIndex` é o índice causal da projection e limita
+  `latestDeliveredInvalidAvailabilityPromptIndexV1`;
+- `INVALID` antes ou depois da selection, mas anterior à projection, bloqueia;
+- `INVALID` posterior à projection não altera retroativamente o helper e é
+  aplicado pelo reducer/barreira normal;
+- `UNDELIVERED`, passenger, payment e document fora do domínio availability continuam
+  sem criar barreira; source novo após barreira permanece válido.
+
+```text
+PASS — REDs dirigidos pós-patch, count=20 — internal/chat 1.279s
+PASS — go test -race -count=1 ./internal/chat — 65.178s
+PASS — regressões transversais — chat 13.341s; demais pacotes verdes
+PASS — go test -count=1 ./internal/chat — 13.056s
+PASS — go test -count=1 ./... — internal/chat 13.078s; demais pacotes verdes
+PASS — gofmt -l internal/chat sem saída
+PASS — regexp.MustCompile = 54
+PASS — git diff --check; git diff --cached --check
+```
+
+H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Evidência local
+verde não declara review limpo nem segurança para commit. Teste em produção
+continua pendente no fluxo posterior autorizado. Não houve B2, 3.6F-D,
+parser, regex, migration, refactor amplo, commit, push, PR, deploy ou smoke.
+Próxima ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem
+bloqueadas.
 
 ---
 

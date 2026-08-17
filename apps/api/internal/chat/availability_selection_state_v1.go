@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +59,66 @@ type AvailabilitySelectionSnapshotV1 struct {
 	TripStatus             string  `json:"trip_status,omitempty"`
 }
 
+type availabilitySelectionSnapshotPresenceV1 uint32
+
+const (
+	availabilitySelectionSnapshotSelectedOptionIndexPresentV1 availabilitySelectionSnapshotPresenceV1 = 1 << iota
+	availabilitySelectionSnapshotSegmentIDPresentV1
+	availabilitySelectionSnapshotTripIDPresentV1
+	availabilitySelectionSnapshotRouteIDPresentV1
+	availabilitySelectionSnapshotBoardStopIDPresentV1
+	availabilitySelectionSnapshotAlightStopIDPresentV1
+	availabilitySelectionSnapshotOriginStopIDPresentV1
+	availabilitySelectionSnapshotDestinationStopIDPresentV1
+	availabilitySelectionSnapshotOriginPresentV1
+	availabilitySelectionSnapshotDestinationPresentV1
+	availabilitySelectionSnapshotPackageNamePresentV1
+	availabilitySelectionSnapshotOriginDisplayNamePresentV1
+	availabilitySelectionSnapshotDestinationDisplayNamePresentV1
+	availabilitySelectionSnapshotOriginDepartTimePresentV1
+	availabilitySelectionSnapshotTripDatePresentV1
+	availabilitySelectionSnapshotSeatsAvailablePresentV1
+	availabilitySelectionSnapshotPricePresentV1
+	availabilitySelectionSnapshotCurrencyPresentV1
+	availabilitySelectionSnapshotStatusPresentV1
+	availabilitySelectionSnapshotTripStatusPresentV1
+)
+
+var availabilitySelectionSnapshotFieldsV1 = []struct {
+	key      string
+	presence availabilitySelectionSnapshotPresenceV1
+	kind     availabilitySelectionSnapshotFieldKindV1
+}{
+	{key: "selected_option_index", presence: availabilitySelectionSnapshotSelectedOptionIndexPresentV1, kind: availabilitySelectionSnapshotFieldIntV1},
+	{key: "segment_id", presence: availabilitySelectionSnapshotSegmentIDPresentV1},
+	{key: "trip_id", presence: availabilitySelectionSnapshotTripIDPresentV1},
+	{key: "route_id", presence: availabilitySelectionSnapshotRouteIDPresentV1},
+	{key: "board_stop_id", presence: availabilitySelectionSnapshotBoardStopIDPresentV1},
+	{key: "alight_stop_id", presence: availabilitySelectionSnapshotAlightStopIDPresentV1},
+	{key: "origin_stop_id", presence: availabilitySelectionSnapshotOriginStopIDPresentV1},
+	{key: "destination_stop_id", presence: availabilitySelectionSnapshotDestinationStopIDPresentV1},
+	{key: "origin", presence: availabilitySelectionSnapshotOriginPresentV1},
+	{key: "destination", presence: availabilitySelectionSnapshotDestinationPresentV1},
+	{key: "package_name", presence: availabilitySelectionSnapshotPackageNamePresentV1},
+	{key: "origin_display_name", presence: availabilitySelectionSnapshotOriginDisplayNamePresentV1},
+	{key: "destination_display_name", presence: availabilitySelectionSnapshotDestinationDisplayNamePresentV1},
+	{key: "origin_depart_time", presence: availabilitySelectionSnapshotOriginDepartTimePresentV1},
+	{key: "trip_date", presence: availabilitySelectionSnapshotTripDatePresentV1},
+	{key: "seats_available", presence: availabilitySelectionSnapshotSeatsAvailablePresentV1, kind: availabilitySelectionSnapshotFieldIntV1},
+	{key: "price", presence: availabilitySelectionSnapshotPricePresentV1, kind: availabilitySelectionSnapshotFieldFloatV1},
+	{key: "currency", presence: availabilitySelectionSnapshotCurrencyPresentV1},
+	{key: "status", presence: availabilitySelectionSnapshotStatusPresentV1},
+	{key: "trip_status", presence: availabilitySelectionSnapshotTripStatusPresentV1},
+}
+
+type availabilitySelectionSnapshotFieldKindV1 uint8
+
+const (
+	availabilitySelectionSnapshotFieldStringV1 availabilitySelectionSnapshotFieldKindV1 = iota
+	availabilitySelectionSnapshotFieldIntV1
+	availabilitySelectionSnapshotFieldFloatV1
+)
+
 type AvailabilitySelectionEventOrderV1 struct {
 	ReceivedAt   time.Time `json:"received_at"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -107,6 +168,37 @@ type AvailabilitySelectionEventV1 struct {
 	ReasonCode                        string                            `json:"reason_code,omitempty"`
 	MaterializesAuthority             bool                              `json:"materializes_authority"`
 	Order                             AvailabilitySelectionEventOrderV1 `json:"order"`
+	snapshotPresence                  availabilitySelectionSnapshotPresenceV1
+	snapshotPresenceKnown             bool
+}
+
+func (event AvailabilitySelectionEventV1) MarshalJSON() ([]byte, error) {
+	type eventJSON AvailabilitySelectionEventV1
+	if event.Type != AvailabilitySelectionEventMaterialized || !event.snapshotPresenceKnown {
+		return json.Marshal(eventJSON(event))
+	}
+
+	raw, err := json.Marshal(eventJSON(event))
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if event.snapshotPresence == 0 {
+		delete(payload, "snapshot")
+		return json.Marshal(payload)
+	}
+	snapshotPayload := event.Snapshot.payload()
+	persistedSnapshot := make(map[string]interface{}, len(availabilitySelectionSnapshotFieldsV1))
+	for _, field := range availabilitySelectionSnapshotFieldsV1 {
+		if event.snapshotPresence&field.presence != 0 {
+			persistedSnapshot[field.key] = snapshotPayload[field.key]
+		}
+	}
+	payload["snapshot"] = persistedSnapshot
+	return json.Marshal(payload)
 }
 
 func newAvailabilitySelectionStateV1() AvailabilitySelectionStateV1 {
@@ -639,8 +731,19 @@ func invalidAvailabilitySelectionStateV1(reason string) AvailabilitySelectionSta
 }
 
 func availabilitySelectionSnapshotV1FromPayload(payload map[string]interface{}) (AvailabilitySelectionSnapshotV1, bool) {
+	snapshot, _, ok := availabilitySelectionSnapshotV1FromPayloadWithPresence(payload)
+	return snapshot, ok
+}
+
+func availabilitySelectionSnapshotV1FromPayloadWithPresence(
+	payload map[string]interface{},
+) (AvailabilitySelectionSnapshotV1, availabilitySelectionSnapshotPresenceV1, bool) {
 	if len(payload) == 0 {
-		return AvailabilitySelectionSnapshotV1{}, false
+		return AvailabilitySelectionSnapshotV1{}, 0, false
+	}
+	presence, validTypes := availabilitySelectionSnapshotPresenceFromPayloadV1(payload)
+	if !validTypes {
+		return AvailabilitySelectionSnapshotV1{}, 0, false
 	}
 	snapshot := normalizeAvailabilitySelectionSnapshotV1(AvailabilitySelectionSnapshotV1{
 		SelectedOptionIndex:    asInt(payload["selected_option_index"]),
@@ -664,15 +767,208 @@ func availabilitySelectionSnapshotV1FromPayload(payload map[string]interface{}) 
 		Status:                 asString(payload["status"]),
 		TripStatus:             asString(payload["trip_status"]),
 	})
-	return snapshot, availabilitySelectionSnapshotCompleteV1(snapshot)
+	return snapshot,
+		presence,
+		availabilitySelectionSnapshotCompleteV1(snapshot)
 }
 
-func availabilitySelectionSnapshotV1FromAvailability(
+func availabilitySelectionSnapshotPresenceFromPayloadV1(
+	payload map[string]interface{},
+) (availabilitySelectionSnapshotPresenceV1, bool) {
+	var presence availabilitySelectionSnapshotPresenceV1
+	for _, field := range availabilitySelectionSnapshotFieldsV1 {
+		value, present := payload[field.key]
+		if !present {
+			continue
+		}
+		if !availabilitySelectionSnapshotFieldValueValidV1(value, field.kind) {
+			return 0, false
+		}
+		presence |= field.presence
+	}
+	return presence, true
+}
+
+func availabilitySelectionSnapshotFieldValueValidV1(
+	value interface{},
+	kind availabilitySelectionSnapshotFieldKindV1,
+) bool {
+	switch kind {
+	case availabilitySelectionSnapshotFieldStringV1:
+		_, ok := value.(string)
+		return ok
+	case availabilitySelectionSnapshotFieldIntV1:
+		_, ok := strictAvailabilitySelectionSnapshotIntV1(value)
+		return ok
+	case availabilitySelectionSnapshotFieldFloatV1:
+		_, ok := strictAvailabilitySelectionSnapshotFloatV1(value)
+		return ok
+	default:
+		return false
+	}
+}
+
+func strictAvailabilitySelectionSnapshotIntV1(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		if strconv.IntSize == 32 && (typed < math.MinInt32 || typed > math.MaxInt32) {
+			return 0, false
+		}
+		return int(typed), true
+	case float32:
+		return strictAvailabilitySelectionSnapshotIntV1(float64(typed))
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || math.Trunc(typed) != typed {
+			return 0, false
+		}
+		parsed, err := strconv.ParseInt(strconv.FormatFloat(typed, 'f', -1, 64), 10, strconv.IntSize)
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	case json.Number:
+		parsed, err := strconv.ParseInt(string(typed), 10, strconv.IntSize)
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func strictAvailabilitySelectionSnapshotFloatV1(value interface{}) (float64, bool) {
+	var result float64
+	switch typed := value.(type) {
+	case float64:
+		result = typed
+	case float32:
+		result = float64(typed)
+	case int:
+		result = float64(typed)
+	case int32:
+		result = float64(typed)
+	case int64:
+		result = float64(typed)
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+		result = parsed
+	default:
+		return 0, false
+	}
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0, false
+	}
+	return result, true
+}
+
+func availabilitySelectionSnapshotPresenceFromEventJSONV1(
+	raw json.RawMessage,
+) (availabilitySelectionSnapshotPresenceV1, bool) {
+	var event map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return 0, false
+	}
+	snapshotRaw, present := event["snapshot"]
+	if !present || string(snapshotRaw) == "null" {
+		return 0, true
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(snapshotRaw, &snapshot); err != nil {
+		return 0, false
+	}
+	return availabilitySelectionSnapshotPresenceFromPayloadV1(snapshot)
+}
+
+func inferredAvailabilitySelectionSnapshotPresenceV1(
+	snapshot AvailabilitySelectionSnapshotV1,
+) availabilitySelectionSnapshotPresenceV1 {
+	var presence availabilitySelectionSnapshotPresenceV1
+	if snapshot.SelectedOptionIndex != 0 {
+		presence |= availabilitySelectionSnapshotSelectedOptionIndexPresentV1
+	}
+	if snapshot.SegmentID != "" {
+		presence |= availabilitySelectionSnapshotSegmentIDPresentV1
+	}
+	if snapshot.TripID != "" {
+		presence |= availabilitySelectionSnapshotTripIDPresentV1
+	}
+	if snapshot.RouteID != "" {
+		presence |= availabilitySelectionSnapshotRouteIDPresentV1
+	}
+	if snapshot.BoardStopID != "" {
+		presence |= availabilitySelectionSnapshotBoardStopIDPresentV1
+	}
+	if snapshot.AlightStopID != "" {
+		presence |= availabilitySelectionSnapshotAlightStopIDPresentV1
+	}
+	if snapshot.OriginStopID != "" {
+		presence |= availabilitySelectionSnapshotOriginStopIDPresentV1
+	}
+	if snapshot.DestinationStopID != "" {
+		presence |= availabilitySelectionSnapshotDestinationStopIDPresentV1
+	}
+	if snapshot.Origin != "" {
+		presence |= availabilitySelectionSnapshotOriginPresentV1
+	}
+	if snapshot.Destination != "" {
+		presence |= availabilitySelectionSnapshotDestinationPresentV1
+	}
+	if snapshot.PackageName != "" {
+		presence |= availabilitySelectionSnapshotPackageNamePresentV1
+	}
+	if snapshot.OriginDisplayName != "" {
+		presence |= availabilitySelectionSnapshotOriginDisplayNamePresentV1
+	}
+	if snapshot.DestinationDisplayName != "" {
+		presence |= availabilitySelectionSnapshotDestinationDisplayNamePresentV1
+	}
+	if snapshot.OriginDepartTime != "" {
+		presence |= availabilitySelectionSnapshotOriginDepartTimePresentV1
+	}
+	if snapshot.TripDate != "" {
+		presence |= availabilitySelectionSnapshotTripDatePresentV1
+	}
+	if snapshot.SeatsAvailable != 0 {
+		presence |= availabilitySelectionSnapshotSeatsAvailablePresentV1
+	}
+	if snapshot.Price != 0 {
+		presence |= availabilitySelectionSnapshotPricePresentV1
+	}
+	if snapshot.Currency != "" {
+		presence |= availabilitySelectionSnapshotCurrencyPresentV1
+	}
+	if snapshot.Status != "" {
+		presence |= availabilitySelectionSnapshotStatusPresentV1
+	}
+	if snapshot.TripStatus != "" {
+		presence |= availabilitySelectionSnapshotTripStatusPresentV1
+	}
+	return presence
+}
+
+func availabilitySelectionEventSnapshotPresenceV1(
+	event AvailabilitySelectionEventV1,
+) availabilitySelectionSnapshotPresenceV1 {
+	if event.snapshotPresenceKnown {
+		return event.snapshotPresence
+	}
+	return inferredAvailabilitySelectionSnapshotPresenceV1(event.Snapshot)
+}
+
+func availabilitySelectionSnapshotV1FromAvailabilityWithPresence(
 	availability *AvailabilitySearchResult,
 	index int,
-) (AvailabilitySelectionSnapshotV1, bool) {
+) (AvailabilitySelectionSnapshotV1, availabilitySelectionSnapshotPresenceV1, bool) {
 	payload := selectedAvailabilityResultPayloadFromAvailability(availability, index)
-	return availabilitySelectionSnapshotV1FromPayload(payload)
+	return availabilitySelectionSnapshotV1FromPayloadWithPresence(payload)
 }
 
 func (snapshot AvailabilitySelectionSnapshotV1) payload() map[string]interface{} {
@@ -957,6 +1253,60 @@ func enrichLegacyAvailabilitySelectionEventSnapshotV1(
 	if event.Type != AvailabilitySelectionEventMaterialized || !event.MaterializesAuthority {
 		return event
 	}
+	projection, projectionIndex, projectionOK := exactAvailabilitySelectionEnrichmentMessageV1(
+		messages,
+		event.ProjectionMessageID,
+	)
+	if !projectionOK {
+		event.MaterializesAuthority = false
+		return event
+	}
+	projectionAuthority := classifyAvailabilityPromptCandidateV1(projection)
+	if projectionAuthority.Class == availabilityPromptAuthorityAbsentLegacyV1 {
+		if !legacyAvailabilitySelectionProjectionFactsV1(projection) ||
+			projectionAuthority.Selection == nil ||
+			!projectionAuthority.Selection.SelectedResultPresent ||
+			!legacyAvailabilitySelectionEnrichmentIdentityMatchesV1(projection, event) {
+			event.MaterializesAuthority = false
+			return event
+		}
+		candidate, candidatePresence, candidateOK := availabilitySelectionSnapshotV1FromPayloadWithPresence(
+			projectionAuthority.Selection.SelectedResult,
+		)
+		if !candidateOK {
+			event.MaterializesAuthority = false
+			return event
+		}
+		if _, sourceOK := exactLegacyAvailabilitySelectionPromptSourceV1(
+			messages,
+			projectionIndex,
+			projectionIndex,
+			event.AvailabilityPromptSourceMessageID,
+			event.SelectedOptionIndex,
+			candidate,
+		); !sourceOK || !availabilitySelectionSnapshotCompatibleForEnrichmentV1(
+			event.Snapshot,
+			availabilitySelectionEventSnapshotPresenceV1(event),
+			candidate,
+			candidatePresence,
+		) {
+			event.MaterializesAuthority = false
+			return event
+		}
+		event.Snapshot, event.snapshotPresence = mergeMissingAvailabilitySelectionSnapshotV1(
+			event.Snapshot,
+			availabilitySelectionEventSnapshotPresenceV1(event),
+			candidate,
+			candidatePresence,
+		)
+		event.snapshotPresenceKnown = true
+		return event
+	}
+	if projectionAuthority.Class != availabilityPromptAuthorityValidStructuralV1 {
+		event.MaterializesAuthority = false
+		return event
+	}
+	eventSnapshotPresence := availabilitySelectionEventSnapshotPresenceV1(event)
 	for _, sourceMessageID := range []string{
 		event.ProjectionMessageID,
 		event.AvailabilityPromptSourceMessageID,
@@ -969,71 +1319,145 @@ func enrichLegacyAvailabilitySelectionEventSnapshotV1(
 			if strings.TrimSpace(message.ID) != sourceMessageID {
 				continue
 			}
-			for _, candidate := range availabilitySelectionSnapshotCandidatesFromMessageV1(
+			if !legacyAvailabilitySelectionEnrichmentIdentityMatchesV1(message, event) {
+				continue
+			}
+			for _, candidate := range availabilitySelectionSnapshotCandidatesWithPresenceFromMessageV1(
 				message,
 				event.SelectedOptionIndex,
 			) {
-				if candidate.TripID != event.Snapshot.TripID ||
-					candidate.BoardStopID != event.Snapshot.BoardStopID ||
-					candidate.AlightStopID != event.Snapshot.AlightStopID {
+				if candidate.Snapshot.TripID != event.Snapshot.TripID ||
+					candidate.Snapshot.BoardStopID != event.Snapshot.BoardStopID ||
+					candidate.Snapshot.AlightStopID != event.Snapshot.AlightStopID {
 					continue
 				}
-				event.Snapshot = mergeMissingAvailabilitySelectionSnapshotV1(event.Snapshot, candidate)
+				event.Snapshot, eventSnapshotPresence = mergeMissingAvailabilitySelectionSnapshotV1(
+					event.Snapshot,
+					eventSnapshotPresence,
+					candidate.Snapshot,
+					candidate.Presence,
+				)
+				event.snapshotPresence = eventSnapshotPresence
+				event.snapshotPresenceKnown = true
 			}
 		}
 	}
 	return event
 }
 
+func exactAvailabilitySelectionEnrichmentMessageV1(
+	messages []Message,
+	messageID string,
+) (Message, int, bool) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return Message{}, -1, false
+	}
+	foundIndex := -1
+	for index, message := range messages {
+		if strings.TrimSpace(message.ID) != messageID {
+			continue
+		}
+		if foundIndex >= 0 {
+			return Message{}, -1, false
+		}
+		foundIndex = index
+	}
+	if foundIndex < 0 {
+		return Message{}, -1, false
+	}
+	return messages[foundIndex], foundIndex, true
+}
+
+func legacyAvailabilitySelectionEnrichmentIdentityMatchesV1(
+	message Message,
+	event AvailabilitySelectionEventV1,
+) bool {
+	authority := classifyAvailabilityPromptCandidateV1(message)
+	if authority.Class != availabilityPromptAuthorityAbsentLegacyV1 ||
+		authority.Selection == nil || !authority.Selection.SelectedResultPresent {
+		return true
+	}
+	selected := authority.Selection.SelectedResult
+	selectionMessageID := strings.TrimSpace(asString(
+		selected[selectedAvailabilitySelectionMessageIDPayloadKey],
+	))
+	promptSourceMessageID := strings.TrimSpace(asString(
+		selected[availabilityPromptSourceMessageIDPayloadKey],
+	))
+	expectedPromptSourceMessageID := strings.TrimSpace(event.AvailabilityPromptSourceMessageID)
+	return strings.TrimSpace(message.ID) == strings.TrimSpace(event.ProjectionMessageID) &&
+		asInt(selected["selected_option_index"]) == event.SelectedOptionIndex &&
+		selectionMessageID != "" && selectionMessageID == strings.TrimSpace(event.MessageID) &&
+		promptSourceMessageID != "" && expectedPromptSourceMessageID != "" &&
+		promptSourceMessageID == expectedPromptSourceMessageID
+}
+
+type availabilitySelectionSnapshotCandidateV1 struct {
+	Snapshot AvailabilitySelectionSnapshotV1
+	Presence availabilitySelectionSnapshotPresenceV1
+}
+
 func availabilitySelectionSnapshotCandidatesFromMessageV1(
 	message Message,
 	index int,
 ) []AvailabilitySelectionSnapshotV1 {
+	detailed := availabilitySelectionSnapshotCandidatesWithPresenceFromMessageV1(message, index)
+	candidates := make([]AvailabilitySelectionSnapshotV1, 0, len(detailed))
+	for _, candidate := range detailed {
+		candidates = append(candidates, candidate.Snapshot)
+	}
+	return candidates
+}
+
+func availabilitySelectionSnapshotCandidatesWithPresenceFromMessageV1(
+	message Message,
+	index int,
+) []availabilitySelectionSnapshotCandidateV1 {
 	authority := classifyAvailabilityPromptCandidateV1(message)
+	var facts *AvailabilitySearchResult
+	var selected map[string]interface{}
 	switch authority.Class {
 	case availabilityPromptAuthorityValidStructuralV1:
 		if authority.Presented == nil {
 			return nil
 		}
-		snapshot, ok := availabilitySelectionSnapshotV1FromAvailability(authority.Presented, index)
+		snapshot, presence, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(authority.Presented, index)
 		if !ok {
 			return nil
 		}
-		return []AvailabilitySelectionSnapshotV1{snapshot}
+		return []availabilitySelectionSnapshotCandidateV1{{Snapshot: snapshot, Presence: presence}}
 	case availabilityPromptAuthorityAbsentLegacyV1:
-		if !legacyAvailabilityPromptFactsV1(message) &&
-			!legacyAvailabilitySelectionProjectionFactsV1(message) {
+		if legacyAvailabilityPromptFactsV1(message) {
+			facts = authority.Facts
+		} else if legacyAvailabilitySelectionProjectionFactsV1(message) &&
+			authority.Selection != nil && authority.Selection.SelectedResultPresent {
+			selected = authority.Selection.SelectedResult
+		} else {
 			return nil
 		}
 	default:
 		return nil
 	}
 
-	candidates := make([]AvailabilitySelectionSnapshotV1, 0, 3)
-	if selected := selectedAvailabilityResultFromMessage(message); len(selected) > 0 {
-		if snapshot, ok := availabilitySelectionSnapshotV1FromPayload(selected); ok {
-			candidates = append(candidates, snapshot)
+	candidates := make([]availabilitySelectionSnapshotCandidateV1, 0, 3)
+	if len(selected) > 0 {
+		if snapshot, presence, ok := availabilitySelectionSnapshotV1FromPayloadWithPresence(selected); ok {
+			candidates = append(candidates, availabilitySelectionSnapshotCandidateV1{
+				Snapshot: snapshot,
+				Presence: presence,
+			})
 		}
 	}
-	for _, toolContext := range messageToolContexts(message) {
-		payload := asMap(toolContext[toolNameAvailabilitySearch])
-		if len(payload) == 0 {
-			continue
-		}
-		selected, ok := selectedAvailabilityPayloadItem(payload, index)
-		if !ok {
-			continue
-		}
-		selected = cloneMap(selected)
-		selected["selected_option_index"] = index
-		if strings.TrimSpace(asString(selected["origin"])) == "" {
-			selected["origin"] = strings.TrimSpace(asString(payload["origin"]))
-		}
-		if strings.TrimSpace(asString(selected["destination"])) == "" {
-			selected["destination"] = strings.TrimSpace(asString(payload["destination"]))
-		}
-		if snapshot, ok := availabilitySelectionSnapshotV1FromPayload(selected); ok {
-			candidates = append(candidates, snapshot)
+	if facts != nil {
+		if snapshot, presence, ok := availabilitySelectionSnapshotV1FromAvailabilityWithPresence(facts, index); ok {
+			if index > 0 && index <= len(facts.Results) {
+				snapshot.PackageName = strings.TrimSpace(facts.Results[index-1].PackageName)
+			}
+			candidates = append(candidates, availabilitySelectionSnapshotCandidateV1{
+				Snapshot: snapshot,
+				Presence: presence,
+			})
 		}
 	}
 	return candidates
@@ -1041,29 +1465,70 @@ func availabilitySelectionSnapshotCandidatesFromMessageV1(
 
 func mergeMissingAvailabilitySelectionSnapshotV1(
 	current AvailabilitySelectionSnapshotV1,
+	currentPresence availabilitySelectionSnapshotPresenceV1,
 	candidate AvailabilitySelectionSnapshotV1,
-) AvailabilitySelectionSnapshotV1 {
-	current.SegmentID = firstNonEmpty(current.SegmentID, candidate.SegmentID)
-	current.RouteID = firstNonEmpty(current.RouteID, candidate.RouteID)
-	current.OriginStopID = firstNonEmpty(current.OriginStopID, candidate.OriginStopID)
-	current.DestinationStopID = firstNonEmpty(current.DestinationStopID, candidate.DestinationStopID)
-	current.Origin = firstNonEmpty(current.Origin, candidate.Origin)
-	current.Destination = firstNonEmpty(current.Destination, candidate.Destination)
-	current.PackageName = firstNonEmpty(current.PackageName, candidate.PackageName)
-	current.OriginDisplayName = firstNonEmpty(current.OriginDisplayName, candidate.OriginDisplayName)
-	current.DestinationDisplayName = firstNonEmpty(current.DestinationDisplayName, candidate.DestinationDisplayName)
-	current.OriginDepartTime = firstNonEmpty(current.OriginDepartTime, candidate.OriginDepartTime)
-	current.TripDate = firstNonEmpty(current.TripDate, candidate.TripDate)
-	if current.SeatsAvailable == 0 {
-		current.SeatsAvailable = candidate.SeatsAvailable
+	candidatePresence availabilitySelectionSnapshotPresenceV1,
+) (AvailabilitySelectionSnapshotV1, availabilitySelectionSnapshotPresenceV1) {
+	merge := func(field availabilitySelectionSnapshotPresenceV1, assign func()) {
+		if currentPresence&field == 0 && candidatePresence&field != 0 {
+			assign()
+			currentPresence |= field
+		}
 	}
-	if current.Price == 0 {
-		current.Price = candidate.Price
+	merge(availabilitySelectionSnapshotSelectedOptionIndexPresentV1, func() { current.SelectedOptionIndex = candidate.SelectedOptionIndex })
+	merge(availabilitySelectionSnapshotSegmentIDPresentV1, func() { current.SegmentID = candidate.SegmentID })
+	merge(availabilitySelectionSnapshotTripIDPresentV1, func() { current.TripID = candidate.TripID })
+	merge(availabilitySelectionSnapshotRouteIDPresentV1, func() { current.RouteID = candidate.RouteID })
+	merge(availabilitySelectionSnapshotBoardStopIDPresentV1, func() { current.BoardStopID = candidate.BoardStopID })
+	merge(availabilitySelectionSnapshotAlightStopIDPresentV1, func() { current.AlightStopID = candidate.AlightStopID })
+	merge(availabilitySelectionSnapshotOriginStopIDPresentV1, func() { current.OriginStopID = candidate.OriginStopID })
+	merge(availabilitySelectionSnapshotDestinationStopIDPresentV1, func() { current.DestinationStopID = candidate.DestinationStopID })
+	merge(availabilitySelectionSnapshotOriginPresentV1, func() { current.Origin = candidate.Origin })
+	merge(availabilitySelectionSnapshotDestinationPresentV1, func() { current.Destination = candidate.Destination })
+	merge(availabilitySelectionSnapshotPackageNamePresentV1, func() { current.PackageName = candidate.PackageName })
+	merge(availabilitySelectionSnapshotOriginDisplayNamePresentV1, func() { current.OriginDisplayName = candidate.OriginDisplayName })
+	merge(availabilitySelectionSnapshotDestinationDisplayNamePresentV1, func() { current.DestinationDisplayName = candidate.DestinationDisplayName })
+	merge(availabilitySelectionSnapshotOriginDepartTimePresentV1, func() { current.OriginDepartTime = candidate.OriginDepartTime })
+	merge(availabilitySelectionSnapshotTripDatePresentV1, func() { current.TripDate = candidate.TripDate })
+	merge(availabilitySelectionSnapshotSeatsAvailablePresentV1, func() { current.SeatsAvailable = candidate.SeatsAvailable })
+	merge(availabilitySelectionSnapshotPricePresentV1, func() { current.Price = candidate.Price })
+	merge(availabilitySelectionSnapshotCurrencyPresentV1, func() { current.Currency = candidate.Currency })
+	merge(availabilitySelectionSnapshotStatusPresentV1, func() { current.Status = candidate.Status })
+	merge(availabilitySelectionSnapshotTripStatusPresentV1, func() { current.TripStatus = candidate.TripStatus })
+	return normalizeAvailabilitySelectionSnapshotV1(current), currentPresence
+}
+
+func availabilitySelectionSnapshotCompatibleForEnrichmentV1(
+	current AvailabilitySelectionSnapshotV1,
+	currentPresence availabilitySelectionSnapshotPresenceV1,
+	candidate AvailabilitySelectionSnapshotV1,
+	candidatePresence availabilitySelectionSnapshotPresenceV1,
+) bool {
+	current = normalizeAvailabilitySelectionSnapshotV1(current)
+	candidate = normalizeAvailabilitySelectionSnapshotV1(candidate)
+	compatible := func(field availabilitySelectionSnapshotPresenceV1, equal bool) bool {
+		return currentPresence&field == 0 || candidatePresence&field != 0 && equal
 	}
-	current.Currency = firstNonEmpty(current.Currency, candidate.Currency)
-	current.Status = firstNonEmpty(current.Status, candidate.Status)
-	current.TripStatus = firstNonEmpty(current.TripStatus, candidate.TripStatus)
-	return normalizeAvailabilitySelectionSnapshotV1(current)
+	return compatible(availabilitySelectionSnapshotSelectedOptionIndexPresentV1, current.SelectedOptionIndex == candidate.SelectedOptionIndex) &&
+		compatible(availabilitySelectionSnapshotSegmentIDPresentV1, current.SegmentID == candidate.SegmentID) &&
+		compatible(availabilitySelectionSnapshotTripIDPresentV1, current.TripID == candidate.TripID) &&
+		compatible(availabilitySelectionSnapshotRouteIDPresentV1, current.RouteID == candidate.RouteID) &&
+		compatible(availabilitySelectionSnapshotBoardStopIDPresentV1, current.BoardStopID == candidate.BoardStopID) &&
+		compatible(availabilitySelectionSnapshotAlightStopIDPresentV1, current.AlightStopID == candidate.AlightStopID) &&
+		compatible(availabilitySelectionSnapshotOriginStopIDPresentV1, current.OriginStopID == candidate.OriginStopID) &&
+		compatible(availabilitySelectionSnapshotDestinationStopIDPresentV1, current.DestinationStopID == candidate.DestinationStopID) &&
+		compatible(availabilitySelectionSnapshotOriginPresentV1, current.Origin == candidate.Origin) &&
+		compatible(availabilitySelectionSnapshotDestinationPresentV1, current.Destination == candidate.Destination) &&
+		compatible(availabilitySelectionSnapshotPackageNamePresentV1, current.PackageName == candidate.PackageName) &&
+		compatible(availabilitySelectionSnapshotOriginDisplayNamePresentV1, current.OriginDisplayName == candidate.OriginDisplayName) &&
+		compatible(availabilitySelectionSnapshotDestinationDisplayNamePresentV1, current.DestinationDisplayName == candidate.DestinationDisplayName) &&
+		compatible(availabilitySelectionSnapshotOriginDepartTimePresentV1, current.OriginDepartTime == candidate.OriginDepartTime) &&
+		compatible(availabilitySelectionSnapshotTripDatePresentV1, current.TripDate == candidate.TripDate) &&
+		compatible(availabilitySelectionSnapshotSeatsAvailablePresentV1, current.SeatsAvailable == candidate.SeatsAvailable) &&
+		compatible(availabilitySelectionSnapshotPricePresentV1, current.Price == candidate.Price) &&
+		compatible(availabilitySelectionSnapshotCurrencyPresentV1, current.Currency == candidate.Currency) &&
+		compatible(availabilitySelectionSnapshotStatusPresentV1, current.Status == candidate.Status) &&
+		compatible(availabilitySelectionSnapshotTripStatusPresentV1, current.TripStatus == candidate.TripStatus)
 }
 
 func availabilitySelectionEventsV1FromMessage(message Message) []AvailabilitySelectionEventV1 {
@@ -1079,7 +1544,17 @@ func availabilitySelectionEventsV1FromMessage(message Message) []AvailabilitySel
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil
 	}
+	var rawDecoded []json.RawMessage
+	if err := json.Unmarshal(raw, &rawDecoded); err != nil || len(rawDecoded) != len(decoded) {
+		return nil
+	}
 	for index := range decoded {
+		presence, ok := availabilitySelectionSnapshotPresenceFromEventJSONV1(rawDecoded[index])
+		if !ok {
+			return nil
+		}
+		decoded[index].snapshotPresence = presence
+		decoded[index].snapshotPresenceKnown = true
 		decoded[index].MessageID = strings.TrimSpace(message.ID)
 		decoded[index].EventID = ""
 		decoded[index].Order = AvailabilitySelectionEventOrderV1{}
@@ -1137,14 +1612,15 @@ func legacyAvailabilitySelectionEventV1FromMessage(
 		return AvailabilitySelectionEventV1{}, false
 	}
 	selected := selectedAvailabilityResultFromMessage(message)
-	snapshot, ok := availabilitySelectionSnapshotV1FromPayload(selected)
+	snapshot, snapshotPresence, ok := availabilitySelectionSnapshotV1FromPayloadWithPresence(selected)
 	if !ok {
-		for _, candidate := range availabilitySelectionSnapshotCandidatesFromMessageV1(
+		for _, candidate := range availabilitySelectionSnapshotCandidatesWithPresenceFromMessageV1(
 			message,
 			evidence.SelectedOptionIndex,
 		) {
-			if candidate.SelectedOptionIndex == evidence.SelectedOptionIndex {
-				snapshot = candidate
+			if candidate.Snapshot.SelectedOptionIndex == evidence.SelectedOptionIndex {
+				snapshot = candidate.Snapshot
+				snapshotPresence = candidate.Presence
 				ok = true
 				break
 			}
@@ -1165,6 +1641,8 @@ func legacyAvailabilitySelectionEventV1FromMessage(
 	promptSource, sourceOK := exactLegacyAvailabilitySelectionPromptSourceV1(
 		messages,
 		selectionHistoryIndex,
+		historyIndex,
+		evidence.AvailabilityPromptSourceMessageID,
 		evidence.SelectedOptionIndex,
 		snapshot,
 	)
@@ -1181,6 +1659,8 @@ func legacyAvailabilitySelectionEventV1FromMessage(
 		MaterializesAuthority:             true,
 		ReasonCode:                        "LEGACY_STRUCTURED_SELECTION",
 		Order:                             availabilitySelectionEventOrderFromMessageV1(selectionMessage, 0),
+		snapshotPresence:                  snapshotPresence,
+		snapshotPresenceKnown:             true,
 	}
 	event = NormalizeAvailabilitySelectionEventsV1WithoutState(event)
 	return event, true
@@ -1228,205 +1708,48 @@ func availabilitySelectionMessageHasStructuralSelectIntentV1(message Message) bo
 
 func exactLegacyAvailabilitySelectionPromptSourceV1(
 	messages []Message,
-	beforeIndex int,
+	sourceBeforeIndex int,
+	materializationIndex int,
+	expectedSourceMessageID string,
 	selectedOptionIndex int,
 	snapshot AvailabilitySelectionSnapshotV1,
 ) (string, bool) {
-	if beforeIndex > len(messages) {
-		beforeIndex = len(messages)
+	if sourceBeforeIndex > len(messages) {
+		sourceBeforeIndex = len(messages)
 	}
-	preferredCandidates := make(map[string]struct{})
-	fallbackCandidates := make(map[string]struct{})
-	linkedDraftIDs := deliveredPromptLinkedDraftMessageIDsV1(messages, beforeIndex)
-	startIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(messages, beforeIndex) + 1
-	for index := startIndex; index < beforeIndex; index++ {
-		message := messages[index]
-		messageID := strings.TrimSpace(message.ID)
-		if messageID == "" {
-			continue
-		}
-		candidate := message
-		candidateID := messageID
-		resolvedDelivery := false
-		if isDeliveredPromptProjectionMessageV1(message) {
-			resolved, _, resolvedOK := resolveDeliveredPromptSourceMessageWithIndex(
-				messages,
-				index,
-				message,
-			)
-			if !resolvedOK {
-				continue
-			}
-			candidate = resolved
-			candidateID = strings.TrimSpace(resolved.ID)
-			resolvedDelivery = true
-		} else if _, linked := linkedDraftIDs[messageID]; linked {
-			continue
-		}
-		authority := classifyAvailabilityPromptCandidateV1(candidate)
-		switch authority.Class {
-		case availabilityPromptAuthorityValidStructuralV1:
-			selected, selectedOK := selectedAvailabilityItemForMaterialization(
-				authority.Presented,
-				selectedOptionIndex,
-			)
-			if authority.Presented != nil && selectedOK &&
-				strings.TrimSpace(selected.TripID) == snapshot.TripID &&
-				strings.TrimSpace(selected.BoardStopID) == snapshot.BoardStopID &&
-				strings.TrimSpace(selected.AlightStopID) == snapshot.AlightStopID {
-				mode := strings.ToUpper(strings.TrimSpace(firstNonEmpty(
-					asString(candidate.Payload["mode"]),
-					asString(candidate.NormalizedPayload["mode"]),
-				)))
-				if !resolvedDelivery && mode == messageStatusAutomationDraft {
-					fallbackCandidates[authority.Event.SourceMessageID] = struct{}{}
-				} else {
-					preferredCandidates[authority.Event.SourceMessageID] = struct{}{}
-				}
-			}
-			continue
-		case availabilityPromptAuthorityAbsentLegacyV1:
-		default:
-			continue
-		}
-		if !legacyAvailabilityListPromptSourceV1(candidate) {
-			continue
-		}
-		matches := false
-		for _, toolContext := range messageToolContexts(candidate) {
-			availability := asMap(toolContext[toolNameAvailabilitySearch])
-			if !legacyAvailabilityListPayloadCompleteV1(availability) {
-				continue
-			}
-			selected, ok := selectedAvailabilityPayloadItem(availability, selectedOptionIndex)
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(asString(selected["trip_id"])) == snapshot.TripID &&
-				strings.TrimSpace(asString(selected["board_stop_id"])) == snapshot.BoardStopID &&
-				strings.TrimSpace(asString(selected["alight_stop_id"])) == snapshot.AlightStopID {
-				matches = true
-				break
-			}
-		}
-		if matches {
-			if resolvedDelivery {
-				preferredCandidates[candidateID] = struct{}{}
-			} else {
-				fallbackCandidates[candidateID] = struct{}{}
-			}
-		}
+	if materializationIndex > len(messages) {
+		materializationIndex = len(messages)
 	}
-	candidates := preferredCandidates
-	if len(candidates) == 0 {
-		candidates = fallbackCandidates
-	}
-	if len(candidates) != 1 {
+	if sourceBeforeIndex < 0 || materializationIndex < 0 {
 		return "", false
 	}
-	for messageID := range candidates {
-		return messageID, true
+	expectedSourceMessageID = strings.TrimSpace(expectedSourceMessageID)
+	if expectedSourceMessageID == "" {
+		return "", false
 	}
-	return "", false
-}
-
-func deliveredPromptLinkedDraftMessageIDsV1(
-	messages []Message,
-	beforeIndex int,
-) map[string]struct{} {
-	if beforeIndex > len(messages) {
-		beforeIndex = len(messages)
+	source, sourceIndex, ok := resolveAvailabilityPromptEffectiveSourceByIDV1(
+		messages,
+		expectedSourceMessageID,
+		sourceBeforeIndex,
+	)
+	if !ok || availabilityPromptSourceMessageIDFromMessage(source) != expectedSourceMessageID {
+		return "", false
 	}
-	linked := make(map[string]struct{})
-	for index := 0; index < beforeIndex; index++ {
-		message := messages[index]
-		if !isDeliveredPromptProjectionMessageV1(message) {
-			continue
-		}
-		for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
-			draftID := strings.TrimSpace(asString(payload["draft_message_id"]))
-			if draftID != "" {
-				linked[draftID] = struct{}{}
-			}
-		}
+	if barrierIndex := latestDeliveredInvalidAvailabilityPromptIndexV1(messages, materializationIndex); barrierIndex > sourceIndex {
+		return "", false
 	}
-	return linked
-}
-
-func legacyAvailabilityListPromptSourceV1(message Message) bool {
-	if classifyAvailabilityPromptCandidateV1(message).Class !=
-		availabilityPromptAuthorityAbsentLegacyV1 {
-		return false
+	availability := visibleAvailabilitySelectionContextFromHistoryMessage(source)
+	selected, selectedOK := selectedAvailabilityItemForMaterialization(
+		availability,
+		selectedOptionIndex,
+	)
+	if !selectedOK ||
+		strings.TrimSpace(selected.TripID) != snapshot.TripID ||
+		strings.TrimSpace(selected.BoardStopID) != snapshot.BoardStopID ||
+		strings.TrimSpace(selected.AlightStopID) != snapshot.AlightStopID {
+		return "", false
 	}
-	explicitListPrompt := false
-	for _, payload := range []map[string]interface{}{message.Payload, message.NormalizedPayload} {
-		if len(payload) == 0 {
-			continue
-		}
-		if len(selectedAvailabilityResultFromPayload(payload)) > 0 ||
-			payloadSelectedOptionIndex(payload) > 0 ||
-			availabilitySelectionPayloadContainsAuthorityMarkerV1(payload) {
-			return false
-		}
-		intent := Intent(strings.TrimSpace(payloadMetadataString(payload, "intent")))
-		if intent != "" && intent != IntentUnknown && intent != IntentAvailabilitySearch {
-			return false
-		}
-		if intent == IntentAvailabilitySearch {
-			explicitListPrompt = true
-		}
-		templateName := ResponseTemplateName(strings.TrimSpace(payloadMetadataString(payload, "template_name")))
-		if templateName != "" && templateName != TemplateAvailabilityList {
-			return false
-		}
-		if templateName == TemplateAvailabilityList {
-			explicitListPrompt = true
-		}
-	}
-	if !explicitListPrompt {
-		return false
-	}
-	for _, toolContext := range messageToolContexts(message) {
-		if legacyAvailabilityListPayloadCompleteV1(asMap(toolContext[toolNameAvailabilitySearch])) {
-			return true
-		}
-	}
-	return false
-}
-
-func availabilitySelectionPayloadContainsAuthorityMarkerV1(payload map[string]interface{}) bool {
-	if len(payload) == 0 {
-		return false
-	}
-	if _, ok := payload[availabilitySelectionMaterializesAuthorityPayloadKey]; ok {
-		return true
-	}
-	for _, key := range []string{"request_payload", "response_payload"} {
-		if _, ok := asMap(payload[key])[availabilitySelectionMaterializesAuthorityPayloadKey]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func legacyAvailabilityListPayloadCompleteV1(payload map[string]interface{}) bool {
-	if len(payload) == 0 {
-		return false
-	}
-	results := asInterfaceSliceMaps(payload["results"])
-	if len(results) == 0 {
-		return false
-	}
-	for _, result := range results {
-		if !hasCompleteSelectedTripFacts(
-			asString(result["trip_id"]),
-			asString(result["board_stop_id"]),
-			asString(result["alight_stop_id"]),
-		) {
-			return false
-		}
-	}
-	return true
+	return expectedSourceMessageID, true
 }
 
 func availabilitySelectionLegacyMessageIDV1(message Message, historyIndex int) string {

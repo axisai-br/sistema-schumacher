@@ -521,7 +521,7 @@ func activeAvailabilitySelectionPromptContext(
 	if activePrompt.Kind != ActivePromptAvailabilityOptionChoice {
 		return availabilitySelectionPromptContext{}, false
 	}
-	message, sourceHistoryIndex, ok := latestReliableAssistantMessageWithIndex(history)
+	message, sourceHistoryIndex, visibleMessage, _, ok := latestAvailabilityPromptEffectiveSourceV1(history)
 	if !ok {
 		return availabilitySelectionPromptContext{}, false
 	}
@@ -530,7 +530,7 @@ func activeAvailabilitySelectionPromptContext(
 		return availabilitySelectionPromptContext{}, false
 	}
 	if sourceBody := strings.TrimSpace(activePrompt.SourceMessageBody); sourceBody == "" ||
-		!equivalentAssistantPromptBody(sourceBody, messageTurnText(message)) {
+		!equivalentAssistantPromptBody(sourceBody, messageTurnText(visibleMessage)) {
 		return availabilitySelectionPromptContext{}, false
 	}
 	context := availabilitySelectionPromptContextFromMessage(message)
@@ -559,7 +559,7 @@ func currentAvailabilitySelectionOptionCount(history []Message) int {
 }
 
 func currentAvailabilitySelectionPromptContext(history []Message) availabilitySelectionPromptContext {
-	message, sourceHistoryIndex, ok := latestReliableAssistantMessageWithIndex(history)
+	message, sourceHistoryIndex, _, _, ok := latestAvailabilityPromptEffectiveSourceV1(history)
 	if !ok {
 		return availabilitySelectionPromptContext{}
 	}
@@ -605,15 +605,19 @@ func availabilitySelectionPromptContextFromMessage(message Message) availability
 	default:
 		return availabilitySelectionPromptContext{}
 	}
-	body := messageTurnText(message)
-	renderedCount := availabilityOptionCountFromRenderedPrompt(body)
-	currentFactsCount := availabilityOptionCountFromMessageToolContext(message)
-	folded := strings.Join(strings.Fields(foldChatText(body)), " ")
+	if !authority.Candidate || !authority.Prompt || authority.Kind != ActivePromptAvailabilityOptionChoice {
+		return availabilitySelectionPromptContext{}
+	}
+	renderedCount := authority.OptionCount
+	currentFactsCount := 0
+	if authority.Facts != nil {
+		currentFactsCount = visibleAvailabilityOptionCount(*authority.Facts)
+	}
 	optionCount := renderedCount
 	if optionCount <= 0 {
 		optionCount = currentFactsCount
 	}
-	if optionCount <= 0 || !activePromptLooksLikeAvailabilityOptionChoice(folded, optionCount) {
+	if optionCount <= 0 {
 		return availabilitySelectionPromptContext{}
 	}
 	hasCurrentFacts := currentFactsCount > 0 && (renderedCount <= 0 || renderedCount == currentFactsCount)
@@ -629,7 +633,7 @@ func currentAvailabilitySelectionPromptAvailabilityContext(history []Message) *A
 }
 
 func currentAvailabilitySelectionPromptAvailabilityContextAt(history []Message, observedAt time.Time) *AvailabilitySearchResult {
-	message, ok := latestReliableAssistantMessage(history)
+	message, _, _, _, ok := latestAvailabilityPromptEffectiveSourceV1(history)
 	if !ok {
 		return nil
 	}

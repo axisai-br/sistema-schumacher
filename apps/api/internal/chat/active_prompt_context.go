@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"reflect"
 	"strings"
 	"time"
 )
@@ -37,13 +38,28 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 		Phase: state.Phase,
 	}
 
-	message, ok := latestReliableAssistantMessage(history)
+	message, messageIndex, ok := latestReliableAssistantMessageWithIndex(history)
 	if !ok {
 		return context
 	}
 
 	body := strings.TrimSpace(messageTurnText(message))
-	if messageMayCarryAvailabilityPromptV1(message) {
+	if source, _, kind, sourceOK := reliableOutOfTurnActivePromptSourceV1(history, messageIndex, message); sourceOK {
+		context.SourceMessageID = strings.TrimSpace(source.ID)
+		context.SourceMessageBody = body
+		context.SourceMessageReceivedAt = message.ReceivedAt
+		context.Kind = kind
+		if kind == ActivePromptAvailabilityOptionChoice {
+			context.AvailabilityOptionCount = activePromptAvailabilityOptionCount(source, history, state)
+			context.HasAvailabilityList = context.AvailabilityOptionCount > 0
+		}
+		return context
+	}
+	if _, _, outOfTurn := reconciledOutOfTurnAvailabilityPromptSourceV1(message); outOfTurn {
+		return context
+	}
+	availabilityCandidate := messageMayCarryAvailabilityPromptV1(message)
+	if availabilityCandidate {
 		authority := classifyAvailabilityPromptCandidateV1(message)
 		switch authority.Class {
 		case availabilityPromptAuthorityValidStructuralV1:
@@ -67,7 +83,19 @@ func InferActivePromptContext(history []Message, state CanonicalConversationStat
 	context.SourceMessageBody = body
 	context.SourceMessageReceivedAt = message.ReceivedAt
 	availabilityOptionCount := activePromptAvailabilityOptionCount(message, history, state)
+	if kind, ok := reconciledAvailabilityPromptKindV1(message); availabilityCandidate && ok {
+		context.Kind = kind
+		if kind == ActivePromptAvailabilityOptionChoice {
+			context.AvailabilityOptionCount = availabilityOptionCount
+			context.HasAvailabilityList = availabilityOptionCount > 0
+		}
+		return context
+	}
 	context.Kind = inferActivePromptKind(body, availabilityOptionCount)
+	if !availabilityCandidate &&
+		(context.Kind == ActivePromptAvailabilityDateChoice || context.Kind == ActivePromptAvailabilityOptionChoice) {
+		context.Kind = ActivePromptUnknown
+	}
 	if context.Kind == ActivePromptAvailabilityOptionChoice {
 		context.SourceMessageID = availabilityPromptSourceMessageIDFromMessage(message)
 		context.AvailabilityOptionCount = availabilityOptionCount
@@ -90,6 +118,21 @@ func latestReliableAssistantMessageWithIndex(history []Message) (Message, int, b
 		}
 		availabilityCandidate := messageMayCarryAvailabilityPromptV1(message)
 		authority := classifyAvailabilityPromptCandidateV1(message)
+		if isDeliveredPromptProjectionMessageV1(message) {
+			if authority.Class == availabilityPromptAuthorityUndeliveredV1 {
+				continue
+			}
+			if source, sourceIndex, ok := resolveDeliveredPromptSourceMessageWithIndex(history, i, message); ok {
+				return source, sourceIndex, true
+			}
+			if availabilityCandidate {
+				return Message{}, -1, false
+			}
+			if strings.TrimSpace(messageTurnText(message)) == "" || !isReliableActivePromptOutbound(message) {
+				continue
+			}
+			return withoutPromptToolContext(message), i, true
+		}
 		if availabilityCandidate {
 			switch authority.Class {
 			case availabilityPromptAuthorityInvalidV1:
@@ -104,15 +147,6 @@ func latestReliableAssistantMessageWithIndex(history []Message) (Message, int, b
 		if !isReliableActivePromptOutbound(message) {
 			continue
 		}
-		if isDeliveredPromptProjectionMessageV1(message) {
-			if source, sourceIndex, ok := resolveDeliveredPromptSourceMessageWithIndex(history, i, message); ok {
-				return source, sourceIndex, true
-			}
-			if messageHasAvailabilityPromptEventV1(message) {
-				continue
-			}
-			return withoutPromptToolContext(message), i, true
-		}
 		if authority.Class == availabilityPromptAuthorityValidStructuralV1 &&
 			authority.Presented == nil {
 			continue
@@ -120,6 +154,138 @@ func latestReliableAssistantMessageWithIndex(history []Message) (Message, int, b
 		return message, i, true
 	}
 	return Message{}, -1, false
+}
+
+func reliableOutOfTurnActivePromptSourceV1(
+	history []Message,
+	messageIndex int,
+	message Message,
+) (Message, int, ActivePromptKind, bool) {
+	sourceID, kind, ok := reconciledOutOfTurnAvailabilityPromptSourceV1(message)
+	if !ok {
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	source, sourceIndex, sourceOK := resolveAvailabilityPromptEffectiveSourceByIDV1(history, sourceID, messageIndex)
+	if !sourceOK {
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	sourceTime := canonicalAvailabilityHistoryMessageTime(history[sourceIndex])
+	reminderTime := canonicalAvailabilityHistoryMessageTime(message)
+	if !sourceTime.IsZero() && !reminderTime.IsZero() && sourceTime.After(reminderTime) {
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	for index := sourceIndex + 1; index < messageIndex; index++ {
+		if deliveredInvalidAvailabilityPromptBarrierAtV1(history, index) {
+			return Message{}, -1, ActivePromptUnknown, false
+		}
+	}
+	authority := classifyAvailabilityPromptCandidateV1(source)
+	if !authority.Candidate || !authority.Prompt || !isReliableActivePromptOutbound(source) {
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	switch authority.Class {
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented == nil {
+			return Message{}, -1, ActivePromptUnknown, false
+		}
+	default:
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	if authority.Kind != ActivePromptUnknown && authority.Kind != kind {
+		return Message{}, -1, ActivePromptUnknown, false
+	}
+	return source, sourceIndex, kind, true
+}
+
+func resolveAvailabilityPromptEffectiveSourceByIDV1(
+	history []Message,
+	sourceID string,
+	beforeIndex int,
+) (Message, int, bool) {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" || beforeIndex < 0 || beforeIndex > len(history) {
+		return Message{}, -1, false
+	}
+	sourceIndex := -1
+	for index := range history {
+		if strings.TrimSpace(history[index].ID) != sourceID {
+			continue
+		}
+		if sourceIndex >= 0 {
+			return Message{}, -1, false
+		}
+		sourceIndex = index
+	}
+	if sourceIndex < 0 || sourceIndex >= beforeIndex {
+		return Message{}, -1, false
+	}
+	source := history[sourceIndex]
+	if isDeliveredPromptProjectionMessageV1(source) {
+		resolved, resolvedIndex, ok := resolveDeliveredPromptSourceMessageWithIndex(history, sourceIndex, source)
+		if !ok || resolvedIndex != sourceIndex {
+			return Message{}, -1, false
+		}
+		source = resolved
+	}
+	authority := classifyAvailabilityPromptCandidateV1(source)
+	if !authority.Candidate || !authority.Prompt {
+		return Message{}, -1, false
+	}
+	switch authority.Class {
+	case availabilityPromptAuthorityAbsentLegacyV1:
+	case availabilityPromptAuthorityValidStructuralV1:
+		if authority.Presented == nil {
+			return Message{}, -1, false
+		}
+	default:
+		return Message{}, -1, false
+	}
+	return source, sourceIndex, true
+}
+
+func latestAvailabilityPromptEffectiveSourceV1(history []Message) (Message, int, Message, int, bool) {
+	message, messageIndex, ok := latestReliableAssistantMessageWithIndex(history)
+	if !ok {
+		return Message{}, -1, Message{}, -1, false
+	}
+	if _, _, outOfTurn := reconciledOutOfTurnAvailabilityPromptSourceV1(message); outOfTurn {
+		source, sourceIndex, _, sourceOK := reliableOutOfTurnActivePromptSourceV1(history, messageIndex, message)
+		if !sourceOK {
+			return Message{}, -1, Message{}, -1, false
+		}
+		return source, sourceIndex, message, messageIndex, true
+	}
+	return message, messageIndex, message, messageIndex, true
+}
+
+func reconciledOutOfTurnAvailabilityPromptSourceV1(message Message) (string, ActivePromptKind, bool) {
+	read := func(payload map[string]interface{}) (string, ActivePromptKind, bool) {
+		data := asMap(payload["template_data"])
+		if data == nil {
+			return "", ActivePromptUnknown, false
+		}
+		outOfTurn := true
+		validFlag := true
+		if raw, present := data[outOfTurnTemplateDataKey]; present {
+			outOfTurn, validFlag = raw.(bool)
+		}
+		kindRaw, validKind := data[outOfTurnActivePromptTemplateDataKey].(string)
+		sourceIDRaw, validSource := data[outOfTurnActivePromptSourceIDDataKey].(string)
+		kind := ActivePromptKind(strings.TrimSpace(kindRaw))
+		sourceID := strings.TrimSpace(sourceIDRaw)
+		if !validFlag || !outOfTurn || !validKind || !validSource || sourceID == "" ||
+			(kind != ActivePromptAvailabilityDateChoice && kind != ActivePromptAvailabilityOptionChoice) {
+			return "", ActivePromptUnknown, false
+		}
+		return sourceID, kind, true
+	}
+	payloadSourceID, payloadKind, payloadOK := read(message.Payload)
+	normalizedSourceID, normalizedKind, normalizedOK := read(message.NormalizedPayload)
+	if !payloadOK || !normalizedOK || payloadSourceID != normalizedSourceID || payloadKind != normalizedKind {
+		return "", ActivePromptUnknown, false
+	}
+	return payloadSourceID, payloadKind, true
 }
 
 func resolveBotAutoReplyPromptSourceMessage(history []Message, mirrorIndex int, mirror Message) (Message, bool) {
@@ -146,38 +312,161 @@ func resolveDeliveredPromptSourceMessageWithIndex(
 	deliveredIndex int,
 	delivered Message,
 ) (Message, int, bool) {
+	if deliveredIndex < 0 || deliveredIndex >= len(history) {
+		return Message{}, -1, false
+	}
+	indexedDelivered := history[deliveredIndex]
+	if !sameDeliveredPromptIdentityV1(indexedDelivered, delivered) {
+		return Message{}, -1, false
+	}
+	delivered = indexedDelivered
 	draftID, projectionKind, ok := deliveredPromptSourceReferenceV1(delivered)
 	if !ok || !isTrustedDeliveredPromptOutboundV1(delivered) {
 		return Message{}, -1, false
 	}
+	sourceIndex := -1
 	for i := deliveredIndex - 1; i >= 0; i-- {
-		candidate := history[i]
-		if strings.TrimSpace(candidate.ID) != draftID {
+		if strings.TrimSpace(history[i].ID) != draftID {
 			continue
 		}
-		if !deliveredPromptSourceTrustworthyV1(candidate, projectionKind) {
+		if sourceIndex >= 0 {
 			return Message{}, -1, false
 		}
-
-		sourceHasEvent := messageHasAvailabilityPromptEventV1(candidate)
-		deliveredHasEvent := messageHasAvailabilityPromptEventV1(delivered)
-		if sourceHasEvent || deliveredHasEvent {
-			if !sourceHasEvent || !deliveredHasEvent {
-				return Message{}, -1, false
-			}
-			resolved, eventOK := availabilityPromptMessageFromDeliveredSourceV1(candidate, delivered)
-			if !eventOK {
-				return Message{}, -1, false
-			}
-			return resolved, deliveredIndex, true
-		}
-
-		if !equivalentAssistantPromptBody(messageTurnText(candidate), messageTurnText(delivered)) {
-			return Message{}, -1, false
-		}
-		return effectiveDeliveredPromptMessageV1(candidate, delivered), deliveredIndex, true
+		sourceIndex = i
 	}
-	return Message{}, -1, false
+	if sourceIndex < 0 {
+		return Message{}, -1, false
+	}
+	candidate := history[sourceIndex]
+	sourceTime := canonicalAvailabilityHistoryMessageTime(candidate)
+	deliveredTime := canonicalAvailabilityHistoryMessageTime(delivered)
+	if !sourceTime.IsZero() && !deliveredTime.IsZero() && sourceTime.After(deliveredTime) {
+		return Message{}, -1, false
+	}
+	if !deliveredPromptSourceTrustworthyV1(candidate, projectionKind) {
+		return Message{}, -1, false
+	}
+
+	sourceHasEvent := messageHasAvailabilityPromptEventV1(candidate)
+	deliveredHasEvent := messageHasAvailabilityPromptEventV1(delivered)
+	if sourceHasEvent || deliveredHasEvent {
+		if !sourceHasEvent || !deliveredHasEvent {
+			return Message{}, -1, false
+		}
+		resolved, eventOK := availabilityPromptMessageFromDeliveredSourceV1(candidate, delivered)
+		if !eventOK {
+			return Message{}, -1, false
+		}
+		return resolved, deliveredIndex, true
+	}
+
+	if !equivalentAssistantPromptBody(messageTurnText(candidate), messageTurnText(delivered)) {
+		return Message{}, -1, false
+	}
+	return effectiveDeliveredPromptMessageV1(candidate, delivered), deliveredIndex, true
+}
+
+var deliveredPromptIdentityMetadataKeysV1 = []string{
+	"mode",
+	"draft_message_id",
+	"review_mode",
+	"review_action",
+	"draft_reviewed",
+	"draft_auto_sent",
+	"sender_name",
+	"auto_send_status",
+	"delivery_mode",
+	"delivery_recorded_at",
+	"provider_status",
+}
+
+func sameDeliveredPromptIdentityV1(indexed Message, delivered Message) bool {
+	if strings.TrimSpace(indexed.ID) != strings.TrimSpace(delivered.ID) ||
+		strings.TrimSpace(indexed.SessionID) != strings.TrimSpace(delivered.SessionID) ||
+		!strings.EqualFold(strings.TrimSpace(indexed.Direction), strings.TrimSpace(delivered.Direction)) ||
+		!strings.EqualFold(strings.TrimSpace(indexed.Kind), strings.TrimSpace(delivered.Kind)) ||
+		strings.TrimSpace(indexed.ProviderMessageID) != strings.TrimSpace(delivered.ProviderMessageID) ||
+		strings.TrimSpace(indexed.IdempotencyKey) != strings.TrimSpace(delivered.IdempotencyKey) ||
+		indexed.Body != delivered.Body ||
+		!strings.EqualFold(strings.TrimSpace(indexed.ProcessingStatus), strings.TrimSpace(delivered.ProcessingStatus)) ||
+		!sameDeliveredPromptTimeV1(indexed.ReceivedAt, delivered.ReceivedAt) ||
+		!sameDeliveredPromptTimeV1(indexed.CreatedAt, delivered.CreatedAt) ||
+		!sameDeliveredPromptOptionalTimeV1(indexed.SentAt, delivered.SentAt) {
+		return false
+	}
+	for _, key := range deliveredPromptIdentityMetadataKeysV1 {
+		if !sameDeliveredPromptMetadataValueV1(indexed.Payload, delivered.Payload, key) ||
+			!sameDeliveredPromptMetadataValueV1(indexed.NormalizedPayload, delivered.NormalizedPayload, key) {
+			return false
+		}
+	}
+	return sameDeliveredPromptEventValueV1(indexed.Payload, delivered.Payload) &&
+		sameDeliveredPromptEventValueV1(indexed.NormalizedPayload, delivered.NormalizedPayload)
+}
+
+func sameDeliveredPromptTimeV1(left time.Time, right time.Time) bool {
+	if left.IsZero() || right.IsZero() {
+		return left.IsZero() && right.IsZero()
+	}
+	return left.Equal(right)
+}
+
+func sameDeliveredPromptOptionalTimeV1(left *time.Time, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return sameDeliveredPromptTimeV1(*left, *right)
+}
+
+func sameDeliveredPromptMetadataValueV1(left map[string]interface{}, right map[string]interface{}, key string) bool {
+	leftValue, leftPresent := left[key]
+	rightValue, rightPresent := right[key]
+	if leftPresent != rightPresent {
+		return false
+	}
+	if !leftPresent {
+		return true
+	}
+	if key == "delivery_recorded_at" {
+		leftTime := firstParsedTime(leftValue)
+		rightTime := firstParsedTime(rightValue)
+		if leftTime != nil || rightTime != nil {
+			return leftTime != nil && rightTime != nil && leftTime.Equal(*rightTime)
+		}
+	}
+	leftText, leftString := leftValue.(string)
+	rightText, rightString := rightValue.(string)
+	if leftString || rightString {
+		if !leftString || !rightString {
+			return false
+		}
+		leftText = strings.TrimSpace(leftText)
+		rightText = strings.TrimSpace(rightText)
+		switch key {
+		case "mode", "review_mode", "review_action", "auto_send_status", "delivery_mode", "provider_status":
+			return strings.EqualFold(leftText, rightText)
+		default:
+			return leftText == rightText
+		}
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+func sameDeliveredPromptEventValueV1(left map[string]interface{}, right map[string]interface{}) bool {
+	leftRaw, leftPresent := left[availabilityPromptEventV1MessageKey]
+	rightRaw, rightPresent := right[availabilityPromptEventV1MessageKey]
+	if leftPresent != rightPresent {
+		return false
+	}
+	if !leftPresent {
+		return true
+	}
+	leftEvent, leftValid := decodeAvailabilityPromptEventV1(leftRaw)
+	rightEvent, rightValid := decodeAvailabilityPromptEventV1(rightRaw)
+	if leftValid || rightValid {
+		return leftValid && rightValid && reflect.DeepEqual(leftEvent, rightEvent)
+	}
+	return reflect.DeepEqual(leftRaw, rightRaw)
 }
 
 func deliveredPromptSourceTrustworthyV1(
@@ -280,6 +569,13 @@ func consistentPromptMetadataStringV1(message Message, key string) (string, bool
 }
 
 func isTrustedDeliveredPromptOutboundV1(message Message) bool {
+	if isDeliveredPromptProjectionMessageV1(message) && messageHasAvailabilityPromptEventV1(message) {
+		if !confirmedOutboundDeliveryV1(message) || availabilityDraftReviewMetadataInvalidV1(message) {
+			return false
+		}
+		event, ok := availabilityPromptEventFromMessageV1(message)
+		return ok && event.SourceMessageID == strings.TrimSpace(message.ID)
+	}
 	switch classifyAvailabilityPromptCandidateV1(message).Class {
 	case availabilityPromptAuthorityAbsentLegacyV1, availabilityPromptAuthorityValidStructuralV1:
 		return true
@@ -422,6 +718,9 @@ func isReliableActivePromptOutbound(message Message) bool {
 }
 
 func inferActivePromptKind(text string, availabilityOptionCount int) ActivePromptKind {
+	if kind, _, ok := legacyAvailabilityPromptBodyV1(text); ok {
+		return kind
+	}
 	folded := activePromptFolded(text)
 	if folded == "" {
 		return ActivePromptUnknown
@@ -621,6 +920,7 @@ func activePromptAvailabilityOptionCount(message Message, history []Message, sta
 			}
 			return 0
 		case availabilityPromptAuthorityAbsentLegacyV1:
+			return availabilityOptionCountFromMessage(message)
 		default:
 			return 0
 		}

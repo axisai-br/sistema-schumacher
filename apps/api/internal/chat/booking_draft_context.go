@@ -624,7 +624,7 @@ func availabilityPromptSourceMessageIDBefore(history []Message, beforeIndex int)
 		beforeIndex = len(history)
 	}
 	for i := beforeIndex - 1; i >= 0; i-- {
-		if deliveredInvalidAvailabilityPromptBarrierV1(history[i]) {
+		if deliveredInvalidAvailabilityPromptBarrierAtV1(history, i) {
 			return ""
 		}
 		message, _, ok := classifiedAvailabilityPromptMessageAtV1(history, i)
@@ -642,7 +642,11 @@ func availabilityPromptSourceMessageIDAtHistoryIndex(history []Message, historyI
 	if historyIndex < 0 || historyIndex >= len(history) {
 		return ""
 	}
-	return availabilityPromptSourceMessageIDFromMessage(history[historyIndex])
+	message, _, ok := classifiedAvailabilityPromptMessageAtV1(history, historyIndex)
+	if !ok {
+		return ""
+	}
+	return availabilityPromptSourceMessageIDFromMessage(message)
 }
 
 func availabilitySelectionRejectedOptionIndexes(rejections []availabilitySelectionRejection) []int {

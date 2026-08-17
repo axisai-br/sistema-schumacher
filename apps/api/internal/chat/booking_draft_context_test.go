@@ -392,7 +392,7 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 		wantPackage         string
 	}{
 		{
-			name:                "own selection event recovers package a before later matching envelope",
+			name:                "own selection snapshot preserves package a before later matching envelope",
 			promptSourceID:      "availability-list-a",
 			includePromptSource: true,
 			includeOwnEnvelope:  true,
@@ -400,7 +400,7 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 			wantPackage:         "package-a",
 		},
 		{
-			name:                "exact prompt source recovers package a before later matching envelope",
+			name:                "selection snapshot without availability envelope preserves package a",
 			promptSourceID:      "availability-list-a",
 			includePromptSource: true,
 			wantBookable:        true,
@@ -419,7 +419,6 @@ func TestBookingDraftLegacyRecoveryUsesOnlySelectionEventOrExactPromptSource(t *
 				availabilitySelectionProjectionAuthorityForTest{},
 			)
 			snapshot := asMap(selectionPayload[selectedAvailabilityResultPayloadKey])
-			delete(snapshot, "package_name")
 			delete(snapshot, availabilityPromptSourceMessageIDPayloadKey)
 			delete(snapshot, availabilitySelectionMaterializesAuthorityPayloadKey)
 			snapshot["selection_message_id"] = "selection-a"

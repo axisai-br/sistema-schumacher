@@ -9,6 +9,80 @@ import (
 	"time"
 )
 
+func TestAvailabilityDraftResolvedProjectionKeepsDeliveredPromptIdentity(t *testing.T) {
+	for _, projectionKind := range []struct {
+		name         string
+		mode         string
+		reviewAction string
+	}{
+		{name: "bot auto reply", mode: string(deliveredPromptProjectionBotAutoReplyV1)},
+		{name: "approved review", mode: string(deliveredPromptProjectionDraftReviewV1), reviewAction: "APPROVED_AS_IS"},
+	} {
+		t.Run(projectionKind.name, func(t *testing.T) {
+			history, projection, raw := resolvedAvailabilityProjectionIdentityHistoryForTest(
+				t,
+				projectionKind.mode,
+				projectionKind.reviewAction,
+				"availability-draft-"+strings.ReplaceAll(projectionKind.name, " ", "-"),
+			)
+			availability, sourceIndex, ok := findLatestAvailabilityContextWithSource(history)
+			if !ok || availability == nil || sourceIndex != 1 {
+				t.Fatalf("resolved finder result: ok=%t index=%d availability=%+v", ok, sourceIndex, availability)
+			}
+			if got := availabilityPromptSourceMessageIDAtHistoryIndex(history, sourceIndex); got != projection.ID {
+				t.Fatalf("resolved prompt identity=%q, want delivered ID %q", got, projection.ID)
+			}
+			if !availabilityDraftHasSelectedTrip(Session{}, history, "1") {
+				t.Fatal("valid resolved projection did not allow its presented option")
+			}
+
+			rejected := append(append([]Message(nil), history...), Message{
+				ID:         "reject-option-" + projection.ID,
+				Direction:  "INBOUND",
+				Body:       "não quero opção 1",
+				ReceivedAt: projection.ReceivedAt.Add(time.Minute),
+				CreatedAt:  projection.CreatedAt.Add(time.Minute),
+			})
+			if availabilityDraftHasSelectedTrip(Session{}, rejected, "1") {
+				t.Fatal("option rejection tied to delivered projection identity was ignored")
+			}
+
+			old := availabilityPromptAuthorityMessage("other-prompt-"+projection.ID, "SENT", raw, []int{0})
+			old.ReceivedAt = projection.ReceivedAt.Add(-2 * time.Hour)
+			old.CreatedAt = old.ReceivedAt
+			otherRejection := Message{
+				ID:         "reject-other-" + projection.ID,
+				Direction:  "INBOUND",
+				Body:       "não quero opção 1",
+				ReceivedAt: old.ReceivedAt.Add(time.Minute),
+				CreatedAt:  old.CreatedAt.Add(time.Minute),
+			}
+			current := append([]Message{old, otherRejection}, history...)
+			if !availabilityDraftHasSelectedTrip(Session{}, current, "1") {
+				t.Fatal("rejection tied to another prompt blocked the current delivered projection")
+			}
+		})
+	}
+}
+
+func resolvedAvailabilityProjectionIdentityHistoryForTest(
+	t *testing.T,
+	mode string,
+	reviewAction string,
+	suffix string,
+) ([]Message, Message, AvailabilitySearchResult) {
+	t.Helper()
+	raw := availabilityPromptAuthorityRawResult()
+	draft, projection := availabilityPromptAuthorityProjectionFixtureV1(
+		t,
+		raw,
+		mode,
+		reviewAction,
+		suffix,
+	)
+	return []Message{draft, projection}, projection, raw
+}
+
 func TestAvailabilityDraftMonthlyFlowUsesStructuredPassengerAuthorityAfterSelection(t *testing.T) {
 	store := newFakeStoreWithPassengerAuthority()
 	runner := &fakeAgentRunner{enabled: true, result: RunAgentResult{ReplyText: "fallback LLM", Model: "gpt-test"}}
