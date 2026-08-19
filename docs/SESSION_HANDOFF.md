@@ -1127,7 +1127,9 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** SEC-2026-08-18 — EM CORREÇÃO APÓS REVIEW — 1 P1 corrigido localmente; aguardando novo /review; nenhum lote SQL autorizado.
+**Status:** PLANO CANÔNICO MATERIALIZADO E REVISADO — REVIEW FINAL SEM
+P0/P1/P2; COMMIT DOCUMENTAL
+`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; NENHUM LOTE SQL AUTORIZADO.
 
 O plano canônico foi materializado em:
 
@@ -1164,8 +1166,8 @@ ser revogado explicitamente nas functions, pois revogar apenas anon/auth não
 remove autoridade herdada de PUBLIC. service_role, postgres, BYPASSRLS e FORCE
 RLS não mudam neste track.
 
-O P1 do review atual foi corrigido localmente, preservando as correções
-anteriores:
+As correções foram incorporadas ao commit documental e validadas pelo review
+final sem P0/P1/P2:
 
 - o pós-check de produção do Lote 2B exclui qualquer write pelo fluxo `trips`.
   A prova positiva do consumidor backend continua obrigatória por caminho
@@ -1186,9 +1188,12 @@ anteriores:
   privilegiadas/com `BYPASSRLS`; esse risco residual é aceito e fica em
   backlog separado.
 
-Esta materialização é somente documental. Não houve migration, SQL, alteração
-de banco/ambiente, deploy ou smoke. Nenhum lote está automaticamente
-autorizado. A validação documental desta correção teve `git diff --check`
-PASS; nenhum teste de aplicação ou produção foi executado. A próxima ação
-única deste track é um novo `/review` do working tree documental completo, e
-a próxima ação do track funcional permanece a declarada no topo deste handoff.
+O plano canônico materializado e revisado foi registrado no commit
+`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; o working tree estava limpo
+imediatamente após esse commit. Não houve migration, SQL, alteração de
+banco/ambiente, deploy ou smoke, e nenhum lote SQL foi iniciado ou autorizado.
+
+O próximo lote só pode iniciar mediante autorização explícita para um único
+lote e cumprimento integral dos gates do plano. A próxima ação documental é
+`/review` destas duas alterações de reconciliação; a próxima ação do track
+funcional permanece a declarada no topo deste handoff.
