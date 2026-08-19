@@ -1127,9 +1127,8 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** PLANO CANÔNICO MATERIALIZADO E REVISADO — REVIEW FINAL SEM
-P0/P1/P2; COMMIT DOCUMENTAL
-`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; NENHUM LOTE SQL AUTORIZADO.
+**Status:** **LOTE 1 IMPLEMENTADO E VALIDADO LOCALMENTE; AGUARDANDO /review;
+NÃO APLICADO EM PRODUÇÃO; NENHUM SUCESSOR AUTORIZADO.**
 
 O plano canônico foi materializado em:
 
@@ -1193,7 +1192,28 @@ O plano canônico materializado e revisado foi registrado no commit
 imediatamente após esse commit. Não houve migration, SQL, alteração de
 banco/ambiente, deploy ou smoke, e nenhum lote SQL foi iniciado ou autorizado.
 
-O próximo lote só pode iniciar mediante autorização explícita para um único
-lote e cumprimento integral dos gates do plano. A próxima ação documental é
-`/review` destas duas alterações de reconciliação; a próxima ação do track
-funcional permanece a declarada no topo deste handoff.
+### Rodada local do Lote 1 (2026-08-19)
+
+Na branch `sec/data-api-rls-hardening`, baseline
+`2385527bd0423d7eff356bc96f4d6612ac739e0c` e working tree inicial limpo, foi
+criada somente a migration:
+
+```text
+apps/api/migrations/0022_harden_public_table_default_privileges.sql
+```
+
+Ela remove de futuras TABLES `postgres`-owned em `public` os sete default
+privileges de anon/authenticated. Tabelas existentes, ACLs atuais, RLS,
+policies, FORCE, functions, sequences, postgres, service_role e objetos
+UNKNOWN_BLOCKED permanecem fora da mudança.
+
+PostgreSQL 16 efêmero comprovou RED com ALL7 antes da migration; PASS no
+`pg_default_acl` e em nova tabela; preservação de postgres/service_role,
+tabela preexistente, RLS/policy, functions e sequences; e rollback exato com
+restauração dos sete privilégios para anon/authenticated. `git diff --check`
+passou. Nenhum teste de aplicação foi necessário para esta migration isolada.
+
+O pré-check read-only e a aplicação no banco real permanecem pendentes. Não
+houve conexão ou SQL em produção, deploy ou smoke. Nenhum sucessor está
+autorizado. Próxima ação obrigatória: `/review` do working tree completo; o
+track funcional mantém a próxima ação declarada no topo deste handoff.

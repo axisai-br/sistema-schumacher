@@ -4994,9 +4994,8 @@ O planner permanece futuro. Não iniciar antes de interpretação V2, validator 
 
 ## 10. Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** PLANO CANÔNICO MATERIALIZADO E REVISADO — REVIEW FINAL SEM
-P0/P1/P2; COMMIT DOCUMENTAL
-`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; NENHUM LOTE SQL AUTORIZADO.
+**Status:** **LOTE 1 IMPLEMENTADO E VALIDADO LOCALMENTE; AGUARDANDO /review;
+NÃO APLICADO EM PRODUÇÃO; NENHUM SUCESSOR AUTORIZADO.**
 
 Plano: `plans/sec-2026-08-18-data-api-rls-hardening.md`.
 
@@ -5063,20 +5062,70 @@ docs/EXECUTION_TRACKER.md
 docs/SESSION_HANDOFF.md
 ```
 
-Fechamento da materialização documental:
+Fechamento da materialização documental anterior:
 
 - review final: sem P0/P1/P2;
 - commit: `b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`;
 - working tree: limpo imediatamente após o commit;
 - mudança funcional: nenhuma;
-- migration, SQL, banco, deploy e smoke: não executados;
+- naquela rodada, migration, SQL, banco, deploy e smoke não foram executados;
 - lote SQL iniciado ou autorizado: nenhum.
 
 Validação desta reconciliação pós-commit: `git diff --check` PASS; working tree
 limitado a `docs/EXECUTION_TRACKER.md` e `docs/SESSION_HANDOFF.md`; nenhum
 teste de aplicação ou produção executado, pois a mudança é somente documental.
 
-O próximo lote só pode iniciar mediante autorização explícita para um único
-lote e cumprimento integral dos gates deste plano. A próxima ação documental
-é `/review` destas duas alterações de reconciliação; a próxima ação do track
-funcional permanece inalterada.
+### Execução local do Lote 1 — default ACL de TABLE (2026-08-19)
+
+Baseline confirmada antes da alteração:
+
+```text
+branch: sec/data-api-rls-hardening
+HEAD: 2385527bd0423d7eff356bc96f4d6612ac739e0c
+working tree: limpo
+```
+
+Arquivo criado:
+
+```text
+apps/api/migrations/0022_harden_public_table_default_privileges.sql
+```
+
+A migration revoga dos default privileges de `postgres` em `public`, somente
+para futuras TABLES, os privilégios `SELECT`, `INSERT`, `UPDATE`, `DELETE`,
+`TRUNCATE`, `REFERENCES` e `TRIGGER` de anon/authenticated. Não altera tabelas
+existentes, RLS, policies, FORCE, functions, sequences, postgres ou
+service_role. Nenhum objeto UNKNOWN_BLOCKED foi alterado.
+
+Validação em PostgreSQL 16 efêmero:
+
+```text
+RED -> PASS: tabela criada antes da migration recebeu ALL7 para anon/authenticated
+PASS -> pg_default_acl sem ALL7 de TABLE para anon/authenticated
+PASS -> nova tabela sem ALL7 para anon/authenticated
+PASS -> postgres/service_role preservados
+PASS -> tabela preexistente manteve ACL, RLS e policy
+PASS -> default ACLs e objetos novos de FUNCTION/SEQUENCE preservados
+ROLLBACK -> PASS: conjunto original de default privileges restaurado exatamente
+git diff --check -> PASS
+```
+
+O rollback validado, somente no banco efêmero, é:
+
+```sql
+alter default privileges for role postgres in schema public
+  grant select, insert, update, delete, truncate, references, trigger
+  on tables to anon;
+
+alter default privileges for role postgres in schema public
+  grant select, insert, update, delete, truncate, references, trigger
+  on tables to authenticated;
+```
+
+Ele restaura exatamente os sete default privileges de TABLE. O rollback não
+foi executado em produção.
+
+O pré-check read-only e a aplicação no banco real continuam pendentes. Não
+houve conexão ou SQL em produção, deploy ou smoke. Nenhum sucessor foi
+autorizado. Próxima ação obrigatória: `/review` do working tree completo. O
+track funcional permanece inalterado.
