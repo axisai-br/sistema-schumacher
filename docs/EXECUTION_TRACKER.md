@@ -4989,3 +4989,81 @@ rollback imediato
 ### Planner
 
 O planner permanece futuro. Não iniciar antes de interpretação V2, validator V2, state canônico e ações seguras estarem estabilizados.
+
+---
+
+## 10. Track independente SEC-2026-08-18 — Data API / grants / RLS
+
+**Status:** SEC-2026-08-18 — EM CORREÇÃO APÓS REVIEW — 1 P1 corrigido localmente; aguardando novo /review; nenhum lote SQL autorizado.
+
+Plano: `plans/sec-2026-08-18-data-api-rls-hardening.md`.
+
+Este track de segurança é paralelo e não altera a fila, os status ou a próxima
+ação de H-2026-07-27A, H-2026-07-16B ou 3.6F.
+
+Inventário read-only reconciliado:
+
+- 29 tabelas `public`, zero policies e zero tabelas em publication;
+- `roles` e `pagarme_webhook_events` já endurecidas;
+- 15 routines `public`, todas SECURITY INVOKER, com EXECUTE atual para
+  PUBLIC/anon/authenticated/postgres/service_role;
+- nove routines catalogalmente elegíveis como RPC;
+- uma sequence, `sheet_sync_queue_id_seq`;
+- default ACLs de tables, functions e sequences reexpõem objetos futuros.
+
+Classificação vigente:
+
+- tabelas: 25 BACKEND_ONLY e quatro UNKNOWN_BLOCKED;
+- routines: uma BACKEND_ONLY, seis TRIGGER_INTERNAL e oito UNKNOWN_BLOCKED;
+- sequence atual: UNKNOWN_BLOCKED;
+- nenhuma tabela ou routine DATA_API_REQUIRED comprovada.
+
+Bloqueios explícitos:
+
+- consumidor, protocolo e DDL implantado de sheet sync não comprovados;
+- duas routines de refresh de manifesto sem caller comprovado;
+- mecanismo de geração de `sheet_sync_queue.id` não reconciliado;
+- prova PostgreSQL efêmera pendente antes de revogar EXECUTE de trigger
+  functions.
+
+Correção local do review atual e correções anteriores preservadas:
+
+- P1 atual: o pós-check de produção do Lote 2B exclui explicitamente qualquer
+  write pelo fluxo `trips`. A prova positiva do consumidor backend continua
+  obrigatória, mas deve usar caminho versionado previamente comprovado sem
+  escrita nas tabelas-fonte de sheet sync, com verificação read-only do
+  resultado; se não houver caminho seguro, a prova permanece bloqueada. DML
+  em `trips` para essa prova fica restrito a PostgreSQL efêmero/de teste;
+- P1 anterior preservado: o gate literal
+  `SHEET_SYNC_UNKNOWN_PRODUCTION_WRITE_GUARD` bloqueia
+  smokes em produção que provoquem DML deliberado em `trips`, `bookings`,
+  `passengers` ou `booking_payment_details` apenas para provar trigger/enqueue.
+  Essas provas ficam restritas a PostgreSQL efêmero/de teste; lotes 9, 11, 12,
+  13 e seus dependentes 10, 14 e 15 não podem contornar o guard; o Lote 2B
+  também está explicitamente submetido ao gate;
+- P2 anterior preservado: o DoD garante redução da autoridade Data API
+  somente para anon/authenticated. A chave antiga do incidente permanece
+  rotacionada/revogada como controle histórico separado. `postgres` e
+  `service_role` continuam privilegiados/com `BYPASSRLS`; o comprometimento
+  de uma credencial válida dessas roles permanece risco residual aceito e
+  backlog separado.
+
+Nenhum `/goal` pode conter mais de um lote ou sublote. Nenhum sucessor é
+liberado automaticamente. A futura execução exige autorização explícita,
+pré-check SQL, pós-check, smokes Data API negativos separados, smoke positivo
+do consumidor, smoke da API quando aplicável e review limpo.
+
+Arquivos desta materialização:
+
+```text
+plans/sec-2026-08-18-data-api-rls-hardening.md
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Mudança funcional: nenhuma. Migration/SQL/banco/deploy/smoke: nenhum.
+Validação documental desta correção: `git diff --check` PASS; nenhum teste de
+aplicação foi executado por se tratar somente de documentação. Teste em
+produção não executado nem autorizado nesta rodada.
+Próxima ação única deste track: novo `/review` do working tree documental
+completo. A próxima ação do track funcional permanece inalterada.
