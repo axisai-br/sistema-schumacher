@@ -4994,8 +4994,11 @@ O planner permanece futuro. Não iniciar antes de interpretação V2, validator 
 
 ## 10. Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 IMPLEMENTADO E VALIDADO LOCALMENTE; AGUARDANDO /review;
-NÃO APLICADO EM PRODUÇÃO; NENHUM SUCESSOR AUTORIZADO.**
+**Status:** **LOTE 1 REVISADO E INTEGRADO NA MAIN VIA PR #69; REVIEW FINAL
+SEM P0/P1/P2; NÃO APLICADO EM PRODUÇÃO; PRÓXIMO GATE: PRÉ-CHECK READ-ONLY;
+NENHUM SUCESSOR AUTORIZADO.**
+
+**Próxima ação operacional única:** pré-check READ-ONLY no banco real.
 
 Plano: `plans/sec-2026-08-18-data-api-rls-hardening.md`.
 
@@ -5125,7 +5128,34 @@ alter default privileges for role postgres in schema public
 Ele restaura exatamente os sete default privileges de TABLE. O rollback não
 foi executado em produção.
 
-O pré-check read-only e a aplicação no banco real continuam pendentes. Não
-houve conexão ou SQL em produção, deploy ou smoke. Nenhum sucessor foi
-autorizado. Próxima ação obrigatória: `/review` do working tree completo. O
-track funcional permanece inalterado.
+### Reconciliação pós-review/pós-merge do Lote 1 (2026-08-19)
+
+Checkpoint vigente:
+
+```text
+review final: sem P0/P1/P2
+working tree seguro para commit: SIM
+Lote 1 seguro para pré-check/aplicação em produção: SIM
+PR: #69 — mergeada em main
+head do PR: b7bd633108f0477b4bc5285e74d7c07c0502fb65
+merge commit: dfcfac5b4a7fead7ef2dd3575948fb7a7c50fb6c
+aplicação em produção: NÃO
+deploy/smoke: NÃO
+sucessor autorizado: NÃO
+```
+
+A migration `0022_harden_public_table_default_privileges.sql` está integrada
+na `main` via PR #69. O próximo gate operacional é somente o pré-check
+READ-ONLY no banco real definido pelo plano canônico. A aplicação da migration
+é uma rodada separada: depende do pré-check verde e de autorização explícita
+posterior. Este registro não autoriza SQL, deploy, smoke nem Lote 2A.
+
+O P2 documental da reconciliação pós-merge foi corrigido e validado por review
+sem P0/P1/P2. O working tree documental foi declarado seguro para commit.
+
+A única próxima ação operacional do Lote 1 permanece o pré-check READ-ONLY no
+banco real. A migration 0022 ainda não foi aplicada em produção. Qualquer SQL
+mutável continua condicionado a pré-check verde e nova autorização explícita.
+Nenhum sucessor, deploy ou smoke está autorizado.
+
+O track funcional permanece inalterado.
