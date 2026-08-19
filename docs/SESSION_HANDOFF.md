@@ -1124,3 +1124,76 @@ Faça reconciliação ampla apenas quando:
 - o próximo hotfix ainda não tem causa/localização delimitada.
 
 No trabalho diário, peça análise dirigida aos arquivos e call paths do goal atual.
+
+## Track independente SEC-2026-08-18 — Data API / grants / RLS
+
+**Status:** PLANO CANÔNICO MATERIALIZADO E REVISADO — REVIEW FINAL SEM
+P0/P1/P2; COMMIT DOCUMENTAL
+`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; NENHUM LOTE SQL AUTORIZADO.
+
+O plano canônico foi materializado em:
+
+```text
+plans/sec-2026-08-18-data-api-rls-hardening.md
+```
+
+Baseline do planejamento: `5dfd9a09a5c93ba5fb2d7d68d59d322ce0bf0436`,
+contendo o checkpoint de segurança
+`4eb543cb27cfa6527c0f225383d2f07fb9d38b97`.
+
+O inventário read-only confirmou 29 tabelas, 15 routines e uma sequence em
+`public`. `roles` e `pagarme_webhook_events` já estão endurecidas. Nenhuma
+tabela ou routine DATA_API_REQUIRED foi comprovada.
+
+Finding principal: nove routines são elegíveis como RPC e todas as 15 possuem
+EXECUTE direto para PUBLIC, anon e authenticated, além de postgres e
+service_role. Como várias tabelas relacionadas ainda possuem grants amplos,
+há exposição de autoridade comprovada, sem evidência de exploração.
+
+Permanecem bloqueados:
+
+- `sheet_sync_queue`, `sheet_sync_queue_id_seq` e seis routines RPC/callable
+  de sheet sync sem consumidor comprovado;
+- `refresh_manifest_data()` e
+  `refresh_manifest_data_for_booking(text)` sem caller comprovado;
+- cinco definições de trigger functions de sheet sync ausentes do repo;
+- `travel_authorizations`, `travel_authorization_check_items` e
+  `trip_contractors` sem consumidor identificado.
+
+O plano separa default ACL de tables, functions e sequences; RPC atual;
+trigger functions; tabelas por domínio; e objetos UNKNOWN_BLOCKED. PUBLIC deve
+ser revogado explicitamente nas functions, pois revogar apenas anon/auth não
+remove autoridade herdada de PUBLIC. service_role, postgres, BYPASSRLS e FORCE
+RLS não mudam neste track.
+
+As correções foram incorporadas ao commit documental e validadas pelo review
+final sem P0/P1/P2:
+
+- o pós-check de produção do Lote 2B exclui qualquer write pelo fluxo `trips`.
+  A prova positiva do consumidor backend continua obrigatória por caminho
+  versionado previamente comprovado sem escrita nas tabelas-fonte de sheet
+  sync, seguido por verificação read-only; sem caminho seguro, a prova fica
+  bloqueada. DML em `trips` para essa prova é exclusivamente efêmero/de teste;
+- o `SHEET_SYNC_UNKNOWN_PRODUCTION_WRITE_GUARD` continua impedindo que smokes
+  em produção provoquem DML deliberado nas tabelas-fonte apenas para testar
+  trigger/enqueue enquanto fila, sequence e routines de sheet sync continuam
+  UNKNOWN. A prova comportamental correspondente é exclusivamente efêmera/de
+  teste; o Lote 2B, os lotes 9, 11, 12, 13 e seus dependentes 10, 14 e 15
+  herdam o guard;
+- a correção P2 continua limitando o DoD à redução da autoridade Data API de
+  anon/authenticated. A chave antiga do incidente permanece
+  rotacionada/revogada conforme o checkpoint operacional, como controle
+  histórico separado. Credenciais válidas comprometidas de `postgres` ou
+  `service_role` ainda preservariam autoridade porque essas roles continuam
+  privilegiadas/com `BYPASSRLS`; esse risco residual é aceito e fica em
+  backlog separado.
+
+O plano canônico materializado e revisado foi registrado no commit
+`b8bfe9e9afd44ed5e1faf5aa1f5ee0653cd3de61`; o working tree estava limpo
+imediatamente após esse commit. Não houve migration, SQL, alteração de
+banco/ambiente, deploy ou smoke, e nenhum lote SQL foi iniciado ou autorizado.
+
+O próximo lote só pode iniciar mediante autorização explícita para um único
+lote e cumprimento integral dos gates do plano. A próxima ação documental é
+`/review` destas duas alterações de reconciliação; a próxima ação do track
+funcional permanece a declarada no topo deste handoff.
