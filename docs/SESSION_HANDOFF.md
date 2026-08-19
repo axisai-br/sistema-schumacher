@@ -1127,9 +1127,11 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 IMPLEMENTADO E VALIDADO LOCALMENTE; AGUARDANDO /review;
-NÃO APLICADO EM PRODUÇÃO; NENHUM SUCESSOR AUTORIZADO.**
+**Status:** **LOTE 1 REVISADO E INTEGRADO NA MAIN VIA PR #69; REVIEW FINAL
+SEM P0/P1/P2; NÃO APLICADO EM PRODUÇÃO; PRÓXIMO GATE: PRÉ-CHECK READ-ONLY;
+NENHUM SUCESSOR AUTORIZADO.**
 
+**Próxima ação operacional única:** pré-check READ-ONLY no banco real.
 O plano canônico foi materializado em:
 
 ```text
@@ -1213,7 +1215,36 @@ tabela preexistente, RLS/policy, functions e sequences; e rollback exato com
 restauração dos sete privilégios para anon/authenticated. `git diff --check`
 passou. Nenhum teste de aplicação foi necessário para esta migration isolada.
 
-O pré-check read-only e a aplicação no banco real permanecem pendentes. Não
-houve conexão ou SQL em produção, deploy ou smoke. Nenhum sucessor está
-autorizado. Próxima ação obrigatória: `/review` do working tree completo; o
-track funcional mantém a próxima ação declarada no topo deste handoff.
+Ao encerrar a implementação local, o pré-check read-only e a aplicação no
+banco real permaneciam pendentes. Não houve conexão ou SQL em produção,
+deploy ou smoke, e nenhum sucessor foi autorizado.
+
+### Estado pós-review/pós-merge do Lote 1 (2026-08-19)
+
+O review final terminou sem P0/P1/P2 e declarou o working tree seguro para
+commit e o Lote 1 seguro para pré-check/aplicação. A PR #69, com head
+`b7bd633108f0477b4bc5285e74d7c07c0502fb65`, foi mergeada na `main` pelo
+commit `dfcfac5b4a7fead7ef2dd3575948fb7a7c50fb6c`, integrando a migration
+`0022_harden_public_table_default_privileges.sql`.
+
+O Lote 1 não foi aplicado no banco de produção. Não houve deploy ou smoke, e
+nenhum sucessor está autorizado. O próximo gate operacional é somente o
+pré-check READ-ONLY no banco real definido pelo plano. A aplicação da
+migration permanece uma rodada separada, condicionada ao pré-check verde e a
+autorização explícita posterior; este handoff não autoriza SQL nem Lote 2A.
+
+Validação desta reconciliação: `git diff --check` PASS; somente tracker e
+handoff estão modificados. Nenhum teste de aplicação ou produção foi
+executado, pois a mudança é somente documental.
+
+O P2 documental da reconciliação pós-merge foi corrigido e validado por review
+sem P0/P1/P2. O working tree documental foi declarado seguro para commit.
+
+A migration `0022_harden_public_table_default_privileges.sql` continua
+integrada na `main`, mas ainda não foi aplicada no banco de produção.
+
+A única próxima ação operacional é o pré-check READ-ONLY no banco real.
+Qualquer aplicação mutável da migration depende de pré-check verde e nova
+autorização explícita. Nenhum sucessor, deploy ou smoke está autorizado.
+
+O track funcional mantém a próxima ação declarada no topo deste handoff.
