@@ -1127,11 +1127,11 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 REVISADO E INTEGRADO NA MAIN VIA PR #69; REVIEW FINAL
-SEM P0/P1/P2; NÃO APLICADO EM PRODUÇÃO; PRÓXIMO GATE: PRÉ-CHECK READ-ONLY;
-NENHUM SUCESSOR AUTORIZADO.**
+**Status:** **LOTE 1 APLICADO E OPERACIONALMENTE CONCLUÍDO; PÓS-CHECK E
+SMOKES VERDES; REVIEW FINAL SEM P0/P1/P2; NENHUM SUCESSOR AUTORIZADO.**
 
-**Próxima ação operacional única:** pré-check READ-ONLY no banco real.
+**Próxima ação operacional:** nenhuma autorizada. O Lote 2A depende de novo
+`/goal` e autorização explícita; este fechamento não o autoriza.
 O plano canônico foi materializado em:
 
 ```text
@@ -1246,5 +1246,78 @@ integrada na `main`, mas ainda não foi aplicada no banco de produção.
 A única próxima ação operacional é o pré-check READ-ONLY no banco real.
 Qualquer aplicação mutável da migration depende de pré-check verde e nova
 autorização explícita. Nenhum sucessor, deploy ou smoke está autorizado.
+
+### Fechamento operacional do Lote 1 (2026-08-20)
+
+Este checkpoint supera apenas o estado operacional pendente registrado na
+reconciliação pós-merge acima; o histórico da implementação e das tentativas
+permanece preservado.
+
+Referência reconciliada:
+
+```text
+branch: sec/data-api-rls-hardening
+HEAD: 83af9b7548000715e8431c2382d694fa6c48a44e
+working tree inicial: limpo
+```
+
+O pré-check READ-ONLY em produção passou em PostgreSQL 15.8 e confirmou 29
+tabelas, 15 routines, uma sequence, zero policies e zero objetos em
+publication.
+
+A primeira tentativa de executar a migration 0022 abortou antes de `COMMIT`
+por erro exclusivamente no wrapper do pós-check. Ela não é contabilizada como
+aplicação. Uma verificação READ-ONLY posterior comprovou rollback integral e
+ausência de mudança persistida.
+
+A aplicação final usou o blob canônico
+`b7a724eaf9065eb772e8ebde2091c53db9980200` e concluiu:
+
+```text
+PRECHECK_IN_TRANSACTION_PASS
+2 ALTER DEFAULT PRIVILEGES
+POSTCHECK_IN_TRANSACTION_PASS
+COMMIT
+MIGRATION_0022_COMMIT_DONE
+```
+
+O pós-check persistido confirmou zero default privileges de TABLE para anon e
+authenticated, `ALL7` preservado para postgres e service_role e default
+privileges de FUNCTION e SEQUENCE inalterados. Nenhum rollback foi necessário
+após a aplicação final.
+
+Os smokes somente leitura passaram sem violar o
+`SHEET_SYNC_UNKNOWN_PRODUCTION_WRITE_GUARD`:
+
+```text
+anon: 401 / SQLSTATE 42501
+authenticated: 403 / SQLSTATE 42501
+/health: 200
+/ready: 200
+GET /routes?limit=1&offset=0: 200
+LOTE1_POST_CHANGE_SMOKE_PASS
+```
+
+O review final posterior à aplicação terminou sem P0/P1/P2. Com pré-check,
+aplicação, pós-check, smokes e review verdes, o Lote 1 está aplicado e
+operacionalmente concluído. Nenhum teste adicional em produção é necessário
+para este lote.
+
+Arquivos alterados nesta reconciliação:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Validação documental: `git diff --check` PASS; `git status --short` e
+`git diff --stat` confirmam somente os dois documentos; o diff completo foi
+revisado; plano, migration e track funcional permanecem sem alteração. Não
+houve teste de aplicação nesta rodada exclusivamente documental. O working
+tree está pronto para `/review`, sem commit.
+
+Este fechamento documental não executou SQL, deploy, smoke ou rollback e não
+autoriza o Lote 2A nem qualquer outro sucessor. Qualquer próximo lote exige
+novo `/goal`, pré-check próprio e autorização explícita.
 
 O track funcional mantém a próxima ação declarada no topo deste handoff.
