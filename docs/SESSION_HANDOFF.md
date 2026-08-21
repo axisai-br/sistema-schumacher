@@ -1127,11 +1127,15 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 APLICADO E OPERACIONALMENTE CONCLUÍDO; PÓS-CHECK E
-SMOKES VERDES; REVIEW FINAL SEM P0/P1/P2; NENHUM SUCESSOR AUTORIZADO.**
+**Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A COM REVIEW SEM
+P0/P1/P2 — 4 P1 ANTERIORES FECHADOS; `UNKNOWN_BLOCKED` NO ESCOPO PUBLIC-ONLY;
+PRODUÇÃO E SUCESSORES NÃO AUTORIZADOS.**
 
-**Próxima ação operacional:** nenhuma autorizada. O Lote 2A depende de novo
-`/goal` e autorização explícita; este fechamento não o autoriza.
+**Próxima ação operacional:** nenhuma autorizada. O Lote 2A permanece
+`UNKNOWN_BLOCKED`, sem migration executável. Qualquer retomada exige nova
+decisão e autorização explícita para alcance cross-schema ou solução canônica
+distinta. A próxima ação documental é o `/review` final desta reconciliação;
+o Lote 2B não está autorizado.
 O plano canônico foi materializado em:
 
 ```text
@@ -1319,5 +1323,78 @@ tree está pronto para `/review`, sem commit.
 Este fechamento documental não executou SQL, deploy, smoke ou rollback e não
 autoriza o Lote 2A nem qualquer outro sucessor. Qualquer próximo lote exige
 novo `/goal`, pré-check próprio e autorização explícita.
+
+### Lote 2A — correção dos 4 P1 e bloqueio public-only (2026-08-21)
+
+O review rejeitou a implementação local anterior com quatro P1:
+
+1. revoke global de PUBLIC sem autorização cross-schema;
+2. grant global incondicional capaz de criar autoridade nova para service_role;
+3. inventário cross-schema insuficiente, tratado indevidamente como reconciliado;
+4. rollback com GRANT/REVOKE incondicionais, não derivado de snapshot completo.
+
+A prova em PostgreSQL 16.15 efêmero permanece válida somente como evidência de
+semântica: defaults schema-locais são somados ao global; portanto,
+`IN SCHEMA public REVOKE EXECUTE ... FROM PUBLIC` não remove o EXECUTE global
+nativo. O único revoke eficaz é global e altera futuras functions
+`postgres`-owned fora de `public`. Não há mecanismo
+`ALTER DEFAULT PRIVILEGES` public-only que cumpra o objetivo sem esse efeito.
+
+Tratamento local dos P1:
+
+- a migration executável 0023 foi removida; não existe efeito cross-schema no
+  working tree;
+- nenhum grant global a service_role permanece;
+- schemas, deployers e consumidores fora de `public` permanecem
+  `UNKNOWN_BLOCKED`; ausência de DDL/caller no repo não é inventário real;
+- qualquer proposta futura deverá capturar individualmente PUBLIC global,
+  service_role global e PUBLIC/anon/authenticated schema-locais. O rollback
+  deverá restaurar cada valor exatamente conforme o snapshot, sem comando
+  incondicional que possa criar ou remover autoridade.
+
+Sob a autorização vigente, restrita a `public`, o Lote 2A está bloqueado. Não
+foi criado event trigger, wrapper, workaround ou arquitetura alternativa. A
+liberação exige nova autorização explícita para alcance cross-schema ou outro
+mecanismo canônico aprovado em `/goal` separado.
+
+Arquivos alterados após a correção:
+
+```text
+plans/sec-2026-08-18-data-api-rls-hardening.md
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+`apps/api/migrations/0023_harden_public_function_default_privileges.sql` não
+existe mais. Migration 0022, Lote 1, routines existentes, TABLE/SEQUENCE, RLS,
+código, infra e track funcional permanecem intactos. Não houve SQL em
+produção, deploy, smoke, rollback de produção, commit ou push.
+
+Validação local: a prova PostgreSQL 16.15 anterior foi mantida somente para a
+semântica public-only/global; nenhum novo SQL foi necessário. `git diff
+--check` passou; staged e untracked estão vazios; `git status --short` e o diff
+completo mostram somente plano SEC, tracker e handoff. O diretório de
+migrations termina em 0022 e não contém migration executável do Lote 2A.
+Nenhum teste de aplicação foi necessário para esta correção documental.
+
+Checkpoint canônico após o novo review:
+
+```text
+review: sem P0/P1/P2
+4 P1 anteriores fechados: SIM
+Lote 2A: UNKNOWN_BLOCKED no escopo public-only
+migration/SQL executável do Lote 2A: NÃO
+Lote 2A seguro para produção: NÃO
+Lote 2B autorizado: NÃO
+SQL/deploy/smoke autorizado: NÃO
+```
+
+Esta reconciliação substitui somente o estado volátil **EM CORREÇÃO /
+AGUARDANDO REVIEW** pelo checkpoint limpo acima e preserva integralmente o
+histórico e o tratamento dos quatro P1. `UNKNOWN_BLOCKED` não equivale à
+conclusão operacional do Lote 2A. Qualquer retomada exige nova decisão e
+autorização explícita para alcance cross-schema ou solução canônica distinta
+em `/goal` separado; nenhum sucessor é liberado automaticamente. O working
+tree documental fica pronto para `/review` final, sem commit.
 
 O track funcional mantém a próxima ação declarada no topo deste handoff.
