@@ -1127,15 +1127,15 @@ No trabalho diário, peça análise dirigida aos arquivos e call paths do goal a
 
 ## Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A COM REVIEW SEM
-P0/P1/P2 — 4 P1 ANTERIORES FECHADOS; `UNKNOWN_BLOCKED` NO ESCOPO PUBLIC-ONLY;
+**Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A / OPÇÃO B APROVADA;
+4 P1 ANTERIORES PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; REDEFINIÇÃO
+DOCUMENTAL CONCLUÍDA LOCALMENTE; AGUARDANDO `/review`; GATE NÃO IMPLEMENTADO;
 PRODUÇÃO E SUCESSORES NÃO AUTORIZADOS.**
 
-**Próxima ação operacional:** nenhuma autorizada. O Lote 2A permanece
-`UNKNOWN_BLOCKED`, sem migration executável. Qualquer retomada exige nova
-decisão e autorização explícita para alcance cross-schema ou solução canônica
-distinta. A próxima ação documental é o `/review` final desta reconciliação;
-o Lote 2B não está autorizado.
+**Próxima ação operacional:** nenhuma autorizada. A próxima ação única é o
+`/review` desta reconciliação documental. Somente após review limpo poderá ser
+pedido `/goal` separado para implementar e provar o gate de migrations. Não
+há migration executável, SQL de produção ou autorização para o Lote 2B.
 O plano canônico foi materializado em:
 
 ```text
@@ -1396,5 +1396,62 @@ conclusão operacional do Lote 2A. Qualquer retomada exige nova decisão e
 autorização explícita para alcance cross-schema ou solução canônica distinta
 em `/goal` separado; nenhum sucessor é liberado automaticamente. O working
 tree documental fica pronto para `/review` final, sem commit.
+
+### Lote 2A — opção B aprovada e pré-check READ-ONLY PASS (2026-08-24)
+
+A decisão arquitetural posterior aprovou substituir a tentativa de default
+ACL public-only pela opção B: política explícita, atômica e por assinatura
+para novas FUNCTIONs `public` criadas por DDL versionado. O default ACL global
+de FUNCTION permanece inalterado e fora da solução. Não haverá revoke
+cross-schema nem grant global a service_role.
+
+Invariantes aprovados para o futuro gate:
+
+- toda nova FUNCTION coberta usa `public` explicitamente;
+- criação e hardening ocorrem na mesma transação;
+- PUBLIC, anon e authenticated perdem EXECUTE pela assinatura exata;
+- a política de service_role é declarada por assinatura;
+- postgres permanece efetivo como owner;
+- routines existentes e schemas não públicos permanecem inalterados;
+- DDL manual/externo não é declarado protegido e permanece risco residual
+  `UNKNOWN_BLOCKED`.
+
+O pré-check operacional autorizado passou em PostgreSQL 15.8 com
+`transaction_read_only=on`. Evidência sanitizada:
+
+```text
+remote main: b559b326b0cd27ad0b2f71ed3572a14b6b7673c8
+checkout servidor/API OCI: 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
+PGRST_DB_SCHEMAS: public,storage,graphql_public
+schemas não sistêmicos: 14
+CREATE para postgres: extensions, gsheets_raw, public, realtime,
+  supabase_functions
+default nativo FUNCTION/postgres: EXECUTE para PUBLIC
+default ACL explícito FUNCTION/postgres: public, storage, supabase_functions
+public routines: 15, todas owner postgres
+postgres-owned routines fora de public: 0
+public routines com owner diferente de postgres: 0
+public: 29 tables / 15 routines / 1 sequence / 0 policies
+default TABLE public: endurecido pelo Lote 1
+default SEQUENCE: inalterado
+fim da transação: ROLLBACK
+GRANT/REVOKE/DDL/DML executado: NÃO
+```
+
+Os SQLs históricos untracked no checkout operacional permanecem intocados,
+fora do versionamento e fora do working tree local desta rodada.
+
+Esta rodada altera somente plano, tracker e handoff. Não criou migration 0023,
+não alterou 0022, routines, TABLE/SEQUENCE, RLS/policies/FORCE,
+roles/BYPASSRLS, código, testes, CI, infra ou track funcional. O gate de
+migrations **ainda não foi implementado**; portanto o Lote 2A não está
+operacionalmente concluído. Nenhum SQL mutável, deploy, smoke, commit ou push
+foi executado.
+
+**Estado atual:** redefinição documental concluída localmente, aguardando
+`/review`. Após review limpo, a próxima etapa possível é exclusivamente um
+`/goal` separado para implementar os REDs, o rollback snapshot-driven por
+objeto e o gate de migrations. Lote 2B, produção e todos os sucessores
+permanecem não autorizados.
 
 O track funcional mantém a próxima ação declarada no topo deste handoff.

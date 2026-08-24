@@ -228,36 +228,103 @@ Revogar ALL7 do default ACL de `postgres` em `public` para anon/authenticated.
 Não altera tabelas existentes. Verificar com `pg_default_acl` e objeto
 descartável somente em PostgreSQL efêmero. Rollback: restaurar ALL7.
 
-### Lote 2A — default privileges futuros de FUNCTION
+### Lote 2A — novas FUNCTIONs `public` em DDL versionado
 
-Objetivo autorizado: revogar EXECUTE de PUBLIC, anon e authenticated somente
-para futuras functions `postgres`-owned em `public`, preservando functions
-existentes, postgres, service_role e o comportamento dos demais schemas.
+**Decisão aprovada: opção B.** O Lote 2A passa a definir uma política de
+hardening explícito, atômico e por assinatura para toda nova FUNCTION
+`public` criada por migration versionada. O default ACL global de FUNCTION
+permanece inalterado e fora da solução; não haverá revoke cross-schema nem
+grant global a service_role.
 
-**Status: UNKNOWN_BLOCKED no escopo public-only.** PostgreSQL soma defaults por
-schema ao default global. Portanto,
+Cada nova FUNCTION coberta deverá:
+
+1. usar schema `public` explícito no DDL;
+2. ser criada e endurecida na mesma transação;
+3. revogar `EXECUTE`, pela identidade/assinatura exata, de PUBLIC, anon e
+   authenticated;
+4. declarar explicitamente a política de service_role para aquela assinatura,
+   sem grant global ou inferência por convenção;
+5. comprovar que postgres preserva sua autoridade de owner e que nenhum objeto
+   preexistente ou schema não público foi alterado.
+
+DDL manual, externo ou fora do fluxo versionado não é protegido por esta
+política e permanece risco residual `UNKNOWN_BLOCKED`. A aprovação da opção B
+limita deliberadamente a garantia ao DDL versionado; não declara inexistência
+de creators ou consumidores externos.
+
+#### Histórico preservado do bloqueio public-only
+
+O objetivo anterior tentava revogar EXECUTE de PUBLIC, anon e authenticated
+somente no default ACL de futuras functions `postgres`-owned em `public`.
+PostgreSQL soma defaults por schema ao default global; portanto,
 `ALTER DEFAULT PRIVILEGES ... IN SCHEMA public REVOKE EXECUTE ... FROM PUBLIC`
-não neutraliza o EXECUTE global nativo de PUBLIC. O revoke capaz de removê-lo
-é global e altera futuras functions `postgres`-owned em todos os schemas. Esse
-efeito cross-schema não está autorizado; editar este plano não constitui
-autorização.
+não neutraliza o EXECUTE global nativo de PUBLIC. O revoke eficaz é global e
+afeta futuras functions `postgres`-owned em todos os schemas.
 
-Também não é permitido conceder EXECUTE global incondicional a service_role:
-se o snapshot real já tiver PUBLIC global ausente e service_role apenas em
-`public` ou sem grant, esse comando criaria autoridade cross-schema nova.
+O review anterior fechou quatro P1: revoke global sem autorização
+cross-schema; grant global incondicional capaz de criar autoridade nova para
+service_role; inventário cross-schema insuficiente; e rollback não derivado
+integralmente de snapshot. A migration 0023 foi removida, nenhum efeito
+executável permaneceu e o review final terminou sem P0/P1/P2. Esses findings
+continuam fechados e não são reabertos pela opção B.
 
-O inventário operacional disponível cobre somente `public`. A ausência de DDL
-ou caller no repo não prova ausência de schemas, deployers ou consumidores
-externos. Todo alcance cross-schema permanece `UNKNOWN_BLOCKED` até inventário
-real e evidência operacional suficientes ou aceitação explícita posterior do
-risco. Nenhuma dessas condições foi satisfeita nesta rodada.
+#### Pré-check operacional READ-ONLY — PASS
 
-Não existe migration executável para o Lote 2A neste estado. Não criar event
-trigger, wrapper ou workaround. Uma futura proposta que altere qualquer ACL
-deverá capturar no pré-check cada valor individual — PUBLIC global,
-service_role global e PUBLIC/anon/authenticated schema-locais — e o rollback
-deverá restaurar cada item exatamente ao valor do snapshot, sem GRANT ou
-REVOKE incondicional.
+O pré-check autorizado terminou em `ROLLBACK`, com
+`transaction_read_only=on`, sem GRANT, REVOKE, DDL ou DML. Evidência
+sanitizada:
+
+```text
+remote main: b559b326b0cd27ad0b2f71ed3572a14b6b7673c8
+checkout servidor/API OCI: 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
+PostgreSQL: 15.8
+PGRST_DB_SCHEMAS: public,storage,graphql_public
+schemas não sistêmicos: 14
+schemas com CREATE para postgres: extensions, gsheets_raw, public, realtime,
+  supabase_functions
+default nativo de FUNCTION para postgres: EXECUTE para PUBLIC
+default ACL explícito de FUNCTION para postgres: public, storage,
+  supabase_functions
+public: 29 tables / 15 routines / 1 sequence / 0 policies
+public routines owner postgres: 15
+postgres-owned routines fora de public: 0
+public routines com owner diferente de postgres: 0
+default TABLE public: endurecido pelo Lote 1
+default SEQUENCE: inalterado
+fim da transação: ROLLBACK
+```
+
+O checkout operacional contém SQLs históricos untracked; eles permanecem
+fora do escopo, não são limpos, movidos ou versionados e não integram o
+working tree local desta rodada.
+
+#### REDs e rollback previstos para o gate
+
+O `/goal` separado de implementação do gate deverá provar em PostgreSQL
+efêmero:
+
+- RED: nova FUNCTION `public` sem hardening herda EXECUTE de PUBLIC;
+- PASS: DDL schema-qualified e revoke por assinatura deixam
+  PUBLIC/anon/authenticated sem EXECUTE direto ou efetivo;
+- service_role termina exatamente conforme a política declarada e postgres
+  permanece efetivo como owner;
+- overload sem ACL própria, DDL não qualificado ou hardening incompleto falham;
+- FUNCTION de outro schema/owner e objects preexistentes permanecem idênticos.
+
+O rollback é por objeto e orientado pelo snapshot. Antes de criar ou substituir
+uma assinatura, capturar existência, owner, identidade completa, ACL direto,
+grant option e autoridade efetiva das roles relevantes. Para objeto novo, o
+rollback da feature remove somente a assinatura criada; se ela precisar
+permanecer, restaurar apenas o delta para o ACL contrafactual capturado dos
+defaults vigentes. Para `CREATE OR REPLACE` autorizado em lote próprio,
+restaurar exatamente o ACL anterior. Nenhum rollback pode usar GRANT ou REVOKE
+blanket/incondicional.
+
+**Estado atual:** redefinição documental concluída localmente; gate de
+migrations ainda não implementado; aguardando review. O Lote 2A não está
+operacionalmente concluído. A próxima etapa única, somente após review limpo,
+é um `/goal` separado para implementar e provar o gate. Nenhum SQL de
+produção, migration 0023 ou sucessor está autorizado.
 
 ### Lote 2B — RPC backend-only atual
 
@@ -421,7 +488,11 @@ role/credencial lógica, DDL implantado e atividade atual.
 - service_role permanece inalterado; nenhum grant global pode ser criado sem
   snapshot e autorização compatíveis.
 - trigger function só é endurecida após prova efêmera.
-- default ACL futuro não recria autoridade para PUBLIC/anon/auth.
+- o default ACL global de FUNCTION permanece fora da solução do Lote 2A;
+- toda nova FUNCTION `public` coberta por DDL versionado é schema-qualified e
+  endurecida atomicamente por assinatura antes do commit;
+- DDL manual/externo permanece risco residual `UNKNOWN_BLOCKED` e nunca é
+  declarado protegido pela política versionada;
 - hardening de RPC não substitui tabela e vice-versa.
 - smoke API não prova segurança Data API e negação Data API não prova saúde da API.
 - nenhum segredo aparece em output.
@@ -455,7 +526,8 @@ Nenhum lote seguinte é liberado automaticamente.
 - nenhum BACKEND_ONLY acessível a anon/auth sem justificativa;
 - qualquer DATA_API_REQUIRED com grants mínimos e policies explícitas;
 - UNKNOWN resolvido ou comprovadamente fora da superfície;
-- default privileges de tables/functions/sequences endurecidos;
+- default privileges de tables/sequences endurecidos nos lotes próprios e
+  política por assinatura de novas FUNCTIONs `public` versionadas implementada;
 - functions/RPC e sequences atuais classificadas;
 - smokes negativos e positivos verdes;
 - API Go saudável pelo PostgreSQL direto;
@@ -480,15 +552,15 @@ Nenhum lote seguinte é liberado automaticamente.
 
 ## 14. Estado após materialização
 
-**Status:** SEC-2026-08-18 — LOTE 2A COM REVIEW SEM P0/P1/P2 — 4 P1
-anteriores fechados; `UNKNOWN_BLOCKED` no escopo public-only; nenhum lote SQL
-autorizado.
+**Status:** SEC-2026-08-18 — LOTE 2A / OPÇÃO B APROVADA; 4 P1 ANTERIORES
+PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; REDEFINIÇÃO DOCUMENTAL
+CONCLUÍDA LOCALMENTE; GATE NÃO IMPLEMENTADO; AGUARDANDO REVIEW; NENHUM LOTE
+SQL AUTORIZADO.
 
-Este arquivo documenta o checkpoint de review limpo e o bloqueio;
-`UNKNOWN_BLOCKED` não equivale à conclusão operacional do Lote 2A. Não há
-migration executável e não existe autorização para SQL, produção ou alcance
-cross-schema. Qualquer retomada do Lote 2A exige nova decisão e autorização
-explícita para o alcance cross-schema ou uma solução canônica distinta em
-`/goal` separado. Nenhum sucessor é liberado automaticamente. A próxima ação
-documental é o `/review` final desta reconciliação; o track funcional mantém
-sua própria próxima ação sem alteração.
+Este arquivo documenta a política versionada aprovada e a evidência
+operacional sanitizada. Não há migration executável do Lote 2A, mudança de
+default ACL global, efeito cross-schema ou autorização para produção. DDL
+externo permanece `UNKNOWN_BLOCKED`; o Lote 2A só poderá ser considerado
+operacionalmente concluído depois da implementação e do review limpo do gate
+em `/goal` separado. O Lote 2B e todos os sucessores permanecem não
+autorizados. O track funcional mantém sua própria próxima ação sem alteração.
