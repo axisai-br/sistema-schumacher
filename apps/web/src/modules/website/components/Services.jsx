@@ -1,167 +1,111 @@
-import { Card, CardBody, CardHeader, Chip } from '@heroui/react'
-import { motion } from 'framer-motion'
+import { Building2, CalendarCheck, Check, Compass, MapPin } from 'lucide-react'
 
-// Destinos em destaque (prioridade)
 const destinations = [
     {
-        icon: '🏝️',
+        icon: <MapPin aria-hidden="true" size={24} strokeWidth={1.8} />,
         title: 'Lençóis Maranhenses',
         description: 'Viagem completa aos Lençóis Maranhenses com roteiro exclusivo. Lagoas cristalinas, dunas infinitas e paisagens de tirar o fôlego.',
         features: ['Roteiro completo', 'Hospedagem inclusa', 'Guia especializado'],
         highlight: true,
-        badge: '⭐ MAIS PROCURADO',
+        badge: 'MAIS PROCURADO',
     },
     {
-        icon: '🎢',
+        icon: <Compass aria-hidden="true" size={24} strokeWidth={1.8} />,
         title: 'Santa Catarina',
         description: 'Balneário Camboriú, Beto Carrero World e praias incríveis. Diversão garantida para toda a família.',
         features: ['Beto Carrero', 'Balneário Camboriú', 'Praias paradisíacas'],
         highlight: false,
-        badge: '🌴 LAZER',
+        badge: 'LAZER',
     },
 ]
 
-// Outros serviços
 const services = [
     {
-        icon: '🏢',
+        icon: <Building2 aria-hidden="true" className="text-brand-lynx" size={30} strokeWidth={1.7} />,
         title: 'Fretamento Empresarial',
         description: 'Transporte regular de colaboradores com rotas personalizadas e pontualidade garantida.',
         features: ['Rotas customizadas', 'Contratos flexíveis'],
     },
     {
-        icon: '🎉',
+        icon: <CalendarCheck aria-hidden="true" className="text-brand-lynx" size={30} strokeWidth={1.7} />,
         title: 'Eventos e Transfers',
         description: 'Transporte para eventos corporativos, casamentos, formaturas e ocasiões especiais.',
         features: ['Logística completa', 'Atendimento VIP'],
     },
 ]
 
-const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-        opacity: 1,
-        transition: { staggerChildren: 0.15 },
-    },
-}
-
-const itemVariants = {
-    hidden: { opacity: 0, y: 30 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.6 } },
+function FeatureList({ features, compact = false }) {
+    return (
+        <ul className={compact ? 'mt-5 space-y-2' : 'mt-7 space-y-3'}>
+            {features.map((feature) => (
+                <li key={feature} className="flex items-center gap-3 text-sm font-medium text-brand-lynx/85">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center bg-brand-lynx text-brand-gunship" aria-hidden="true">
+                        <Check size={13} strokeWidth={3} />
+                    </span>
+                    {feature}
+                </li>
+            ))}
+        </ul>
+    )
 }
 
 export default function Services() {
     return (
-        <section id="servicos" className="section-padding bg-white">
-            <div className="container-max">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.6 }}
-                    className="text-center mb-16"
-                >
-                    <h2 className="section-title">
-                        Nossos <span className="text-gradient-gold">Destinos</span>
+        <section id="servicos" className="bg-brand-gunship px-5 py-20 text-brand-lynx sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+            <div className="mx-auto max-w-7xl">
+                <header className="mb-12 max-w-3xl sm:mb-16">
+                    <h2 className="text-3xl font-bold leading-tight tracking-[-0.025em] text-brand-lynx sm:text-4xl lg:text-5xl">
+                        Nossos <span className="border-b-4 border-brand-ember">Destinos</span>
                     </h2>
-                    <p className="section-subtitle">
+                    <p className="mt-5 text-base leading-7 text-brand-lynx/75 sm:text-lg">
                         Viagens inesquecíveis com conforto e segurança
                     </p>
-                </motion.div>
+                </header>
 
-                {/* Destinos em Destaque */}
-                <motion.div
-                    variants={containerVariants}
-                    initial="hidden"
-                    whileInView="visible"
-                    viewport={{ once: true }}
-                    className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16"
-                >
-                    {destinations.map((dest, index) => (
-                        <motion.div key={index} variants={itemVariants}>
-                            <Card className={`border-2 ${dest.highlight ? 'border-gold-400 shadow-gold-lg' : 'border-light-300'} hover:border-gold-400 hover:shadow-gold transition-all duration-300 h-full bg-gradient-to-br from-white to-gold-50`}>
-                                <CardHeader className="flex gap-4 pb-0 pt-6 px-6">
-                                    <div className="text-5xl">{dest.icon}</div>
-                                    <div>
-                                        <Chip size="sm" className={`${dest.highlight ? 'bg-gold-500 text-white' : 'bg-gold-100 text-gold-700'} mb-2`}>
-                                            {dest.badge}
-                                        </Chip>
-                                        <h3 className="text-2xl font-bold text-dark-900">
-                                            {dest.title}
-                                        </h3>
-                                    </div>
-                                </CardHeader>
-                                <CardBody className="px-6 pb-6">
-                                    <p className="text-dark-500 mb-4 leading-relaxed">
-                                        {dest.description}
-                                    </p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {dest.features.map((feature, idx) => (
-                                            <Chip
-                                                key={idx}
-                                                size="sm"
-                                                variant="flat"
-                                                className="bg-gold-50 text-gold-700 border border-gold-200"
-                                            >
-                                                ✓ {feature}
-                                            </Chip>
-                                        ))}
-                                    </div>
-                                </CardBody>
-                            </Card>
-                        </motion.div>
+                <div className="grid gap-6 md:grid-cols-2 lg:gap-8">
+                    {destinations.map(({ icon, title, description, features, highlight, badge }) => (
+                        <article
+                            key={title}
+                            className={`flex h-full flex-col border bg-black/10 p-6 sm:p-8 ${highlight ? 'border-brand-ember' : 'border-brand-blue-grey/55'}`}
+                        >
+                            <div className="mb-8 flex items-start justify-between gap-5">
+                                <span className={`flex h-12 w-12 shrink-0 items-center justify-center ${highlight ? 'bg-brand-ember text-black' : 'border border-brand-blue-grey/60 text-brand-lynx'}`}>
+                                    {icon}
+                                </span>
+                                <span className={`px-3 py-2 text-[0.68rem] font-bold tracking-[0.14em] ${highlight ? 'bg-brand-ember text-black' : 'border border-brand-blue-grey/60 text-brand-lynx'}`}>
+                                    {badge}
+                                </span>
+                            </div>
+
+                            <h3 className="mb-4 text-2xl font-bold text-brand-lynx sm:text-3xl">{title}</h3>
+                            <p className="text-base leading-7 text-brand-lynx/75">{description}</p>
+                            <div className="mt-auto">
+                                <FeatureList features={features} />
+                            </div>
+                        </article>
                     ))}
-                </motion.div>
+                </div>
 
-                {/* Outros Serviços */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    className="text-center mb-8"
-                >
-                    <h3 className="text-2xl font-bold text-dark-700">
+                <div className="mt-16 border-t border-brand-blue-grey/40 pt-12 sm:mt-20 sm:pt-16">
+                    <h3 className="mb-8 text-2xl font-bold text-brand-lynx sm:text-3xl">
                         Também oferecemos
                     </h3>
-                </motion.div>
 
-                <motion.div
-                    variants={containerVariants}
-                    initial="hidden"
-                    whileInView="visible"
-                    viewport={{ once: true }}
-                    className="grid grid-cols-1 md:grid-cols-2 gap-6"
-                >
-                    {services.map((service, index) => (
-                        <motion.div key={index} variants={itemVariants}>
-                            <Card className="bg-white border border-light-300 hover:border-gold-300 hover:shadow-gold transition-all duration-300 h-full">
-                                <CardHeader className="flex gap-4 pb-0 pt-5 px-5">
-                                    <div className="text-3xl">{service.icon}</div>
-                                    <h3 className="text-xl font-bold text-dark-900">
-                                        {service.title}
-                                    </h3>
-                                </CardHeader>
-                                <CardBody className="px-5 pb-5">
-                                    <p className="text-dark-500 mb-3 leading-relaxed text-sm">
-                                        {service.description}
+                    <div className="grid gap-x-12 gap-y-10 md:grid-cols-2">
+                        {services.map(({ icon, title, description, features }) => (
+                            <article key={title} className="grid gap-5 border-l-2 border-brand-blue-grey/60 pl-5 sm:grid-cols-[auto_1fr] sm:pl-6">
+                                {icon}
+                                <div>
+                                    <h4 className="text-xl font-bold text-brand-lynx">{title}</h4>
+                                    <p className="mt-3 text-sm leading-6 text-brand-lynx/75 sm:text-base">
+                                        {description}
                                     </p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {service.features.map((feature, idx) => (
-                                            <Chip
-                                                key={idx}
-                                                size="sm"
-                                                variant="flat"
-                                                className="bg-light-200 text-dark-600 border border-light-300"
-                                            >
-                                                ✓ {feature}
-                                            </Chip>
-                                        ))}
-                                    </div>
-                                </CardBody>
-                            </Card>
-                        </motion.div>
-                    ))}
-                </motion.div>
+                                    <FeatureList features={features} compact />
+                                </div>
+                            </article>
+                        ))}
+                    </div>
+                </div>
             </div>
         </section>
     )

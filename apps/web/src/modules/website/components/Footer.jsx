@@ -1,5 +1,14 @@
-import { Divider } from '@heroui/react'
-import { Link, useNavigate } from 'react-router-dom'
+import {
+    Facebook,
+    Heart,
+    Instagram,
+    Mail,
+    MapPin,
+    MessageCircle,
+    Phone,
+    Youtube,
+} from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 const links = {
     empresa: [
@@ -10,72 +19,86 @@ const links = {
         { name: 'Solicitar Orçamento', href: '/orcamento', isRoute: true },
     ],
     contato: [
-        { name: '📞 (49) 3246-6666', href: 'tel:+554932466666' },
-        { name: '💬 (49) 99986-2222', href: 'https://wa.me/5549999862222' },
-        { name: '📧 turismo@schumacher.tur.br', href: 'mailto:turismo@schumacher.tur.br' },
-        { name: '📍 SC-355, KM 35 - Fraiburgo/SC', href: 'https://maps.google.com/?q=SC-355+KM+35+Fraiburgo+SC' },
+        { name: '(49) 3246-6666', href: 'tel:+554932466666', icon: <Phone aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: '(49) 99986-2222', href: 'https://wa.me/5549999862222', icon: <MessageCircle aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: 'turismo@schumacher.tur.br', href: 'mailto:turismo@schumacher.tur.br', icon: <Mail aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: 'SC-355, KM 35 - Fraiburgo/SC', href: 'https://maps.google.com/?q=SC-355+KM+35+Fraiburgo+SC', icon: <MapPin aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
     ],
+}
+
+const socialLinks = [
+    { label: 'Facebook', href: 'https://www.facebook.com/joseane.schumachertur', icon: <Facebook aria-hidden="true" size={20} strokeWidth={1.8} /> },
+    { label: 'Instagram', href: 'https://www.instagram.com/schumacher_tur/', icon: <Instagram aria-hidden="true" size={20} strokeWidth={1.8} /> },
+    { label: 'YouTube', href: 'https://www.youtube.com/channel/UCZV5YZpjW_7QtGuHre6Tj8w', icon: <Youtube aria-hidden="true" size={20} strokeWidth={1.8} /> },
+]
+
+function getScrollBehavior() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
 }
 
 export default function Footer() {
     const navigate = useNavigate()
 
     const handleNavigation = (link) => {
+        const behavior = getScrollBehavior()
+
         if (link.isRoute) {
             navigate(link.href)
-            window.scrollTo({ top: 0, behavior: 'smooth' })
+            window.scrollTo({ top: 0, behavior })
         } else if (link.href.startsWith('#')) {
             if (window.location.pathname !== '/') {
                 navigate('/')
                 setTimeout(() => {
-                    document.querySelector(link.href)?.scrollIntoView({ behavior: 'smooth' })
+                    document.querySelector(link.href)?.scrollIntoView({ behavior })
                 }, 100)
             } else {
-                document.querySelector(link.href)?.scrollIntoView({ behavior: 'smooth' })
+                document.querySelector(link.href)?.scrollIntoView({ behavior })
             }
-        } else {
-            window.open(link.href, '_blank')
         }
     }
 
     return (
-        <footer id="contato" className="bg-light-200 border-t border-light-300">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-                    {/* Brand */}
+        <footer id="contato" className="border-t-4 border-brand-ember bg-brand-gunship text-brand-lynx">
+            <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-20 lg:px-10">
+                <div className="grid gap-12 md:grid-cols-3 md:gap-10 lg:gap-16">
                     <div>
-                        <h3 className="font-heading text-2xl font-bold text-dark-900 mb-4">
-                            Schumacher <span className="text-gold-500">Tur</span>
-                        </h3>
-                        <p className="text-dark-500 leading-relaxed mb-4">
+                        <p className="mb-5 font-heading text-2xl font-semibold tracking-[-0.02em] text-brand-lynx">
+                            Schumacher Tur
+                        </p>
+                        <p className="mb-5 max-w-sm text-sm leading-7 text-brand-lynx/75 sm:text-base">
                             Sua viagem com conforto, segurança e pontualidade.
                             Especialistas em viagens ao Maranhão e turismo em Santa Catarina.
                         </p>
-                        <p className="text-xs text-dark-400 mb-4">
+                        <p className="mb-7 text-xs font-medium tracking-wide text-brand-lynx/70">
                             CNPJ: 17.246.217/0001-89
                         </p>
-                        <div className="flex gap-4">
-                            <a href="https://www.facebook.com/joseane.schumachertur" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-gold-100 flex items-center justify-center text-gold-600 hover:bg-gold-200 transition-colors">
-                                📘
-                            </a>
-                            <a href="https://www.instagram.com/schumacher_tur/" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-gold-100 flex items-center justify-center text-gold-600 hover:bg-gold-200 transition-colors">
-                                📸
-                            </a>
-                            <a href="https://www.youtube.com/channel/UCZV5YZpjW_7QtGuHre6Tj8w" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-gold-100 flex items-center justify-center text-gold-600 hover:bg-gold-200 transition-colors">
-                                ▶️
-                            </a>
+                        <div className="flex gap-3">
+                            {socialLinks.map(({ label, href, icon }) => (
+                                <a
+                                    key={label}
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={label}
+                                    className="flex h-11 w-11 items-center justify-center border border-brand-blue-grey/60 text-brand-lynx transition-colors hover:border-brand-lynx hover:bg-brand-lynx/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship"
+                                >
+                                    {icon}
+                                </a>
+                            ))}
                         </div>
                     </div>
 
-                    {/* Links */}
                     <div>
-                        <h4 className="font-bold text-dark-900 mb-4">Navegação</h4>
-                        <ul className="space-y-3">
+                        <h2 className="mb-5 text-sm font-bold uppercase tracking-[0.16em] text-brand-lynx">
+                            Navegação
+                        </h2>
+                        <ul className="space-y-1">
                             {links.empresa.map((link) => (
                                 <li key={link.name}>
                                     <button
+                                        type="button"
                                         onClick={() => handleNavigation(link)}
-                                        className="text-dark-500 hover:text-gold-500 transition-colors"
+                                        className="min-h-11 rounded-sm px-1 text-left text-sm font-medium text-brand-lynx/75 transition-colors hover:text-brand-lynx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:text-base"
                                     >
                                         {link.name}
                                     </button>
@@ -84,17 +107,19 @@ export default function Footer() {
                         </ul>
                     </div>
 
-                    {/* Contact */}
                     <div>
-                        <h4 className="font-bold text-dark-900 mb-4">Contato</h4>
-                        <ul className="space-y-3">
-                            {links.contato.map((link) => (
-                                <li key={link.name}>
+                        <h2 className="mb-5 text-sm font-bold uppercase tracking-[0.16em] text-brand-lynx">
+                            Contato
+                        </h2>
+                        <ul className="space-y-2">
+                            {links.contato.map(({ name, href, icon }) => (
+                                <li key={name}>
                                     <a
-                                        href={link.href}
-                                        className="text-dark-500 hover:text-gold-500 transition-colors"
+                                        href={href}
+                                        className="flex min-h-11 items-center gap-3 rounded-sm px-1 text-sm text-brand-lynx/75 transition-colors hover:text-brand-lynx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:text-base"
                                     >
-                                        {link.name}
+                                        {icon}
+                                        <span>{name}</span>
                                     </a>
                                 </li>
                             ))}
@@ -102,14 +127,12 @@ export default function Footer() {
                     </div>
                 </div>
 
-                <Divider className="my-8 bg-light-400" />
+                <div className="my-9 h-px bg-brand-blue-grey/40" aria-hidden="true" />
 
-                <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                    <p className="text-dark-400 text-sm">
-                        © {new Date().getFullYear()} Schumacher Tur. Todos os direitos reservados.
-                    </p>
-                    <p className="text-dark-400 text-sm">
-                        Feito com 💛 em Santa Catarina
+                <div className="flex flex-col gap-4 text-sm text-brand-lynx/70 sm:flex-row sm:items-center sm:justify-between">
+                    <p>© {new Date().getFullYear()} Schumacher Tur. Todos os direitos reservados.</p>
+                    <p className="flex items-center gap-1.5">
+                        Feito com <Heart aria-hidden="true" className="fill-brand-wasp text-brand-wasp" size={15} /> em Santa Catarina
                     </p>
                 </div>
             </div>
