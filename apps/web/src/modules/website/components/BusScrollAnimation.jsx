@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
 const ANIMATED_BUS_SOURCE = '/assets/bus.webp'
-const STATIC_BUS_SOURCE = '/assets/bus-static.webp'
 const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)'
 const REDUCED_MOTION_MEDIA_QUERY = '(prefers-reduced-motion: reduce)'
 
@@ -44,20 +43,15 @@ function drawFrameCover(canvas, frame) {
 function StaticBusSection() {
     return (
         <section
-            className="relative h-[70svh] min-h-[30rem] max-h-[48rem] overflow-hidden bg-white"
+            className="relative flex h-[70svh] min-h-[30rem] max-h-[48rem] items-center justify-center overflow-hidden border-t border-brand-blue-grey/30 bg-brand-gunship"
             data-bus-mode="static"
         >
-            <img
-                src={STATIC_BUS_SOURCE}
-                alt="Ônibus Schumacher Tur em uma estrada"
-                className="h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent pointer-events-none" />
-            <div className="absolute bottom-12 left-4 right-4 text-center">
-                <h2 className="mb-3 text-3xl font-bold text-gradient-gold drop-shadow-lg sm:text-5xl">
+            <div className="absolute inset-x-0 top-0 h-2 bg-brand-ember" aria-hidden="true" />
+            <div className="px-4 text-center">
+                <h2 className="mb-3 text-3xl font-bold text-brand-lynx sm:text-5xl">
                     Sua Jornada Começa Aqui
                 </h2>
-                <p className="text-base font-medium text-gold-500 sm:text-lg">↓ Continue descendo ↓</p>
+                <p className="text-base font-medium text-brand-lynx sm:text-lg">↓ Continue descendo ↓</p>
             </div>
         </section>
     )

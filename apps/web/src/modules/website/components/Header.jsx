@@ -61,23 +61,25 @@ export default function Header() {
         <Navbar
             isMenuOpen={isMenuOpen}
             onMenuOpenChange={setIsMenuOpen}
-            className="fixed top-0 z-50 h-16 border-b border-gold-100 bg-white/90 backdrop-blur-lg"
+            height="5rem"
+            className="fixed top-0 z-50 h-20 border-b border-brand-blue-grey/40 bg-brand-lynx/95 backdrop-blur-md"
             classNames={{ wrapper: 'h-full', srOnly: 'sr-only' }}
             maxWidth="xl"
         >
             <NavbarContent className="h-full min-w-0 gap-2" justify="start">
                 <NavbarMenuToggle
                     aria-label={isMenuOpen ? "Fechar menu" : "Abrir menu"}
-                    className="lg:hidden shrink-0 text-gold-500"
+                    className="shrink-0 text-brand-gunship focus-visible:ring-2 focus-visible:ring-brand-ember lg:hidden"
                     icon={(open) => open ? <X aria-hidden="true" size={24} /> : <Menu aria-hidden="true" size={24} />}
                 />
                 <NavbarBrand className="min-w-0">
                     <Link
                         to="/"
                         onClick={() => setIsMenuOpen(false)}
-                        className="whitespace-nowrap font-heading font-bold text-xl text-dark-900 sm:text-2xl"
+                        aria-label="Página inicial — Schumacher Tur"
+                        className="rounded-sm font-heading text-lg font-semibold tracking-[-0.02em] text-brand-gunship focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-4 focus-visible:ring-offset-brand-lynx sm:text-xl"
                     >
-                        Schumacher <span className="text-gold-500">Tur</span>
+                        Schumacher Tur
                     </Link>
                 </NavbarBrand>
             </NavbarContent>
@@ -86,14 +88,14 @@ export default function Header() {
                 {/* Dropdown Viagens */}
                 <Dropdown
                     classNames={{
-                        content: "bg-white/70 backdrop-blur-xl shadow-xl border border-white/20",
+                        content: "border border-brand-blue-grey/50 bg-brand-lynx shadow-lg",
                     }}
                 >
                     <NavbarItem>
                         <DropdownTrigger>
                             <Button
                                 disableRipple
-                                className="p-0 bg-transparent data-[hover=true]:bg-transparent text-dark-600 hover:text-gold-500 font-medium"
+                                className="rounded-sm bg-transparent p-2 font-medium text-brand-gunship data-[hover=true]:bg-brand-ember/10 focus-visible:ring-2 focus-visible:ring-brand-ember"
                                 endContent={<ChevronDown size={16} />}
                                 variant="light"
                             >
@@ -108,18 +110,18 @@ export default function Header() {
                             base: [
                                 "gap-4",
                                 "transition-colors",
-                                "data-[hover=true]:bg-gold-50/50",
-                                "data-[hover=true]:text-gold-700",
+                                "data-[hover=true]:bg-brand-ember/10",
+                                "data-[hover=true]:text-brand-gunship",
                             ],
                             title: "font-semibold",
-                            description: "text-gold-600/70 text-xs",
+                            description: "text-brand-gunship/75 text-xs",
                         }}
                     >
                         {destinations.map((dest) => (
                             <DropdownItem
                                 key={dest.href}
                                 description={dest.badge}
-                                startContent={<MapPin size={18} className="text-gold-500" />}
+                                startContent={<MapPin size={18} className="text-brand-ember" />}
                                 onClick={() => navigate(dest.href)}
                             >
                                 {dest.name}
@@ -133,7 +135,7 @@ export default function Header() {
                     <NavbarItem key={item.name}>
                         <button
                             onClick={() => handleNavigation(item)}
-                            className="rounded text-dark-600 hover:text-gold-500 font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-4"
+                            className="rounded-sm px-2 py-2 font-medium text-brand-gunship transition-colors duration-200 hover:bg-brand-ember/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-4 focus-visible:ring-offset-brand-lynx"
                         >
                             {item.name}
                         </button>
@@ -145,7 +147,7 @@ export default function Header() {
                 <NavbarItem>
                     <Button
                         size="sm"
-                        className="bg-gold-400 text-white font-semibold px-6 hover:bg-gold-500 transition-colors"
+                        className="bg-brand-ember px-6 font-semibold text-black transition-[filter] hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-brand-lynx"
                         onClick={() => navigate('/orcamento')}
                     >
                         Solicitar Orçamento
@@ -154,21 +156,21 @@ export default function Header() {
             </NavbarContent>
 
             {/* Mobile Menu */}
-            <NavbarMenu className="bg-white/95 backdrop-blur-lg pt-6 lg:hidden">
+            <NavbarMenu className="bottom-auto top-20 bg-brand-lynx/95 pt-6 backdrop-blur-md lg:hidden">
                 {/* Viagens no mobile */}
                 <NavbarMenuItem>
-                    <p className="text-xs uppercase tracking-wider text-dark-400 mb-2 mt-2">Viagens</p>
+                    <p className="mb-2 mt-2 text-xs uppercase tracking-[0.18em] text-brand-gunship/70">Viagens</p>
                 </NavbarMenuItem>
                 {destinations.map((dest) => (
                     <NavbarMenuItem key={dest.href}>
                         <Link
                             to={dest.href}
                             onClick={() => setIsMenuOpen(false)}
-                            className="w-full text-left py-2 text-lg text-dark-700 hover:text-gold-500 font-medium transition-colors flex items-center gap-2"
+                            className="flex w-full items-center gap-2 rounded-sm py-2 text-left text-lg font-medium text-brand-gunship transition-colors hover:bg-brand-ember/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
                         >
                             {dest.name}
                             {dest.badge && (
-                                <span className="text-xs bg-gold-100 text-gold-600 px-2 py-0.5 rounded-full">
+                                <span className="rounded-full bg-brand-ember/15 px-2 py-0.5 text-xs text-brand-gunship">
                                     {dest.badge}
                                 </span>
                             )}
@@ -177,14 +179,14 @@ export default function Header() {
                 ))}
 
                 <NavbarMenuItem>
-                    <div className="border-t border-light-200 my-4" />
+                    <div className="my-4 border-t border-brand-blue-grey/40" />
                 </NavbarMenuItem>
 
                 {menuItems.map((item, index) => (
                     <NavbarMenuItem key={`${item.name}-${index}`}>
                         <button
                             onClick={() => handleNavigation(item)}
-                            className="w-full rounded-lg px-2 py-3 text-left text-lg text-dark-700 hover:text-gold-500 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400"
+                            className="w-full rounded-sm px-2 py-3 text-left text-lg font-medium text-brand-gunship transition-colors hover:bg-brand-ember/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
                         >
                             {item.name}
                         </button>
@@ -193,7 +195,7 @@ export default function Header() {
 
                 <NavbarMenuItem className="pt-4">
                     <Button
-                        className="w-full bg-gold-400 text-white font-semibold hover:bg-gold-500 transition-colors"
+                        className="w-full bg-brand-ember font-semibold text-black transition-[filter] hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-brand-lynx"
                         onClick={() => {
                             navigate('/orcamento')
                             setIsMenuOpen(false)
