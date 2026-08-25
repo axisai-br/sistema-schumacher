@@ -1,22 +1,24 @@
+import { BusFront } from 'lucide-react'
 import { buses, micros } from '../data/fleet'
 
 function FleetGroup({ title, vehicles }) {
     return (
-        <div>
-            <div className="mb-6 flex items-center gap-4">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-gold-200 to-transparent" />
-                <h3 className="text-center text-2xl font-bold text-dark-800">{title}</h3>
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-gold-200 to-transparent" />
+        <div className="grid gap-7 lg:grid-cols-12 lg:gap-10">
+            <div className="lg:col-span-3">
+                <div className="flex items-center gap-4 lg:sticky lg:top-28">
+                    <span className="h-1 w-10 bg-brand-ember" aria-hidden="true" />
+                    <h3 className="text-2xl font-bold text-brand-gunship">{title}</h3>
+                </div>
             </div>
 
-            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="grid gap-px border border-brand-blue-grey/55 bg-brand-blue-grey/55 sm:grid-cols-2 lg:col-span-9 lg:grid-cols-3">
                 {vehicles.map((vehicle) => (
                     <li
                         key={vehicle.id}
-                        className="flex min-h-20 items-center rounded-2xl border border-light-200 bg-white px-6 py-5 shadow-sm transition-colors hover:border-gold-300"
+                        className="flex min-h-28 items-center gap-4 bg-brand-lynx px-5 py-6 transition-colors hover:bg-white/70 sm:px-6"
                     >
-                        <span className="mr-4 h-2.5 w-2.5 shrink-0 rounded-full bg-gold-400" />
-                        <span className="font-heading text-lg font-bold text-dark-900">
+                        <BusFront aria-hidden="true" className="shrink-0 text-brand-ember" size={25} strokeWidth={1.8} />
+                        <span className="font-heading text-base font-bold leading-snug text-brand-gunship sm:text-lg">
                             {vehicle.name}
                         </span>
                     </li>
@@ -28,22 +30,19 @@ function FleetGroup({ title, vehicles }) {
 
 export default function Fleet() {
     return (
-        <section id="frota" className="section-padding relative overflow-hidden bg-light-50">
-            <div className="absolute right-0 top-0 h-1/3 w-1/3 -translate-y-1/2 translate-x-1/2 rounded-full bg-gold-100/30 blur-3xl" />
-            <div className="absolute bottom-0 left-0 h-1/4 w-1/4 -translate-x-1/3 translate-y-1/2 rounded-full bg-gold-200/20 blur-3xl" />
-
-            <div className="container-max relative z-10">
-                <div className="mb-12 text-center sm:mb-16">
-                    <h2 className="section-title">
-                        Nossa <span className="text-gradient-gold">Frota</span>
+        <section id="frota" className="border-b border-brand-blue-grey/35 bg-brand-lynx px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+            <div className="mx-auto max-w-7xl">
+                <header className="mb-14 max-w-3xl sm:mb-20">
+                    <h2 className="text-3xl font-bold leading-tight tracking-[-0.025em] text-brand-gunship sm:text-4xl lg:text-5xl">
+                        Nossa <span className="border-b-4 border-brand-ember">Frota</span>
                     </h2>
-                    <p className="section-subtitle">
-                        Veículos <span className="font-semibold text-gold-500">modernos e equipados</span> para
+                    <p className="mt-5 text-base leading-7 text-brand-gunship/80 sm:text-lg">
+                        Veículos <span className="font-bold text-brand-gunship">modernos e equipados</span> para
                         garantir o máximo conforto em suas viagens
                     </p>
-                </div>
+                </header>
 
-                <div className="space-y-12">
+                <div className="space-y-16 sm:space-y-20">
                     <FleetGroup title="Ônibus" vehicles={buses} />
                     <FleetGroup title="Micro-ônibus e Vans" vehicles={micros} />
                 </div>
