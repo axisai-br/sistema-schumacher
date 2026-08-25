@@ -10,6 +10,15 @@ export default {
     theme: {
         extend: {
             colors: {
+                // Schumacher Tur official palette
+                brand: {
+                    gunship: '#414951',
+                    ember: '#DF674A',
+                    'blue-grey': '#A0A9AF',
+                    wasp: '#E8B100',
+                    inca: '#A08B63',
+                    lynx: '#F0F5F7',
+                },
                 // Light mode palette
                 gold: {
                     50: '#FDF8E7',
@@ -39,8 +48,8 @@ export default {
                 },
             },
             fontFamily: {
-                heading: ['Outfit', 'sans-serif'],
-                body: ['Inter', 'sans-serif'],
+                heading: ['Franie', 'Outfit', 'Inter', 'sans-serif'],
+                body: ['Franie', 'Outfit', 'Inter', 'sans-serif'],
             },
             backgroundImage: {
                 'gradient-gold': 'linear-gradient(135deg, #D4AF37 0%, #F3DC8C 50%, #D4AF37 100%)',
@@ -60,10 +69,10 @@ export default {
             light: {
                 colors: {
                     primary: {
-                        DEFAULT: "#D4AF37",
-                        foreground: "#FFFFFF",
+                        DEFAULT: "#DF674A",
+                        foreground: "#000000",
                     },
-                    focus: "#D4AF37",
+                    focus: "#DF674A",
                 },
             },
         },

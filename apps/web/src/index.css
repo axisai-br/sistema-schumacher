@@ -6,11 +6,11 @@
   html {
     scroll-behavior: smooth;
     scroll-padding-top: 5rem;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Franie', 'Outfit', 'Inter', sans-serif;
   }
 
   body {
-    @apply bg-white text-dark-800 antialiased;
+    @apply bg-brand-lynx text-brand-gunship antialiased;
   }
 
   h1,
@@ -19,8 +19,8 @@
   h4,
   h5,
   h6 {
-    font-family: 'Outfit', sans-serif;
-    @apply font-bold text-dark-900;
+    font-family: 'Franie', 'Outfit', 'Inter', sans-serif;
+    @apply font-bold text-brand-gunship;
   }
 
 }
