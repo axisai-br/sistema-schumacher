@@ -1,3 +1,43 @@
+@font-face {
+  font-family: 'Franie';
+  src: url('./assets/brand/fonts/Franie-SemiLight.otf') format('opentype');
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Franie';
+  src: url('./assets/brand/fonts/Franie-SemiLightItalic.otf') format('opentype');
+  font-display: swap;
+  font-style: italic;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Franie';
+  src: url('./assets/brand/fonts/Franie-Regular.otf') format('opentype');
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: 'Franie';
+  src: url('./assets/brand/fonts/Franie-SemiBold.otf') format('opentype');
+  font-display: swap;
+  font-style: normal;
+  font-weight: 600;
+}
+
+@font-face {
+  font-family: 'Franie';
+  src: url('./assets/brand/fonts/Franie-Bold.otf') format('opentype');
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
