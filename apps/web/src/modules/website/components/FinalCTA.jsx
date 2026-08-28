@@ -1,5 +1,6 @@
 import { Button } from '@heroui/react'
-import { motion } from 'framer-motion'
+import { motion as Motion } from 'framer-motion'
+import schumacherGraphicNeutral from '../../../assets/brand/graphics/schumacher-graphic-neutral.svg'
 
 const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de solicitar um orçamento de viagem'
@@ -10,41 +11,54 @@ export default function FinalCTA() {
     }
 
     return (
-        <section className="section-padding bg-gradient-to-r from-gold-400 via-gold-500 to-gold-400 relative overflow-hidden">
-            {/* Decorative elements */}
-            <div className="absolute top-0 left-0 w-72 h-72 bg-white/10 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2" />
-            <div className="absolute bottom-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl translate-x-1/2 translate-y-1/2" />
-
-            <div className="container-max relative z-10">
-                <motion.div
+        <section className="section-padding overflow-hidden border-y border-brand-blue-grey/40 bg-brand-lynx">
+            <div className="container-max grid items-center gap-10 lg:grid-cols-4 lg:gap-14">
+                <Motion.div
                     initial={{ opacity: 0, y: 20 }}
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true }}
                     transition={{ duration: 0.6 }}
-                    className="text-center"
+                    className="text-center lg:col-span-2 lg:text-left"
                 >
-                    <h2 className="text-4xl sm:text-5xl font-bold text-white mb-6">
+                    <h2 className="mb-6 text-4xl font-bold text-brand-gunship sm:text-5xl">
                         Pronto para Embarcar?
                     </h2>
-                    <p className="text-xl text-white/90 mb-10 max-w-2xl mx-auto">
+                    <p className="mx-auto mb-10 max-w-2xl text-lg leading-relaxed text-brand-gunship/85 sm:text-xl lg:mx-0">
                         Solicite um orçamento agora mesmo e descubra como podemos tornar sua viagem inesquecível.
                     </p>
 
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        whileInView={{ opacity: 1, scale: 1 }}
+                    <Motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ duration: 0.4, delay: 0.2 }}
                     >
                         <Button
                             onClick={handleWhatsApp}
                             size="lg"
-                            className="bg-white text-gold-600 font-bold text-lg px-12 py-8 rounded-2xl shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-300"
+                            className="h-14 rounded-sm bg-brand-ember px-8 text-base font-bold text-black transition-[filter] hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gunship focus-visible:ring-offset-2 focus-visible:ring-offset-brand-lynx sm:px-10 sm:text-lg"
                         >
                             Falar no WhatsApp
                         </Button>
-                    </motion.div>
-                </motion.div>
+                    </Motion.div>
+                </Motion.div>
+
+                <Motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.55, delay: 0.1 }}
+                    className="flex justify-center lg:col-span-2 lg:justify-end"
+                    aria-hidden="true"
+                >
+                    <img
+                        src={schumacherGraphicNeutral}
+                        alt=""
+                        className="h-auto w-full max-w-md object-contain"
+                        loading="lazy"
+                        decoding="async"
+                    />
+                </Motion.div>
             </div>
         </section>
     )
