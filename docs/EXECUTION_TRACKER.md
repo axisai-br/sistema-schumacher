@@ -4994,17 +4994,16 @@ O planner permanece futuro. Não iniciar antes de interpretação V2, validator 
 
 ## 10. Track independente SEC-2026-08-18 — Data API / grants / RLS
 
-**Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A / OPÇÃO B APROVADA;
-4 P1 HISTÓRICOS PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; GATE EM
-CORREÇÃO APÓS REVIEW; REGRESSÕES ANTERIORES PRESERVADAS; REDESENHO
-ARQUITETURAL IMPLEMENTADO LOCALMENTE; P2 DOCUMENTAL FECHADO; POLICY FAIL-CLOSED
-DE `statementUnknown` E P1 TRANSACIONAL CORRIGIDOS LOCALMENTE; MATRIZ DE
-REGRESSÃO E SUÍTE GO COMPLETA PASS; AGUARDANDO NOVO `/review`; PRODUÇÃO E
-SUCESSORES NÃO AUTORIZADOS.**
+**Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A / OPÇÃO B CONCLUÍDO
+E INTEGRADO EM MAIN; REVIEW FINAL SEM P0/P1/P2; MIGRATION GUARD FAIL-CLOSED
+INTEGRADO; `statementUnknown` E TRANSAÇÕES FORA DA FUNCTION CANÔNICA
+PROTEGIDOS; REGRESSÕES ANTERIORES PRESERVADAS; 0022 PRESERVADA E 0023 AUSENTE;
+PRODUÇÃO E SUCESSORES NÃO AUTORIZADOS.**
 
-**Próxima ação operacional:** nenhuma autorizada. A próxima ação única é o
-novo `/review` do gate redesenhado localmente. Não há migration executável,
-SQL de produção ou autorização para o Lote 2B.
+**Próxima ação operacional:** nenhuma autorizada. A reconciliação documental
+pós-merge local aguarda `/review`. O Lote 2B continua bloqueado até autorização
+explícita separada; não há migration executável, SQL de produção, deploy ou
+smoke autorizado por este checkpoint.
 
 Plano: `plans/sec-2026-08-18-data-api-rls-hardening.md`.
 
@@ -5785,7 +5784,62 @@ porque a correção é exclusivamente de policy; teste em produção nesta rodad
 NÃO. Migration 0022 permanece intacta e 0023 ausente. Nenhum SQL, deploy,
 smoke, commit ou push foi executado.
 
-**Estado vigente:** Lote 2A **EM CORREÇÃO APÓS REVIEW**; P1 transacional
-corrigido localmente, `statementUnknown` permanece fail-closed, regressões
-preservadas e aguardando novo `/review`. O Lote 2A não está concluído; Lote 2B,
-produção, deploy e smoke continuam bloqueados.
+**Estado registrado naquela rodada:** o P1 transacional estava corrigido
+localmente, `statementUnknown` permanecia fail-closed e o gate aguardava novo
+`/review`. O checkpoint pós-review/pós-merge abaixo substitui somente esse
+estado volátil.
+
+### Reconciliação pós-review/pós-merge do Lote 2A (2026-08-28)
+
+O review final terminou **sem P0/P1/P2** e declarou o working tree seguro para
+commit, o P1 transacional fechado, `statementUnknown` preservado fail-closed,
+as regressões anteriores preservadas, a arquitetura e o gate global corretos,
+todo statement não vazio explicitamente permitido ou rejeitado e os REDs,
+fuzz e testes suficientes. Com isso, o Lote 2A / Opção B foi concluído
+localmente e depois integrado em `main`.
+
+Checkpoint Git e de integração confirmado antes desta reconciliação:
+
+```text
+branch local: sec/data-api-rls-hardening
+HEAD local/origin branch: d1b74906ae73f6e543440fdaf69077b28a2264bf
+working tree inicial: limpo
+base anterior do PR: b911c3c4de882606a2e5c4f4040e054c6790ec25
+PR: #77 — MERGED
+head do PR: d1b74906ae73f6e543440fdaf69077b28a2264bf
+merge commit/origin-main: 6ffc50fa217fdbc1ed1a315e69d3fa978125e695
+Publish API to GHCR #157: SUCCESS
+```
+
+O merge commit possui a base e o head acima como pais, e a ref remota do PR
+resolve para o mesmo head. A imagem GHCR da tag `sha-6ffc50f` está publicada.
+Publicação da imagem não é deploy nem smoke: nenhum deploy ou smoke de
+produção foi autorizado ou executado neste lote.
+
+O último review não conseguiu repetir `go test ./...` por ausência de Go no
+host e de módulos/rede no container offline, sem observar falha de código.
+`migrationguard`, fuzz por 30s, gofmt e os dois diff checks passaram; o goal
+anterior tinha `go test -count=1 ./...` PASS. O próprio review considerou os
+testes suficientes e o working tree seguro para commit.
+
+A migration 0022 permanece intacta e a 0023 não existe. O Lote 2A não contém
+migration executável e não executou SQL de produção. DDL manual ou externo
+continua fora da cobertura do gate e permanece `UNKNOWN_BLOCKED`. O Lote 2B
+não começou e permanece **BLOQUEADO** até autorização explícita separada.
+
+Arquivos desta reconciliação documental:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+plans/sec-2026-08-18-data-api-rls-hardening.md
+```
+
+Nenhum teste de aplicação é necessário nesta rodada puramente documental. O
+estado ao final é: **Lote 2A concluído e integrado / reconciliação documental
+pós-merge local aguardando `/review` / Lote 2B não autorizado**.
+
+Validação documental: `git diff --check` e `git diff --cached --check` PASS;
+`git status --short`, `git diff --stat` e o diff completo confirmam somente os
+três documentos listados acima. Nenhum teste de aplicação ou produção foi
+executado.

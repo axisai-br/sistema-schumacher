@@ -586,10 +586,14 @@ PostgreSQL efêmero não foi repetido porque o patch é exclusivamente de policy
 Migration 0022 permanece intacta, 0023 ausente e nenhum SQL de produção,
 deploy, smoke, commit ou push foi executado.
 
-**Estado atual:** gate **EM CORREÇÃO APÓS REVIEW**; P1 transacional corrigido
-localmente, `statementUnknown` preservado fail-closed e próxima ação única em
-novo `/review`. O Lote 2A não está concluído. Nenhum SQL de produção, migration
-0023 ou sucessor está autorizado; DDL manual/externo permanece
+**Estado registrado naquela rodada:** o gate estava **EM CORREÇÃO APÓS
+REVIEW**; o P1 transacional estava corrigido localmente, `statementUnknown`
+permanecia fail-closed e a próxima ação era um novo `/review`. O Lote 2A ainda
+não estava concluído naquele checkpoint. Esse estado foi posteriormente
+superado pelo review limpo e pela integração do PR #77; o checkpoint vigente é
+o bloco pós-review/pós-merge da seção 14. O Lote 2A está concluído e integrado
+em `main`; o Lote 2B continua não autorizado. Nenhum SQL de produção ou
+migration 0023 foi executado, e DDL manual/externo permanece
 `UNKNOWN_BLOCKED`.
 
 ### Lote 2B — RPC backend-only atual
@@ -818,17 +822,26 @@ Nenhum lote seguinte é liberado automaticamente.
 
 ## 14. Estado após materialização
 
-**Status:** SEC-2026-08-18 — LOTE 2A / OPÇÃO B APROVADA; 4 P1 ANTERIORES
-PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; GATE EM CORREÇÃO APÓS REVIEW;
-REGRESSÕES ANTERIORES PRESERVADAS; REDESENHO ARQUITETURAL IMPLEMENTADO
-LOCALMENTE; P2 DOCUMENTAL FECHADO; POLICY FAIL-CLOSED DE `statementUnknown` E
-P1 TRANSACIONAL CORRIGIDOS LOCALMENTE; MATRIZ DE REGRESSÃO E SUÍTE GO COMPLETA
-PASS; AGUARDANDO NOVO REVIEW; NENHUM LOTE SQL AUTORIZADO.
+**Status:** SEC-2026-08-18 — LOTE 2A / OPÇÃO B CONCLUÍDO E INTEGRADO EM MAIN;
+REVIEW FINAL SEM P0/P1/P2; COMMIT
+`d1b74906ae73f6e543440fdaf69077b28a2264bf`; PR #77 MERGEADO; MERGE/MAIN
+`6ffc50fa217fdbc1ed1a315e69d3fa978125e695`; MIGRATION GUARD FAIL-CLOSED
+INTEGRADO; `statementUnknown` E TRANSAÇÕES FORA DA FUNCTION CANÔNICA
+PROTEGIDOS; 0022 PRESERVADA E 0023 AUSENTE; LOTE 2B E PRODUÇÃO NÃO
+AUTORIZADOS.
 
 Este arquivo documenta a política versionada aprovada, a evidência operacional
-sanitizada e o gate local. Não há migration executável do Lote 2A, mudança de
-default ACL global, efeito cross-schema ou autorização para produção. DDL
-externo permanece `UNKNOWN_BLOCKED`; o Lote 2A só poderá ser considerado
-concluído depois de review limpo do gate. O Lote 2B e todos os sucessores
-permanecem não autorizados. O track funcional mantém sua própria próxima ação
-sem alteração.
+sanitizada e o gate integrado. O workflow `Publish API to GHCR` #157 terminou
+com SUCCESS; publicação da imagem não equivale a deploy ou smoke. Não há
+migration executável do Lote 2A, mudança de default ACL global, efeito
+cross-schema, SQL de produção, deploy ou smoke deste lote. DDL externo
+permanece `UNKNOWN_BLOCKED`. O Lote 2B e todos os sucessores permanecem
+bloqueados até autorização explícita separada.
+
+O último review não repetiu `go test ./...` por limitação ambiental, sem
+observar falha de código; `migrationguard`, fuzz por 30s, gofmt e diff checks
+passaram, e o goal anterior registrou a suíte completa PASS. O review declarou
+os testes suficientes e o working tree seguro. Estado desta reconciliação:
+**Lote 2A concluído e integrado / reconciliação documental corrigida
+localmente / aguardando novo `/review` / Lote 2B não autorizado**. O track
+funcional mantém sua própria próxima ação sem alteração.
