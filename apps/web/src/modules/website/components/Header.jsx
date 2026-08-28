@@ -2,6 +2,7 @@ import { Navbar, NavbarBrand, NavbarContent, NavbarItem, NavbarMenuToggle, Navba
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, MapPin, Menu, X } from 'lucide-react'
+import schumacherHorizontalDark from '../../../assets/brand/logos/schumacher-horizontal-dark.svg'
 
 const menuItems = [
     { name: 'Sobre', href: '#sobre', isAnchor: true },
@@ -69,7 +70,7 @@ export default function Header() {
             <NavbarContent className="h-full min-w-0 gap-2" justify="start">
                 <NavbarMenuToggle
                     aria-label={isMenuOpen ? "Fechar menu" : "Abrir menu"}
-                    className="shrink-0 text-brand-gunship focus-visible:ring-2 focus-visible:ring-brand-ember lg:hidden"
+                    className="shrink-0 text-brand-gunship focus-visible:ring-2 focus-visible:ring-brand-ember xl:hidden"
                     icon={(open) => open ? <X aria-hidden="true" size={24} /> : <Menu aria-hidden="true" size={24} />}
                 />
                 <NavbarBrand className="min-w-0">
@@ -77,14 +78,27 @@ export default function Header() {
                         to="/"
                         onClick={() => setIsMenuOpen(false)}
                         aria-label="Página inicial — Schumacher Tur"
-                        className="rounded-sm font-heading text-lg font-semibold tracking-[-0.02em] text-brand-gunship focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-4 focus-visible:ring-offset-brand-lynx sm:text-xl"
+                        className="flex items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-4 focus-visible:ring-offset-brand-lynx"
                     >
-                        Schumacher Tur
+                        <span className="relative block h-10 w-14 overflow-hidden sm:hidden" aria-hidden="true">
+                            <img
+                                src="/assets/brand/schumacher-symbol-dark.svg"
+                                alt=""
+                                className="absolute left-1/2 top-1/2 w-[72px] max-w-none -translate-x-1/2 -translate-y-1/2"
+                            />
+                        </span>
+                        <span className="relative hidden h-10 w-[190px] overflow-hidden sm:block" aria-hidden="true">
+                            <img
+                                src={schumacherHorizontalDark}
+                                alt=""
+                                className="absolute left-1/2 top-1/2 w-[237px] max-w-none -translate-x-1/2 -translate-y-1/2"
+                            />
+                        </span>
                     </Link>
                 </NavbarBrand>
             </NavbarContent>
 
-            <NavbarContent className="hidden h-full gap-6 lg:flex" justify="center">
+            <NavbarContent className="hidden h-full gap-6 xl:flex" justify="center">
                 {/* Dropdown Viagens */}
                 <Dropdown
                     classNames={{
@@ -143,7 +157,7 @@ export default function Header() {
                 ))}
             </NavbarContent>
 
-            <NavbarContent className="hidden h-full lg:flex" justify="end">
+            <NavbarContent className="hidden h-full xl:flex" justify="end">
                 <NavbarItem>
                     <Button
                         size="sm"
@@ -156,7 +170,7 @@ export default function Header() {
             </NavbarContent>
 
             {/* Mobile Menu */}
-            <NavbarMenu className="bottom-auto top-20 bg-brand-lynx/95 pt-6 backdrop-blur-md lg:hidden">
+            <NavbarMenu className="bottom-auto top-20 z-40 bg-brand-lynx/95 pt-6 backdrop-blur-md xl:hidden">
                 {/* Viagens no mobile */}
                 <NavbarMenuItem>
                     <p className="mb-2 mt-2 text-xs uppercase tracking-[0.18em] text-brand-gunship/70">Viagens</p>

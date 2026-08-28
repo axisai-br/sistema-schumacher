@@ -9,6 +9,7 @@ import {
     Youtube,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import schumacherHorizontalLight from '../../../assets/brand/logos/schumacher-horizontal-light.svg'
 
 const links = {
     empresa: [
@@ -61,10 +62,14 @@ export default function Footer() {
         <footer id="contato" className="border-t-4 border-brand-ember bg-brand-gunship text-brand-lynx">
             <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-20 lg:px-10">
                 <div className="grid gap-12 md:grid-cols-3 md:gap-10 lg:gap-16">
-                    <div>
-                        <p className="mb-5 font-heading text-2xl font-semibold tracking-[-0.02em] text-brand-lynx">
-                            Schumacher Tur
-                        </p>
+                    <div className="min-w-0">
+                        <div className="relative mb-5 h-12 w-[230px] overflow-hidden">
+                            <img
+                                src={schumacherHorizontalLight}
+                                alt="Schumacher Tur"
+                                className="absolute left-1/2 top-1/2 w-[290px] max-w-none -translate-x-1/2 -translate-y-1/2"
+                            />
+                        </div>
                         <p className="mb-5 max-w-sm text-sm leading-7 text-brand-lynx/75 sm:text-base">
                             Sua viagem com conforto, segurança e pontualidade.
                             Especialistas em viagens ao Maranhão e turismo em Santa Catarina.
@@ -107,7 +112,7 @@ export default function Footer() {
                         </ul>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                         <h2 className="mb-5 text-sm font-bold uppercase tracking-[0.16em] text-brand-lynx">
                             Contato
                         </h2>
@@ -116,10 +121,10 @@ export default function Footer() {
                                 <li key={name}>
                                     <a
                                         href={href}
-                                        className="flex min-h-11 items-center gap-3 rounded-sm px-1 text-sm text-brand-lynx/75 transition-colors hover:text-brand-lynx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:text-base"
+                                        className="flex min-h-11 min-w-0 items-center gap-3 rounded-sm px-1 text-sm text-brand-lynx/75 transition-colors hover:text-brand-lynx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:text-base"
                                     >
                                         {icon}
-                                        <span>{name}</span>
+                                        <span className="min-w-0 break-words">{name}</span>
                                     </a>
                                 </li>
                             ))}

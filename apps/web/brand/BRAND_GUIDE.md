@@ -115,15 +115,25 @@ O manual associa a Franie a:
 
 Não baixar, copiar ou fabricar Franie sem asset oficial e licença compatível.
 
-Enquanto o arquivo oficial não estiver disponível, usar fallback claramente
-tratado como adaptação técnica, nunca como substituição oficial.
-
-Stack provisória sugerida:
+Usar fallback claramente tratado como adaptação técnica, nunca como
+substituição oficial:
 
 `Franie, Outfit, Inter, sans-serif`
 
-A migração só pode ser considerada tipograficamente completa quando o asset
-oficial da Franie estiver disponível e autorizado para web.
+### Estado de implementação
+
+Os arquivos oficiais fornecidos para este projeto estão integrados sem
+conversão ou alteração, com `font-display: swap`:
+
+- `Franie-SemiLight.otf` — peso `400`;
+- `Franie-SemiLightItalic.otf` — peso `400`, estilo `italic`;
+- `Franie-Regular.otf` — peso `500`;
+- `Franie-SemiBold.otf` — peso `600`;
+- `Franie-Bold.otf` — peso `700`.
+
+Franie Black e as demais variantes itálicas permanecem somente no acervo-fonte
+local. `Franie-SemiLightItalic.otf` entra no runtime para o uso `italic`
+existente nos depoimentos.
 
 ---
 
@@ -164,6 +174,19 @@ aplicados às respectivas versões demonstradas no manual.
 
 A implementação deve conferir visualmente no documento qual variante
 corresponde a cada limite antes de aplicá-lo.
+
+### Mapeamento implementado
+
+- Header a partir de `sm`: assinatura horizontal escura (`LOGO (2)`), com
+  largura visual mínima de `180 px`;
+- Header abaixo de `sm`: símbolo escuro (`LOGO (7)`), com largura visual mínima
+  de `50 px`;
+- Footer: assinatura horizontal clara (`LOGO (3)`);
+- favicon: símbolo escuro (`LOGO (7)`).
+
+Os arquivos selecionados recebem nomes semânticos no runtime. O inventário
+bruto, com nomes originais preservados, fica em
+`brand/source-assets.local/`, diretório local ignorado pelo Git.
 
 ### Uso correto
 
