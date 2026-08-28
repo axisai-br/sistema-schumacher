@@ -4995,14 +4995,16 @@ O planner permanece futuro. Não iniciar antes de interpretação V2, validator 
 ## 10. Track independente SEC-2026-08-18 — Data API / grants / RLS
 
 **Status:** **LOTE 1 OPERACIONALMENTE CONCLUÍDO; LOTE 2A / OPÇÃO B APROVADA;
-4 P1 ANTERIORES PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; REDEFINIÇÃO
-DOCUMENTAL CONCLUÍDA LOCALMENTE; AGUARDANDO `/review`; GATE NÃO IMPLEMENTADO;
-PRODUÇÃO E SUCESSORES NÃO AUTORIZADOS.**
+4 P1 HISTÓRICOS PERMANECEM FECHADOS; PRÉ-CHECK READ-ONLY PASS; GATE EM
+CORREÇÃO APÓS REVIEW; REGRESSÕES ANTERIORES PRESERVADAS; REDESENHO
+ARQUITETURAL IMPLEMENTADO LOCALMENTE; P2 DOCUMENTAL FECHADO; POLICY FAIL-CLOSED
+DE `statementUnknown` E P1 TRANSACIONAL CORRIGIDOS LOCALMENTE; MATRIZ DE
+REGRESSÃO E SUÍTE GO COMPLETA PASS; AGUARDANDO NOVO `/review`; PRODUÇÃO E
+SUCESSORES NÃO AUTORIZADOS.**
 
 **Próxima ação operacional:** nenhuma autorizada. A próxima ação única é o
-`/review` desta reconciliação documental. Somente após review limpo poderá ser
-pedido `/goal` separado para implementar e provar o gate de migrations. Não
-há migration executável, SQL de produção ou autorização para o Lote 2B.
+novo `/review` do gate redesenhado localmente. Não há migration executável,
+SQL de produção ou autorização para o Lote 2B.
 
 Plano: `plans/sec-2026-08-18-data-api-rls-hardening.md`.
 
@@ -5352,17 +5354,438 @@ GRANT/REVOKE/DDL/DML executado: NÃO
 Os SQLs históricos untracked no checkout operacional permanecem intocados,
 fora do versionamento e fora do working tree local desta rodada.
 
-Esta rodada altera somente plano, tracker e handoff. Não criou migration 0023,
-não alterou 0022, routines, TABLE/SEQUENCE, RLS/policies/FORCE,
-roles/BYPASSRLS, código, testes, CI, infra ou track funcional. O gate de
-migrations **ainda não foi implementado**; portanto o Lote 2A não está
-operacionalmente concluído. Nenhum SQL mutável, deploy, smoke, commit ou push
-foi executado.
+O gate foi implementado em `apps/api/internal/migrationguard`, usando somente
+a biblioteca padrão Go e o `go test -count=1 ./...` já executado pelo CI. Ele
+inspeciona somente migrations posteriores à 0022, associa cada nova FUNCTION
+à assinatura exata e exige framing explícito `BEGIN` antes do DDL e
+`COMMIT`/`END` somente depois de todos os REVOKEs de
+PUBLIC/anon/authenticated e do GRANT direto sem grant option a service_role.
+Overload sem ACL individual, schema ausente ou diferente de `public`,
+`CREATE OR REPLACE FUNCTION`, ACL divergente e `ALTER DEFAULT PRIVILEGES` de
+FUNCTION falham fechados. Migrations históricas permanecem fora do
+enforcement e o diretório atual, encerrado em 0022, passa.
 
-**Estado atual:** redefinição documental concluída localmente, aguardando
-`/review`. Após review limpo, a próxima etapa possível é exclusivamente um
-`/goal` separado para implementar os REDs, o rollback snapshot-driven por
-objeto e o gate de migrations. Lote 2B, produção e todos os sucessores
-permanecem não autorizados.
+RED anterior ao patch: sete fixtures temporárias `9001`–`9007` cobriram
+FUNCTION `public` sem ACL, schema ausente, hardening incompleto, ausência de
+service_role, overload parcialmente endurecido, schema não público e default
+ACL global. A suíte completa terminou verde indevidamente, provando que o
+estado anterior não rejeitava nenhuma dessas violações; as fixtures foram
+removidas antes do patch.
+
+PASS local:
+
+```text
+go test -count=1 -v ./internal/migrationguard -> PASS
+go test -count=1 ./... -> PASS
+fixture válida schema public + assinatura exata + três revokes + service_role -> PASS
+migrations <= 0022 fora do enforcement -> PASS
+diretório atual de migrations -> PASS
+```
+
+O review seguinte encontrou 3 P1 + 1 P2: variantes ACL como `GRANT ALL`
+ignoradas; `ALTER FUNCTION/ROUTINE` capaz de mudar owner/schema ignorado;
+ausência de transação explícita e de suporte a `END`; nomes numéricos
+malformados como `0023.sql` e `0023-add_function.sql` ignorados. O review
+declarou o gate incorreto, os REDs insuficientes e o working tree inseguro para
+commit; os quatro P1 históricos permaneceram fechados.
+
+RED dirigido confirmou os quatro bypasses antes da correção. O patch agora:
+
+- aceita somente ACL exata por assinatura: REVOKE de
+  PUBLIC/anon/authenticated e GRANT direto a service_role;
+- rejeita todas as demais ACLs FUNCTION/ROUTINE, modifiers, mutations
+  `ALTER FUNCTION/ROUTINE`, mudanças da role de execução, `REASSIGN OWNED` e
+  membership no mesmo arquivo;
+- exige `BEGIN` antes de cada criação e `COMMIT` ou `END` após todos os ACLs,
+  rejeitando ausência, fechamento intermediário ou framing alternativo;
+- rejeita `.sql` numericamente iniciado acima de 0022 que não siga
+  `NNNN_description.sql`, preservando arquivos legítimos não numéricos.
+
+PASS após a correção:
+
+```text
+3 P1 + 1 P2 dirigidos -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS
+go test -count=1 ./... -> FULL_SUITE_PASS
+gofmt -l -> vazio
+```
+
+A prova foi repetida em PostgreSQL 15.19 por causa da mudança transacional. O
+RED sem hardening herdou EXECUTE de PUBLIC e terminou em ROLLBACK. A fixture
+válida usou `BEGIN` + DDL/ACL exatos + `END`; após o commit,
+PUBLIC/anon/authenticated estavam sem EXECUTE, service_role mantinha somente o
+grant direto, postgres permanecia owner e functions preexistentes, schema
+`private` e `pg_default_acl` estavam idênticos. O container efêmero foi
+removido.
+
+O review atual encontrou 2 P1 adicionais: SQL dinâmico executável dentro de
+`DO $tag$...$tag$` era descartado pelo splitter e `ALTER GROUP ... ADD/DROP
+USER` não era reconhecido como alias de mutação de membership. O review
+manteve fechados os quatro P1 arquiteturais históricos e os 3 P1 + 1 P2 da
+rodada anterior.
+
+REDs dirigidos reproduziram ambos os bypasses antes do patch. A correção local
+agora rejeita qualquer comando executável `DO` sob enforcement, sem analisar
+PL/pgSQL, e trata `ALTER GROUP` como mutação de role já proibida. Comentários e
+corpos dollar-quoted de `CREATE FUNCTION` continuam ignorados como conteúdo
+não executável pelo gate. Depois do patch:
+
+```text
+2 P1 dirigidos -> PASS
+3 P1 + 1 P2 da rodada anterior -> PASS na suíte migrationguard
+go test -count=1 -v ./internal/migrationguard -> PASS
+go test -count=1 ./... -> PASS em container Go 1.22
+gofmt -l -> vazio
+```
+
+A prova PostgreSQL 15.19 não foi repetida porque esta rodada altera somente a
+detecção estática, sem mudar a política ACL ou o framing transacional já
+comprovados.
+
+O review seguinte encontrou 3 P1: `GRANT/REVOKE` de membership standalone era
+detectado mas descartado sem `CREATE FUNCTION`; uma FUNCTION recém-criada
+podia executar ACL oculto quando chamada por `SELECT`/`CALL`; e `DROP
+FUNCTION/ROUTINE/PROCEDURE` era ignorado. Os 3 P1 + 1 P2 anteriores e os
+quatro P1 arquiteturais permaneceram fechados; as correções dos 2 P1 da
+rodada imediatamente anterior foram preservadas.
+
+REDs dirigidos reproduziram individualmente GRANT e REVOKE standalone, SELECT
+da FUNCTION com SQL dinâmico, CALL e as três variantes de DROP. A correção
+local agora:
+
+- emite finding incondicional para membership `GRANT/REVOKE` pós-0022;
+- rejeita CALL e SELECT contendo sintaxe de chamada quando a migration cria
+  FUNCTION, sem interpretar efeitos arbitrários; SELECT literal, agrupamento
+  aritmético, comentários e corpos dollar-quoted permanecem aceitos;
+- rejeita incondicionalmente `DROP FUNCTION/ROUTINE/PROCEDURE`, exigindo lote
+  e autorização separados.
+
+```text
+3 P1 dirigidos -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS offline em Go 1.22
+regressões anteriores -> PASS na suíte migrationguard
+gofmt -l -> vazio
+go test -count=1 ./... -> BLOQUEADO antes da compilação: host sem Go e
+  container offline sem módulos em cache/rede
+```
+
+A prova PostgreSQL 15.19 não foi repetida: o patch altera somente detecção
+estática, sem mudar ACL ou framing transacional.
+
+O review atual preservou as regressões anteriores e encontrou 2 P1: uma role
+citada chamada `"on"` era confundida com a keyword estrutural `ON`; e a
+detecção limitada a SELECT/CALL deixava VALUES, INSERT e outras formas
+executáveis chamarem FUNCTION antes do COMMIT.
+
+REDs dirigidos reproduziram GRANT e REVOKE para `"on"`, VALUES e
+INSERT...VALUES. A regressão adicional com identificador citado contendo `--`
+comprovou que comentários não podem começar dentro de aspas duplas. O patch:
+
+- classifica membership pela ordem dos tokens estruturais: `ON` não citado
+  antes de `TO/FROM` identifica ACL; `TO/FROM` primeiro identifica membership;
+- preserva integralmente identificadores entre aspas duplas no splitter;
+- usa allowlist para migrations que criam FUNCTION: somente BEGIN, CREATE
+  FUNCTION canônico, ACLs exatos e COMMIT/END são permitidos; qualquer outro
+  statement, inclusive SELECT, CALL, VALUES, INSERT, UPDATE, DELETE e WITH,
+  falha fechado.
+
+```text
+2 P1 dirigidos -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS offline em Go 1.22
+regressões anteriores -> PASS na suíte migrationguard
+gofmt -l -> vazio
+go test -count=1 ./... -> BLOQUEADO antes da compilação: host sem Go e
+  container offline sem módulos em cache/rede
+```
+
+A prova PostgreSQL 15.19 não foi repetida porque ACL e framing transacional
+não mudaram.
+
+O review atual encontrou 1 P1 + 1 P2. Escape strings `E'...'` com `\'`
+faziam o splitter encerrar o corpo no ponto errado e absorver um statement
+posterior ao CREATE FUNCTION; e prefixos numéricos maiores que `int` eram
+ignorados quando `Atoi` falhava, reabrindo a regressão de nomes malformados.
+
+Os REDs reproduziram zero findings tanto para CREATE com corpo escape seguido
+de INSERT quanto para
+`999999999999999999999999_unhardened.sql`. A correção local:
+
+- reconhece `E'...'` em boundary lexical, consumindo backslash escapes e
+  aspas duplicadas sem absorver o statement seguinte;
+- mantém strings simples e dollar-quoted bodies já suportados;
+- classifica qualquer `.sql` numeric-looking não canônico como inválido sem
+  converter o prefixo; `Atoi` fica restrito ao formato canônico de quatro
+  dígitos, preservando migrations canônicas até 0022 fora do enforcement.
+
+```text
+1 P1 + 1 P2 dirigidos -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS offline em Go 1.22
+regressões anteriores -> PASS na suíte migrationguard
+gofmt -l -> vazio
+go test -count=1 ./... -> BLOQUEADO antes da compilação: host sem Go e
+  container offline sem módulos em cache/rede
+```
+
+A prova PostgreSQL 15.19 não foi repetida porque ACL e framing transacional
+não mudaram.
+
+Não foi criada migration 0023 nem alterada 0022, routines existentes,
+TABLE/SEQUENCE, RLS/policies/FORCE, roles/BYPASSRLS, CI, infra ou track
+funcional. Nenhum SQL de produção, deploy, smoke, commit ou push foi
+executado. DDL manual/externo continua fora da cobertura e permanece
+`UNKNOWN_BLOCKED`.
+
+**Estado atual:** Lote 2A em correção após review; 1 P1 + 1 P2 atuais
+corrigidos localmente, regressões anteriores preservadas e aguardando novo
+`/review`. A suíte Go completa permanece bloqueada pelo ambiente e não é
+declarada PASS.
+Não declarar conclusão antes de review sem P0/P1/P2. Lote 2B, produção e todos
+os sucessores permanecem não autorizados.
 
 O track funcional permanece inalterado.
+
+### Lote 2A — redesenho arquitetural do migration guard (2026-08-25)
+
+O review posterior fechou o 1 P1 + 1 P2 anteriores, preservou as regressões e
+encontrou um novo P1: `$tag$` dentro de identificador PostgreSQL não citado era
+interpretado como início de dollar quote. Com `public.cover$tag$()`,
+`public.cover()` e `public.decoy$tag$()` na mesma transação, o splitter reduzia
+sete statements reais e aceitava o arquivo embora somente `public.cover()`
+estivesse endurecida. O review declarou a arquitetura inadequada e bloqueou o
+commit.
+
+O RED obrigatório foi adicionado antes do redesenho e falhou com zero
+findings, reproduzindo exatamente o bypass. O gate foi então separado em três
+camadas usando somente Go stdlib:
+
+- lexer único com tokens, texto original e byte offset;
+- parser estrutural mínimo que consome somente tokens;
+- policy state-machine com allowlist canônica e ACL adjacente por assinatura.
+
+O lexer preserva `$` dentro de identificadores, reconhece dollar quote somente
+em boundary lexical válida, mantém `$1` como parâmetro, tokeniza strings
+simples, `E'...'`, identificadores citados e comentários, suporta comentários
+de bloco aninhados e falha fechado em NUL ou constructo não terminado.
+Statements são separados exclusivamente por `;` fora de literais, quoted
+identifiers e comentários. Regex permanece somente para nomes de arquivos;
+nenhuma decisão estrutural usa regex, `strings.Fields` ou busca textual no SQL
+bruto.
+
+Para migrations posteriores à 0022 que criem FUNCTION, a allowlist aceita um
+único `BEGIN`, um ou mais blocos adjacentes CREATE/REVOKE/GRANT canônicos e um
+`COMMIT` ou `END` final. O REVOKE exige exatamente PUBLIC, anon e authenticated
+e o GRANT somente service_role. Qualquer outro statement falha fechado.
+
+A prova PostgreSQL 15 efêmera confirmou que o RED é SQL válido e cria três
+assinaturas distintas. `cover()` terminou sem EXECUTE para anon/authenticated
+e com EXECUTE para service_role; `cover$tag$()` e `decoy$tag$()` mantiveram o
+EXECUTE herdado de PUBLIC. Todas permaneceram owner postgres. O container foi
+removido; nenhum ambiente real foi acessado.
+
+Validação após o redesenho:
+
+```text
+RED obrigatório antes do patch -> FAIL com zero findings
+RED obrigatório depois do patch -> PASS; sete statements preservados
+matriz lexical + regressões históricas -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+go test -run=^$ -fuzz=FuzzLexer -fuzztime=30s ./internal/migrationguard ->
+  PASS; 1.629.683 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+```
+
+A suíte completa usou container descartável com rede apenas para obter os
+módulos já fixados no `go.mod`; nenhuma dependência ou arquivo de módulo foi
+alterado.
+
+Não foi criada migration 0023 nem alterada 0022, routines existentes,
+TABLE/SEQUENCE, RLS/policies/FORCE, roles/BYPASSRLS, CI, infra ou track
+funcional. Nenhum SQL de produção, deploy, smoke, commit ou push foi
+executado. DDL manual/externo continua `UNKNOWN_BLOCKED`.
+
+**Estado atual:** Lote 2A em correção após review; redesenho implementado
+localmente, regressões anteriores preservadas e aguardando novo `/review`.
+Não declarar conclusão ou segurança para commit antes de review sem P0/P1/P2.
+Lote 2B, produção e todos os sucessores permanecem não autorizados.
+
+### Lote 2A — correção dos três P1 pós-redesenho (2026-08-25)
+
+O review encontrou três P1: boundary multibyte de identificador divergente do
+PostgreSQL 15, colisão entre `double precision` e `doubleprecision` na
+identidade de assinatura e ausência de bloqueio para `DROP OWNED`. Os três
+REDs obrigatórios falharam antes do patch com zero findings.
+
+O lexer agora usa a classe byte-a-byte relevante do PostgreSQL para conteúdo
+multibyte de identificadores não citados. A identidade canônica de tipos
+preserva boundaries entre tokens e cobre compound types, schema-qualified,
+arrays, typmods e nomes opcionais. `DROP OWNED` passou a ser uma mutação
+proibida incondicionalmente em migrations posteriores à 0022.
+
+```text
+3 REDs pré-patch -> FAIL com zero findings
+3 P1 dirigidos pós-patch -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+fuzz FuzzLexer por 30s -> PASS; 1.311.947 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+```
+
+PostgreSQL 15.19 efêmero aceitou literalmente U+0301 antes de `$tag$`, criou
+os dois nomes distintos e executou o GRANT intermediário; a transação terminou
+em `ROLLBACK` e o container foi removido. Nenhuma migration real, dependência,
+CI, runtime, infra, RLS, role ou default ACL foi alterado.
+
+**Estado registrado naquela rodada:** os três P1 pós-redesenho estavam
+corrigidos localmente e aguardavam novo `/review`. O review seguinte confirmou
+esses três fechados e abriu o P1 de EXTENSION + P2 documental registrados
+abaixo.
+
+### Lote 2A — bloqueio de DDL de EXTENSION e reconciliação canônica (2026-08-26)
+
+O review confirmou fechados os três P1 pós-redesenho e encontrou 1 P1 + 1 P2:
+`CREATE EXTENSION` podia materializar routines fora da allowlist quando a
+migration não continha `CREATE FUNCTION`, e o resumo superior ainda registrava
+somente o finding antigo de dollar quote.
+
+O RED obrigatório com `CREATE EXTENSION pgcrypto WITH SCHEMA public;` falhou
+antes do patch porque o gate retornava zero findings. A correção estrutural
+classifica `CREATE`, `ALTER` e `DROP EXTENSION` como DDL capaz de criar, mover,
+atualizar ou remover objects/routines e exige autorização separada. A regra é
+global para migrations posteriores à 0022 e não interpreta scripts internos
+de extensão; migrations até 0022 continuam fora do enforcement.
+
+```text
+RED CREATE EXTENSION pré-patch -> FAIL com zero findings
+CREATE/ALTER/DROP EXTENSION pós-patch -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+fuzz FuzzLexer por 30s -> PASS; 2.031.915 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+```
+
+Em PostgreSQL 15.19 efêmero, `pgcrypto` criou 36 routines em `public`; todas
+as 36 eram executáveis por uma role `anon` via PUBLIC. A transação terminou em
+`ROLLBACK` e o container foi removido. Nenhuma migration real, dependência,
+CI, runtime, infra, RLS, role ou default ACL foi alterado.
+
+**Estado registrado naquela rodada:** o P1 de EXTENSION + P2 documental
+estavam corrigidos localmente. O review seguinte confirmou o P2 documental,
+mas encontrou o bypass lexical por tab vertical registrado abaixo.
+
+### Lote 2A — whitespace PostgreSQL com tab vertical (2026-08-26)
+
+O review encontrou um P1 lexical: PostgreSQL 15 aceita tab vertical (`\v`)
+como whitespace, mas o lexer o emitia como token intermediário. Com isso,
+oito formas exigidas — CREATE/ALTER/DROP EXTENSION, CREATE/DROP FUNCTION,
+DROP/REASSIGN OWNED e ALTER GROUP — escapavam da classificação estrutural com
+zero findings.
+
+Os oito REDs falharam antes do patch. A correção foi exclusivamente lexical:
+`isSQLSpace` agora reconhece o conjunto ASCII relevante do PostgreSQL 15 —
+espaço, `\t`, `\n`, `\r`, `\f` e `\v`. Nenhum parser, comando individual ou
+policy recebeu busca textual ou tratamento especial por keyword.
+
+Os testes dirigidos cobrem cada separador isoladamente, a combinação entre
+keywords e tab vertical dentro de strings, quoted identifiers, comentários e
+corpos dollar-quoted. A matriz histórica voltou a passar, incluindo EXTENSION,
+U+0301, overloads, OWNED, membership, routines, ACL, framing, strings e nomes
+de migration.
+
+```text
+8 REDs com tab vertical pré-patch -> FAIL; zero findings em todos
+8 comandos + matriz de whitespace/contextos pós-patch -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+fuzz FuzzLexer por 30s -> PASS; 1.371.301 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+```
+
+A prova PostgreSQL 15.19 não foi repetida: a aceitação de `\v` já estava
+comprovada pelo review e a mudança não altera semântica SQL, ACL ou framing.
+
+**Estado registrado naquela rodada:** o P1 de whitespace estava corrigido
+localmente e aguardava novo `/review`. O review seguinte encontrou o P1 de
+`statementUnknown` registrado abaixo.
+
+### Lote 2A — fail-closed global de `statementUnknown` (2026-08-28)
+
+O review seguinte preservou as regressões anteriores e encontrou um P1: uma
+migration posterior à 0022 sem `CREATE FUNCTION` aceitava qualquer statement
+que o parser classificasse como `statementUnknown`. `CREATE AGGREGATE` podia,
+assim, criar uma routine com `EXECUTE` herdado de PUBLIC sem finding; a
+allowlist fail-closed ficava restrita às migrations que criavam FUNCTION.
+
+Antes do patch, os REDs obrigatórios retornaram zero findings para
+CREATE/ALTER/DROP AGGREGATE, ALTER TABLE ... ADD COLUMN, DROP SCHEMA ...
+CASCADE, CREATE TRIGGER e INSERT. As seis formas de whitespace PostgreSQL
+suportadas também retornaram zero; dois unknowns no mesmo arquivo não geraram
+nenhum finding.
+
+A policy global agora rejeita todo `statementUnknown` em migrations
+posteriores à 0022 e inclui filename e byte offset em cada finding. O fluxo
+continua lexer -> parser estrutural -> policy, sem denylist de AGGREGATE nem
+gramática PostgreSQL geral. Migrations vazias/só comentários, a FUNCTION
+canônica, migrations até 0022 e os findings específicos existentes permanecem
+preservados.
+
+```text
+REDs obrigatórios pré-patch -> FAIL; zero findings em todos
+REDs pós-patch + seis whitespaces + múltiplos unknowns -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+fuzz FuzzLexer por 30s -> PASS; 2.630.215 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+git diff --check / git diff --cached --check -> PASS
+```
+
+PostgreSQL 15.19 efêmero criou o AGGREGATE descartável dentro de transação,
+confirmou `pg_proc.prokind='a'` e `EXECUTE` herdado de PUBLIC por uma role sem
+grants. O `ROLLBACK` removeu aggregate e role; o container foi removido.
+
+Migration 0022 permanece intacta e 0023 ausente. Não houve mudança em migration
+real, lexer, parser, dependência, CI, runtime, infra, RLS, roles ou default ACL;
+nenhum SQL de produção, deploy, smoke, commit ou push foi executado.
+
+**Estado registrado naquela rodada:** o fail-closed de `statementUnknown`
+estava implementado localmente e aguardava novo `/review`. O review seguinte
+confirmou esse P1 fechado e encontrou o P1 transacional registrado abaixo.
+
+### Lote 2A — transações somente na state machine de FUNCTION (2026-08-28)
+
+O review confirmou fechado o P1 de `statementUnknown`, preservou as regressões
+e encontrou um P1 adicional: sem CREATE FUNCTION, `BEGIN`, `COMMIT`, `END`,
+`START TRANSACTION`, `ROLLBACK` e `ABORT` eram kinds modelados, mas passavam
+pelo ramo `hasFunction=false` com zero findings. `BEGIN; COMMIT;` também era
+aceito, contrariando o fail-closed de todo statement não vazio pós-0022.
+
+Os REDs pré-patch reproduziram zero findings para os seis comandos isolados e
+para os pares `BEGIN`/`COMMIT` e `BEGIN`/`END`. Antes/depois de um unknown,
+somente o unknown era reportado. A policy agora permite statements
+transacionais somente quando a presença de CREATE FUNCTION ativa a state
+machine existente; sem FUNCTION, cada kind transacional gera finding com
+filename e byte offset. A state machine continua consumindo exclusivamente o
+BEGIN inicial e o COMMIT/END final canônicos e rejeita framing incompleto,
+`START TRANSACTION`, `ROLLBACK`, `ABORT` ou transação extra.
+
+```text
+REDs transacionais pré-patch -> FAIL; zero findings nos casos sem FUNCTION
+REDs pós-patch + adjacência com unknown -> PASS
+FUNCTION canônica + framing inválido -> PASS
+go test -count=1 -v ./internal/migrationguard -> PASS em Go 1.22
+fuzz FuzzLexer por 30s -> PASS; 1.806.552 execuções
+go test -count=1 ./... -> PASS em Go 1.22
+gofmt -l -> vazio
+git diff --check / git diff --cached --check -> PASS
+```
+
+Não houve mudança no lexer ou parser, migration real, dependência, CI,
+runtime, infra, RLS, roles ou default ACL. A prova PostgreSQL não foi repetida
+porque a correção é exclusivamente de policy; teste em produção nesta rodada:
+NÃO. Migration 0022 permanece intacta e 0023 ausente. Nenhum SQL, deploy,
+smoke, commit ou push foi executado.
+
+**Estado vigente:** Lote 2A **EM CORREÇÃO APÓS REVIEW**; P1 transacional
+corrigido localmente, `statementUnknown` permanece fail-closed, regressões
+preservadas e aguardando novo `/review`. O Lote 2A não está concluído; Lote 2B,
+produção, deploy e smoke continuam bloqueados.
