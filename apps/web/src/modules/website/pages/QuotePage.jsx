@@ -1,139 +1,132 @@
-import { motion } from 'framer-motion'
-import { Card, CardBody } from '@heroui/react'
+import { motion as Motion } from 'framer-motion'
+import { Clock, Mail, MapPin, Phone } from 'lucide-react'
+import schumacherGraphicEmber from '../../../assets/brand/graphics/schumacher-graphic-ember.svg'
 import BookingForm from '../components/BookingForm'
-import { Phone, Mail, MapPin, Clock } from 'lucide-react'
+
+const contactLinkClass = 'flex min-h-11 items-center gap-3 rounded-sm text-brand-gunship transition-colors hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gunship focus-visible:ring-offset-2 focus-visible:ring-offset-brand-lynx'
+const iconClass = 'flex h-11 w-11 shrink-0 items-center justify-center border border-brand-blue-grey/60 bg-brand-lynx text-brand-gunship'
 
 export default function QuotePage() {
     return (
-        <div className="bg-light-50 min-h-screen">
-            {/* Hero */}
-            <section className="bg-gradient-to-br from-gold-500 to-gold-600 py-16">
-                <div className="container-max text-center">
-                    <motion.div
+        <div className="min-h-screen bg-brand-lynx">
+            <section className="border-b border-brand-blue-grey/40 bg-brand-gunship">
+                <div className="container-max grid items-center gap-8 px-5 py-12 sm:px-8 sm:py-16 lg:grid-cols-4 lg:px-10">
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
+                        className="text-center lg:col-span-2 lg:text-left"
                     >
-                        <h1 className="text-3xl md:text-4xl font-heading font-bold text-white mb-4">
+                        <h1 className="mb-4 text-3xl font-bold text-brand-lynx md:text-4xl">
                             Solicite seu Orçamento
                         </h1>
-                        <p className="text-gold-100 text-lg max-w-xl mx-auto">
+                        <p className="mx-auto max-w-xl text-lg leading-relaxed text-brand-lynx/85 lg:mx-0">
                             Preencha o formulário abaixo e nossa equipe entrará em contato com a melhor proposta para sua viagem!
                         </p>
-                    </motion.div>
+                    </Motion.div>
+
+                    <Motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.1 }}
+                        className="flex h-32 items-center justify-center sm:h-40 lg:col-span-2 lg:h-52 lg:justify-end"
+                        aria-hidden="true"
+                    >
+                        <img
+                            src={schumacherGraphicEmber}
+                            alt=""
+                            className="h-full w-full max-w-sm object-contain"
+                            decoding="async"
+                        />
+                    </Motion.div>
                 </div>
             </section>
 
-            {/* Form Section */}
-            <section className="section-padding -mt-8">
-                <div className="container-max max-w-4xl">
-                    <div className="grid md:grid-cols-3 gap-8">
-                        {/* Formulário */}
-                        <motion.div
+            <section className="px-5 py-16 sm:px-8 sm:py-20 lg:px-10">
+                <div className="container-max max-w-6xl">
+                    <div className="grid gap-12 lg:grid-cols-12 lg:gap-10">
+                        <Motion.div
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.1 }}
-                            className="md:col-span-2"
+                            className="border border-brand-blue-grey/60 bg-white p-5 sm:p-8 lg:col-span-8"
                         >
-                            <Card className="shadow-xl">
-                                <CardBody className="p-6 md:p-8">
-                                    <BookingForm />
-                                </CardBody>
-                            </Card>
-                        </motion.div>
+                            <BookingForm />
+                        </Motion.div>
 
-                        {/* Sidebar */}
-                        <motion.div
+                        <Motion.aside
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.2 }}
-                            className="space-y-6"
+                            className="divide-y divide-brand-blue-grey/50 border-y border-brand-blue-grey/50 lg:col-span-4 lg:border-y-0 lg:border-l lg:pl-10"
+                            aria-label="Informações de contato"
                         >
-                            {/* Contatos */}
-                            <Card className="bg-white">
-                                <CardBody className="p-5">
-                                    <h3 className="font-bold text-dark-900 mb-4">Contatos Diretos</h3>
-                                    <div className="space-y-4">
-                                        <a
-                                            href="tel:+554932466666"
-                                            className="flex items-center gap-3 text-dark-600 hover:text-gold-500 transition-colors"
-                                        >
-                                            <div className="w-10 h-10 rounded-full bg-gold-50 flex items-center justify-center">
-                                                <Phone size={18} className="text-gold-500" />
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-dark-400">Telefone</p>
-                                                <p className="font-medium">(49) 3246-6666</p>
-                                            </div>
-                                        </a>
-                                        <a
-                                            href="https://wa.me/5549999862222"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-3 text-dark-600 hover:text-green-500 transition-colors"
-                                        >
-                                            <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center">
-                                                <Phone size={18} className="text-green-500" />
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-dark-400">WhatsApp</p>
-                                                <p className="font-medium">(49) 99986-2222</p>
-                                            </div>
-                                        </a>
-                                        <a
-                                            href="mailto:turismo@schumacher.tur.br"
-                                            className="flex items-center gap-3 text-dark-600 hover:text-gold-500 transition-colors"
-                                        >
-                                            <div className="w-10 h-10 rounded-full bg-gold-50 flex items-center justify-center">
-                                                <Mail size={18} className="text-gold-500" />
-                                            </div>
-                                            <div>
-                                                <p className="text-sm text-dark-400">E-mail</p>
-                                                <p className="font-medium text-sm">turismo@schumacher.tur.br</p>
-                                            </div>
-                                        </a>
-                                    </div>
-                                </CardBody>
-                            </Card>
+                            <section className="py-7 lg:first:pt-0">
+                                <h2 className="mb-5 text-lg font-bold text-brand-gunship">Contatos Diretos</h2>
+                                <div className="space-y-4">
+                                    <a href="tel:+554932466666" className={contactLinkClass}>
+                                        <span className={iconClass} aria-hidden="true">
+                                            <Phone size={18} />
+                                        </span>
+                                        <span>
+                                            <span className="block text-sm text-brand-gunship/80">Telefone</span>
+                                            <span className="font-medium">(49) 3246-6666</span>
+                                        </span>
+                                    </a>
+                                    <a
+                                        href="https://wa.me/5549999862222"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={contactLinkClass}
+                                    >
+                                        <span className={iconClass} aria-hidden="true">
+                                            <Phone size={18} />
+                                        </span>
+                                        <span>
+                                            <span className="block text-sm text-brand-gunship/80">WhatsApp</span>
+                                            <span className="font-medium">(49) 99986-2222</span>
+                                        </span>
+                                    </a>
+                                    <a href="mailto:turismo@schumacher.tur.br" className={contactLinkClass}>
+                                        <span className={iconClass} aria-hidden="true">
+                                            <Mail size={18} />
+                                        </span>
+                                        <span className="min-w-0">
+                                            <span className="block text-sm text-brand-gunship/80">E-mail</span>
+                                            <span className="break-all text-sm font-medium">turismo@schumacher.tur.br</span>
+                                        </span>
+                                    </a>
+                                </div>
+                            </section>
 
-                            {/* Endereço */}
-                            <Card className="bg-white">
-                                <CardBody className="p-5">
-                                    <h3 className="font-bold text-dark-900 mb-4">Nossa Sede</h3>
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-gold-50 flex items-center justify-center flex-shrink-0">
-                                            <MapPin size={18} className="text-gold-500" />
-                                        </div>
-                                        <div>
-                                            <p className="text-dark-600 text-sm">
-                                                SC-355, KM 35<br />
-                                                Sala Comercial CONTAINER<br />
-                                                São Sebastião, Fraiburgo/SC<br />
-                                                CEP: 89580-000
-                                            </p>
-                                        </div>
-                                    </div>
-                                </CardBody>
-                            </Card>
+                            <section className="py-7">
+                                <h2 className="mb-5 text-lg font-bold text-brand-gunship">Nossa Sede</h2>
+                                <div className="flex items-start gap-3 text-brand-gunship">
+                                    <span className={iconClass} aria-hidden="true">
+                                        <MapPin size={18} />
+                                    </span>
+                                    <p className="text-sm leading-relaxed">
+                                        SC-355, KM 35<br />
+                                        Sala Comercial CONTAINER<br />
+                                        São Sebastião, Fraiburgo/SC<br />
+                                        CEP: 89580-000
+                                    </p>
+                                </div>
+                            </section>
 
-                            {/* Horário */}
-                            <Card className="bg-white">
-                                <CardBody className="p-5">
-                                    <h3 className="font-bold text-dark-900 mb-4">Atendimento</h3>
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-gold-50 flex items-center justify-center flex-shrink-0">
-                                            <Clock size={18} className="text-gold-500" />
-                                        </div>
-                                        <div>
-                                            <p className="text-dark-600 text-sm">
-                                                <strong>Seg - Sex:</strong> 8h às 18h<br />
-                                                <strong>Sábado:</strong> 8h às 12h<br />
-                                                <strong>WhatsApp:</strong> 24h
-                                            </p>
-                                        </div>
-                                    </div>
-                                </CardBody>
-                            </Card>
-                        </motion.div>
+                            <section className="py-7 lg:last:pb-0">
+                                <h2 className="mb-5 text-lg font-bold text-brand-gunship">Atendimento</h2>
+                                <div className="flex items-start gap-3 text-brand-gunship">
+                                    <span className={iconClass} aria-hidden="true">
+                                        <Clock size={18} />
+                                    </span>
+                                    <p className="text-sm leading-relaxed">
+                                        <strong>Seg - Sex:</strong> 8h às 18h<br />
+                                        <strong>Sábado:</strong> 8h às 12h<br />
+                                        <strong>WhatsApp:</strong> 24h
+                                    </p>
+                                </div>
+                            </section>
+                        </Motion.aside>
                     </div>
                 </div>
             </section>

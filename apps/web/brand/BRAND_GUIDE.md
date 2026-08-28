@@ -226,15 +226,15 @@ São derivados geometricamente do símbolo S e aparecem em:
 
 Não inventar grafismos novos que se apresentem como oficiais.
 
-Enquanto os assets oficiais não estiverem disponíveis:
+### Mapeamento implementado
 
-- trabalhar com composição;
-- cor;
-- tipografia;
-- espaço;
-- fotografia;
+- `GRAFISMO (1).svg`: grafismo neutro usado no FinalCTA;
+- `GRAFISMO (4).svg`: grafismo Ember usado na página de orçamento.
 
-sem redesenhar manualmente os patterns ou elementos derivados do S.
+As cópias de runtime recebem nomes semânticos e preservam os arquivos oficiais
+sem edição, filtro, recoloração ou deformação. `GRAFISMO (2).svg`, `PATTERN.svg`
+e os demais grafismos permanecem somente no acervo-fonte local até existir uso
+comprovado na interface.
 
 ---
 
