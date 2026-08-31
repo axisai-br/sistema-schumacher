@@ -22,9 +22,10 @@ H-2026-07-16B em andamento
 H-2026-07-16B1 concluída em código, com gate operacional reaberto
 H-2026-07-22A — problema original corrigido e deployado;
 smoke RED na transição availability → passageiros
-H-2026-07-27A — EM CORREÇÃO APÓS REVIEW —
-1 P1 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO REVIEW
-H-2026-07-16B2 bloqueada por H-2026-07-27A e pelo gate operacional de B1
+H-2026-07-27A — REVIEW_CLOSED; CORREÇÃO COMMITTED + MERGED
+deploy PENDENTE / NÃO AUTORIZADO; smoke PENDENTE / NÃO AUTORIZADO
+H-2026-07-16B2 bloqueada pelos gates operacionais de H-2026-07-27A e B1
+H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
 ```
 
@@ -1050,11 +1051,30 @@ PASS — regexp.MustCompile = 54
 PASS — git diff --check; git diff --cached --check
 ```
 
-H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Não há review
-limpo nem segurança para commit. Não houve B2, 3.6F-D, parser, regex,
-migration, refactor amplo, commit, push, PR, deploy ou smoke. Deploy/smoke
-continuam pendentes no fluxo posterior autorizado. Próxima ação única: novo
-`/review`.
+O estado registrado ao final daquela rodada era **EM CORREÇÃO APÓS REVIEW**,
+sem review final e aguardando novo `/review`. Esse estado volátil foi superado
+pelo fechamento histórico abaixo.
+
+### Fechamento do review final da Fase 9
+
+O review histórico dirigido terminou **sem P0/P1/P2**. Os seis cenários e o
+controle preexistente de source posterior à selection cobrem a separação entre
+`sourceBeforeIndex` e `materializationIndex`; o único finding da Fase 9 passa
+de `FIXED_UNREVIEWED` para `REVIEW_CLOSED`.
+
+```text
+finding_state: REVIEW_CLOSED
+delivery_state: MERGED
+commit da correção: 2784b731e706f64c19f05b7edcc302bedb215692
+merge: c8f4e4534bd24d0de74dcb74962e07f591991d1a
+deploy: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+smoke: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+```
+
+O review limpo e o merge não encerram o lifecycle operacional:
+`REVIEW_CLOSED != DEPLOYED` e `DEPLOYED != SMOKE_VERIFIED`. H-B2 permanece
+bloqueada até os gates operacionais exigidos; H-B3 permanece bloqueada por
+H-B2; 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 ## Bug H-2026-07-16B
 
@@ -1068,18 +1088,14 @@ Esse bug é determinístico e separado de TravelQueryMeaningV2.
 
 ## Próxima ação
 
-Executar somente:
+Nenhuma próxima etapa de implementação é autorizada por esta reconciliação.
+H-2026-07-27A está com review fechado e correção mergeada, mas permanece
+aguardando autorização própria para deploy e, depois, smoke. Esses gates não
+foram executados nesta tarefa.
 
-```text
-/review dirigido às correções locais do review atual de H-2026-07-27A
-```
-
-H-2026-07-22A está corrigido e deployado, mas o smoke real reabriu o gate com
-H-2026-07-27A. A correção do único achado do review mais recente e os gates
-locais estão verdes, mas ainda não há novo review limpo, commit, push, deploy
-ou novo smoke.
-B2 permanece bloqueada até review, deploy e smoke verdes de H-2026-07-27A.
-3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+H-B2 permanece bloqueada até deploy e smoke verdes de H-2026-07-27A e
+cumprimento dos demais gates operacionais de H-B1. H-B3 permanece bloqueada
+por H-B2. 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 ## Arquivos que a nova sessão deve ler
 
@@ -1088,7 +1104,7 @@ B2 permanece bloqueada até review, deploy e smoke verdes de H-2026-07-27A.
 3. `docs/SESSION_HANDOFF.md`
 4. `docs/PRODUCTION_CONVERSATION_CASES.md`
 5. `plans/00-plano-mestre-travel-semantic-v2.md`
-6. plano do hotfix ativo em correção após review
+6. plano histórico do hotfix H-2026-07-27A já mergeado, preservado para consulta enquanto deploy e smoke aguardam autorização própria
 
 Não carregar todos os planos no prompt operacional do Codex. Eles podem ficar versionados no repositório para consulta futura.
 

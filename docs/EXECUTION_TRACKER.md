@@ -290,8 +290,8 @@ Regras:
 | 8 | H-2026-07-16B | **EM ANDAMENTO — gate operacional de B1 reaberto** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; H-2026-07-27A interrompe a fila antes de B2. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-27A** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | H-2026-07-22A corrigiu o bootstrap e foi deployado; o smoke reabriu o gate na autoridade de opções apresentadas. |
 | 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE OPERACIONAL RED** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido, mas o smoke falhou na transição availability → passageiros. |
-| 11 | H-2026-07-27A | **EM CORREÇÃO APÓS REVIEW — 1 P1 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO REVIEW** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | o gate temporal recebe separadamente o limite causal do source e o índice da projeção/materialização; `INVALID` entre selection e projection falha fechado sem tornar barreira posterior retroativa; próxima ação única: novo `/review`. |
-| 12 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-27A / gate operacional de H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após review, deploy e smoke verdes do hotfix ativo. |
+| 11 | H-2026-07-27A | **REVIEW_CLOSED — CORREÇÃO MERGED; DEPLOY E SMOKE PENDENTES** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | Fase 9 sem P0/P1/P2; finding fechado pelo review final; correção `2784b731` integrada pelo merge `c8f4e453`; deploy e smoke não autorizados nesta reconciliação. |
+| 12 | H-2026-07-16B2 | **BLOQUEADA pelos gates operacionais de H-2026-07-27A / H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após deploy e smoke verdes do hotfix ativo e cumprimento dos demais gates do umbrella. |
 | 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 15 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -4735,12 +4735,49 @@ PASS — regexp.MustCompile = 54
 PASS — git diff --check; git diff --cached --check
 ```
 
-H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Evidência local
-verde não declara review limpo nem segurança para commit. Teste em produção
-continua pendente no fluxo posterior autorizado. Não houve B2, 3.6F-D,
-parser, regex, migration, refactor amplo, commit, push, PR, deploy ou smoke.
-Próxima ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem
-bloqueadas.
+O estado registrado ao final daquela rodada era **EM CORREÇÃO APÓS REVIEW**,
+com evidência local verde, sem review final e aguardando novo `/review`. Esse
+estado volátil foi superado pelo fechamento histórico abaixo. H-2026-07-16B2
+e 3.6F-D permaneceram bloqueadas.
+
+#### Fechamento do review final da Fase 9 e reconciliação pós-merge (2026-08-31)
+
+O review histórico dirigido ao único P1 da Fase 9 terminou **sem P0/P1/P2**.
+Os seis cenários da regressão, junto ao controle preexistente de source
+posterior à selection, cobrem a separação entre `sourceBeforeIndex` e
+`materializationIndex`. O finding passa de `FIXED_UNREVIEWED` para
+`REVIEW_CLOSED`.
+
+Lifecycle reconciliado:
+
+```text
+finding_state: REVIEW_CLOSED
+review final: sem P0/P1/P2
+delivery_state: MERGED
+commit da correção: 2784b731e706f64c19f05b7edcc302bedb215692
+merge: c8f4e4534bd24d0de74dcb74962e07f591991d1a
+deploy: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+smoke: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+```
+
+O review usou o envelope histórico
+`d62dbb06b8fd47d817bf5d93c0b4eff3ea7cabd0..2784b731e706f64c19f05b7edcc302bedb215692`
+com allowlist dos hunks da Fase 9; o merge possui tree equivalente para a
+correção e não acrescenta resolução funcional dessa fase.
+
+`REVIEW_CLOSED != DEPLOYED` e `DEPLOYED != SMOKE_VERIFIED`. O fechamento do
+finding e o estado `MERGED` não encerram H-2026-07-27A operacionalmente. O
+deploy e o smoke exigidos continuam pendentes e dependem de autorização
+própria. H-2026-07-16B2 permanece bloqueada por esses gates operacionais;
+H-2026-07-16B3 permanece bloqueada por H-B2; 3.6F-D permanece bloqueada pelo
+fechamento integral de H-B.
+
+Esta reconciliação altera somente `docs/EXECUTION_TRACKER.md`,
+`docs/SESSION_HANDOFF.md` e
+`plans/h-2026-07-27a-structural-reconciliation-fixes.md`. Nenhum teste de
+aplicação foi executado porque não há mudança funcional. Nenhuma próxima etapa
+de implementação foi autorizada; commit desta reconciliação, deploy e smoke
+não foram executados.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 

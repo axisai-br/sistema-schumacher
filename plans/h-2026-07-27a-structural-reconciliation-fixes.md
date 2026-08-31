@@ -3,8 +3,9 @@
 ## Resumo
 
 Este plano é cumulativo e preserva as rodadas corretivas anteriores como
-histórico concluído. A próxima execução deve tratar somente a fase pendente
-descrita ao final deste documento.
+histórico concluído. Não há fase corretiva pendente: a Fase 9 teve review final
+sem P0/P1/P2 e a correção está mergeada; deploy e smoke permanecem pendentes e
+exigem autorização própria.
 
 ### Estado das fases
 
@@ -18,7 +19,7 @@ descrita ao final deste documento.
 | 6 | projeção exclusiva e compatibilidade integral | **HISTÓRICO; review posterior encontrou 2 P1 + 1 P2** |
 | 7 | source explícito, presença persistida e status operacional canônico | **HISTÓRICO; review posterior encontrou 3 P1 + 1 P2** |
 | 8 | barreira `INVALID`, tipos estritos e presença na serialização live | **HISTÓRICO; review posterior encontrou 1 P1** |
-| 9 | limite da barreira até a projeção/materialização | **EXECUTADA LOCALMENTE; AGUARDANDO NOVO REVIEW** |
+| 9 | limite da barreira até a projeção/materialização | **REVIEW_CLOSED — MERGED; DEPLOY E SMOKE PENDENTES** |
 
 ## Fase 1 — Histórico concluído
 
@@ -1623,7 +1624,7 @@ parser, regex, migration, refactor amplo, commit, push, PR, deploy ou smoke.
 Próxima ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem
 bloqueadas.
 
-## Fase 9 — Executada localmente, aguardando review: limite causal da projeção
+## Fase 9 — Review fechado; correção mergeada: limite causal da projeção
 
 ### Escopo e causa raiz
 
@@ -1671,8 +1672,30 @@ PASS — inventário de produção = 54 regexp.MustCompile
 PASS — git diff --check; git diff --cached --check
 ```
 
-H-2026-07-27A permanece **EM CORREÇÃO APÓS REVIEW**. Esta evidência local
-não declara review limpo nem segurança para commit. Não houve B2, 3.6F-D,
-parser, regex, migration, refactor amplo, commit, push, PR, deploy ou smoke.
-Próxima ação única: novo `/review`; H-2026-07-16B2 e 3.6F-D permanecem
-bloqueadas.
+### Fechamento do review final e estado de entrega
+
+O review histórico dirigido ao único P1 desta fase terminou **sem P0/P1/P2**.
+Os seis cenários, junto ao controle preexistente de source posterior à
+selection, cobrem integralmente a separação entre `sourceBeforeIndex` e
+`materializationIndex`. O finding passa de `FIXED_UNREVIEWED` para
+`REVIEW_CLOSED`.
+
+```text
+finding_state: REVIEW_CLOSED
+delivery_state: MERGED
+commit da correção: 2784b731e706f64c19f05b7edcc302bedb215692
+merge: c8f4e4534bd24d0de74dcb74962e07f591991d1a
+deploy: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+smoke: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+```
+
+O review usou o envelope histórico
+`d62dbb06b8fd47d817bf5d93c0b4eff3ea7cabd0..2784b731e706f64c19f05b7edcc302bedb215692`
+com allowlist específica dos hunks da Fase 9. O merge preserva conteúdo
+equivalente para a correção e não acrescenta resolução funcional da fase.
+
+`REVIEW_CLOSED != DEPLOYED` e `DEPLOYED != SMOKE_VERIFIED`. H-2026-07-27A
+não está operacionalmente encerrado. H-2026-07-16B2 permanece bloqueada pelos
+gates operacionais pendentes; H-2026-07-16B3 permanece bloqueada por H-B2;
+3.6F-D permanece bloqueada pelo fechamento integral de H-B. Nenhuma próxima
+etapa de implementação é autorizada por este fechamento documental.
