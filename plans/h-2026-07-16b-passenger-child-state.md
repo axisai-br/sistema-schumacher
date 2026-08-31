@@ -3,15 +3,15 @@
 ## Status no tracker
 
 ```text
-EM ANDAMENTO — gate operacional de B1 reaberto por H-2026-07-22A.
+EM ANDAMENTO — próximo slice H-B2 aguarda autorização própria.
 ```
 
 O H-B não é mais um slice executável. Ele organiza três slices independentes e
-permanece aberto até todos concluírem seus gates. O review local histórico de
-B1 foi limpo, mas evidência operacional posterior mostrou que seu bootstrap
-`UNKNOWN` bloqueava sessões novas globalmente. H-2026-07-22A está **EM CORREÇÃO
-APÓS REVIEW — 3 P1 DO NOVO REVIEW**; B2, B3 e
-3.6F-D permanecem bloqueadas.
+permanece aberto até todos concluírem seus gates. B1 está concluída: o problema
+original de H-2026-07-22A foi corrigido/deployado e o blocker posterior do
+smoke RED histórico foi fechado por H-2026-07-27A com review, merge, deploy e
+smoke verificados. B2 ainda não foi iniciada; B3 e 3.6F-D permanecem
+bloqueadas.
 
 ## Histórico — motivo do replanejamento após o sexto review
 
@@ -33,9 +33,9 @@ responsabilidades apontada pelos reviews. A decisão canônica passa a ser
 
 | Ordem | Slice | Status | Responsabilidade única |
 |---|---|---|---|
-| 1 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | fonte durável preservada; bootstrap `UNKNOWN` fresco não pode bloquear o atendimento antes de contexto de passageiros |
-| 2 | H-2026-07-22A | **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO REVIEW** | separar identidade do prompt de facts de continuidade, preservar `STRONG` e exigir autoridade bookable explícita sem enfraquecer o `UNKNOWN` fresco |
-| 3 | H-2026-07-16B2 | **BLOQUEADA por H-2026-07-22A / gate operacional de B1** | `PassengerClarificationMeaningV1` strict, validator local, corpus e shadow; sem tools ou mudança user-visible |
+| 1 | H-2026-07-16B1 | **CONCLUÍDA — GATE OPERACIONAL ENCERRADO** | fonte durável preservada; bootstrap `UNKNOWN` fresco não bloqueia o atendimento antes de contexto de passageiros |
+| 2 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — RED HISTÓRICO ORIGINOU H-A; BLOCKER FECHADO** | identidade do prompt e facts de continuidade preservam `STRONG` e exigem autoridade bookable explícita sem enfraquecer o `UNKNOWN` fresco |
+| 3 | H-2026-07-16B2 | **PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA** | `PassengerClarificationMeaningV1` strict, validator local, corpus e shadow; sem tools ou mudança user-visible |
 | 4 | H-2026-07-16B3 | **BLOQUEADA por H-B2** | promoção gated somente em prompt passageiro/criança e decisão `WEAK`/`FALLBACK`/`UNKNOWN`; sem booking/payment direto |
 | 5 | 3.6F-D | **BLOQUEADA por H-B** | só pode ser reavaliada depois do fechamento integral do umbrella |
 
@@ -92,8 +92,9 @@ autoriza antecipar B2 dentro do diff do B1.
   `./internal/chat`, `./...` e `git diff --check` verde;
 - review sem P1/P2;
 - nenhuma chamada externa sob lock e nenhum incidente operacional aberto.
-- H-2026-07-22A revisado, implantado e com smoke verde, comprovando que sessão
-  nova não abre o gate prematuramente e que o fail-closed pós-prompt permanece.
+- H-2026-07-22A revisado e implantado; seu RED histórico originou H-A, cujo
+  fechamento operacional comprovou seleção materializada e avanço seguro até
+  `ASK_PASSENGER_COUNT`, sem `NONE`/`SAFE_PHASE_FALLBACK`.
 
 ### B2 -> B3
 
@@ -121,14 +122,12 @@ desbloqueio de 3.6F-D.
 - implementar provider, schema, reducer, repository ou runtime;
 - alterar código de produção ou testes;
 - executar commit, push, deploy ou smoke;
-- liberar B2, B3 ou 3.6F-D por inferência documental.
+- iniciar B2, B3 ou 3.6F-D sem `/goal` e autorização próprios.
 
 ## Próxima ação única
 
-O review local de `plans/h-2026-07-22a-fresh-session-passenger-gate.md` está
-verde. Mediante novo `/goal` e autorização explícita, preparar commit/push,
-implantar e executar o smoke do hotfix. B2 só pode ser reavaliada depois de
-deploy e smoke verdes; este PR não inicia contrato, validator, corpus ou shadow
-de B2. B3 permanece bloqueada por B2, e 3.6F-D permanece bloqueada pelo
-fechamento integral de H-B. Este umbrella não deve ser usado como objetivo de
-implementação.
+Todos os gates B1 → B2 estão satisfeitos. Mediante novo `/goal` e autorização
+explícita, a próxima ação possível é iniciar somente H-B2. Esta reconciliação
+não inicia contrato, validator, corpus ou shadow de B2. B3 permanece bloqueada
+por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B. Este
+umbrella não deve ser usado como objetivo de implementação.

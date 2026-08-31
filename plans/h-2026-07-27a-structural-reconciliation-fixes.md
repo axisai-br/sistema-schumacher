@@ -4,8 +4,8 @@
 
 Este plano é cumulativo e preserva as rodadas corretivas anteriores como
 histórico concluído. Não há fase corretiva pendente: a Fase 9 teve review final
-sem P0/P1/P2 e a correção está mergeada; deploy e smoke permanecem pendentes e
-exigem autorização própria.
+sem P0/P1/P2, a correção está mergeada e a evidência operacional posterior
+comprovou deploy e smoke verdes.
 
 ### Estado das fases
 
@@ -19,7 +19,7 @@ exigem autorização própria.
 | 6 | projeção exclusiva e compatibilidade integral | **HISTÓRICO; review posterior encontrou 2 P1 + 1 P2** |
 | 7 | source explícito, presença persistida e status operacional canônico | **HISTÓRICO; review posterior encontrou 3 P1 + 1 P2** |
 | 8 | barreira `INVALID`, tipos estritos e presença na serialização live | **HISTÓRICO; review posterior encontrou 1 P1** |
-| 9 | limite da barreira até a projeção/materialização | **REVIEW_CLOSED — MERGED; DEPLOY E SMOKE PENDENTES** |
+| 9 | limite da barreira até a projeção/materialização | **REVIEW_CLOSED — MERGED — DEPLOYED — SMOKE_VERIFIED** |
 
 ## Fase 1 — Histórico concluído
 
@@ -1685,8 +1685,10 @@ finding_state: REVIEW_CLOSED
 delivery_state: MERGED
 commit da correção: 2784b731e706f64c19f05b7edcc302bedb215692
 merge: c8f4e4534bd24d0de74dcb74962e07f591991d1a
-deploy: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
-smoke: PENDENTE — NÃO AUTORIZADO NESTA RECONCILIAÇÃO
+deploy: DEPLOYED
+smoke: SMOKE_VERIFIED
+runtime revision: 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
+runtime digest: sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
 ```
 
 O review usou o envelope histórico
@@ -1694,8 +1696,23 @@ O review usou o envelope histórico
 com allowlist específica dos hunks da Fase 9. O merge preserva conteúdo
 equivalente para a correção e não acrescenta resolução funcional da fase.
 
-`REVIEW_CLOSED != DEPLOYED` e `DEPLOYED != SMOKE_VERIFIED`. H-2026-07-27A
-não está operacionalmente encerrado. H-2026-07-16B2 permanece bloqueada pelos
-gates operacionais pendentes; H-2026-07-16B3 permanece bloqueada por H-B2;
-3.6F-D permanece bloqueada pelo fechamento integral de H-B. Nenhuma próxima
-etapa de implementação é autorizada por este fechamento documental.
+A correção `2784b731` está integrada em `c8f4e453`, e esse merge é ancestral
+da revisão de runtime `4eb543cb`. ServiceSpec, task, container, image ID e
+RepoDigest convergiram no digest acima; a metadata OCI confirmou a mesma
+revisão. O runtime estava em execução desde 2026-08-17, sem evidência de
+redeploy/restart antes do smoke de 2026-08-28.
+
+O smoke atribuível ao runtime percorreu `availability executada →
+SELECT_AVAILABILITY_OPTION → deterministic_active_prompt_availability_option →
+PASSENGER_COLLECTION → ASK_PASSENGER_COUNT`. Esse caminho exige seleção
+materializada e não apresentou `AvailabilitySelectionStateV1=NONE` nem
+`SAFE_PHASE_FALLBACK`. H-2026-07-27A está operacionalmente encerrado.
+
+As frases `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` permanecem
+casos futuros de H-B2/H-B3. O lifecycle shadow, `empty_idempotency_key` e o
+webhook HTTP 400 mantêm seus owners próprios e não reabrem H-A.
+
+Com o gate operacional de B1 novamente concluído, H-B2 é somente **PRÓXIMA —
+NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA**. H-B3 permanece bloqueada por
+H-B2 e 3.6F-D permanece bloqueada pelo fechamento integral de H-B. Esta
+reconciliação não inicia qualquer etapa de implementação.

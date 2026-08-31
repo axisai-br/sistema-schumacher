@@ -1,18 +1,19 @@
 # H-2026-07-16B1 — Fundação do estado de passageiros
 
-## Status após a evidência operacional de 2026-07-22
+## Status após o fechamento operacional de H-2026-07-27A
 
 ```text
-CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-22A
+CONCLUÍDA — GATE OPERACIONAL ENCERRADO
 ```
 
-O review final histórico fechou B1 sem P1/P2, mas evidência operacional posterior em sessão
-nova comprovou um bloqueio global: o bootstrap durável `UNKNOWN` foi tratado
-como inseguro antes de existir contexto de passageiros. H-2026-07-22A reabre o
-gate operacional de B1 e está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
-REVIEW**. B2 fica bloqueada até review, deploy e
-smoke verdes do hotfix. Esta rodada não autoriza iniciar B2,
-fazer commit, push, deploy ou smoke.
+O review final histórico fechou B1 sem P1/P2. A evidência operacional de
+2026-07-22 reabriu o gate por um bloqueio global em sessão nova; H-2026-07-22A
+corrigiu e deployou o problema original, e seu smoke RED posterior originou o
+hotfix H-2026-07-27A. H-A agora está `REVIEW_CLOSED`, `MERGED`, `DEPLOYED` e
+`SMOKE_VERIFIED`: a seleção foi materializada e avançou até
+`ASK_PASSENGER_COUNT`, sem `NONE`/`SAFE_PHASE_FALLBACK`. Não resta incidente
+operacional aberto de B1. H-B2 passa apenas a próxima, não iniciada e dependente
+de `/goal` e autorização próprios.
 
 Plano corretivo: `plans/h-2026-07-22a-fresh-session-passenger-gate.md`.
 
@@ -30,8 +31,8 @@ Evidência aceita para o fechamento:
 - inventário de produção em 54 `regexp.MustCompile`;
 - `git diff --check` verde.
 
-B1 está seguro para commit. O desbloqueio alcança somente B2 como próximo
-slice; B2 não é implementado neste fechamento documental.
+B1 está concluído. O desbloqueio alcança somente B2 como próximo slice; B2 não
+é implementado neste fechamento documental.
 
 Os blocos de reviews anteriores abaixo são registros históricos das respectivas
 rodadas. Todos foram superseded pelo review final sem P1/P2 e não definem o
@@ -285,10 +286,10 @@ propagação do prompt efetivamente enviado, fail-closed e
 ## Dependência e sucessor
 
 - predecessor: replanejamento documental do umbrella H-2026-07-16B;
-- gate corretivo: H-2026-07-22A, **EM CORREÇÃO APÓS REVIEW — 3 P1 DO NOVO
-  REVIEW**, aguardando novo review;
-- sucessor: H-2026-07-16B2, novamente bloqueado até review, deploy e smoke
-  verdes do hotfix;
+- gate corretivo: H-2026-07-22A corrigido/revisado/deployado; o blocker do RED
+  histórico foi fechado operacionalmente por H-2026-07-27A;
+- sucessor: H-2026-07-16B2, **PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO
+  PRÓPRIA**;
 - 3.6F-D permanece bloqueada pelo umbrella H-B.
 
 ## Fonte arquitetural
@@ -679,17 +680,16 @@ PASS — git diff --check
 PASS — nenhuma alteração em arquivo de produção nesta correção
 ```
 
-Resultado histórico do review final: **sem P1/P2**. Esse resultado foi
-superseded como gate operacional pela evidência de 2026-07-22; H-B1 permanece
-concluída em código, H-2026-07-22A está **EM CORREÇÃO APÓS REVIEW — 3 P1 DO
-NOVO REVIEW**, e B2 continua bloqueada. H-B
-permanece em andamento, B3 permanece bloqueada por B2 e 3.6F-D
-continua bloqueada pelo fechamento integral de H-B.
+Resultado histórico do review final: **sem P1/P2**. Esse resultado teve o gate
+operacional reaberto pela evidência de 2026-07-22; H-2026-07-22A corrigiu e
+deployou o problema original, e H-2026-07-27A fechou o blocker posterior com
+review, merge, deploy e smoke verificados. Assim, H-B1 está concluída e B2 é a
+próxima, ainda não iniciada. H-B permanece em andamento, B3 permanece
+bloqueada por B2 e 3.6F-D continua bloqueada pelo fechamento integral de H-B.
 
-Teste em produção/smoke: **não executado e não autorizado nesta rodada**.
-Commit, push e deploy: **não executados**. Risco operacional aberto: validar a
-correção de H-2026-07-22A em review, deploy e smoke antes de reavaliar B2. B1
-continua sem interpretar linguagem; esse contrato pertence exclusivamente a B2.
+O teste em produção/smoke não foi executado na rodada histórica de B1; a
+evidência operacional posterior está reconciliada no tracker. B1 continua sem
+interpretar linguagem; esse contrato pertence exclusivamente a B2.
 
 ## `/goal`
 
