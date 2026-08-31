@@ -19,12 +19,13 @@ backend executa somente ações autorizadas
 3.6F-B concluída
 3.6F-C concluída em código; H-2026-07-16A teve smoke operacional verde
 H-2026-07-16B em andamento
-H-2026-07-16B1 concluída em código, com gate operacional reaberto
+H-2026-07-16B1 concluída; gate operacional encerrado
 H-2026-07-22A — problema original corrigido e deployado;
-smoke RED na transição availability → passageiros
-H-2026-07-27A — REVIEW_CLOSED; CORREÇÃO COMMITTED + MERGED
-deploy PENDENTE / NÃO AUTORIZADO; smoke PENDENTE / NÃO AUTORIZADO
-H-2026-07-16B2 bloqueada pelos gates operacionais de H-2026-07-27A e B1
+smoke RED histórico originou H-A; blocker posterior fechado por H-A
+H-2026-07-27A — REVIEW_CLOSED + MERGED + DEPLOYED + SMOKE_VERIFIED
+runtime revision 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
+runtime digest sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
+H-2026-07-16B2 PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA
 H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
 ```
@@ -32,6 +33,33 @@ H-2026-07-16B3 bloqueada por H-B2
 Esta é a única declaração vigente de H-2026-07-27A neste handoff. Todos os
 status e próximas ações nas seções cronológicas abaixo são históricos e estão
 **SUPERADOS** por este bloco.
+
+## Fechamento operacional vigente de H-2026-07-27A
+
+A correção `2784b731` está integrada no merge `c8f4e453`, que é ancestral da
+revisão de runtime `4eb543cb`. ServiceSpec, task, container, image ID e
+RepoDigest convergiram no digest registrado no bloco canônico; a metadata OCI
+confirmou a mesma revisão. O serviço/container executava desde 2026-08-17, sem
+evidência de redeploy ou restart antes do smoke de 2026-08-28.
+
+O smoke atribuível a esse runtime percorreu:
+
+```text
+availability executada
+→ SELECT_AVAILABILITY_OPTION
+→ source deterministic_active_prompt_availability_option
+→ PASSENGER_COLLECTION
+→ ASK_PASSENGER_COUNT
+```
+
+Assim, a seleção foi materializada e não reapareceram `NONE` nem
+`SAFE_PHASE_FALLBACK`. O erro de template observado ao inspecionar
+`.Spec.DesiredState` foi não bloqueante e não invalida a proveniência.
+
+Esse fechamento não mistura sintomas de outros owners: as frases de composição
+com crianças continuam casos futuros de H-B2/H-B3; o lifecycle shadow e
+`empty_idempotency_key` continuam em H-2026-07-16A/Travel V2 shadow; webhook
+HTTP 400 continua com owner/cause `UNKNOWN`.
 
 ## Incidente H-2026-07-27A
 
@@ -1088,14 +1116,13 @@ Esse bug é determinístico e separado de TravelQueryMeaningV2.
 
 ## Próxima ação
 
-Nenhuma próxima etapa de implementação é autorizada por esta reconciliação.
-H-2026-07-27A está com review fechado e correção mergeada, mas permanece
-aguardando autorização própria para deploy e, depois, smoke. Esses gates não
-foram executados nesta tarefa.
+H-2026-07-27A está operacionalmente encerrado e o gate de H-B1 voltou a
+concluído. Todos os predecessores canônicos de H-B2 estão satisfeitos.
 
-H-B2 permanece bloqueada até deploy e smoke verdes de H-2026-07-27A e
-cumprimento dos demais gates operacionais de H-B1. H-B3 permanece bloqueada
-por H-B2. 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+A próxima ação possível é iniciar exclusivamente H-B2 mediante `/goal` e
+autorização próprios. H-B2 ainda **NÃO foi iniciada** por esta reconciliação;
+H-B3 permanece bloqueada por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
+integral de H-B.
 
 ## Arquivos que a nova sessão deve ler
 
@@ -1104,7 +1131,7 @@ por H-B2. 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 3. `docs/SESSION_HANDOFF.md`
 4. `docs/PRODUCTION_CONVERSATION_CASES.md`
 5. `plans/00-plano-mestre-travel-semantic-v2.md`
-6. plano histórico do hotfix H-2026-07-27A já mergeado, preservado para consulta enquanto deploy e smoke aguardam autorização própria
+6. plano histórico do hotfix H-2026-07-27A, preservado com seu fechamento operacional
 
 Não carregar todos os planos no prompt operacional do Codex. Eles podem ficar versionados no repositório para consulta futura.
 

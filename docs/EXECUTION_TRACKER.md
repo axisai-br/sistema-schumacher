@@ -287,11 +287,11 @@ Regras:
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
-| 8 | H-2026-07-16B | **EM ANDAMENTO — gate operacional de B1 reaberto** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; H-2026-07-27A interrompe a fila antes de B2. |
-| 9 | H-2026-07-16B1 | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO por H-2026-07-27A** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | H-2026-07-22A corrigiu o bootstrap e foi deployado; o smoke reabriu o gate na autoridade de opções apresentadas. |
-| 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE OPERACIONAL RED** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido, mas o smoke falhou na transição availability → passageiros. |
-| 11 | H-2026-07-27A | **REVIEW_CLOSED — CORREÇÃO MERGED; DEPLOY E SMOKE PENDENTES** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | Fase 9 sem P0/P1/P2; finding fechado pelo review final; correção `2784b731` integrada pelo merge `c8f4e453`; deploy e smoke não autorizados nesta reconciliação. |
-| 12 | H-2026-07-16B2 | **BLOQUEADA pelos gates operacionais de H-2026-07-27A / H-B1** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | meaning strict só pode iniciar após deploy e smoke verdes do hotfix ativo e cumprimento dos demais gates do umbrella. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — PRÓXIMO SLICE H-B2 AGUARDA AUTORIZAÇÃO PRÓPRIA** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; B1 está concluída e B2 ainda não foi iniciada. |
+| 9 | H-2026-07-16B1 | **CONCLUÍDA — GATE OPERACIONAL ENCERRADO** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fundação, review, PostgreSQL e gate operacional estão concluídos; H-A fechou o blocker posterior de autoridade materializada. |
+| 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE RED HISTÓRICO; BLOCKER FECHADO POR H-A** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido; o RED posterior na transição availability → passageiros originou H-A e permanece preservado como histórico. |
+| 11 | H-2026-07-27A | **REVIEW_CLOSED — MERGED — DEPLOYED — SMOKE_VERIFIED** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | correção `2784b731` integrada por `c8f4e453`; runtime `4eb543cb`; smoke de 2026-08-28 verde e atribuível ao runtime. |
+| 12 | H-2026-07-16B2 | **PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | todos os predecessores canônicos estão satisfeitos; esta reconciliação não inicia contrato, validator, corpus ou shadow. |
 | 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 15 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -1647,8 +1647,8 @@ próxima ação histórica daquela rodada: revisar e, por fluxo autorizado, impl
 
 ### 8.10 Bug user-visible — H-2026-07-16B (2026-07-16)
 
-**Status:** **EM ANDAMENTO — gate operacional de B1 reaberto por
-H-2026-07-27A; B2 bloqueada**.
+**Status:** **EM ANDAMENTO — B1 CONCLUÍDA; H-B2 PRÓXIMA, NÃO INICIADA E
+AGUARDANDO AUTORIZAÇÃO PRÓPRIA**.
 
 O H-B agora é umbrella não executável. O 3.6F-D permanece **BLOQUEADA por
 H-2026-07-16B**.
@@ -1701,7 +1701,8 @@ Critérios de desbloqueio:
 
 - B1 libera B2 somente com as nove regressões, inventário lexical sem
   crescimento, teste PostgreSQL concorrente real, matriz completa, review sem
-  P1/P2 e H-2026-07-22A revisado, implantado e com smoke verde;
+  P1/P2, H-2026-07-22A revisado/implantado e fechamento operacional verde de
+  H-2026-07-27A para o blocker revelado pelo smoke RED histórico;
 - B2 libera B3 somente com contrato strict, corpus/evaluator, shadow sem
   influência runtime, métricas críticas zeradas, limiares aprovados e review
   sem P1/P2;
@@ -4778,6 +4779,82 @@ Esta reconciliação altera somente `docs/EXECUTION_TRACKER.md`,
 aplicação foi executado porque não há mudança funcional. Nenhuma próxima etapa
 de implementação foi autorizada; commit desta reconciliação, deploy e smoke
 não foram executados.
+
+#### Fechamento operacional de H-2026-07-27A e liberação documental de H-B2 (2026-08-31)
+
+Evidência direta posterior supera somente os campos operacionais pendentes do
+registro anterior, sem apagar o histórico do smoke RED de H-2026-07-22A:
+
+```text
+finding_state: REVIEW_CLOSED
+delivery_state: MERGED
+deploy: DEPLOYED
+smoke: SMOKE_VERIFIED
+runtime revision: 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
+runtime digest: sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
+commit da correção: 2784b731e706f64c19f05b7edcc302bedb215692
+merge: c8f4e4534bd24d0de74dcb74962e07f591991d1a
+```
+
+ServiceSpec, task em execução, container, image ID real e RepoDigest
+convergiram no mesmo digest. A metadata OCI declarou a revisão `4eb543cb`; o
+merge `c8f4e453` é ancestral dessa revisão e integra a correção `2784b731`.
+O serviço/container já executava desde 2026-08-17, sem evidência de redeploy ou
+restart antes do smoke de 2026-08-28. O erro de template durante a inspeção de
+`.Spec.DesiredState` foi não bloqueante e não invalida essa proveniência.
+
+O smoke atribuível a esse runtime comprovou o comportamento específico de H-A:
+
+```text
+availability executada
+→ SELECT_AVAILABILITY_OPTION
+→ source deterministic_active_prompt_availability_option
+→ PASSENGER_COLLECTION
+→ ASK_PASSENGER_COUNT
+```
+
+Esse caminho exige seleção materializada e não apresentou
+`AvailabilitySelectionStateV1=NONE` nem `SAFE_PHASE_FALLBACK`, sintomas do
+incidente original. Portanto, H-A está operacionalmente encerrado; o blocker
+que o smoke RED histórico de H-2026-07-22A abriu sobre B1 também está fechado.
+Os demais gates B1 → B2 já estavam comprovados: review sem P1/P2, regressões e
+race verdes, concorrência real em PostgreSQL, inventário lexical sem
+crescimento, autoridade por estado/eventos e ausência de chamada externa sob
+lock ou incidente operacional aberto.
+
+Após a reavaliação, H-B permanece em andamento, B1 volta a concluída e H-B2 é
+somente **PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA**. H-B3
+permanece bloqueada por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
+integral de H-B.
+
+Separação de ownership preservada:
+
+- `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` pertencem a H-B2/H-B3
+  e permanecem casos futuros, sem implementação nesta reconciliação;
+- `scheduled → claim_acquired → provider_started → provider_completed →
+  completion_completed` pertence ao lifecycle shadow de H-2026-07-16A;
+- `empty_idempotency_key` pertence ao scheduler Travel V2 shadow e mantém
+  correlação exata `UNKNOWN`;
+- webhook HTTP 400 mantém owner/cause `UNKNOWN`.
+
+Arquivos alterados nesta reconciliação documental:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+plans/h-2026-07-27a-structural-reconciliation-fixes.md
+plans/h-2026-07-16b-passenger-child-state.md
+plans/h-2026-07-16b1-passenger-state-foundation.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+```
+
+Não houve alteração funcional ou de testes, e testes de aplicação não foram
+executados. O gate documental é inspeção do diff completo e
+`git diff --check`. Resultado do review documental: **EM CORREÇÃO APÓS
+REVIEW**, aguardando novo `/review` sem P0/P1/P2. Não houve commit, push, PR,
+merge, deploy ou smoke nesta tarefa documental; a evidência operacional acima
+foi somente reconciliada. Próxima ação única: mediante `/goal` e autorização
+próprios, iniciar exclusivamente H-B2.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 

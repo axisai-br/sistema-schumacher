@@ -3,21 +3,22 @@
 ## Status atual no tracker
 
 ```text
-BLOQUEADA por H-2026-07-27A / gate operacional de H-2026-07-16B1.
+PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA
 ```
 
 H-2026-07-22A corrigiu o bootstrap `UNKNOWN`, passou por review, foi implantado
-e removeu o problema original. O smoke real posterior ficou RED na transição
-availability → passageiros: oito resultados brutos foram confundidos com a
-única opção apresentada, não existia `availability_prompt_event_v1` e a
-confirmação `"sim"` terminou em `SAFE_PHASE_FALLBACK`, sem `booking_create`.
-H-2026-07-27A está **EM CORREÇÃO APÓS REVIEW — 3 P1 + 1 P2 DE ENTREGA
-TEMPORAL E PROVENIÊNCIA**. A correção local tornou o delivery monotônico,
-tratou `INVALID` entregue como barreira temporal, fechou `DRAFT_REVIEW` não
-aprovado e provou metadata hostil no `Repository.CreateReply` real com
-PostgreSQL obrigatório. Novo review dirigido continua pendente. Este diff não
-implementa contrato, validator, corpus ou shadow de B2. B3 permanece bloqueada
-por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+e removeu o problema original. O smoke RED histórico posterior na transição
+availability → passageiros originou H-2026-07-27A. H-A agora está
+`REVIEW_CLOSED`, `MERGED`, `DEPLOYED` e `SMOKE_VERIFIED`; o smoke de 2026-08-28
+atribuível ao runtime `4eb543cb` comprovou seleção materializada e avanço até
+`ASK_PASSENGER_COUNT`, sem `NONE`/`SAFE_PHASE_FALLBACK`. O gate operacional de
+B1 está novamente concluído. Este checkpoint apenas libera B2 como próxima:
+contrato, validator, corpus e shadow ainda não foram iniciados. B3 permanece
+bloqueada por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+
+As frases `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` permanecem
+casos futuros deste meaning/B3; não são regressão de H-A nem foram
+implementadas nesta reconciliação.
 
 ## Objetivo
 
@@ -27,12 +28,15 @@ user-visible.
 
 ## Pré-condições
 
-- H-2026-07-27A revisado sem P1/P2, implantado e com smoke verde;
-- gate operacional de B1 novamente concluído;
-- serialização concorrente comprovada em PostgreSQL;
-- estado e eventos estruturais são autoridade;
-- nenhuma interpretação lexical nova permanece no foundation;
-- nenhum incidente operacional do B1 aberto.
+- [x] H-2026-07-27A revisado sem P1/P2, implantado e com smoke verde;
+- [x] gate operacional de B1 novamente concluído;
+- [x] serialização concorrente comprovada em PostgreSQL;
+- [x] estado e eventos estruturais são autoridade;
+- [x] nenhuma interpretação lexical nova permanece no foundation;
+- [x] nenhum incidente operacional do B1 aberto.
+
+Todas as pré-condições canônicas estão satisfeitas. Isso não inicia H-B2 nem
+autoriza implementação sem `/goal` próprio.
 
 ## Escopo autorizado
 
