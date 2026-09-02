@@ -25,7 +25,8 @@ smoke RED histórico originou H-A; blocker posterior fechado por H-A
 H-2026-07-27A — REVIEW_CLOSED + MERGED + DEPLOYED + SMOKE_VERIFIED
 runtime revision 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
 runtime digest sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
-H-2026-07-16B2 PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA
+H-2026-07-16B2 EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE;
+AGUARDANDO NOVO /review
 H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
 ```
@@ -1114,13 +1115,251 @@ H-B2; 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
 
 Esse bug é determinístico e separado de TravelQueryMeaningV2.
 
+## Execução local de H-2026-07-16B2
+
+H-B2 possui patch local e todos os gates autorizados verdes, mas permanece
+aberta após o primeiro review, com três P2 corrigidos localmente e aguardando
+nova revisão independente. O patch cria o contrato strict
+`PassengerClarificationMeaningV1`, runner Responses API sem storage/tools,
+validator sem acesso ao texto, mapper sem evento, corpus/evaluator separado do
+expected e shadow durável/fail-open atrás de flag dedicada desligada por
+padrão.
+
+Os casos reais `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` propõem
+`KNOWN=3` com `INCLUDES_SPEAKER_COMPOSITION`, mantendo under-5 `UNKNOWN` sem
+idade suficiente. O shadow não aplica essa proposta ao B1 e não altera
+resposta, template, autosend, state ou tools.
+
+Evidência local final, executada somente pelo `schumacher_test_runner`:
+
+```text
+focused count=1: PASS — 0.098s
+corpus/shadow count=20: PASS — 1.471s
+race idempotency/shadow: PASS — 1.407s
+internal/chat completo: PASS — 12.494s
+./... completo: PASS — chat 11.886s; demais pacotes verdes
+gofmt -l: vazio
+regexp.MustCompile produção/internal/chat: 54 (sem crescimento)
+git diff --check: PASS
+```
+
+RED pré-patch: os testes novos falharam por símbolos inexistentes do contrato,
+schema e validator. A suíte final prova schema strict, validator sem parsing,
+provider input independente do expected, flag off/on equivalente no B1,
+idempotência por mensagem/epoch, timeout/concurrency bounded, fail-open,
+resumo sem body/PII e contadores de ação/state/tool iguais a zero.
+
+O primeiro review encontrou três P2: recovery dependente da identidade exata,
+source message esperado alimentando a fixture/provider e um corpus cross-turn
+que era somente uma mensagem. Os três REDs foram reproduzidos antes do patch.
+
+A correção vigente:
+
+- faz sweep por sessão antes do novo claim, com timeout de 2 s e batch 25;
+- terminaliza claim expirado como `COMPLETED/abandoned`, sem replay da key e
+  sem nova chamada do provider antigo;
+- preserva o novo shadow B e mantém recovery idempotente/fail-open;
+- separa source IDs de `Input` e `Expected`, provando mismatch isolado dos dois
+  IDs sem alterar request/output do provider fixture;
+- substitui o caso artificial por dois turnos, messages e epochs reais no
+  corpus, com `child_turn_1` preservado e `child_turn_2` adicionado uma única
+  vez, sem evento nem mutação de estado.
+
+A regressão end-to-end percorre `Ingest -> Reprocess -> scheduler`: B cria uma
+identidade diferente, terminaliza A, não chama novamente o provider A e não
+promove meaning para o B1.
+
+Gates da correção, executados somente pelo `schumacher_test_runner`:
+
+```text
+REDs dirigidos corrigidos: PASS — 0.073s
+focused count=1: PASS — 0.120s
+corpus/shadow count=20: PASS — 1.518s
+race idempotency/shadow: PASS — 1.384s
+internal/chat completo: PASS — 10.509s
+./... completo: PASS — chat 10.473s; demais pacotes verdes
+gofmt -l: vazio
+regexp.MustCompile produção/internal/chat: 54 (sem crescimento)
+git diff --check: PASS
+```
+
+Review vigente: três P2 corrigidos localmente; novo review ainda não executado.
+Produção/smoke: não executados e ainda dependem de review, integração, deploy e
+autorização próprios. Não houve chamada OpenAI real, migration, commit, push,
+PR ou deploy. H-B3 e 3.6F-D permanecem bloqueadas.
+
+### Segunda correção de review de H-B2 — 2026-09-01
+
+O review seguinte fechou a rodada anterior e encontrou três P2 novos: batch de
+recovery por mensagens em vez de claims; validator aceitando total 99 contra
+snapshot conhecido 3 sem correction; e segundo turno do corpus com identidade
+anterior hardcoded. Os três REDs foram reproduzidos antes de cada patch:
+
+```text
+FAIL — 26 claims numa mensagem sem batch claim-level
+FAIL — snapshot 3 versus proposta 99 aceito com ReasonCodes vazio
+FAIL de compilação — builder test-only de turn2 a partir de turn1Actual ausente
+```
+
+A correção vigente seleciona e transforma no máximo 25 claim keys por sweep,
+preserva concorrência por `SKIP LOCKED`, idempotência e zero recall do provider;
+reconcilia aggregates conhecidos do snapshot com correction target tipado; e
+constrói a evidência test-only do turno 2 somente após obter `turn1Actual`. O
+template não contém child reference anterior, e a segunda fixture preserva a
+identidade derivada mais `child_turn_2` exatamente uma vez. Nenhum texto,
+regex, evento ou reducer runtime participa dessas decisões.
+
+Somente o `schumacher_test_runner` executou os gates finais em checkout
+read-only:
+
+```text
+três testes dirigidos: PASS — 0.006s
+focused schema/validator/corpus/shadow: PASS — 0.103s
+corpus/shadow count=20: PASS — 1.678s
+race shadow/idempotency: PASS — 1.512s; nenhum race
+internal/chat completo: PASS — 12.392s
+./... completo: PASS — chat 11.906s; demais pacotes verdes
+gofmt -l nos 14 arquivos Go H-B2: vazio
+regexp.MustCompile produção/internal/chat: 54
+git diff --check: PASS
+critical_action_violation_count: 0
+state_mutation_count: 0
+tool_call_count: 0
+```
+
+A prova de batch com 26 claims é estrutural sobre a SQL; PostgreSQL real não
+foi executado. Não houve chamada OpenAI real, migration, commit, push, PR,
+deploy ou smoke. H-B2 permanece **EM CORREÇÃO APÓS REVIEW — 3 P2 CORRIGIDOS
+LOCALMENTE; AGUARDANDO NOVO `/review`**. Teste em produção continua necessário
+somente em fluxo futuro autorizado. H-B3 e 3.6F-D permanecem bloqueadas.
+
+### Terceira correção de review de H-B2 — 2026-09-01
+
+O terceiro review encontrou dois P2 novos: continuidade das referências
+infantis conhecidas não era reconciliada contra o snapshot e
+`SOLO_SPEAKER` aceitava total diferente de 1. A reavaliação arquitetural
+obrigatória decidiu **KEEP H-B2**: os achados continuam dentro do validator e
+corpus canônicos, sem criar B2a/B2b.
+
+Os REDs reais falharam antes do patch para `SOLO=3`, `INCLUDES=1`, provenance
+divergente, referência omitida/reclassificada/relation alterada, coverage
+`PASSENGER_AGGREGATE`, duas mutações cross-turn de `child_turn_1` e passenger
+correction incompatível com `ChildUnder5AddsTraveler`.
+
+A correção usa uma matriz privada `status × provenance × value`, uma matriz de
+coverage `NONE/PASSENGER/CHILD/FULL` e um reconciliador por ID que preserva
+exatamente uma ocorrência, `relation=CHILD` e `under_5`. Idade histórica não é
+inventada a partir de `AgeKnown`. O corpus adversarial altera somente o actual;
+provider input e expected permanecem independentes.
+
+Somente o `schumacher_test_runner` executou os gates finais em checkout
+read-only:
+
+```text
+REDs dirigidos: PASS — internal/chat 0.007s
+focused schema/validator/corpus/shadow: PASS — internal/chat 0.098s
+corpus/shadow count=20: PASS — internal/chat 1.585s
+race shadow/idempotency: PASS — internal/chat 1.435s
+internal/chat completo: PASS — 11.468s
+./... completo: PASS — chat 10.938s; demais pacotes verdes
+gofmt -l nos 14 arquivos Go H-B2: vazio
+regexp.MustCompile produção/internal/chat: 54
+git diff --check: PASS
+TestPassengerMeaningV1ShadowHasZeroRuntimeInfluence: PASS
+critical_action_violation_count: 0
+state_mutation_count: 0
+tool_call_count: 0
+```
+
+Não houve mudança em schema, prompt, runner, repository/recovery, scheduler,
+shadow ou runtime B1; não houve OpenAI/PG real, migration, commit, push, PR,
+deploy ou smoke. Os dois P2 estão `FIXED_UNREVIEWED`. H-B2 permanece **EM
+CORREÇÃO APÓS TERCEIRO REVIEW — 2 P2 CORRIGIDOS LOCALMENTE; AGUARDANDO NOVO
+`/review`**. H-B3 e 3.6F-D permanecem bloqueadas.
+
+### Quarta correção de review de H-B2 — 2026-09-01
+
+O quarto review encontrou um P1 de precedência determinística: mesmo com
+estado e prompt H-B2 estruturalmente elegíveis, `BOOKING_CANCEL` e
+`HUMAN_SUPPORT` `STRONG` podiam criar o job e chamar o provider. Os dois REDs
+reais falharam antes do patch com uma chamada cada.
+
+O patch usa somente a força da `precomputedDeterministicDecision` já calculada
+no `Reprocess` para impedir a criação do job quando `STRONG`. Não interpreta
+texto nem duplica regras de intent. O controle não-`STRONG` continua chamando o
+shadow uma vez e mantém resposta, template, autosend e state idênticos ao B1.
+
+Somente o `schumacher_test_runner` executou os gates finais em checkout
+read-only:
+
+```text
+STRONG cancel/humano + controle não-STRONG: PASS — 0.235s
+focused ^TestPassengerMeaningV1: PASS — 0.260s
+corpus/shadow count=20: PASS — 5.320s
+race shadow/idempotency: PASS — 1.526s
+internal/chat completo: PASS — 13.034s
+./... completo: PASS — chat 12.666s; demais pacotes verdes
+gofmt -l nos 14 arquivos Go H-B2: vazio
+regexp.MustCompile produção/internal/chat: 54
+git diff --check: PASS
+critical_action_violation_count: 0
+state_mutation_count: 0
+tool_call_count: 0
+```
+
+Não houve alteração em B1, contrato/schema, prompt, validator factual,
+booking/payment, resposta/template/autosend, TravelQueryMeaningV2, Segurança,
+recovery ou persistência. Não houve OpenAI/PG real, migration, commit, push,
+PR, deploy ou smoke. O P1 está `FIXED_UNREVIEWED`. H-B2 permanece **EM
+CORREÇÃO APÓS QUARTO REVIEW — 1 P1 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO
+`/review`**. H-B3 e 3.6F-D permanecem bloqueadas.
+
+### Quinta correção de review de H-B2 — 2026-09-02
+
+O quinto review confirmou o P1 STRONG como `REVIEW_CLOSED` e encontrou um P2:
+`ABSOLUTE_TOTAL=2` aceitava três referências `CHILD` distintas, todas com seis
+anos e `under_5=false`, mesmo com `child_under_5.count=0`. O RED real foi
+aceito com `ReasonCodes:[]` antes do patch.
+
+O validator agora conta somente IDs válidos, distintos e `relation=CHILD` para
+compará-los exclusivamente com `ABSOLUTE_TOTAL` conhecido. Total 2 aceita zero,
+uma ou duas referências; três são rejeitadas. Duplicidades permanecem sob
+`duplicate_child_reference_id`, total desconhecido continua elegível para
+clarification e nenhuma outra provenance recebeu regra nova.
+
+Somente o `schumacher_test_runner` executou os gates finais em checkout
+read-only:
+
+```text
+regressão dirigida deste P2: PASS
+focused ^TestPassengerMeaningV1: PASS
+corpus/shadow count=20: PASS
+race shadow/idempotency: PASS
+internal/chat completo: PASS
+./... completo: PASS; todos os pacotes verdes
+gofmt -l nos 14 arquivos Go H-B2: vazio
+regexp.MustCompile produção/internal/chat: 54
+git diff --check: PASS
+critical_action_violation_count: 0
+state_mutation_count: 0
+tool_call_count: 0
+```
+
+Não houve alteração em schema, prompt, runner, shadow, recovery, B1,
+booking/payment, resposta/template/autosend, TravelQueryMeaningV2 ou Segurança.
+Não houve OpenAI/PG real, migration, commit, push, PR, deploy ou smoke. O P2
+está `FIXED_UNREVIEWED`. H-B2 permanece **EM CORREÇÃO APÓS QUINTO REVIEW — 1
+P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO `/review`**. H-B3 e 3.6F-D permanecem
+bloqueadas.
+
 ## Próxima ação
 
-H-2026-07-27A está operacionalmente encerrado e o gate de H-B1 voltou a
-concluído. Todos os predecessores canônicos de H-B2 estão satisfeitos.
+H-2026-07-27A está operacionalmente encerrado e o gate de H-B1 está concluído.
+H-B2 possui o P2 do quinto review corrigido localmente e gates verdes,
+mas testes não substituem o novo review.
 
-A próxima ação possível é iniciar exclusivamente H-B2 mediante `/goal` e
-autorização próprios. H-B2 ainda **NÃO foi iniciada** por esta reconciliação;
+A próxima ação canônica única é um `/review` separado e read-only de H-B2.
+Não executar H-B3, 3.6F-D, commit, push, PR, deploy ou smoke neste checkpoint.
 H-B3 permanece bloqueada por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
 integral de H-B.
 
@@ -1131,7 +1370,8 @@ integral de H-B.
 3. `docs/SESSION_HANDOFF.md`
 4. `docs/PRODUCTION_CONVERSATION_CASES.md`
 5. `plans/00-plano-mestre-travel-semantic-v2.md`
-6. plano histórico do hotfix H-2026-07-27A, preservado com seu fechamento operacional
+6. `plans/h-2026-07-16b2-passenger-meaning-v1.md`
+7. plano histórico do hotfix H-2026-07-27A, preservado com seu fechamento operacional
 
 Não carregar todos os planos no prompt operacional do Codex. Eles podem ficar versionados no repositório para consulta futura.
 

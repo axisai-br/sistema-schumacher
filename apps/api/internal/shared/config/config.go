@@ -43,6 +43,7 @@ type Config struct {
 	ChatOpenAIInterpreterShadowEnabled bool
 	ChatOpenAIInterpreterAssistEnabled bool
 	ChatOpenAITravelV2ShadowEnabled    bool
+	ChatOpenAIPassengerV1ShadowEnabled bool
 	OpenAIAPIKey                       string
 	OpenAIModel                        string
 	OpenAIVisionModel                  string
@@ -124,6 +125,7 @@ func Load() (Config, error) {
 		ChatOpenAIInterpreterShadowEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_SHADOW_ENABLED")),
 		ChatOpenAIInterpreterAssistEnabled: parseBool(os.Getenv("CHAT_OPENAI_INTERPRETER_ASSIST_ENABLED")),
 		ChatOpenAITravelV2ShadowEnabled:    parseBool(os.Getenv("CHAT_OPENAI_TRAVEL_V2_SHADOW_ENABLED")),
+		ChatOpenAIPassengerV1ShadowEnabled: parseBool(os.Getenv("CHAT_OPENAI_PASSENGER_MEANING_V1_SHADOW_ENABLED")),
 		GoogleSheetsSpreadsheetID:          strings.TrimSpace(os.Getenv("GOOGLE_SHEETS_SPREADSHEET_ID")),
 		GoogleServiceAccountJSON:           strings.TrimSpace(os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
 	}

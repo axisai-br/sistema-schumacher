@@ -71,7 +71,9 @@ type Service struct {
 	profiles            AuthUserProfileEnsurer
 	openaiInterpreter   OpenAIStructuredInterpreter
 	openaiTravelV2      OpenAITravelQueryV2Interpreter
+	openaiPassengerV1   OpenAIPassengerMeaningV1Interpreter
 	travelV2Timeout     time.Duration
+	passengerV1Timeout  time.Duration
 	deterministicRouter func([]Message, string, CanonicalConversationState, time.Time) IntentDecision
 }
 
@@ -99,6 +101,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 	var profiles AuthUserProfileEnsurer
 	var openaiInterpreter OpenAIStructuredInterpreter
 	var openaiTravelV2 OpenAITravelQueryV2Interpreter
+	var openaiPassengerV1 OpenAIPassengerMeaningV1Interpreter
 	for _, dep := range deps {
 		switch typed := dep.(type) {
 		case chatLogger:
@@ -162,6 +165,10 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 			if openaiTravelV2 == nil {
 				openaiTravelV2 = typed
 			}
+		case OpenAIPassengerMeaningV1Interpreter:
+			if openaiPassengerV1 == nil {
+				openaiPassengerV1 = typed
+			}
 		}
 	}
 	return &Service{
@@ -182,6 +189,7 @@ func NewService(store Store, cfg config.Config, deps ...interface{}) *Service {
 		profiles:            profiles,
 		openaiInterpreter:   openaiInterpreter,
 		openaiTravelV2:      openaiTravelV2,
+		openaiPassengerV1:   openaiPassengerV1,
 		deterministicRouter: routeDeterministicIntent,
 	}
 }
@@ -1027,6 +1035,7 @@ func availabilitySelectionMaterializationAppliedV1(
 
 func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output ReprocessResult, outputErr error) {
 	var travelV2BackgroundJob *travelQueryV2ShadowBackgroundJob
+	var passengerV1BackgroundJob *passengerMeaningV1ShadowBackgroundJob
 	defer func() {
 		if outputErr != nil {
 			return
@@ -1036,6 +1045,11 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 			return
 		}
 		s.scheduleTravelQueryV2Shadow(*travelV2BackgroundJob)
+	}()
+	defer func() {
+		if outputErr == nil && passengerV1BackgroundJob != nil {
+			s.schedulePassengerMeaningV1Shadow(*passengerV1BackgroundJob)
+		}
 	}()
 
 	sessionID := strings.TrimSpace(input.SessionID)
@@ -1351,6 +1365,20 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 				IdempotencyKey:           travelV2IdempotencyKey,
 			},
 			Timeout: s.travelV2Timeout,
+		}
+	}
+	if s.cfg.ChatOpenAIPassengerV1ShadowEnabled &&
+		travelQueryV2ShadowDecisionStrength(precomputedDeterministicDecision, false) != DecisionStrengthStrong {
+		if job, ok := buildPassengerMeaningV1ShadowBackgroundJob(
+			session.ID,
+			candidates,
+			currentTurn,
+			structuredCanonicalState,
+			passengerState,
+			s.openaiPassengerV1,
+			s.passengerV1Timeout,
+		); ok {
+			passengerV1BackgroundJob = &job
 		}
 	}
 
@@ -3934,6 +3962,77 @@ func buildTravelQueryV2ShadowIdempotencyKey(sessionID string, candidates []Messa
 		parts = append(parts, message.ID)
 	}
 	return "chat-openai-travel-v2-shadow-" + deterministicID(strings.Join(parts, "|"))
+}
+
+func buildPassengerMeaningV1ShadowIdempotencyKey(sessionID string, candidates []Message, promptEventID string) string {
+	parts := make([]string, 0, len(candidates)+3)
+	parts = append(parts, "v1", strings.TrimSpace(sessionID), strings.TrimSpace(promptEventID))
+	for _, message := range candidates {
+		parts = append(parts, strings.TrimSpace(message.ID))
+	}
+	return "chat-openai-passenger-meaning-v1-shadow-" + deterministicID(strings.Join(parts, "|"))
+}
+
+func buildPassengerMeaningV1ShadowBackgroundJob(
+	sessionID string,
+	candidates []Message,
+	currentTurn string,
+	canonicalState CanonicalConversationState,
+	passengerState PassengerClarificationStateV1,
+	interpreter OpenAIPassengerMeaningV1Interpreter,
+	timeout time.Duration,
+) (passengerMeaningV1ShadowBackgroundJob, bool) {
+	if canonicalState.Phase != ConversationPhasePassengerCollection ||
+		validatePassengerClarificationStateV1(passengerState) != nil ||
+		passengerState.Authority != PassengerClarificationAuthorityPreBooking ||
+		!passengerState.HasEvidence || passengerClarificationStateConflictingV1(passengerState) {
+		return passengerMeaningV1ShadowBackgroundJob{}, false
+	}
+
+	var promptKind ActivePromptKind
+	var promptMessageID string
+	switch {
+	case passengerState.PassengerSlotStatus == PassengerClarificationSlotOpen &&
+		passengerState.ChildSlotStatus != PassengerClarificationSlotOpen:
+		promptKind = ActivePromptPassengerCount
+		promptMessageID = passengerState.PassengerPromptMessageID
+	case passengerState.ChildSlotStatus == PassengerClarificationSlotOpen &&
+		passengerState.PassengerSlotStatus != PassengerClarificationSlotOpen:
+		promptKind = ActivePromptLapChildQuestion
+		promptMessageID = passengerState.ChildPromptMessageID
+	default:
+		return passengerMeaningV1ShadowBackgroundJob{}, false
+	}
+	promptEvent, ok := passengerClarificationPromptEventV1(promptKind, promptMessageID)
+	if !ok || !passengerMeaningV1PromptMatchesState(passengerState, promptEvent) {
+		return passengerMeaningV1ShadowBackgroundJob{}, false
+	}
+	messageID := strings.TrimSpace(latestCandidateMessageID(candidates))
+	if strings.TrimSpace(sessionID) == "" || messageID == "" || strings.TrimSpace(currentTurn) == "" {
+		return passengerMeaningV1ShadowBackgroundJob{}, false
+	}
+	idempotencyKey := buildPassengerMeaningV1ShadowIdempotencyKey(sessionID, candidates, promptEvent.EventID)
+	identity := PassengerMeaningV1ShadowIdentity{
+		SessionID:       strings.TrimSpace(sessionID),
+		MessageID:       messageID,
+		PromptEventID:   strings.TrimSpace(promptEvent.EventID),
+		IdempotencyKey:  idempotencyKey,
+		ContractVersion: passengerClarificationMeaningV1Version,
+	}
+	return passengerMeaningV1ShadowBackgroundJob{
+		Identity: identity,
+		Input: PassengerMeaningV1ShadowInput{
+			Enabled:             true,
+			OpenAIInterpreter:   interpreter,
+			CurrentTurn:         currentTurn,
+			State:               clonePassengerMeaningV1State(passengerState),
+			PromptEvent:         clonePassengerMeaningV1Prompt(promptEvent),
+			SourceMessageID:     messageID,
+			SourcePromptEventID: promptEvent.EventID,
+			IdempotencyKey:      idempotencyKey,
+		},
+		Timeout: timeout,
+	}, true
 }
 
 func deterministicID(value string) string {
