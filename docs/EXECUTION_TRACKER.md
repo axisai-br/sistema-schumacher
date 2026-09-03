@@ -287,11 +287,11 @@ Regras:
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
-| 8 | H-2026-07-16B | **EM ANDAMENTO — PRÓXIMO SLICE H-B2 AGUARDA AUTORIZAÇÃO PRÓPRIA** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; B1 está concluída e B2 ainda não foi iniciada. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — H-B2 EM CORREÇÃO APÓS QUINTO REVIEW; 1 P2 CORRIGIDO LOCALMENTE** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; decisão KEEP H-B2, B1 concluída e novo `/review` ainda obrigatório, sem liberar H-B3. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA — GATE OPERACIONAL ENCERRADO** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fundação, review, PostgreSQL e gate operacional estão concluídos; H-A fechou o blocker posterior de autoridade materializada. |
 | 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE RED HISTÓRICO; BLOCKER FECHADO POR H-A** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido; o RED posterior na transição availability → passageiros originou H-A e permanece preservado como histórico. |
 | 11 | H-2026-07-27A | **REVIEW_CLOSED — MERGED — DEPLOYED — SMOKE_VERIFIED** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | correção `2784b731` integrada por `c8f4e453`; runtime `4eb543cb`; smoke de 2026-08-28 verde e atribuível ao runtime. |
-| 12 | H-2026-07-16B2 | **PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | todos os predecessores canônicos estão satisfeitos; esta reconciliação não inicia contrato, validator, corpus ou shadow. |
+| 12 | H-2026-07-16B2 | **EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO `/review`** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | KEEP H-B2; P1 STRONG fechado e limite factual de referências contra `ABSOLUTE_TOTAL` corrigido localmente; gates verdes não encerram o slice nem liberam H-B3. |
 | 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 15 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -4855,6 +4855,470 @@ REVIEW**, aguardando novo `/review` sem P0/P1/P2. Não houve commit, push, PR,
 merge, deploy ou smoke nesta tarefa documental; a evidência operacional acima
 foi somente reconciliada. Próxima ação única: mediante `/goal` e autorização
 próprios, iniciar exclusivamente H-B2.
+
+#### Execução local de H-2026-07-16B2 — PassengerClarificationMeaningV1 em shadow (2026-08-31)
+
+**Status vigente:** **EM CORREÇÃO APÓS REVIEW — 3 P2 CORRIGIDOS LOCALMENTE;
+AGUARDANDO NOVO `/review`**. Testes locais verdes não declaram review limpo,
+conclusão do slice nem liberação de H-B3. O bloco inicial abaixo preserva a
+evidência anterior ao primeiro review; a correção de 2026-09-01 o supersede
+somente nos três findings descritos ao final desta seção.
+
+O checkpoint inicial foi reconciliado em modo read-only na branch
+`feat/h-2026-07-16b2-passenger-meaning-v1`, HEAD/base
+`6957ec4e46128b835c383907cdda00d4fbd26303`, com working tree inicialmente
+limpo, H-A `REVIEW_CLOSED + MERGED + DEPLOYED + SMOKE_VERIFIED`, B1 concluída
+e sem finding predecessor aberto. O explorer especializado mapeou somente os
+call paths; a implementação foi feita pelo agente principal.
+
+O patch acrescenta:
+
+- `PassengerClarificationMeaningV1` versionado, schema recursivamente strict,
+  nullable explícito e sem campo operacional executável;
+- runner Responses API com `store=false`, `tools=[]`, `tool_choice=none`,
+  `text.format` strict e `X-Client-Request-Id` idempotente;
+- validator determinístico sem `CurrentTurn`, com versão, source IDs, epoch
+  canônico recalculado, enums, ranges, referências, correção e missing fields;
+- mapper para proposta local isolada, incapaz de produzir evento B1;
+- corpus/evaluator determinístico com provider fixture separado do expected,
+  sem rede e com spy que prova que alterar expected não muda o input;
+- shadow fail-open após snapshot, fora da autoridade runtime, com timeout de
+  provider de 10 s, store de 2 s, concorrência máxima 4, claim/completion
+  duráveis e atômicos no `normalized_payload`, retry limitado e lease;
+- resumo allowlisted sem body, histórico, nome, telefone, CPF/documento ou
+  referências cruas, além das métricas explícitas de schema/validator e
+  contadores de ação crítica, mutação de state e tool call;
+- flag dedicada `CHAT_OPENAI_PASSENGER_MEANING_V1_SHADOW_ENABLED=false`.
+
+Os dois sintomas reais obrigatórios estão no corpus em contexto estrutural de
+`PASSENGER_COLLECTION`/prompt passageiro:
+
+```text
+"eu e mais 2 crianças"
+"eu e mais duas crianças"
+→ passenger_count KNOWN=3
+→ provenance INCLUDES_SPEAKER_COMPOSITION
+→ child_under_5 UNKNOWN, sem count inferido por relação familiar
+```
+
+RED real registrado antes do patch, no container Go 1.23 com caches fora do
+worktree:
+
+```text
+go test -count=1 ./internal/chat -run TestPassengerMeaningV1
+FAIL de compilação — undefined:
+openAIPassengerClarificationMeaningV1JSONSchema
+PassengerClarificationMeaningV1
+ValidatePassengerClarificationMeaningV1
+```
+
+Após o patch, somente o `schumacher_test_runner` executou os gates autorizados
+no repositório montado read-only:
+
+```text
+PASS — gofmt -l nos 14 arquivos Go alterados — saída vazia
+PASS — regexp.MustCompile em produção/internal/chat = 54 — baseline 54
+PASS — focused count=1 — internal/chat 0.098s
+PASS — corpus/shadow count=20 — internal/chat 1.471s
+PASS — race idempotency/shadow — internal/chat 1.407s
+PASS — go test -count=1 ./internal/chat — 12.494s
+PASS — go test -count=1 ./... — chat 11.886s; demais pacotes verdes
+PASS — git diff --check — saída vazia
+```
+
+As provas verdes incluem `TestPassengerMeaningV1SchemaIsStrict`,
+`TestPassengerMeaningV1ValidatorDoesNotParseCurrentTurn`, os dois casos reais,
+flag off/on com a mesma projeção B1 de resposta/template/autosend/state, uma
+chamada por mensagem/epoch/versão, novo claim para epoch canônico distinto,
+timeout e concorrência bounded, provider error/timeout fail-open, resumo
+sanitizado e:
+
+```text
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+Arquivos alterados neste slice:
+
+```text
+apps/api/.env.example
+apps/api/cmd/api/main.go
+apps/api/internal/shared/config/config.go
+apps/api/internal/shared/config/config_test.go
+apps/api/internal/chat/passenger_meaning_v1.go
+apps/api/internal/chat/openai_passenger_meaning_v1_schema.go
+apps/api/internal/chat/openai_passenger_meaning_v1_prompt.go
+apps/api/internal/chat/openai_passenger_meaning_v1_runner.go
+apps/api/internal/chat/passenger_meaning_v1_shadow.go
+apps/api/internal/chat/passenger_meaning_v1_shadow_background.go
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/service.go
+apps/api/internal/chat/passenger_meaning_v1_test.go
+apps/api/internal/chat/passenger_meaning_v1_corpus_test.go
+apps/api/internal/chat/passenger_meaning_v1_shadow_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Não houve alteração em `TravelQueryMeaningV2`, reducer/autoridade B1,
+resposta, template, autosend, booking, payment, documentos, preço, STRONG,
+migration, schema físico, infra ou track Segurança. Nenhuma chamada OpenAI
+real, commit, push, PR, deploy ou smoke foi executada.
+
+Limitação do checkpoint pré-review: o claim expirado só era terminalizado
+quando a identidade exata era reprocessada. O primeiro review rejeitou essa
+limitação como P2; a correção vigente está registrada abaixo.
+
+Resultado naquele checkpoint: **REVIEW AINDA NÃO EXECUTADO**. Esse estado foi
+supersedido pelo primeiro review de H-B2, que encontrou três P2.
+
+##### Correção após o primeiro review — 3 P2 (2026-09-01)
+
+O review manteve H-B2 aberto e inseguro para commit por três findings:
+
+1. claim `IN_PROGRESS` expirado dependia do replay da mesma identidade;
+2. `Expected.SourceMessageID` alimentava input/output da fixture do provider;
+3. `distinct_children_across_statements` era um caso de um turno só, sem
+   evidência cross-turn real.
+
+REDs reais executados antes das correções:
+
+```text
+FAIL — claim A continuou IN_PROGRESS após job B com message/key diferentes
+FAIL — mutar somente Expected.SourceMessageID alterou provider input/output
+FAIL — caso cross-turn não continha referência estruturada anterior
+```
+
+Correções locais restritas aos findings:
+
+- antes de cada novo claim elegível, o shadow executa sweep por sessão com
+  timeout de 2 s, batch máximo 25, row locks `SKIP LOCKED` e transformação
+  idempotente de claims expirados para `COMPLETED/abandoned`; o sweep não usa
+  message/key antiga e nunca chama provider;
+- a query examina somente a sessão do novo job, preserva claims não expirados e
+  deixa falha de storage fail-open para o novo shadow;
+- o corpus passou a ter `Input` próprio com source message/prompt IDs; provider
+  fixture e request derivam exclusivamente desse input, enquanto mutações
+  isoladas dos dois IDs em `Expected` mantêm o provider inalterado e fazem o
+  evaluator falhar;
+- a prova `distinct_children_across_turns` usa dois source messages e dois
+  prompt epochs: o segundo turno recebe fato estruturado independente de
+  `child_turn_1` e valida `child_turn_1` + `child_turn_2` exatamente uma vez,
+  sem aplicar evento ou promover meaning para o estado B1;
+- a regressão end-to-end percorre `Ingest -> Reprocess -> scheduler`, comprova
+  identidade B diferente, terminalização de A, uma chamada por provider e
+  estado B1 inalterado.
+
+Arquivos funcionais/testes alterados nesta correção:
+
+```text
+apps/api/internal/chat/repository.go
+apps/api/internal/chat/passenger_meaning_v1_shadow_background.go
+apps/api/internal/chat/passenger_meaning_v1_shadow_test.go
+apps/api/internal/chat/passenger_meaning_v1_corpus_test.go
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Somente o `schumacher_test_runner` executou os gates pós-patch, com o
+repositório montado read-only:
+
+```text
+PASS — REDs dirigidos corrigidos — internal/chat 0.073s
+PASS — focused count=1 — internal/chat 0.120s
+PASS — corpus/shadow count=20 — internal/chat 1.518s
+PASS — race idempotency/shadow — internal/chat 1.384s
+PASS — go test -count=1 ./internal/chat — 10.509s
+PASS — go test -count=1 ./... — chat 10.473s; demais pacotes verdes
+PASS — gofmt -l nos 14 arquivos Go alterados — saída vazia
+PASS — regexp.MustCompile produção/internal/chat = 54 — baseline 54
+PASS — git diff --check — saída vazia
+```
+
+Os gates também preservaram schema strict/versionado, validator sem texto,
+`store=false`, `tools=[]`, `tool_choice=none`, flag off idêntica ao B1, os dois
+casos reais obrigatórios, summaries sem body/PII e:
+
+```text
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+Resultado do review vigente: **3 P2 CORRIGIDOS LOCALMENTE; NOVO REVIEW AINDA
+NÃO EXECUTADO**. Necessidade de teste em produção: **SIM, futuramente**, somente
+após review limpo, integração, deploy e autorização próprios. Não houve chamada
+OpenAI real, migration, commit, push, PR, deploy ou smoke. H-B2 permanece **EM
+CORREÇÃO APÓS REVIEW**; H-B3 continua **BLOQUEADA por H-B2** e 3.6F-D continua
+**BLOQUEADA pelo fechamento integral de H-B**. Próxima ação canônica única:
+novo `/review` independente e read-only de H-B2.
+
+##### Correção após o segundo review — 3 P2 (2026-09-01)
+
+O segundo review manteve H-B2 aberto e inseguro para commit por três findings
+novos, sem reabrir os findings já fechados:
+
+1. o batch de recovery limitava 25 mensagens, mas uma única mensagem podia
+   terminalizar mais de 25 claims expirados;
+2. o validator aceitava proposta `passenger_count=99` contra snapshot
+   estruturado conhecido com total 3 quando `correction=NONE`;
+3. o segundo turno do corpus recebia `child_turn_1` hardcoded, sem derivá-lo do
+   resultado estruturado real do primeiro turno.
+
+REDs reproduzidos antes de cada correção:
+
+```text
+FAIL — fixture com 26 claims numa mensagem não encontrou batch claim-level
+FAIL — snapshot total 3 versus proposta 99 foi aceito com ReasonCodes vazio
+FAIL de compilação — builder test-only de turn2 a partir de turn1Actual ausente
+```
+
+Correções locais restritas aos três findings:
+
+- o recovery seleciona globalmente até 25 pares `(message_id, claim_key)`
+  expirados depois de `jsonb_each`, bloqueia somente as mensagens selecionadas
+  com `FOR UPDATE ... SKIP LOCKED` e agrega de volta somente essas keys; claims
+  restantes ficam para o sweep seguinte, sem replay da identidade e sem nova
+  chamada ao provider;
+- o validator compara aggregates conhecidos do snapshot com a proposta e
+  rejeita divergência sem correction target compatível; a decisão usa somente
+  estruturas tipadas, sem texto, regex ou parser lexical;
+- o template do segundo turno começa sem evidência infantil. Após avaliar o
+  primeiro resultado, um builder test-only deriva count e referências para o
+  snapshot do turno 2; a fixture do segundo provider preserva a identidade
+  derivada e adiciona `child_turn_2` exatamente uma vez, sem evento ou mutação
+  do state runtime.
+
+Somente o `schumacher_test_runner` executou os gates finais pós-patch, com o
+repositório montado read-only e caches fora do working tree:
+
+```text
+PASS — três testes dirigidos novos — internal/chat 0.006s
+PASS — focused schema/validator/corpus/shadow — internal/chat 0.103s
+PASS — corpus/shadow count=20 — internal/chat 1.678s
+PASS — race shadow/idempotency — internal/chat 1.512s; nenhum race
+PASS — go test -count=1 ./internal/chat — 12.392s
+PASS — go test -count=1 ./... — chat 11.906s; demais pacotes verdes
+PASS — gofmt -l nos 14 arquivos Go H-B2 — saída vazia
+PASS — regexp.MustCompile produção/internal/chat = 54 — baseline 54
+PASS — git diff --check — saída vazia
+```
+
+Os gates preservaram schema strict/versionado, `store=false`, `tools=[]`,
+`tool_choice=none`, flag desligada por padrão, zero influência runtime e:
+
+```text
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+A prova de 26 claims é estrutural sobre a SQL e não executou PostgreSQL real.
+Não houve chamada OpenAI real, migration, commit, push, PR, deploy ou smoke.
+Necessidade de teste em produção: **SIM, futuramente**, somente após review
+limpo, integração, deploy e autorização próprios. H-B2 permanece **EM
+CORREÇÃO APÓS REVIEW — 3 P2 CORRIGIDOS LOCALMENTE; AGUARDANDO NOVO
+`/review`**. H-B3 continua **BLOQUEADA por H-B2** e 3.6F-D continua
+**BLOQUEADA pelo fechamento integral de H-B**. Próxima ação canônica única:
+novo `/review` independente e read-only de H-B2.
+
+##### Reavaliação arquitetural e correção após o terceiro review — 2 P2 (2026-09-01)
+
+O terceiro review fechou a rodada anterior e encontrou dois P2 novos:
+
+1. o validator preservava `ChildUnder5Count`, mas aceitava omissão ou
+   reclassificação de uma referência infantil conhecida sem correction target
+   compatível;
+2. `passenger_count KNOWN` aceitava `SOLO_SPEAKER` com valor diferente de 1.
+
+Conforme a disciplina de terceira rodada corretiva, a arquitetura e a divisão
+foram reavaliadas antes do patch. A decisão foi **KEEP H-B2**: ambos os achados
+pertencem ao validator factual e ao corpus já autorizados, sem novo contrato,
+schema, shadow, persistência ou runtime. A causa raiz foi a ausência de uma
+matriz completa `status × provenance × value` e de reconciliação declarativa
+por correction coverage, não uma nova fronteira de slice.
+
+REDs reais, executados no Go 1.23 antes da correção funcional:
+
+```text
+FAIL — SOLO_SPEAKER=3 e INCLUDES_SPEAKER_COMPOSITION=1 aceitos
+FAIL — provenance divergente do snapshot aceita sem correction
+FAIL — referência conhecida omitida, reclassificada ou com relation alterada aceita
+FAIL — PASSENGER_AGGREGATE cobriu indevidamente divergência infantil
+FAIL — duas mutações cross-turn de child_turn_1 aceitas pelo validator
+FAIL — passenger correction incompatível com ChildUnder5AddsTraveler sem reason fechado
+```
+
+A correção local:
+
+- usa matriz privada para as combinações válidas de status, provenance,
+  presença e faixa/exato do valor: `SOLO_SPEAKER=1`,
+  `INCLUDES_SPEAKER_COMPOSITION=2..99` e `ABSOLUTE_TOTAL=1..99`;
+- compara valor e provenance conhecidos do snapshot sem correction de
+  passageiro compatível;
+- usa matriz privada de coverage `NONE/PASSENGER/CHILD/FULL` e reconciliador
+  por ID para exigir exatamente uma ocorrência, `relation=CHILD` e `under_5`
+  preservado; idade não é reconstruída a partir do bit `AgeKnown`;
+- rejeita passenger-only correction que abandone `SOLO_SPEAKER` enquanto a
+  dependência `ChildUnder5AddsTraveler` exigir substituição integral;
+- adiciona mutações adversariais do actual cross-turn, mantendo input/provider
+  e expected independentes.
+
+Somente o `schumacher_test_runner` executou os gates finais, com o repositório
+montado read-only em `golang:1.23` e caches fora do working tree:
+
+```text
+PASS — REDs dirigidos pós-patch — internal/chat 0.007s
+PASS — focused schema/validator/corpus/shadow — internal/chat 0.098s
+PASS — corpus/shadow count=20 — internal/chat 1.585s
+PASS — race shadow/idempotency — internal/chat 1.435s; nenhum race
+PASS — go test -count=1 ./internal/chat — 11.468s
+PASS — go test -count=1 ./... — chat 10.938s; demais pacotes verdes
+PASS — gofmt -l nos 14 arquivos Go H-B2 — saída vazia
+PASS — regexp.MustCompile produção/internal/chat = 54 — baseline 54
+PASS — git diff --check — saída vazia
+PASS — TestPassengerMeaningV1ShadowHasZeroRuntimeInfluence
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+Arquivos alterados exclusivamente nesta rodada corretiva:
+
+```text
+apps/api/internal/chat/passenger_meaning_v1.go
+apps/api/internal/chat/passenger_meaning_v1_test.go
+apps/api/internal/chat/passenger_meaning_v1_corpus_test.go
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Não houve alteração em schema, prompt, runner, mapper, repository/recovery,
+scheduler, shadow, interfaces públicas ou runtime B1. Não houve OpenAI ou
+PostgreSQL real, migration, commit, push, PR, deploy ou smoke. Os dois P2 estão
+`FIXED_UNREVIEWED`; H-B2 permanece **EM CORREÇÃO APÓS TERCEIRO REVIEW — 2 P2
+CORRIGIDOS LOCALMENTE; AGUARDANDO NOVO `/review`**. H-B3 e 3.6F-D permanecem
+bloqueados. Próxima ação canônica única: novo `/review` independente e
+read-only de H-B2.
+
+##### Correção após o quarto review — 1 P1 de precedência STRONG (2026-09-01)
+
+O quarto review preservou **KEEP H-B2** e encontrou um P1: com fase
+`PASSENGER_COLLECTION` e estado/prompt elegíveis, o bloco de criação do job
+ignorava a decisão determinística já calculada e podia agendar o
+`PassengerMeaningV1` para `BOOKING_CANCEL` ou `HUMAN_SUPPORT` `STRONG`.
+
+RED real antes do patch funcional, em `golang:1.23`:
+
+```text
+FAIL — BOOKING_CANCEL STRONG chamou o provider 1 vez
+FAIL — HUMAN_SUPPORT STRONG chamou o provider 1 vez
+```
+
+O patch mínimo adiciona ao ponto de criação do job uma condição sobre
+`travelQueryV2ShadowDecisionStrength(precomputedDeterministicDecision, false)`:
+somente decisões diferentes de `STRONG` podem prosseguir para a elegibilidade
+estrutural já existente. Não há nova leitura de texto, regra de intent, parser
+ou alteração no shadow/provider. O controle flag off/on agora afirma
+explicitamente que sua decisão é não-`STRONG` e preserva uma chamada do shadow
+e a mesma projeção B1.
+
+Somente o `schumacher_test_runner` executou os gates finais, com o repositório
+montado read-only e caches fora do working tree:
+
+```text
+PASS — STRONG cancel/humano + controle não-STRONG — internal/chat 0.235s
+PASS — focused ^TestPassengerMeaningV1 — internal/chat 0.260s
+PASS — corpus/shadow count=20 — internal/chat 5.320s
+PASS — race shadow/idempotency — internal/chat 1.526s; nenhum race
+PASS — go test -count=1 ./internal/chat — 13.034s
+PASS — go test -count=1 ./... — chat 12.666s; demais pacotes verdes
+PASS — gofmt -l nos 14 arquivos Go H-B2 — saída vazia
+PASS — regexp.MustCompile produção/internal/chat = 54 — baseline 54
+PASS — git diff --check — saída vazia
+PASS — TestPassengerMeaningV1ShadowHasZeroRuntimeInfluence
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+Arquivos alterados exclusivamente nesta rodada corretiva:
+
+```text
+apps/api/internal/chat/service.go
+apps/api/internal/chat/passenger_meaning_v1_shadow_test.go
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Não houve alteração em B1, contrato/schema, prompt, validator factual,
+booking/payment, resposta/template/autosend, TravelQueryMeaningV2, Segurança,
+recovery ou persistência. Não houve OpenAI real, migration, commit, push, PR,
+deploy ou smoke. O P1 está `FIXED_UNREVIEWED`; H-B2 permanece **EM CORREÇÃO
+APÓS QUARTO REVIEW — 1 P1 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO `/review`**.
+H-B3 e 3.6F-D permanecem bloqueados. Próxima ação canônica única: novo
+`/review` independente e read-only de H-B2.
+
+##### Correção após o quinto review — 1 P2 de referências contra total absoluto (2026-09-02)
+
+O quinto review confirmou o P1 STRONG como fechado e encontrou um P2 factual:
+uma proposta `ABSOLUTE_TOTAL=2`, `child_under_5.count=0` e três referências
+`CHILD` distintas, todas com seis anos e `under_5=false`, era aceita.
+
+RED real antes do patch funcional:
+
+```text
+FAIL — três identidades infantis distintas contra total absoluto 2 foram aceitas com ReasonCodes:[]
+```
+
+O patch mínimo adiciona ao validator uma relação exclusiva para
+`ABSOLUTE_TOTAL` conhecido. A contagem considera somente IDs opacos válidos,
+distintos e `relation=CHILD`; três excedendo total 2 recebem o reason fechado
+`children_exceed_passenger_total`. Os limites positivos provam zero, uma e duas
+referências válidas para total 2, duplicidade ainda rejeitada somente pela
+invariável existente e total desconhecido ainda elegível para clarification.
+`SOLO_SPEAKER`, `INCLUDES_SPEAKER_COMPOSITION` e demais provenances não foram
+ampliadas.
+
+Somente o `schumacher_test_runner` executou os gates finais em checkout
+read-only e sem editar arquivos:
+
+```text
+PASS — regressão dirigida deste P2 — internal/chat
+PASS — focused ^TestPassengerMeaningV1 — internal/chat
+PASS — corpus/shadow count=20 — internal/chat
+PASS — race shadow/idempotency — internal/chat; nenhum race
+PASS — go test -count=1 ./internal/chat
+PASS — go test -count=1 ./... — todos os pacotes verdes
+PASS — gofmt -l nos 14 arquivos Go H-B2 — saída vazia
+PASS — regexp.MustCompile produção/internal/chat = 54 — baseline 54
+PASS — git diff --check — saída vazia
+PASS — TestPassengerMeaningV1ShadowHasZeroRuntimeInfluence
+critical_action_violation_count = 0
+state_mutation_count = 0
+tool_call_count = 0
+```
+
+Arquivos alterados exclusivamente nesta rodada corretiva:
+
+```text
+apps/api/internal/chat/passenger_meaning_v1.go
+apps/api/internal/chat/passenger_meaning_v1_test.go
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Não houve texto, regex, parser, mudança de schema/prompt/runner, evento/state,
+shadow, recovery, B1, booking/payment, resposta/template/autosend,
+TravelQueryMeaningV2 ou Segurança. Não houve OpenAI/PG real, migration,
+commit, push, PR, deploy ou smoke. O P2 está `FIXED_UNREVIEWED`; H-B2 permanece
+**EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO
+`/review`**. H-B3 e 3.6F-D permanecem bloqueados. Próxima ação canônica única:
+novo `/review` independente e read-only de H-B2.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 

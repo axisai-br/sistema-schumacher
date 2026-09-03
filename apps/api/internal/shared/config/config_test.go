@@ -40,3 +40,27 @@ func TestLoadRejectsInvalidSupabaseSecretKeyWithoutLeakingValue(t *testing.T) {
 		t.Fatal("configuration error must not include credential value")
 	}
 }
+
+func TestLoadPassengerMeaningV1ShadowFlagDefaultsOffAndParsesExplicitOn(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("SUPABASE_JWT_SECRET", "jwt-secret")
+	t.Setenv("SUPABASE_ISSUER", "https://supabase.example.com/auth/v1")
+	t.Setenv("CHAT_OPENAI_PASSENGER_MEANING_V1_SHADOW_ENABLED", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load default passenger meaning config: %v", err)
+	}
+	if cfg.ChatOpenAIPassengerV1ShadowEnabled {
+		t.Fatal("passenger meaning v1 shadow must default off")
+	}
+
+	t.Setenv("CHAT_OPENAI_PASSENGER_MEANING_V1_SHADOW_ENABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load enabled passenger meaning config: %v", err)
+	}
+	if !cfg.ChatOpenAIPassengerV1ShadowEnabled {
+		t.Fatal("explicit passenger meaning v1 shadow flag must parse on")
+	}
+}

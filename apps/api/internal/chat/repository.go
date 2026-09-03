@@ -3064,6 +3064,336 @@ func decodeTravelQueryV2ShadowClaim(raw []byte) (TravelQueryV2ShadowClaimResult,
 	}
 }
 
+func (r *Repository) ClaimPassengerMeaningV1Shadow(ctx context.Context, identity PassengerMeaningV1ShadowIdentity, leaseDuration time.Duration) (PassengerMeaningV1ShadowClaimResult, error) {
+	identity = normalizePassengerMeaningV1ShadowIdentity(identity)
+	if !passengerMeaningV1ShadowIdentityValid(identity) {
+		return PassengerMeaningV1ShadowClaimResult{}, ErrPassengerMeaningV1ShadowClaimNotFound
+	}
+	if leaseDuration <= 0 {
+		leaseDuration = passengerMeaningV1ShadowLeaseDuration(passengerMeaningV1ShadowProviderTimeout)
+	}
+	recordPayload, err := encodeTravelQueryV2ShadowJSON(passengerMeaningV1ShadowClaimRecord{
+		Status:              passengerMeaningV1ShadowClaimInProgress,
+		IdempotencyKey:      identity.IdempotencyKey,
+		ContractVersion:     identity.ContractVersion,
+		SourceMessageID:     identity.MessageID,
+		SourcePromptEventID: identity.PromptEventID,
+	})
+	if err != nil {
+		return PassengerMeaningV1ShadowClaimResult{}, err
+	}
+	var raw []byte
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				case
+					when jsonb_typeof(message.normalized_payload -> $4) = 'object'
+						then message.normalized_payload -> $4
+					else '{}'::jsonb
+				end || jsonb_build_object($3::text, $5::jsonb || jsonb_build_object(
+					'claimed_at', statement_timestamp(),
+					'lease_expires_at', statement_timestamp() + ($6::double precision * interval '1 millisecond'),
+					'lease_expires_at_unix_ms', floor(extract(epoch from (statement_timestamp() + ($6::double precision * interval '1 millisecond'))) * 1000)
+				)) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and not (
+					case
+						when jsonb_typeof(message.normalized_payload -> $4) = 'object'
+							then message.normalized_payload -> $4
+						else '{}'::jsonb
+					end ? $3::text
+				)
+			for update of message
+		), updated as (
+			update chat_messages message
+			set normalized_payload = jsonb_set(
+				candidate.normalized_payload,
+				array[$4]::text[],
+				candidate.claims,
+				true
+			)
+			from candidate
+			where message.id = candidate.id
+			returning candidate.claims -> $3::text
+		)
+		select * from updated
+	`, identity.SessionID, identity.MessageID, identity.IdempotencyKey, passengerMeaningV1ShadowClaimsPayloadKey, recordPayload, leaseDuration.Milliseconds()).Scan(&raw)
+	if err == nil {
+		return PassengerMeaningV1ShadowClaimResult{Status: PassengerMeaningV1ShadowClaimAcquired}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return PassengerMeaningV1ShadowClaimResult{}, err
+	}
+
+	abandoned := abandonedPassengerMeaningV1ShadowSummary()
+	recoveredPayload, marshalErr := encodeTravelQueryV2ShadowJSON(passengerMeaningV1ShadowClaimRecord{
+		Status:              passengerMeaningV1ShadowClaimCompleted,
+		IdempotencyKey:      identity.IdempotencyKey,
+		ContractVersion:     identity.ContractVersion,
+		SourceMessageID:     identity.MessageID,
+		SourcePromptEventID: identity.PromptEventID,
+		Summary:             &abandoned,
+	})
+	if marshalErr != nil {
+		return PassengerMeaningV1ShadowClaimResult{}, marshalErr
+	}
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				(message.normalized_payload -> $4) || jsonb_build_object(
+					$3::text,
+					coalesce(message.normalized_payload -> $4 -> $3, '{}'::jsonb)
+						|| $5::jsonb || jsonb_build_object('completed_at', statement_timestamp())
+				) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and coalesce(message.normalized_payload -> $4 -> $3 ->> 'status', '') = $6
+				and jsonb_typeof(message.normalized_payload -> $4 -> $3 -> 'lease_expires_at_unix_ms') = 'number'
+				and (message.normalized_payload -> $4 -> $3 ->> 'lease_expires_at_unix_ms')::numeric
+					<= floor(extract(epoch from clock_timestamp()) * 1000)
+			for update of message
+		), updated as (
+			update chat_messages message
+			set normalized_payload = jsonb_set(
+				candidate.normalized_payload,
+				array[$4]::text[],
+				candidate.claims,
+				false
+			)
+			from candidate
+			where message.id = candidate.id
+			returning candidate.claims -> $3::text
+		)
+		select * from updated
+	`, identity.SessionID, identity.MessageID, identity.IdempotencyKey, passengerMeaningV1ShadowClaimsPayloadKey, recoveredPayload, passengerMeaningV1ShadowClaimInProgress).Scan(&raw)
+	if err == nil {
+		return decodePassengerMeaningV1ShadowClaim(raw)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return PassengerMeaningV1ShadowClaimResult{}, err
+	}
+	return r.readPassengerMeaningV1ShadowClaim(ctx, identity)
+}
+
+const recoverExpiredPassengerMeaningV1ShadowClaimsSQL = `
+	with candidate_claims as materialized (
+		select
+			message.id,
+			message.created_at,
+			claim.key
+		from chat_messages message
+		cross join lateral jsonb_each(message.normalized_payload -> $2) claim(key, value)
+		where message.session_id = $1::uuid
+			and jsonb_typeof(message.normalized_payload -> $2) = 'object'
+			and claim.value ->> 'status' = $3
+			and jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+			and (claim.value ->> 'lease_expires_at_unix_ms')::numeric
+				<= floor(extract(epoch from statement_timestamp()) * 1000)
+		order by message.created_at, message.id
+		limit $4
+	), locked_messages as materialized (
+		select
+			message.id,
+			coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload
+		from chat_messages message
+		join (
+			select distinct candidate.id
+			from candidate_claims candidate
+		) selected_message on selected_message.id = message.id
+		order by message.created_at, message.id
+		for update of message skip locked
+	), selected_claims as materialized (
+		select locked.id, candidate.key
+		from locked_messages locked
+		join candidate_claims candidate on candidate.id = locked.id
+	), transformed as (
+		select
+			locked.id,
+			jsonb_object_agg(
+				selected.key,
+				claim.value || $5::jsonb || jsonb_build_object(
+						'idempotency_key', case
+							when coalesce(claim.value ->> 'idempotency_key', '') <> '' then claim.value ->> 'idempotency_key'
+							else selected.key
+						end,
+						'completed_at', statement_timestamp()
+					)
+			) as completed_claims,
+			count(*) as claims_completed
+		from locked_messages locked
+		join selected_claims selected on selected.id = locked.id
+		cross join lateral (
+			select locked.normalized_payload -> $2 -> selected.key as value
+		) claim
+		where claim.value ->> 'status' = $3
+			and jsonb_typeof(claim.value -> 'lease_expires_at_unix_ms') = 'number'
+			and (claim.value ->> 'lease_expires_at_unix_ms')::numeric
+				<= floor(extract(epoch from statement_timestamp()) * 1000)
+		group by locked.id
+	), updated as (
+		update chat_messages message
+		set normalized_payload = jsonb_set(
+			coalesce(message.normalized_payload, '{}'::jsonb),
+			array[$2]::text[],
+			(message.normalized_payload -> $2) || transformed.completed_claims,
+			false
+		)
+		from transformed
+		where message.id = transformed.id
+		returning transformed.claims_completed
+	)
+	select count(*)::bigint, coalesce(sum(claims_completed), 0)::bigint
+	from updated
+`
+
+func (r *Repository) RecoverExpiredPassengerMeaningV1ShadowClaims(ctx context.Context, sessionID string, batchSize int) (PassengerMeaningV1ShadowRecoveryResult, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return PassengerMeaningV1ShadowRecoveryResult{}, ErrPassengerMeaningV1ShadowClaimNotFound
+	}
+	if batchSize <= 0 || batchSize > passengerMeaningV1ShadowRecoveryBatchSize {
+		batchSize = passengerMeaningV1ShadowRecoveryBatchSize
+	}
+	terminalPayload, err := encodeTravelQueryV2ShadowJSON(map[string]interface{}{
+		"status":  passengerMeaningV1ShadowClaimCompleted,
+		"summary": abandonedPassengerMeaningV1ShadowSummary(),
+	})
+	if err != nil {
+		return PassengerMeaningV1ShadowRecoveryResult{}, err
+	}
+	var messagesProcessed int64
+	var claimsCompleted int64
+	err = r.pool.QueryRow(
+		ctx,
+		recoverExpiredPassengerMeaningV1ShadowClaimsSQL,
+		sessionID,
+		passengerMeaningV1ShadowClaimsPayloadKey,
+		passengerMeaningV1ShadowClaimInProgress,
+		batchSize,
+		terminalPayload,
+	).Scan(&messagesProcessed, &claimsCompleted)
+	if err != nil {
+		return PassengerMeaningV1ShadowRecoveryResult{}, err
+	}
+	return PassengerMeaningV1ShadowRecoveryResult{
+		MessagesProcessed: int(messagesProcessed),
+		ClaimsCompleted:   int(claimsCompleted),
+	}, nil
+}
+
+func (r *Repository) CompletePassengerMeaningV1Shadow(ctx context.Context, identity PassengerMeaningV1ShadowIdentity, summary PassengerMeaningV1ShadowSummary) error {
+	identity = normalizePassengerMeaningV1ShadowIdentity(identity)
+	if !passengerMeaningV1ShadowIdentityValid(identity) {
+		return ErrPassengerMeaningV1ShadowClaimNotFound
+	}
+	recordPayload, err := encodeTravelQueryV2ShadowJSON(passengerMeaningV1ShadowClaimRecord{
+		Status:              passengerMeaningV1ShadowClaimCompleted,
+		IdempotencyKey:      identity.IdempotencyKey,
+		ContractVersion:     identity.ContractVersion,
+		SourceMessageID:     identity.MessageID,
+		SourcePromptEventID: identity.PromptEventID,
+		Summary:             &summary,
+	})
+	if err != nil {
+		return err
+	}
+	var completed bool
+	err = r.pool.QueryRow(ctx, `
+		with candidate as materialized (
+			select
+				message.id,
+				coalesce(message.normalized_payload, '{}'::jsonb) as normalized_payload,
+				(message.normalized_payload -> $4) || jsonb_build_object(
+					$3::text,
+					coalesce(message.normalized_payload -> $4 -> $3, '{}'::jsonb)
+						|| $5::jsonb || jsonb_build_object('completed_at', statement_timestamp())
+				) as claims
+			from chat_messages message
+			where message.session_id = $1::uuid
+				and message.id = $2::uuid
+				and coalesce(message.normalized_payload -> $4 -> $3 ->> 'status', '') = $6
+			for update of message
+		), updated as (
+			update chat_messages message
+			set normalized_payload = jsonb_set(
+				candidate.normalized_payload,
+				array[$4]::text[],
+				candidate.claims,
+				false
+			)
+			from candidate
+			where message.id = candidate.id
+			returning true
+		)
+		select * from updated
+	`, identity.SessionID, identity.MessageID, identity.IdempotencyKey, passengerMeaningV1ShadowClaimsPayloadKey, recordPayload, passengerMeaningV1ShadowClaimInProgress).Scan(&completed)
+	if err == nil && completed {
+		return nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	existing, readErr := r.readPassengerMeaningV1ShadowClaim(ctx, identity)
+	if readErr == nil && existing.Status == PassengerMeaningV1ShadowClaimCompleted {
+		return nil
+	}
+	if readErr != nil {
+		return readErr
+	}
+	return ErrPassengerMeaningV1ShadowClaimNotFound
+}
+
+func (r *Repository) readPassengerMeaningV1ShadowClaim(ctx context.Context, identity PassengerMeaningV1ShadowIdentity) (PassengerMeaningV1ShadowClaimResult, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `
+		select coalesce(normalized_payload -> $4 -> $3, '{}'::jsonb)
+		from chat_messages
+		where session_id = $1::uuid
+			and id = $2::uuid
+	`, identity.SessionID, identity.MessageID, identity.IdempotencyKey, passengerMeaningV1ShadowClaimsPayloadKey).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PassengerMeaningV1ShadowClaimResult{}, ErrPassengerMeaningV1ShadowClaimNotFound
+		}
+		return PassengerMeaningV1ShadowClaimResult{}, err
+	}
+	return decodePassengerMeaningV1ShadowClaim(raw)
+}
+
+func decodePassengerMeaningV1ShadowClaim(raw []byte) (PassengerMeaningV1ShadowClaimResult, error) {
+	record := passengerMeaningV1ShadowClaimRecord{}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return PassengerMeaningV1ShadowClaimResult{}, err
+	}
+	switch strings.TrimSpace(record.Status) {
+	case passengerMeaningV1ShadowClaimInProgress:
+		return PassengerMeaningV1ShadowClaimResult{Status: PassengerMeaningV1ShadowClaimInProgress}, nil
+	case passengerMeaningV1ShadowClaimCompleted:
+		result := PassengerMeaningV1ShadowClaimResult{Status: PassengerMeaningV1ShadowClaimCompleted}
+		if record.Summary != nil {
+			result.Summary = *record.Summary
+		}
+		return result, nil
+	default:
+		return PassengerMeaningV1ShadowClaimResult{}, ErrPassengerMeaningV1ShadowClaimNotFound
+	}
+}
+
+func normalizePassengerMeaningV1ShadowIdentity(identity PassengerMeaningV1ShadowIdentity) PassengerMeaningV1ShadowIdentity {
+	identity.SessionID = strings.TrimSpace(identity.SessionID)
+	identity.MessageID = strings.TrimSpace(identity.MessageID)
+	identity.PromptEventID = strings.TrimSpace(identity.PromptEventID)
+	identity.IdempotencyKey = strings.TrimSpace(identity.IdempotencyKey)
+	return identity
+}
+
 func (r *Repository) SaveAgentDraft(ctx context.Context, input SaveAgentDraftInput) (SaveAgentDraftResult, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

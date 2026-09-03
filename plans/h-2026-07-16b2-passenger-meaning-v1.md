@@ -3,7 +3,7 @@
 ## Status atual no tracker
 
 ```text
-PRÓXIMA — NÃO INICIADA; AGUARDANDO AUTORIZAÇÃO PRÓPRIA
+EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE; KEEP H-B2; AGUARDANDO NOVO `/review`
 ```
 
 H-2026-07-22A corrigiu o bootstrap `UNKNOWN`, passou por review, foi implantado
@@ -12,13 +12,61 @@ availability → passageiros originou H-2026-07-27A. H-A agora está
 `REVIEW_CLOSED`, `MERGED`, `DEPLOYED` e `SMOKE_VERIFIED`; o smoke de 2026-08-28
 atribuível ao runtime `4eb543cb` comprovou seleção materializada e avanço até
 `ASK_PASSENGER_COUNT`, sem `NONE`/`SAFE_PHASE_FALLBACK`. O gate operacional de
-B1 está novamente concluído. Este checkpoint apenas libera B2 como próxima:
-contrato, validator, corpus e shadow ainda não foram iniciados. B3 permanece
-bloqueada por B2, e 3.6F-D permanece bloqueada pelo fechamento integral de H-B.
+B1 está novamente concluído. H-B2 foi implementada localmente em working tree
+não commitado. O quinto review fechou o P1 STRONG e encontrou um P2 factual,
+agora corrigido com gates locais verdes, mas ainda `FIXED_UNREVIEWED` até novo
+review independente.
+B3 permanece bloqueada por B2, e 3.6F-D permanece bloqueada pelo fechamento
+integral de H-B.
 
-As frases `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` permanecem
-casos futuros deste meaning/B3; não são regressão de H-A nem foram
-implementadas nesta reconciliação.
+As frases `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` pertencem ao
+corpus de H-B2. Sua eventual influência runtime continua exclusiva de B3.
+
+### Reavaliação arquitetural após o terceiro review
+
+A decisão é **KEEP H-B2**. Os findings recorrentes mostraram ausência de uma
+matriz factual completa no validator e de mutações adversariais no corpus, não
+uma fronteira arquitetural nova. Contract, validator, corpus/evaluator e shadow
+continuam no mesmo slice; nenhum plano B2a/B2b deve ser criado.
+
+Os dois P2 do terceiro review, já `FIXED_UNREVIEWED`, eram:
+
+1. referências infantis conhecidas podiam ser omitidas ou reclassificadas sem
+   `CHILD_AGGREGATE`/`FULL_AGGREGATE`;
+2. `SOLO_SPEAKER` aceitava total diferente de 1.
+
+As seis correções das duas rodadas anteriores permanecem fechadas e devem ser
+preservadas: recovery independente da identidade antiga, fixture independente
+do expected, corpus sequencial, batch claim-level, aggregate contra snapshot e
+turno 2 derivado do resultado real do turno 1.
+
+### Correção após o quarto review
+
+O quarto review preservou **KEEP H-B2** e encontrou um P1 de precedência: o
+job de `PassengerMeaningV1` era criado em `PASSENGER_COLLECTION` mesmo quando
+a decisão determinística já calculada no `Reprocess` era `STRONG`, permitindo
+que cancelamento explícito ou pedido humano chamasse o provider fora do escopo.
+
+Os REDs usam estado e prompt estruturalmente elegíveis e provaram uma chamada
+ao provider tanto para `BOOKING_CANCEL` quanto para `HUMAN_SUPPORT`. O patch
+mínimo condiciona a criação do job à força não-`STRONG` da decisão já
+calculada, sem reler texto nem duplicar regras de intent. O controle flag
+off/on comprova que decisão não-`STRONG` elegível continua executando o shadow
+sem influência no B1.
+
+### Correção após o quinto review
+
+O quinto review confirmou `REVIEW_CLOSED` para o P1 STRONG e encontrou um P2:
+`ABSOLUTE_TOTAL=2` ainda aceitava três referências `CHILD` distintas quando
+`child_under_5.count=0` e todas as idades eram seis anos. O RED reproduziu a
+aceitação com `ReasonCodes:[]`.
+
+O patch factual conta somente IDs opacos válidos, distintos e com
+`relation=CHILD`, e rejeita quando essa quantidade excede um total conhecido
+com provenance `ABSOLUTE_TOTAL`. Zero, uma ou duas referências permanecem
+válidas para total 2; duplicidades continuam pertencendo à invariável
+`duplicate_child_reference_id`; total desconhecido não recebe a nova regra.
+Nenhuma outra provenance foi ampliada.
 
 ## Objetivo
 
@@ -113,6 +161,34 @@ facts mínimos. Ele verifica:
 O validator não recebe ou não consulta o conteúdo do turno para reinterpretar
 palavras. Proposta semanticamente errada é rejeitada; não é reparada por regex.
 
+### Matriz factual de passenger count
+
+| status | provenance | value permitido |
+|---|---|---|
+| `KNOWN` | `SOLO_SPEAKER` | exatamente `1` |
+| `KNOWN` | `ABSOLUTE_TOTAL` | `1..99` |
+| `KNOWN` | `INCLUDES_SPEAKER_COMPOSITION` | `2..99` |
+| `UNKNOWN` | `UNKNOWN` ou `SUBGROUP_ONLY` | `null` |
+| `CONFLICTING` | `UNKNOWN` | `null` |
+
+`ABSOLUTE_TOTAL=1` permanece válido e distinto de `SOLO_SPEAKER`.
+
+### Matriz factual de correction coverage
+
+| correction target | passageiro pode divergir | child count/references podem divergir |
+|---|---:|---:|
+| `NONE` | não | não |
+| `PASSENGER_AGGREGATE` | sim | não |
+| `CHILD_AGGREGATE` | não | sim |
+| `FULL_AGGREGATE` | sim | sim |
+
+Sem coverage infantil, cada referência conhecida do snapshot reaparece
+exatamente uma vez e preserva ID opaco, `relation=CHILD` e `under_5`. Idade não
+é comparada, pois o snapshot conserva somente `AgeKnown`. Referências novas são
+permitidas quando distintas e coerentes com o agregado. Passenger correction
+que abandona `SOLO_SPEAKER` não pode preservar silenciosamente uma dependência
+`ChildUnder5AddsTraveler`; nesse caso exige `FULL_AGGREGATE`.
+
 ## Corpus obrigatório
 
 O corpus deve cobrir, no mínimo:
@@ -135,7 +211,8 @@ total, subgrupo, incerteza e correção na mesma mensagem
 ```
 
 Casos adversariais incluem datas, opções, CPF/documento, valores e números que
-não são composição de passageiros.
+não são composição de passageiros, além de mutações cross-turn que omitem ou
+reclassificam uma identidade infantil previamente derivada.
 
 O evaluator compara significado estruturado, não texto livre.
 
@@ -167,12 +244,17 @@ correta sem reintroduzir interpretação local. Provas:
 - schema strict e versionado;
 - provider usa `store=false`, `tools=[]`, `tool_choice=none`;
 - validator não interpreta texto;
+- matriz `status × provenance × value` integralmente comprovada;
+- referências conhecidas preservadas conforme correction coverage;
+- referências `CHILD` distintas não excedem `ABSOLUTE_TOTAL` conhecido;
 - corpus obrigatório passa integralmente;
 - `critical_action_violation_count=0`;
 - `state_mutation_count=0`;
 - `tool_call_count=0`;
 - flag off preserva exatamente o B1;
 - shadow não muda resposta, state, template ou autosend;
+- decisão determinística `STRONG` não cria job, claim nem chamada de provider;
+- decisão não-`STRONG` estruturalmente elegível preserva o shadow;
 - uma chamada por key;
 - resumo sem PII;
 - erros/timeouts não quebram o fluxo determinístico.
@@ -181,13 +263,23 @@ correta sem reintroduzir interpretação local. Provas:
 
 ```bash
 cd apps/api
+go test -count=1 ./internal/chat -run '^(TestPassengerMeaningV1ValidatorPassengerCountFactualMatrix|TestPassengerMeaningV1ValidatorRejectsPassengerProvenanceContradictingSnapshotWithoutCorrection|TestPassengerMeaningV1ValidatorReconcilesKnownChildReferencesByCorrectionCoverage|TestPassengerMeaningV1ValidatorRejectsPassengerOnlyCorrectionOfSoloChildDependency|TestPassengerMeaningV1CorpusRejectsCrossTurnChildIdentityMutation)$'
+go test -count=1 ./internal/chat -run '^(TestPassengerMeaningV1ShadowSkipsDeterministicStrongDecisions|TestPassengerMeaningV1ShadowFlagOffAndOnPreserveB1Runtime)$'
+go test -count=1 ./internal/chat -run '^TestPassengerMeaningV1ValidatorRejectsChildReferencesExceedingAbsolutePassengerTotal$'
 go test -count=1 ./internal/chat -run 'Test.*PassengerMeaningV1.*Schema|Test.*PassengerMeaningV1.*Validator|Test.*PassengerMeaningV1.*Corpus|Test.*PassengerMeaningV1.*Shadow'
 go test -count=20 ./internal/chat -run 'Test.*PassengerMeaningV1.*Corpus|Test.*PassengerMeaningV1.*Shadow'
 go test -race -count=1 ./internal/chat -run 'Test.*PassengerMeaningV1.*Shadow|Test.*PassengerMeaningV1.*Idempotency'
 go test -count=1 ./internal/chat
 go test -count=1 ./...
+gofmt -l <14 arquivos Go do manifesto H-B2>
+rg -o --glob '*.go' --glob '!*_test.go' 'regexp\.MustCompile' internal/chat | wc -l  # esperado: 54
 git diff --check
 ```
+
+Os gates também devem comprovar
+`critical_action_violation_count=0`, `state_mutation_count=0` e
+`tool_call_count=0`. Resultado local verde mantém H-B2 em correção até novo
+`/review` independente sem P1/P2.
 
 ## Gate de desbloqueio do B3
 
