@@ -25,8 +25,8 @@ smoke RED histórico originou H-A; blocker posterior fechado por H-A
 H-2026-07-27A — REVIEW_CLOSED + MERGED + DEPLOYED + SMOKE_VERIFIED
 runtime revision 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
 runtime digest sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
-H-2026-07-16B2 EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE;
-AGUARDANDO NOVO /review
+H-2026-07-16B2 — REVIEW_CLOSED + MERGED + DEPLOYED;
+protocolo com 2 P1 + 2 P2 documentais FIXED_UNREVIEWED; coleta bloqueada
 H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
 ```
@@ -1352,15 +1352,62 @@ está `FIXED_UNREVIEWED`. H-B2 permanece **EM CORREÇÃO APÓS QUINTO REVIEW —
 P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO `/review`**. H-B3 e 3.6F-D permanecem
 bloqueadas.
 
+## Estado operacional vigente de H-B2
+
+O bloco anterior registra o checkpoint histórico antes do review final. O
+estado reconciliado posterior é:
+
+```text
+main remoto (GitHub) = origin/main = d7b585abcb69c3055759de82c9346762a5ebb020
+main local = f674e65f9001ee360e4e0a21b898446229e416b3 (stale; não alterar ref nesta tarefa)
+commit H-B2 = a9c74852a43a24ba838decc5b2dee46eff3a03f8
+PR #82 = merged
+review final = sem P0/P1/P2
+CI de publicação = verde
+imagem = sha-d7b585a
+digest = sha256:1eecfa4902e30e3c471432a02ca0d5fb1ce0e28e28e6773af5d0077ff28f993c
+delivery = DEPLOYED
+promotion gate = PROTOCOL_FIXED_UNREVIEWED; COLLECTION_BLOCKED
+H-B3 = BLOCKED
+3.6F-D = BLOCKED
+```
+
+O smoke dirigido posterior ao deploy produziu três claims reais `COMPLETED` e
+OpenAI `valid`, todos com `KNOWN=3`, provenance
+`INCLUDES_SPEAKER_COMPOSITION`, `child_under_5=UNKNOWN` e contadores críticos,
+de estado e tools em zero. Dois foram aceitos; um foi rejeitado por
+`incoherent_clarification_fields`. O comportamento user-visible continuou B1.
+As sessões históricas foram
+`29fe9a67-581e-49a3-8217-e90cbe2d9f94` e
+`45562088-e459-4c29-89ff-d7e2cb429202`. Esse piloto não entra nos denominadores
+da futura amostra confirmatória.
+
+O primeiro review documental do protocolo encontrou dois P1 e dois P2. A SQL
+agora usa `claimed_at`/`completed_at` e `summary.{openai,validation,metrics}` com
+manifesto em `LEFT JOIN`; O-100 mede somente a projeção persistida; R-100 é o
+owner exclusivo da semantic accuracy completa; cada repetição 18→19 compartilha
+uma sessão dedicada com mensagens/epochs/keys distintos; e
+`validator_acceptance_rate` usa apenas propostas naturais schema-valid
+efetivamente avaliadas. Os quatro findings estão `FIXED_UNREVIEWED`.
+
+Os dois conjuntos preservam 100 casos, 20 classes × 5 repetições, duas janelas
+separadas por pelo menos 24 horas (2 + 3 repetições por classe), todos os
+thresholds originais, 20 controles inelegíveis, 20 propostas adversariais e 20
+turnos OFF. O protocolo ainda **não está aprovado para coleta**. Nenhuma coleta,
+chamada OpenAI, alteração de flag, execução do runner, deploy, rollback ou smoke
+foi feita nesta correção documental.
+
 ## Próxima ação
 
-H-2026-07-27A está operacionalmente encerrado e o gate de H-B1 está concluído.
-H-B2 possui o P2 do quinto review corrigido localmente e gates verdes,
-mas testes não substituem o novo review.
+H-2026-07-27A está operacionalmente encerrado, o gate de H-B1 está concluído e
+H-B2 está revisado, integrado e implantado. O lifecycle documental do seu gate
+está em `2 P1 + 2 P2 FIXED_UNREVIEWED`; a amostra confirmatória e o rollback
+proof continuam bloqueados.
 
-A próxima ação canônica única é um `/review` separado e read-only de H-B2.
-Não executar H-B3, 3.6F-D, commit, push, PR, deploy ou smoke neste checkpoint.
-H-B3 permanece bloqueada por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
+A próxima ação canônica única é um novo `/review` documental independente dos
+quatro findings. Não coletar amostra, executar runner/rollback ou iniciar H-B3
+ou 3.6F-D. Não alterar código durante esse gate.
+H-B3 permanece **BLOCKED** por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
 integral de H-B.
 
 ## Arquivos que a nova sessão deve ler
