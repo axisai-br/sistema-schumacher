@@ -287,11 +287,11 @@ Regras:
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
-| 8 | H-2026-07-16B | **EM ANDAMENTO — H-B2 EM CORREÇÃO APÓS QUINTO REVIEW; 1 P2 CORRIGIDO LOCALMENTE** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; decisão KEEP H-B2, B1 concluída e novo `/review` ainda obrigatório, sem liberar H-B3. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — H-B2 REVIEW_CLOSED, MERGED E DEPLOYED; PROTOCOLO COM 2 P1 + 2 P2 FIXED_UNREVIEWED** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; B1 concluída e o protocolo H-B2 aguarda novo review documental antes de qualquer coleta; H-B3 segue bloqueada. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA — GATE OPERACIONAL ENCERRADO** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fundação, review, PostgreSQL e gate operacional estão concluídos; H-A fechou o blocker posterior de autoridade materializada. |
 | 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE RED HISTÓRICO; BLOCKER FECHADO POR H-A** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido; o RED posterior na transição availability → passageiros originou H-A e permanece preservado como histórico. |
 | 11 | H-2026-07-27A | **REVIEW_CLOSED — MERGED — DEPLOYED — SMOKE_VERIFIED** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | correção `2784b731` integrada por `c8f4e453`; runtime `4eb543cb`; smoke de 2026-08-28 verde e atribuível ao runtime. |
-| 12 | H-2026-07-16B2 | **EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO `/review`** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | KEEP H-B2; P1 STRONG fechado e limite factual de referências contra `ABSOLUTE_TOTAL` corrigido localmente; gates verdes não encerram o slice nem liberam H-B3. |
+| 12 | H-2026-07-16B2 | **REVIEW_CLOSED — MERGED — DEPLOYED; PROTOCOLO CORRIGIDO APÓS REVIEW DOCUMENTAL — 2 P1 + 2 P2 FIXED_UNREVIEWED** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | O delivery do código permanece encerrado; SQL, ownership O-100/R-100, sequência 18→19 e denominador foram corrigidos. Coleta não autorizada até novo review documental; H-B3 não está liberada. |
 | 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
 | 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 15 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
@@ -5319,6 +5319,84 @@ commit, push, PR, deploy ou smoke. O P2 está `FIXED_UNREVIEWED`; H-B2 permanece
 **EM CORREÇÃO APÓS QUINTO REVIEW — 1 P2 CORRIGIDO LOCALMENTE; AGUARDANDO NOVO
 `/review`**. H-B3 e 3.6F-D permanecem bloqueados. Próxima ação canônica única:
 novo `/review` independente e read-only de H-B2.
+
+### 8.12.1 Fechamento de delivery de H-B2 e correção documental do gate de promoção (2026-09-08)
+
+Esta seção atualiza somente o estado vigente; a seção 8.12 acima permanece como
+histórico da última rodada corretiva.
+
+**Estado reconciliado:** `main` remoto (GitHub) e `origin/main` em
+`d7b585abcb69c3055759de82c9346762a5ebb020`; commit H-B2
+`a9c74852a43a24ba838decc5b2dee46eff3a03f8`; PR #82 merged; review final sem
+P0/P1/P2; workflow de publicação verde; imagem
+`sha-d7b585a`/`sha256:1eecfa4902e30e3c471432a02ca0d5fb1ce0e28e28e6773af5d0077ff28f993c`
+publicada; H-B2 deployed. O smoke dirigido fornecido como evidência operacional
+contém claim real `COMPLETED`, OpenAI `valid`, `KNOWN=3`, provenance
+`INCLUDES_SPEAKER_COMPOSITION`, validator accepted e
+`critical_action_violation_count=0`, `state_mutation_count=0`,
+`tool_call_count=0`. O comportamento user-visible permaneceu B1.
+
+O piloto histórico totaliza três claims nas sessões
+`29fe9a67-581e-49a3-8217-e90cbe2d9f94` e
+`45562088-e459-4c29-89ff-d7e2cb429202`. Ele demonstra viabilidade e preservação
+do shadow, mas fica **excluído de todos os denominadores confirmatórios**.
+
+O review documental posterior encontrou dois P1 e dois P2: caminhos SQL
+incorretos, ownership impossível da semântica completa no conjunto operacional,
+ambiguidade da sessão 18→19 e ambiguidade do denominador do validator. Os quatro
+findings estão corrigidos e `FIXED_UNREVIEWED`; o protocolo **não está aprovado
+para coleta** até novo review documental independente.
+
+A decisão A preserva o digest atual e separa os conjuntos descritos
+integralmente em `plans/h-2026-07-16b2-passenger-meaning-v1.md`:
+
+- O-100 contém 100 turnos operacionais e mede somente lifecycle, projeção
+  persistida, contadores, idempotência, elegibilidade e influência B1;
+- R-100 contém 100 execuções no runner isolado e é o owner exclusivo da semantic
+  accuracy completa, incluindo IDs, relações, idades e continuidade;
+- ambos preservam 20 classes × 5 repetições e os thresholds originais;
+- duas janelas por conjunto, com duas repetições por classe na primeira e três
+  na segunda, separadas por pelo menos 24 horas;
+- 20 controles de inelegibilidade, 20 propostas adversariais para o validator e
+  20 turnos separados para rollback OFF;
+- completude operacional `100/100` terminal em até 60 segundos;
+- provider/schema success `>=99/100`; validator acceptance `>=98%` sobre
+  propostas schema-valid efetivamente avaliadas; acceptance ponta a ponta
+  `>=98/100`;
+- passenger accuracy e clarification accuracy permanecem em ambos os conjuntos;
+  a projeção persistida do O-100 e a semantic accuracy completa do R-100 têm,
+  separadamente, threshold `>=98/100` e `>=4/5` em toda classe; classes reais 1
+  e 2 permanecem `10/10` em cada conjunto;
+- adversariais `20/20` corretamente rejeitados; `false_override=0`; contadores
+  de ação crítica, mutação de estado e tool call iguais a zero; no máximo uma
+  chamada provider por mensagem/época/key; controles inelegíveis com zero
+  job/claim/provider.
+
+Falha, timeout, recusa, claim ausente e output inválido permanecem nos
+denominadores fixos aplicáveis. O `validator_acceptance_rate` usa exclusivamente
+`accepted / (accepted + rejected)` entre propostas naturais schema-valid
+efetivamente avaliadas; skipped/error/refusal/unparseable não entram nesse
+denominador específico, não melhoram PASS e continuam falhas nas métricas fixas.
+Rejeição adversarial esperada é sucesso do controle; rejeição de
+proposta natural correta, proposta incoerente de linguagem natural ou aceitação
+incorreta são defeitos classificados separadamente. Incidente abre nos critérios
+objetivos congelados no plano, e ausência de erro recorrente exige as duas janelas
+completas, nenhuma família de causa repetida e os últimos 50 elegíveis sem erro
+inesperado, claim perdido ou rejeição imprópria. Tráfego ausente não é evidência.
+
+O rollback proof exige flag `PassengerMeaningV1` shadow OFF, restart/redeploy
+controlado do mesmo digest, prova de zero novos claims/jobs/provider H-B2 em 20
+turnos, B1 inalterado e restauração ON somente após evidência aprovada, sem
+alteração de código. Nada disso foi executado nesta atualização documental.
+
+**Delivery lifecycle:** implementação → review final sem P0/P1/P2 → commit
+H-B2 → merge PR #82 → CI/GHCR verde → deploy → piloto dirigido verde. O
+lifecycle documental separado está em primeira formalização → review com 2 P1
+e 2 P2 → quatro correções `FIXED_UNREVIEWED` → novo review pendente. Amostra e
+rollback proof não estão autorizados. H-B3 e 3.6F-D permanecem **BLOCKED**.
+
+**Próxima ação canônica única:** novo `/review` documental independente dos
+quatro findings, sem coletar amostra e sem iniciar H-B3.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 
