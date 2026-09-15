@@ -1,6 +1,6 @@
 name: Publish API to GHCR
 # Operational note: keep a tracked diff available when a manual rerun via push is needed.
-
+# When starts workflow
 on:
   push:
     branches:
@@ -14,16 +14,17 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: joaovitormessias/sistema-schumacher-api
 
+# What the Actions will execute
 jobs:
   test-api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # Where this job is executed
     permissions:
       contents: read
     defaults:
       run:
         working-directory: apps/api
 
-    steps:
+    steps: # This are the commands/tasks of job
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -40,7 +41,7 @@ jobs:
         run: go test -count=1 ./...
 
   publish-api:
-    needs: test-api
+    needs: test-api # Only starts when test-api is completed
     runs-on: ubuntu-latest
     permissions:
       contents: read

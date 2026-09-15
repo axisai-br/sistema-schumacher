@@ -1,0 +1,24 @@
+name: Runner Connectivity Check
+
+on:
+  push:
+    branches:
+      - ci/api-auto-deploy
+    paths:
+      - ".github/workflows/runner-connectivity-check.yml"
+      - ".github/workflows/publish-api-ghcr.yml"
+
+jobs:
+  runner-check:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - schumacher-production
+
+    steps:
+      - name: Show runner runner-identity
+        run: |
+          echo "user=$(whoaim)"
+          echo "hostname=$(hostname)"
+          echo "pwd=$(pwd)"
