@@ -6,7 +6,6 @@ on:
       - ci/api-auto-deploy
     paths:
       - ".github/workflows/runner-connectivity-check.yml"
-      - ".github/workflows/publish-api-ghcr.yml"
 
 jobs:
   runner-check:
@@ -17,8 +16,11 @@ jobs:
       - schumacher-production
 
     steps:
-      - name: Show runner runner-identity
+      - name: Show runner identity
         run: |
-          echo "user=$(whoaim)"
+          set -euo pipefail
+
+          echo "user=$(id -un)"
+          echo "group=$(id -gn)"
           echo "hostname=$(hostname)"
-          echo "pwd=$(pwd)"
+          echo "pwd=$PWD"
