@@ -6499,3 +6499,369 @@ Validação documental: `git diff --check` e `git diff --cached --check` PASS;
 `git status --short`, `git diff --stat` e o diff completo confirmam somente os
 três documentos listados acima. Nenhum teste de aplicação ou produção foi
 executado.
+
+---
+
+## 11. CI/CD da API — correção dos 2 P1 + 5 P2 (2026-09-15)
+
+**Status: EM CORREÇÃO APÓS REVIEW.** Patch local dos sete findings; novo
+/review independente sem P0/P1/P2 ainda pendente. Este registro não modifica
+estados, gates ou próximas ações de H-B2, H-B3, 3.6F-D ou Segurança/Supabase/RLS.
+
+### Baseline e escopo
+
+Branch ci/api-auto-deploy; HEAD f754dd948bf608ca35aea1656c5fc9fd184211cb,
+base main informada 0346dc9e8b50c01c71d1585537ff319d5542d0e8.
+Antes do patch foram confirmados somente os três itens staged autorizados:
+publish-api-ghcr.yml modificado, runner-connectivity-check.yml deletado e
+test-api-pr.yml adicionado. Diff unstaged e untracked vazios. O index foi
+preservado nesta correção; nenhum add, commit, push, PR, merge ou descarte.
+
+Arquivos desta correção:
+
+- .github/workflows/publish-api-ghcr.yml
+- .github/workflows/test-api-pr.yml
+- infra/deploy/schumacher-api-deploy
+- infra/deploy/schumacher-api-verify
+- infra/deploy/schumacher-api-rollback
+- infra/deploy/authorize.cjs
+- infra/deploy/test.cjs
+- infra/deploy/SHA256SUMS
+- infra/deploy/README.md
+- docs/EXECUTION_TRACKER.md
+
+A exclusão staged de runner-connectivity-check.yml permanece intacta.
+apps/api, stacks Swarm, sudoers, secrets e ambiente real não foram alterados.
+
+### Comportamento antes/depois
+
+1. Ordenação: só havia concurrency sem FIFO. Agora consulta o HEAD de main
+   depois de adquirir o grupo, antes de preparar e imediatamente antes de
+   atualizar o serviço. SHA obsoleto/consulta inválida falham fechados.
+2. Rollback: dependia de deploy.outcome=success. Agora falha ou cancelamento
+   após preflight também aciona recuperação. O registro root-only por
+   run_id/run_attempt/SHA distingue prepared, started, completed e rolled_back;
+   started é durável antes da chamada Docker. O rollback exige a mesma tentativa
+   ativa, restaura o digest anterior e comprova convergência.
+3. Artefato: a tag sha-<7> decidia o deploy. Agora o digest retornado pelo build
+   é propagado até o self-hosted e validado como sha256 de 64 hexadecimais.
+   Tags main/sha permanecem auxiliares.
+4. Autorização: PR histórica associada ao SHA era suficiente. Agora exige a
+   transição não forçada, after, primeiro/segundo pai e PR merged em main;
+   primeira tentativa, única execução push do workflow/SHA e criação da execução
+   até 120 segundos após o merge impedem replay histórico/reset para o pai.
+5. Permissões: self-hosted mantém packages: read e contents: read exclusivamente
+   para as consultas do HEAD. actions: read fica somente no job hosted de
+   autorização. Não há checkout no self-hosted.
+6. Wrappers: passam a ter fontes, contrato, testes e manifesto SHA-256 canônicos.
+   O build confere o manifesto e propaga os hashes; preflight confere bytes,
+   propriedade e permissões dos três arquivos instalados antes de mutações.
+7. HTTP: curl --fail aceitava redirects. Ambos os gates exigem health=200 e
+   ready=200, sem seguir redirects e ignorando curlrc.
+
+### REDs anteriores ao patch e evidência local
+
+Antes de editar o workflow, /tmp/schumacher-cicd-red.mjs executou o script
+original de autorização em VM com push forçado para merge histórico: autorizou
+indevidamente. Formalizou deterministicamente as outras cinco lacunas no
+workflow staged: ausência de consulta ao HEAD, condição que excluía deploy
+failure do rollback, tag curta passada ao wrapper, ausência de checksum e
+ausência de comparação HTTP 200. Não houve reprodução no scheduler/produção.
+
+PASS local: oito grupos do teste de contrato, primeiro com fontes candidatas
+em /tmp/schumacher-ci e depois com node infra/deploy/test.cjs na raiz.
+A primeira execução canônica dentro do sandbox encontrou EPERM em subprocessos
+e timeout no stdin de bash -n (também reproduzido com entrada sintética mínima).
+A repetição fora do sandbox foi autorizada, sempre com Docker/sudo/GitHub falsos
+e HTTP exclusivamente em loopback. A suíte valida também erros de subprocesso.
+Cobertura:
+
+- merge válido e rejeição de transições inválidas, force-push, reset/replay,
+  histórico incompleto, rerun, evento PR e workflow_dispatch;
+- execução antiga e main avançando durante prepare: nenhuma chamada apply;
+  erro de transporte, JSON inválido ou resposta sem SHA bloqueiam o deploy;
+- referência por tag/digest malformado recusada e digest ligado ao output build;
+- checksum correto aceito; drift em cada wrapper e arquivo writable recusados;
+- erro Docker depois da mutação, rollback da mesma tentativa, tentativa antiga
+  recusada, falha/ausência de convergência no rollback não registrada como sucesso,
+  retry, falha no pull e interrupção antes de started sem rollback stale;
+- ServiceSpec/tasks/réplicas convergentes; tasks ausentes, extras, imagem
+  divergente, update pending/paused e estado não running recusados;
+- permissões, origem push, dependências de testes, ausência de checkout no
+  self-hosted e elegibilidade de rollback após falha/cancelamento preservadas;
+- curl real em loopback: 200/200 PASS; 301, 302, 307, 400 e 500 em qualquer
+  endpoint falham tanto no gate normal quanto após rollback.
+
+bash -n dos três wrappers e dos blocos shell: PASS.
+SHA-256 dos três wrappers e manifesto: PASS.
+Parsing sintático dos dois workflows por Ruby/Psych: PASS.
+git diff --check e git diff --cached --check: PASS.
+actionlint não está disponível; nenhuma dependência foi instalada.
+Nenhuma suíte Go foi executada, pois não houve alteração de código Go.
+
+Os testes isolam paths/UID e substituem Docker, sudo e GitHub por fakes.
+Eles não comprovam permissões efetivas, agendamento/cancelamento do Actions,
+convergência real do Swarm ou operação dos wrappers já instalados.
+
+### Riscos e próxima ação
+
+Os wrappers reais não foram lidos, instalados ou alterados nesta rodada.
+Até sincronização posterior autorizada das fontes revisadas em /usr/local/sbin,
+o preflight deve recusar drift. Conferir posteriormente a compatibilidade do
+sudoers existente com os argumentos do contrato v1, sem ampliar os três comandos.
+O primeiro prepare exige digest anterior resolvido e tasks convergentes.
+
+Squash/rebase, reruns de produção e criação da execução mais de 120s após o merge
+são recusados; a fila/build podem demorar normalmente. Morte do host/runner pode
+impedir rollback automático e exigir recuperação do registro da mesma tentativa.
+Registro parcial/corrompido falha fechado; credenciais transitórias root-only
+podem requerer limpeza se houver SIGKILL. GitHub e Swarm não têm transação comum;
+a consulta imediata fecha a inversão entre workflows serializados.
+
+Teste em produção: necessário em gate futuro, não autorizado nem executado aqui.
+Próxima ação única: novo /review independente do diff completo, incluindo fontes
+untracked, mantendo EM CORREÇÃO APÓS REVIEW até ausência de P0/P1/P2.
+
+### Segunda correção de CI/CD — 1 P1 + 4 P2 (2026-09-16)
+
+**Status: EM CORREÇÃO APÓS REVIEW.** O novo review encontrou o P1 da consulta
+antes das esperas internas de apply e quatro P2 (rerun parcial, journal,
+parentagem incompleta e topologia). As declarações de fechamento desses pontos
+na primeira rodada não substituem estes achados. Novo /review independente
+sem P0/P1/P2 continua obrigatório; não há liberação de commit ou operação.
+
+Checkpoint confirmado antes de editar: branch ci/api-auto-deploy,
+HEAD f754dd948bf608ca35aea1656c5fc9fd184211cb e os onze itens staged/unstaged/
+untracked exatamente como informados no goal. Index original preservado.
+Foram lidos AGENTS, tracker, handoff e plano mestre; a fila de H-B2/H-B3/3.6F-D
+e Segurança/Supabase/RLS permanece intacta.
+
+#### REDs dirigidos anteriores ao patch
+
+Executados sobre cópias exatas da baseline em /tmp/schumacher-ci-r2, com Docker,
+GitHub e sudo simulados, antes de editar workflow/wrappers:
+
+- main avançou durante current_image interno de apply; a imagem obsoleta foi
+  aplicada com sucesso;
+- expressão real de elegibilidade do job aceitou run_attempt 2/3, inclusive
+  valor string, com outputs reutilizados de autorização/publicação;
+- active apontando para diretório removido retornou rollback=not_needed;
+- active removido com started remanescente permitiu preparar um sucessor;
+- previous removido de registro prepared permitiu rollback=not_needed;
+- segundo parent vazio e pull.head ausente autorizaram deploy;
+- topologia 2/2 convergiu indevidamente no verify e no rollback.
+
+Esses REDs foram executados por test.cjs --review-red antes da correção, não
+inferidos apenas da presença/ausência de strings no código.
+
+#### Patch desta rodada
+
+- publish-api-ghcr.yml: job exige github.run_attempt == 1 e passa credencial
+  transitória por stdin a apply.
+- authorize.cjs: valida tipo/string e 40 hex minúsculos de todos os SHAs usados
+  como prova; primeiro/segundo pai e head da PR são válidos antes da igualdade.
+- schumacher-api-deploy: consulta final de main dentro do flock, depois da
+  validação do journal, current_image e started durável. Origem/repo/ref fixos,
+  HTTPS, timeout e HTTP 200 exato; token da consulta só em memória/stdin, sem
+  argv/arquivo/log. Recusa antes de Docker registra aborted, sem service update.
+  Reconsulta após update/convergência detecta avanço durante a chamada e deixa
+  started para rollback da mesma tentativa, em vez de declarar sucesso.
+- schumacher-api-verify: modo read-only --ledger compartilhado por deploy e
+  rollback. Valida id/parent, ownership/modo, campos, symlinks, cadeia completa,
+  ciclos, órfãos e temporários de escrita parcial. Convergência exige exatamente
+  uma réplica, uma task Running no digest correto e update completed.
+- schumacher-api-rollback: ausência/inconsistência de journal é erro. Tentativas
+  antigas não capturam active; aborto conserva ownership. rolling_back é durável
+  antes de atualizar o serviço e bloqueia sucessor até recuperação/convergência.
+- test.cjs, SHA256SUMS e README.md: regressões, hashes atualizados e contrato v2.
+
+Arquivos alterados nesta rodada: .github/workflows/publish-api-ghcr.yml,
+os sete arquivos já existentes no working tree em infra/deploy e este tracker.
+test-api-pr.yml e a exclusão de runner-connectivity-check.yml foram preservados.
+
+#### Gates locais
+
+PASS — regressões dos cinco findings e controles anteriores em test.cjs:
+21 grupos incluindo expressão de rerun, fixtures de SHA incompletas, espera real
+pelo flock, avanço durante current_image/sync, falhas HTTP/timeout/JSON/SHA,
+avanço durante update com rollback, inconsistências do journal nos dois wrappers,
+retry legítimo, topologia 2/2 recusada em verify/rollback e HTTP 200 em loopback.
+
+PASS — bash -n dos três wrappers e blocos shell, node --check, SHA256SUMS,
+parsing YAML dos workflows com Ruby/Psych, git diff --check e
+git diff --cached --check. Nenhuma dependência instalada; actionlint ausente.
+Suítes Go não executadas: nenhum Go foi alterado.
+
+Fakes não comprovam APIs/scheduler/permissões efetivas do Actions, Swarm real
+ou durabilidade sob falha física. A expressão do job é exercitada localmente;
+Re-run failed jobs não foi disparado no GitHub.
+
+#### Gate operacional e próxima ação
+
+Wrappers reais, sudoers, secrets, stacks e produção permanecem intocados.
+Não houve commit, push, PR, merge, sincronização, deploy ou smoke.
+
+O contrato v2 exige sincronizar posteriormente os três wrappers juntos e
+reconciliar explicitamente qualquer journal v1 (sem migração automática).
+O serviço deve cumprir 1/1 e update completed; ausência de UpdateStatus é
+recusada. Corrupção exige recuperação explícita; morte do runner pode impedir
+rollback automático. Esses são gates futuros, não autorizados nesta rodada.
+
+GitHub e Docker não compartilham transação/lock: a consulta final impede
+mutação obsoleta após as esperas internas; avanço DURANTE a requisição Docker
+é detectado pelo pós-check e tratado como falha recuperável. Não se afirma
+atomicidade distribuída nem impossibilidade absoluta de avanço após uma leitura.
+
+Próxima ação única: novo /review independente do working tree completo.
+Manter EM CORREÇÃO APÓS REVIEW até revisão sem P0/P1/P2.
+
+### Terceira correção de CI/CD — quatro P2 (2026-09-17)
+
+**Status: EM CORREÇÃO APÓS REVIEW.** Patch e gates locais desta rodada não
+declaram review limpo. O último review encontrou quatro P2; novo /review
+independente do working tree completo continua obrigatório antes de qualquer
+liberação. H-B2/H-B3/3.6F-D e Segurança/Supabase/RLS permanecem inalterados.
+
+#### Reavaliação do slice e checkpoint
+
+Por ser a terceira rodada corretiva, a arquitetura/divisão foi reavaliada antes
+de editar: os achados pertencem ao mesmo contrato de execução privilegiada
+(convergência, integridade do journal/lock e transporte de credencial).
+Mantidos três wrappers, um validador compartilhado e nenhum subsistema/plano
+paralelo. --lock faz a validação pré-abertura; --ledger continua sendo a
+autoridade compartilhada para journal/credenciais. Nenhuma regra funcional nova.
+
+Confirmados branch ci/api-auto-deploy, HEAD
+f754dd948bf608ca35aea1656c5fc9fd184211cb e os onze itens do checkpoint.
+Staged, unstaged, untracked e exclusão foram considerados. Index original
+preservado, sem add/reset/restore/checkout/stash. AGENTS, tracker, handoff e
+plano mestre consultados; somente esta seção de CI/CD foi acrescentada.
+
+#### REDs antes do patch
+
+Executados em cópias isoladas da baseline, com test.cjs --third-review-red,
+antes de alterar workflow/wrappers:
+
+- Uma task desired running/current running no digest esperado, ServiceSpec 1,
+  update completed, mais outra desired shutdown/current running:
+  convergence=ok indevido. O fake agora respeita o filtro desired-state.
+- Lock symlink para sentinela em apply e rollback: operação aceita e sentinela
+  truncada. Apply também chamou service update.
+- docker symlink externo, docker 0777, config.json symlink e config.json 0666:
+  apply/rollback aceitaram cada corrupção; diretório symlink permitiu cleanup
+  externo. Prepare sucessor também aceitou cada corrupção de predecessor
+  terminal, isolando esse defeito do gate de phase.
+- Captura dos argumentos das duas consultas externas current_main confirmou
+  token sintético em argv. Nenhum segredo real foi usado.
+
+#### Correções desta rodada
+
+1. Convergência compartilhada enumera todas as tasks, sem filtro que oculte
+   tasks antigas. Exige réplica 1, exatamente uma desired running/current
+   running no digest esperado e update completed. Histórico
+   shutdown/complete/failed/rejected, desired shutdown/remove, pode permanecer;
+   qualquer task extra ativa/incerta bloqueia inclusive apply/rollback.
+2. Base validada antes de escrita e bootstrap exclusivo apenas em prepare.
+   Lock regular root:root 0600, sem symlink, validado antes da abertura;
+   criação ausente com noclobber e abertura append sem truncar. Flock e inode
+   preservados. Invariante administrativo de ancestrais root-owned e base
+   root:root 0700 documentado; usuário do runner não pode substituir o path.
+3. Ledger exige docker real root:root 0700 e config.json, quando presente,
+   regular root:root 0600. Diretório ausente, symlink, owner/grupo/modo/tipo
+   divergente e arquivos extras/parciais falham fechados. Revalidação após
+   login/pull e antes de cleanup, inclusive EXIT; corrupção não é reparada nem
+   apagada. Sucessores ficam bloqueados. Config ausente após cleanup é válido;
+   apply continua exigindo sua presença.
+4. Consultas externas usam curl --config - com header por stdin, URL/repo/ref
+   fixos, HTTPS, timeout, HTTP 200 exato e JSON/ref/SHA válidos. GH_TOKEN é
+   removido do ambiente dos filhos, variável privada limpa ao sair e tracing
+   desativado. Tokens para prepare/apply/rollback continuam somente por stdin.
+
+Contrato atualizado para v3, com manifesto dos três wrappers recalculado.
+Arquivos alterados nesta rodada:
+
+- .github/workflows/publish-api-ghcr.yml
+- infra/deploy/schumacher-api-deploy
+- infra/deploy/schumacher-api-verify
+- infra/deploy/schumacher-api-rollback
+- infra/deploy/test.cjs
+- infra/deploy/SHA256SUMS
+- infra/deploy/README.md
+- docs/EXECUTION_TRACKER.md
+
+authorize.cjs, test-api-pr.yml e exclusão staged de runner-connectivity-check.yml
+permanecem exatamente como no checkpoint anterior a esta rodada.
+
+#### Gates locais e limites
+
+PASS — node infra/deploy/test.cjs: 41 grupos, regressões anteriores e novas.
+Inclui sentinelas byte a byte intactas, nenhuma chamada Docker ao recusar
+credenciais, successor bloqueado, histórico terminal permitido, tasks extras
+ativas recusadas, lock symlink/FIFO/diretório/modos inválidos, inode/conteúdo
+preservados, revalidação após corrupção introduzida pelo fake de login/pull,
+captura do argv/ambiente das duas consultas, stdin dos wrappers e tracing
+desligado. Mantidos testes de espera real por flock, avanço de main,
+parentagem/replay/rerun, journal, retry/rollback, digest e HTTP 200 em loopback.
+
+PASS — bash -n nos três wrappers e blocos shell; node --check nos dois JS;
+sha256sum --check SHA256SUMS em infra/deploy; parsing dos dois workflows
+com Ruby/Psych; git diff --check; git diff --cached --check.
+Diff completo staged/unstaged/untracked revisado localmente.
+Actionlint não disponível; não instalado. Nenhuma dependência criada.
+Nenhuma suíte Go executada, pois nenhum código Go foi alterado.
+
+Os fakes não provam Docker/Swarm real, scheduler/semântica operacional do Actions
+ou durabilidade sob falha física. Tipos, modos, symlinks, flock e sentinelas
+usam filesystem real isolado; ownership/grupo negativos usam stat simulado,
+sem root/chown. Captura de argv/ambiente usa processos locais com token
+sintético, não credencial real. A proteção não cobre root malicioso nem a
+exposição inicial do token ao ambiente do próprio step/runner comprometido.
+
+#### Gate operacional e próxima ação
+
+Não houve add, commit, push, PR, merge, sincronização de wrappers, alteração
+de sudoers/secrets/produção, deploy ou smoke.
+Wrappers reais continuam não sincronizados; drift deve ser recusado pelo
+preflight. Sincronização futura exige gate separado, os três wrappers v3
+juntos, revisão do journal existente e compatibilidade dos modos do Docker CLI
+instalado. Não há migração/reparo automático de journal v1/v2 inconsistente.
+
+Corrupção bloqueia recuperação automática e exige investigação autorizada.
+Root deve coordenar intervenções com o lock sem trocar seu inode; ancestrais
+de /var/lib precisam manter a fronteira administrativa. Morte do runner pode
+impedir rollback automático. GitHub e Swarm continuam sem transação comum.
+Teste em produção será necessário em gate futuro, não autorizado nesta rodada.
+
+Próxima ação única: novo /review independente do working tree completo.
+Manter EM CORREÇÃO APÓS REVIEW até revisão sem P0/P1/P2.
+
+#### Fechamento do review independente (2026-09-17)
+
+**Status vigente do CI/CD: REVIEW_CLOSED — SAFE FOR COMMIT.** A terceira
+rodada corretiva está concluída. O review independente final declarou
+literalmente **“review sem P0/P1/P2”** e respondeu **“Seguro para commit: sim”**.
+Este fechamento substitui somente o gate de review pendente registrado acima;
+não autoriza sincronização, deploy ou smoke.
+
+Os gates locais da implementação permanecem os registrados nesta rodada:
+41 grupos do `node infra/deploy/test.cjs`, sintaxe Bash/JavaScript, manifesto
+SHA-256, parsing dos dois workflows e `git diff --check`/`--cached --check` em
+PASS. No ambiente do review independente, o checkpoint, as validações estáticas
+e 26 casos dirigidos passaram; a suíte completa não terminou porque o sandbox
+bloqueou subprocessos com `EPERM`. Essa limitação do review não apaga a execução
+local completa já registrada. `actionlint` permaneceu indisponível e não foi
+instalado.
+
+Os três wrappers v3 reais continuam **NÃO sincronizados** no servidor. A
+sincronização requer autorização explícita e gate operacional separado, com
+validação conjunta dos três artefatos. Deploy e smoke continuam **NÃO
+autorizados** e **NÃO executados**. Nenhum arquivo de produção, sudoers, secret
+ou ambiente real foi alterado.
+
+Este fechamento não modifica H-B2, H-B3 ou 3.6F-D. Segurança/Supabase/RLS
+permanece fora deste trabalho. `docs/SESSION_HANDOFF.md` não foi alterado porque
+o tracker é a fonte canônica do estado operacional volátil deste CI/CD.
+
+Próxima ação única: aguardar autorização explícita do usuário para commit.
+Commit, push, PR, merge, sincronização dos wrappers, deploy e smoke não foram
+executados nesta reconciliação documental.

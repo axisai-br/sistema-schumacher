@@ -1,6 +1,5 @@
 name: Publish API to GHCR
-# Operational note: keep a tracked diff available when a manual rerun via push is needed.
-# When starts workflow
+
 on:
   push:
     branches:
@@ -8,69 +7,105 @@ on:
     paths:
       - "apps/api/**"
       - ".github/workflows/publish-api-ghcr.yml"
+      - "infra/deploy/**"
+
+  # Manual publication never authorizes production deployment.
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: joaovitormessias/sistema-schumacher-api
 
-# What the Actions will execute
 jobs:
   test-api:
-    runs-on: ubuntu-latest # Where this job is executed
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     defaults:
       run:
         working-directory: apps/api
-
-    steps: # This are the commands/tasks of job
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+      - name: Test deployment contract
+        working-directory: .
+        run: node infra/deploy/test.cjs
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
-
       - name: Test chat package
         run: go test -count=1 ./internal/chat
-
       - name: Test API
         run: go test -count=1 ./...
 
+  authorize-production:
+    needs: test-api
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      deploy-allowed: ${{ steps.authorization.outputs.deploy-allowed }}
+    steps:
+      - name: Checkout authorization helper
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Authorize production source
+        id: authorization
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require('./infra/deploy/authorize.cjs')({github, context, core});
+
   publish-api:
-    needs: test-api # Only starts when test-api is completed
+    needs:
+      - test-api
+      - authorize-production
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      deploy-sha: ${{ steps.wrappers.outputs.deploy-sha }}
+      verify-sha: ${{ steps.wrappers.outputs.verify-sha }}
+      rollback-sha: ${{ steps.wrappers.outputs.rollback-sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+      - name: Verify canonical wrapper identities
+        id: wrappers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd infra/deploy
+          sha256sum --check SHA256SUMS
+          for wrapper in deploy verify rollback; do
+            checksum=$(sha256sum "schumacher-api-$wrapper")
+            echo "$wrapper-sha=${checksum%% *}" >> "$GITHUB_OUTPUT"
+          done
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=main
+            type=raw,value=main,enable={{is_default_branch}}
             type=sha,format=short
-
       - name: Build and push API image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./apps/api
@@ -78,3 +113,162 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-production:
+    if: >-
+      ${{
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        github.run_attempt == 1 &&
+        needs.authorize-production.outputs.deploy-allowed == 'true'
+      }}
+    needs:
+      - publish-api
+      - authorize-production
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - schumacher-production
+    permissions:
+      # Only current-main queries (workflow and wrapper). No checkout/download.
+      contents: read
+      packages: read
+    concurrency:
+      group: schumacher-api-production
+      cancel-in-progress: false
+    env:
+      ATTEMPT: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+      IMAGE_DIGEST: ${{ needs.publish-api.outputs.digest }}
+    steps:
+      - name: Validate artifact and installed wrappers
+        id: preflight
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.publish-api.outputs.deploy-sha }}
+          VERIFY_SHA: ${{ needs.publish-api.outputs.verify-sha }}
+          ROLLBACK_SHA: ${{ needs.publish-api.outputs.rollback-sha }}
+        run: |
+          set -euo pipefail
+          [[ $IMAGE_DIGEST =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ $ATTEMPT =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]]
+          # The runner may read but must not be able to replace these root files.
+          for directory in / /usr /usr/local /usr/local/sbin; do
+            [[ ! -L $directory && $(stat -c '%u:%a' "$directory") == 0:755 ]]
+          done
+          for wrapper in deploy verify rollback; do
+            case "$wrapper" in
+              deploy) expected=$DEPLOY_SHA ;;
+              verify) expected=$VERIFY_SHA ;;
+              rollback) expected=$ROLLBACK_SHA ;;
+            esac
+            [[ $expected =~ ^[a-f0-9]{64}$ ]]
+            file="/usr/local/sbin/schumacher-api-$wrapper"
+            [[ -f $file && ! -L $file && $(stat -c '%u:%a' "$file") == 0:755 ]]
+            actual=$(sha256sum "$file")
+            [[ ${actual%% *} == "$expected" ]]
+          done
+
+      - name: Deploy API
+        id: deploy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          # Keep the secret out of child environments, argv, files and logs.
+          unset registry_token
+          registry_token=$GH_TOKEN
+          unset GH_TOKEN GITHUB_TOKEN
+          trap 'unset registry_token' EXIT
+          [[ $registry_token =~ ^[a-zA-Z0-9_.-]+$ ]]
+          image="ghcr.io/joaovitormessias/sistema-schumacher-api@$IMAGE_DIGEST"
+          current_main() {
+            local response head status
+            response=$(printf 'header = "Authorization: Bearer %s"\n' "$registry_token" |
+              curl --disable --fail --silent --max-time 15 --connect-timeout 5 \
+                --proto '=https' --config - --header 'Accept: application/vnd.github+json' \
+                --header 'Cache-Control: no-cache' --write-out '\n%{http_code}' \
+                https://api.github.com/repos/joaovitormessias/sistema-schumacher/git/ref/heads/main) || return 1
+            status=${response##*$'\n'}
+            [[ $status == 200 ]] || return 1
+            head=$(jq -er 'select(.ref == "refs/heads/main") | .object |
+              select(.type == "commit") | .sha | select(type == "string")' \
+              <<< "${response%$'\n'*}") || return 1
+            [[ $head =~ ^[a-f0-9]{40}$ && $head == "$GITHUB_SHA" ]]
+          }
+          # Acquired the concurrency slot; reject an old run before host writes.
+          current_main
+          printf '%s\n' "$registry_token" |
+            sudo -n /usr/local/sbin/schumacher-api-deploy prepare "$ATTEMPT" "$image" "$GITHUB_ACTOR"
+          # Pull/previous-image verification can take time. Recheck immediately
+          # before the wrapper may mutate the service, still in the same slot.
+          current_main
+          printf '%s\n' "$registry_token" |
+            sudo -n /usr/local/sbin/schumacher-api-deploy apply "$ATTEMPT" "$image" "$GITHUB_ACTOR"
+
+      - name: Verify Swarm deployment
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/schumacher-api-verify \
+            "ghcr.io/joaovitormessias/sistema-schumacher-api@$IMAGE_DIGEST"
+
+      - name: Verify API health and readiness
+        id: health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ((attempt=1; attempt<=20; attempt++)); do
+            health=$(curl --disable --silent --show-error --max-time 5 --output /dev/null \
+              --write-out '%{http_code}' https://api.schumachertursc.com.br/health) || health=000
+            ready=$(curl --disable --silent --show-error --max-time 5 --output /dev/null \
+              --write-out '%{http_code}' https://api.schumachertursc.com.br/ready) || ready=000
+            if [[ $health == 200 && $ready == 200 ]]; then
+              echo 'health=ok ready=ok'
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'health/readiness=failed' >&2
+          exit 1
+
+      - name: Roll back failed deployment
+        id: rollback
+        # A failed/cancelled deploy can already have mutated the service.
+        # The root-owned transaction, never step success, decides eligibility.
+        if: >-
+          ${{ always() && (failure() || cancelled()) &&
+              steps.preflight.outcome == 'success' &&
+              (steps.deploy.outcome == 'success' ||
+               steps.deploy.outcome == 'failure' ||
+               steps.deploy.outcome == 'cancelled') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          unset registry_token
+          registry_token=$GH_TOKEN
+          unset GH_TOKEN GITHUB_TOKEN
+          trap 'unset registry_token' EXIT
+          [[ $registry_token =~ ^[a-zA-Z0-9_.-]+$ ]]
+          printf '%s\n' "$registry_token" |
+            sudo -n /usr/local/sbin/schumacher-api-rollback "$ATTEMPT" "$GITHUB_ACTOR"
+          unset registry_token
+          for ((attempt=1; attempt<=20; attempt++)); do
+            health=$(curl --disable --silent --show-error --max-time 5 --output /dev/null \
+              --write-out '%{http_code}' https://api.schumachertursc.com.br/health) || health=000
+            ready=$(curl --disable --silent --show-error --max-time 5 --output /dev/null \
+              --write-out '%{http_code}' https://api.schumachertursc.com.br/ready) || ready=000
+            if [[ $health == 200 && $ready == 200 ]]; then
+              echo 'rollback_health=ok rollback_ready=ok'
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'rollback_health/readiness=failed' >&2
+          exit 1
