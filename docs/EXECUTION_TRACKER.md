@@ -6965,3 +6965,119 @@ Próxima ação única: aguardar autorização explícita para a próxima mudan�
 estado do PR #84. Antes de qualquer primeiro deploy, executar separadamente o
 gate de bootstrap/reconciliação do journal classe B; esta sincronização dos
 binários não o autoriza.
+
+### Bootstrap operacional do journal v3 — PR #84 (2026-09-17)
+
+**Status: JOURNAL_V3_BOOTSTRAPPED — FIXED_UNREVIEWED.** O gate operacional
+explicitamente autorizado reconciliou exclusivamente o journal vazio/legado
+classe B em `/var/lib/schumacher-api-deploy` com a estrutura mínima válida do
+contrato v3. O PR #84 permanece sem merge. Deploy e smoke continuam não
+autorizados.
+
+#### Preflight e bootstrap fail-closed
+
+Branch local `ci/api-auto-deploy`, HEAD
+`f35fb426a94cf630071e1239420b3577cddb3141` e working tree limpo foram
+confirmados antes da operação. O manifesto SHA-256 e `bash -n` dos três
+wrappers passaram. No servidor, os três artefatos instalados permaneceram
+arquivos regulares, não symlinks, `root:root 0755`, com os hashes canônicos já
+registrados na sincronização anterior. O allowlist NOPASSWD de `github-deploy`
+continuou restrito aos três wrappers, o acesso Docker genérico permaneceu
+bloqueado e não havia processo concorrente de deploy, rollback ou
+`docker service update`.
+
+Imediatamente antes da criação, a base foi novamente confirmada como diretório
+real `root:root 0700`, completamente vazio, sem `lock`, `attempts` ou `active`.
+Com `umask 077`, foram criados exclusivamente:
+
+```text
+/var/lib/schumacher-api-deploy/attempts  directory           root:root 0700, vazio
+/var/lib/schumacher-api-deploy/lock      regular empty file  root:root 0600, inode 1179677
+```
+
+`attempts` foi criado sem `-p`; `lock` foi criado com noclobber. Não houve
+chmod, chown, reparo, remoção ou substituição de objeto preexistente. Após as
+validações, o inode do lock continuou `1179677`, `attempts` continuou vazio,
+`active` continuou ausente e não havia diretório `docker`, `config.json` nem
+qualquer objeto adicional no journal.
+
+#### Validadores e invariância do serviço
+
+Os caminhos reais de sudoers foram exercitados como `github-deploy`, somente
+nos modos read-only:
+
+```text
+sudo -n /usr/local/sbin/schumacher-api-verify --lock    PASS
+sudo -n /usr/local/sbin/schumacher-api-verify --ledger  PASS
+```
+
+O snapshot read-only do serviço foi idêntico antes e depois:
+
+```text
+service_id=vpj60gzekukjllio1jjk55v7l
+version=14690
+updated=2026-09-03 15:01:13.745062763 +0000 UTC
+image=ghcr.io/joaovitormessias/sistema-schumacher-api:main@sha256:1eecfa4902e30e3c471432a02ca0d5fb1ce0e28e28e6773af5d0077ff28f993c
+replicas=1
+update=completed
+running_task=q4zm82phd3aw72s1s7sk36ddl
+```
+
+Não houve alteração de ServiceSpec, digest, versão, timestamp, réplica ou task;
+não há evidência de restart ou atualização causada pelo bootstrap. Confirmação
+explícita:
+
+```text
+deploy = NÃO EXECUTADO
+smoke = NÃO EXECUTADO
+health/ready = NÃO CHAMADOS
+service update = NÃO EXECUTADO
+prepare/apply/rollback = NÃO EXECUTADOS
+wrappers/sudoers/secrets/env/banco = NÃO ALTERADOS
+```
+
+Somente este tracker foi alterado localmente. `docs/SESSION_HANDOFF.md`, código,
+workflows e wrappers permaneceram inalterados. Este registro ainda requer
+review independente e não autoriza commit, push, merge, deploy ou smoke.
+
+Próxima ação única: executar `/review` independente deste gate e da atualização
+documental. Não iniciar automaticamente deploy, smoke ou outra mudança de
+estado.
+
+#### Fechamento do review independente do bootstrap (2026-09-17)
+
+**Status vigente: JOURNAL_V3_BOOTSTRAPPED — REVIEW_CLOSED — SAFE FOR TRACKER
+COMMIT.** O review independente final declarou literalmente **“review sem
+P0/P1/P2”** e aprovou o bootstrap/reconciliação do journal v3. Os validadores
+read-only `--lock` e `--ledger` permanecem em PASS conforme a evidência
+operacional registrada acima.
+
+O review confirmou hashes, sintaxe, 41 grupos de testes e checks do diff em
+PASS. O ambiente do review não conseguiu reinspecionar produção diretamente;
+essa limitação não substitui nem amplia a evidência operacional anterior, que
+permaneceu coerente com o contrato v3. O snapshot antes/depois comprova que o
+serviço Swarm não foi alterado pelo bootstrap.
+
+Decisão de promoção documental:
+
+```text
+commit somente do tracker = SEGURO
+push desse commit documental = SEGURO
+merge do PR #84 = NÃO AUTORIZADO
+deploy = NÃO AUTORIZADO
+smoke = NÃO AUTORIZADO
+```
+
+A autorização para commit e push limita-se à atualização documental de
+`docs/EXECUTION_TRACKER.md`; commit/push não equivalem a autorização para
+merge. O merge permanece bloqueado porque pode acionar automaticamente deploy
+e smoke, que continuam bloqueados. O PR #84 permanece Ready for review e não
+mergeado.
+
+H-B2, H-B3 e 3.6F-D permanecem inalterados. Segurança/Supabase/RLS continua
+fora deste trabalho. `docs/SESSION_HANDOFF.md`, código, workflows, wrappers,
+infraestrutura e produção não foram alterados nesta reconciliação documental.
+
+Próxima ação única: aguardar autorização explícita do usuário para commit e
+push da atualização documental do tracker. Não executar merge, deploy ou
+smoke.
