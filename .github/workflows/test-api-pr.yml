@@ -1,0 +1,42 @@
+name: Test API PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/test-api-pr.yml"
+      - ".github/workflows/publish-api-ghcr.yml"
+      - "infra/deploy/**"
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test deployment contract
+        working-directory: .
+        run: node infra/deploy/test.cjs
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Test chat package
+        run: go test -count=1 ./internal/chat
+
+      - name: Test API
+        run: go test -count=1 ./...
