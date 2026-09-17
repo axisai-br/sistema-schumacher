@@ -6865,3 +6865,103 @@ o tracker é a fonte canônica do estado operacional volátil deste CI/CD.
 Próxima ação única: aguardar autorização explícita do usuário para commit.
 Commit, push, PR, merge, sincronização dos wrappers, deploy e smoke não foram
 executados nesta reconciliação documental.
+
+### Sincronização operacional dos wrappers v3 — PR #84 (2026-09-17)
+
+**Status: WRAPPERS_V3_SYNCED — DEPLOY/SMOKE NOT AUTHORIZED.** Operação
+explicitamente limitada à instalação conjunta dos três wrappers revisados do
+commit `f98f6aa57313a604795e173933d9990b7a3c29fc`, PR #84
+`ci(api): add guarded production deployment`. O PR permanece Draft, seu
+`CI Test API PR` está em PASS conforme a referência autorizada, e nenhum
+ready-for-review, merge, deploy ou smoke foi executado.
+
+#### Fonte e instalação
+
+Branch local `ci/api-auto-deploy`, HEAD autorizado `f98f6aa57313a604795e173933d9990b7a3c29fc`
+e working tree limpo foram confirmados antes da conexão. `SHA256SUMS`,
+`bash -n` e hashes dos arquivos locais e dos objetos do HEAD coincidiram.
+Os três candidatos foram transferidos diretamente desses bytes commitados,
+validados juntos em staging temporário e instalados por rename individual no
+mesmo filesystem, sem checkout no servidor.
+
+Estado final em `/usr/local/sbin`: arquivos regulares, não symlinks,
+`root:root 0755`, `bash -n` PASS e hashes:
+
+```text
+b8e347b8610fba0a078fedaff611b5a2335fe9a3a3126b3af6276ffc5d8d558f  schumacher-api-deploy
+98cb970bbdba7ca96c7af7f1d1e97e9bb02f7391c607e9865b85269135586731  schumacher-api-verify
+83d67da3e099318ce189f8cea79871dc1778dbdbd6ba9abff63d3ac7ba10f6a2  schumacher-api-rollback
+```
+
+Os wrappers anteriores eram também arquivos regulares `root:root 0755` e
+tinham, respectivamente, os hashes `10fbf6b972218dc8182fe5c9551acb0614eea1b73f06bf07e8503edddd7bb0f6`,
+`8949de182edae83f3a53bacaed2675a811c7d1fcd73d680bc12cb14e7369040e`
+e `82481028668274a28ea26eb6cb13e6c38917eef9f43e38aa19ec1a22a3ef1d77`.
+Backup byte a byte, root-only `root:root 0700`, preservado em:
+
+```text
+/var/backups/schumacher-api-wrappers/20260917T131850Z-f98f6aa57313a604
+```
+
+Os três hashes do backup coincidem com os hashes anteriores acima. Stagings
+temporários da operação foram removidos após a verificação; o backup permanece.
+
+#### Sudoers, journal e ausência de mutação
+
+Sudoers não foi alterado. `github-deploy` continua sem grupo/acesso ao socket
+Docker e uma tentativa read-only de `docker ps` permaneceu bloqueada. O
+allowlist NOPASSWD continua contendo exclusivamente:
+
+```text
+/usr/local/sbin/schumacher-api-deploy
+/usr/local/sbin/schumacher-api-verify
+/usr/local/sbin/schumacher-api-rollback
+```
+
+Não foi encontrado processo concorrente de deploy, rollback ou
+`docker service update` antes ou depois da instalação.
+
+Journal classificado como **B — vazio/legado sem mutação pendente**:
+`/var/lib/schumacher-api-deploy` já existia como diretório real
+`root:root 0700`, vazio, sem `lock`, `attempts` ou `active`. O estado
+foi apenas inspecionado e permaneceu byte/estrutura inalterado. Os validadores
+`--lock` e `--ledger` não foram chamados porque os pré-requisitos v3 não
+existiam naturalmente. Bootstrap/reconciliação do journal continua sendo gate
+operacional separado antes do primeiro deploy; nada foi criado, migrado,
+removido, reparado, chmodado ou chownado nesse diretório.
+
+Snapshot read-only do serviço antes e depois foi idêntico:
+
+```text
+service_id=vpj60gzekukjllio1jjk55v7l
+version=14690
+updated=2026-09-03 15:01:13.745062763 +0000 UTC
+image=ghcr.io/joaovitormessias/sistema-schumacher-api:main@sha256:1eecfa4902e30e3c471432a02ca0d5fb1ce0e28e28e6773af5d0077ff28f993c
+replicas=1
+update=completed
+running_task=q4zm82phd3aw72s1s7sk36ddl
+```
+
+O mesmo conjunto de tasks históricas permaneceu em `Shutdown`. ServiceSpec,
+digest, versão, timestamp de update, réplica, task atual e imagens não mudaram;
+não há evidência de restart ou atualização causada por esta operação.
+
+Confirmação explícita:
+
+```text
+deploy = NÃO EXECUTADO
+smoke = NÃO EXECUTADO
+health/ready = NÃO CHAMADOS
+service update = NÃO EXECUTADO
+prepare/apply/rollback = NÃO EXECUTADOS
+PR ready/merge = NÃO EXECUTADOS
+```
+
+Stacks, secrets, env, banco, sudoers, serviço Swarm e
+`docs/SESSION_HANDOFF.md` permaneceram inalterados. H-B2/H-B3/3.6F-D e
+Segurança/Supabase/RLS continuam fora deste trabalho.
+
+Próxima ação única: aguardar autorização explícita para a próxima mudança de
+estado do PR #84. Antes de qualquer primeiro deploy, executar separadamente o
+gate de bootstrap/reconciliação do journal classe B; esta sincronização dos
+binários não o autoriza.
