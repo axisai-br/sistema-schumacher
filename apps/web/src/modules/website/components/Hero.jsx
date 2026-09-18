@@ -1,6 +1,6 @@
 import { Button } from '@heroui/react'
 import { ArrowDown, BusFront, Check, MessageCircle } from 'lucide-react'
-import { motion as Motion } from 'framer-motion'
+import { motion as Motion, useReducedMotion } from 'framer-motion'
 
 const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de informações sobre viagens com a Schumacher Tur'
@@ -12,6 +12,7 @@ const trustItems = [
 ]
 
 export default function Hero() {
+    const prefersReducedMotion = useReducedMotion()
     const handleWhatsApp = () => {
         window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`, '_blank')
     }
@@ -27,7 +28,7 @@ export default function Hero() {
                 <div className="flex min-w-0 items-center px-5 py-12 sm:px-8 sm:py-16 lg:col-span-5 lg:px-10 xl:px-16">
                     <div className="w-full max-w-2xl">
                         <Motion.div
-                            initial={{ opacity: 0, y: 16 }}
+                            initial={prefersReducedMotion ? false : { opacity: 0, y: 16 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.45 }}
                             className="mb-6 inline-flex items-center gap-3 border-l-4 border-brand-ember bg-black/10 px-4 py-3 sm:mb-8"
@@ -39,7 +40,7 @@ export default function Hero() {
                         </Motion.div>
 
                         <Motion.h1
-                            initial={{ opacity: 0, y: 20 }}
+                            initial={prefersReducedMotion ? false : { opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.55, delay: 0.1 }}
                             className="mb-6 text-4xl font-bold leading-[1.03] tracking-[-0.035em] text-brand-lynx sm:text-5xl lg:text-6xl xl:text-7xl"
@@ -51,7 +52,7 @@ export default function Hero() {
                         </Motion.h1>
 
                         <Motion.p
-                            initial={{ opacity: 0, y: 18 }}
+                            initial={prefersReducedMotion ? false : { opacity: 0, y: 18 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.55, delay: 0.2 }}
                             className="mb-8 max-w-xl text-base leading-relaxed text-brand-lynx/85 sm:text-lg lg:text-xl"
@@ -62,15 +63,15 @@ export default function Hero() {
                         </Motion.p>
 
                         <Motion.div
-                            initial={{ opacity: 0, y: 18 }}
+                            initial={prefersReducedMotion ? false : { opacity: 0, y: 18 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.55, delay: 0.3 }}
-                            className="mb-9 flex flex-col gap-3 sm:flex-row"
+                            className="mb-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap"
                         >
                             <Button
                                 onClick={handleWhatsApp}
                                 size="lg"
-                                className="h-14 w-full rounded-md bg-brand-ember px-6 text-base font-bold text-black transition-[filter] hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:w-auto"
+                                className="h-14 w-full shrink-0 rounded-md bg-brand-ember px-6 text-base font-bold text-black transition-[filter] hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:w-auto"
                                 startContent={<MessageCircle aria-hidden="true" size={20} />}
                             >
                                 Pedir Cotação Grátis
@@ -80,7 +81,7 @@ export default function Hero() {
                                 onClick={scrollToFleet}
                                 size="lg"
                                 variant="bordered"
-                                className="h-14 w-full rounded-md border border-brand-blue-grey bg-transparent px-6 text-base font-semibold text-brand-lynx transition-colors hover:border-brand-lynx hover:bg-brand-lynx/10 focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:w-auto"
+                                className="h-14 w-full shrink-0 rounded-md border border-brand-blue-grey bg-transparent px-6 text-base font-semibold text-brand-lynx transition-colors hover:border-brand-lynx hover:bg-brand-lynx/10 focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:w-auto"
                                 startContent={<BusFront aria-hidden="true" size={20} />}
                             >
                                 Conhecer Frota
@@ -88,7 +89,7 @@ export default function Hero() {
                         </Motion.div>
 
                         <Motion.ul
-                            initial={{ opacity: 0 }}
+                            initial={prefersReducedMotion ? false : { opacity: 0 }}
                             animate={{ opacity: 1 }}
                             transition={{ duration: 0.45, delay: 0.4 }}
                             className="grid gap-3 border-t border-brand-blue-grey/35 pt-6 text-sm text-brand-lynx/85 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3"
@@ -104,18 +105,20 @@ export default function Hero() {
                 </div>
 
                 <Motion.figure
-                    initial={{ opacity: 0 }}
+                    initial={prefersReducedMotion ? false : { opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.65, delay: 0.15 }}
-                    className="relative min-h-[22rem] overflow-hidden border-t border-brand-blue-grey/30 lg:col-span-7 lg:min-h-0 lg:border-l lg:border-t-0"
+                    className="relative flex min-h-[22rem] min-w-0 items-center justify-center overflow-hidden border-t border-brand-blue-grey/30 bg-brand-gunship px-4 py-12 sm:px-6 lg:col-span-7 lg:min-h-0 lg:border-l lg:border-t-0"
                 >
                     <img
-                        src="/assets/bus-static.webp"
-                        alt="Ônibus Schumacher Tur em uma estrada"
-                        className="absolute inset-0 h-full w-full object-cover object-center"
+                        src="/assets/brand/schumacher-bus-cutout.webp"
+                        alt="Ônibus Schumacher Tur com a identidade atual da frota"
+                        width={1672}
+                        height={941}
+                        className="h-auto w-full max-w-[1200px] object-contain"
                         fetchPriority="high"
+                        decoding="async"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-brand-gunship/70 via-transparent to-transparent" aria-hidden="true" />
                     <div className="absolute inset-x-0 top-0 h-2 bg-brand-ember" aria-hidden="true" />
 
                     <div className="absolute bottom-6 right-6 hidden items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-brand-lynx sm:flex">
