@@ -1,8 +1,8 @@
 import { Button, Card, CardBody, Chip } from '@heroui/react'
-import { motion } from 'framer-motion'
+import { motion as Motion } from 'framer-motion'
 import { MapPin, Calendar, Users, Clock, Check, X, Phone, MessageCircle, Star, ChevronRight, Sun, Droplets, Camera, Compass } from 'lucide-react'
+import { contacts, createTelUrl, createWhatsAppUrl } from '../data/contacts'
 
-const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de informações sobre a viagem aos Lençóis Maranhenses'
 
 // Dados do roteiro
@@ -132,7 +132,7 @@ const testimonials = [
 
 export default function TripMaranhao() {
     const handleWhatsApp = (message = WHATSAPP_MESSAGE) => {
-        window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`, '_blank')
+        window.open(createWhatsAppUrl(contacts.travelAi, message), '_blank')
     }
 
     return (
@@ -151,7 +151,7 @@ export default function TripMaranhao() {
 
                 {/* Content */}
                 <div className="container-max relative z-10 py-20">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 30 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8 }}
@@ -202,7 +202,7 @@ export default function TripMaranhao() {
                                 <ChevronRight size={20} />
                             </Button>
                         </div>
-                    </motion.div>
+                    </Motion.div>
                 </div>
             </section>
 
@@ -216,7 +216,7 @@ export default function TripMaranhao() {
                             { icon: Camera, label: 'Paisagens únicas', value: 'Insta-worthy' },
                             { icon: Compass, label: 'Aventura completa', value: '4x4 e lancha' },
                         ].map((item, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 20 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -229,7 +229,7 @@ export default function TripMaranhao() {
                                 </div>
                                 <div className="font-bold text-dark-900">{item.value}</div>
                                 <div className="text-sm text-dark-500">{item.label}</div>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -238,7 +238,7 @@ export default function TripMaranhao() {
             {/* Roteiro */}
             <section className="section-padding">
                 <div className="container-max">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -248,11 +248,11 @@ export default function TripMaranhao() {
                             Roteiro <span className="text-gradient-gold">Completo</span>
                         </h2>
                         <p className="section-subtitle">Cada dia uma nova aventura</p>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="max-w-3xl mx-auto">
                         {itinerary.map((day, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, x: -20 }}
                                 whileInView={{ opacity: 1, x: 0 }}
@@ -273,7 +273,7 @@ export default function TripMaranhao() {
                                         <p className="text-dark-500 text-sm">{day.description}</p>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -282,7 +282,7 @@ export default function TripMaranhao() {
             {/* Pacotes */}
             <section id="pacotes" className="section-padding bg-light-100">
                 <div className="container-max">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -292,11 +292,11 @@ export default function TripMaranhao() {
                             Escolha seu <span className="text-gradient-gold">Pacote</span>
                         </h2>
                         <p className="section-subtitle">Opções para todos os perfis</p>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="grid md:grid-cols-3 gap-8">
                         {packages.map((pkg, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 30 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -337,7 +337,7 @@ export default function TripMaranhao() {
                                         </Button>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -348,7 +348,7 @@ export default function TripMaranhao() {
                 <div className="container-max">
                     <div className="grid md:grid-cols-2 gap-12">
                         {/* Incluído */}
-                        <motion.div
+                        <Motion.div
                             initial={{ opacity: 0, x: -20 }}
                             whileInView={{ opacity: 1, x: 0 }}
                             viewport={{ once: true }}
@@ -364,10 +364,10 @@ export default function TripMaranhao() {
                                     </div>
                                 ))}
                             </div>
-                        </motion.div>
+                        </Motion.div>
 
                         {/* Não incluído */}
-                        <motion.div
+                        <Motion.div
                             initial={{ opacity: 0, x: 20 }}
                             whileInView={{ opacity: 1, x: 0 }}
                             viewport={{ once: true }}
@@ -383,7 +383,7 @@ export default function TripMaranhao() {
                                     </li>
                                 ))}
                             </ul>
-                        </motion.div>
+                        </Motion.div>
                     </div>
                 </div>
             </section>
@@ -391,7 +391,7 @@ export default function TripMaranhao() {
             {/* Depoimentos */}
             <section className="section-padding bg-gold-50">
                 <div className="container-max">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -400,11 +400,11 @@ export default function TripMaranhao() {
                         <h2 className="section-title">
                             Quem já <span className="text-gradient-gold">foi</span>
                         </h2>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
                         {testimonials.map((testimonial, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 20 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -422,7 +422,7 @@ export default function TripMaranhao() {
                                         <p className="font-bold text-dark-900">{testimonial.name}</p>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -431,7 +431,7 @@ export default function TripMaranhao() {
             {/* FAQ */}
             <section className="section-padding">
                 <div className="container-max max-w-3xl">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -440,11 +440,11 @@ export default function TripMaranhao() {
                         <h2 className="section-title">
                             Perguntas <span className="text-gradient-gold">Frequentes</span>
                         </h2>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="space-y-4">
                         {faqs.map((faq, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 10 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -457,7 +457,7 @@ export default function TripMaranhao() {
                                         <p className="text-dark-500 text-sm">{faq.answer}</p>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -466,7 +466,7 @@ export default function TripMaranhao() {
             {/* CTA Final */}
             <section className="section-padding bg-gradient-to-br from-gold-500 to-gold-600">
                 <div className="container-max text-center">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -490,13 +490,13 @@ export default function TripMaranhao() {
                                 size="lg"
                                 variant="bordered"
                                 className="border-white text-white hover:bg-white/10"
-                                onClick={() => window.location.href = 'tel:+554932466666'}
+                                onClick={() => window.location.href = createTelUrl(contacts.legacyVoice)}
                             >
                                 <Phone size={20} className="mr-2" />
-                                (49) 3246-6666
+                                {contacts.legacyVoice.display}
                             </Button>
                         </div>
-                    </motion.div>
+                    </Motion.div>
                 </div>
             </section>
         </div>

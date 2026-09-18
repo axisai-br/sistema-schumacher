@@ -1,8 +1,8 @@
 import { Button } from '@heroui/react'
 import { ArrowDown, BusFront, Check, MessageCircle } from 'lucide-react'
 import { motion as Motion, useReducedMotion } from 'framer-motion'
+import { contacts, createWhatsAppUrl } from '../data/contacts'
 
-const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de informações sobre viagens com a Schumacher Tur'
 
 const trustItems = [
@@ -14,7 +14,7 @@ const trustItems = [
 export default function Hero() {
     const prefersReducedMotion = useReducedMotion()
     const handleWhatsApp = () => {
-        window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`, '_blank')
+        window.open(createWhatsAppUrl(contacts.commercial, WHATSAPP_MESSAGE), '_blank')
     }
 
     const scrollToFleet = () => {

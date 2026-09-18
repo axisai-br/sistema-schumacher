@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import schumacherHorizontalLight from '../../../assets/brand/logos/schumacher-horizontal-light.svg'
+import { contacts, createTelUrl, createWhatsAppUrl } from '../data/contacts'
 
 const links = {
     empresa: [
@@ -20,8 +21,8 @@ const links = {
         { name: 'Solicitar Orçamento', href: '/orcamento', isRoute: true },
     ],
     contato: [
-        { name: '(49) 3246-6666', href: 'tel:+554932466666', icon: <Phone aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
-        { name: '(49) 99986-2222', href: 'https://wa.me/5549999862222', icon: <MessageCircle aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: contacts.commercial.display, href: createTelUrl(contacts.commercial), icon: <Phone aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: contacts.commercial.display, href: createWhatsAppUrl(contacts.commercial), icon: <MessageCircle aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
         { name: 'turismo@schumacher.tur.br', href: 'mailto:turismo@schumacher.tur.br', icon: <Mail aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
         { name: 'SC-355, KM 35 - Fraiburgo/SC', href: 'https://maps.google.com/?q=SC-355+KM+35+Fraiburgo+SC', icon: <MapPin aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
     ],
