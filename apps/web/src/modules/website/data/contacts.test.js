@@ -10,6 +10,8 @@ import {
 test('defines the commercial and travel AI contacts', () => {
     assert.equal(contacts.commercial.number, '5549988502101')
     assert.equal(contacts.commercial.display, '+55 49 98850-2101')
+    assert.equal(contacts.secondaryWhatsApp.number, '5549999862222')
+    assert.equal(contacts.secondaryWhatsApp.display, '+55 49 99986-2222')
     assert.equal(contacts.travelAi.number, '5549991600330')
 })
 
@@ -21,6 +23,10 @@ test('creates WhatsApp URLs and encodes the message', () => {
     assert.equal(
         createWhatsAppUrl(contacts.travelAi),
         'https://wa.me/5549991600330',
+    )
+    assert.equal(
+        createWhatsAppUrl(contacts.secondaryWhatsApp),
+        'https://wa.me/5549999862222',
     )
 })
 

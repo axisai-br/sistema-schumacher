@@ -3,6 +3,10 @@ export const contacts = Object.freeze({
         number: '5549988502101',
         display: '+55 49 98850-2101',
     }),
+    secondaryWhatsApp: Object.freeze({
+        number: '5549999862222',
+        display: '+55 49 99986-2222',
+    }),
     travelAi: Object.freeze({
         number: '5549991600330',
         display: '+55 49 99160-0330',
