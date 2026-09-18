@@ -3,7 +3,6 @@ import BusScrollAnimation from '../components/BusScrollAnimation'
 import About from '../components/About'
 import Services from '../components/Services'
 import Fleet from '../components/Fleet'
-import Testimonials from '../components/Testimonials'
 import FinalCTA from '../components/FinalCTA'
 
 export default function Home() {
@@ -14,7 +13,6 @@ export default function Home() {
             <About />
             <Services />
             <Fleet />
-            <Testimonials />
             <FinalCTA />
         </>
     )

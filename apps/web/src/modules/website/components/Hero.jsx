@@ -1,7 +1,8 @@
 import { Button } from '@heroui/react'
-import { ArrowDown, BusFront, Check, MessageCircle } from 'lucide-react'
+import { BusFront, Check, MessageCircle } from 'lucide-react'
 import { motion as Motion, useReducedMotion } from 'framer-motion'
 import { contacts, createWhatsAppUrl } from '../data/contacts'
+import Testimonials from './Testimonials'
 
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de informações sobre viagens com a Schumacher Tur'
 
@@ -45,10 +46,7 @@ export default function Hero() {
                             transition={{ duration: 0.55, delay: 0.1 }}
                             className="mb-6 text-4xl font-bold leading-[1.03] tracking-[-0.035em] text-brand-lynx sm:text-5xl lg:text-6xl xl:text-7xl"
                         >
-                            Viagens com
-                            <span className="mt-1 block text-brand-lynx">
-                                <span className="border-b-[0.12em] border-brand-ember">Conforto Premium</span>
-                            </span>
+                            Conforto de verdade
                         </Motion.h1>
 
                         <Motion.p
@@ -74,7 +72,7 @@ export default function Hero() {
                                 className="h-14 w-full shrink-0 rounded-md bg-brand-ember px-6 text-base font-bold text-black transition-[filter] hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-lynx focus-visible:ring-offset-2 focus-visible:ring-offset-brand-gunship sm:w-auto"
                                 startContent={<MessageCircle aria-hidden="true" size={20} />}
                             >
-                                Pedir Cotação Grátis
+                                Pedir Cotação
                             </Button>
 
                             <Button
@@ -104,28 +102,15 @@ export default function Hero() {
                     </div>
                 </div>
 
-                <Motion.figure
+                <Motion.div
                     initial={prefersReducedMotion ? false : { opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.65, delay: 0.15 }}
-                    className="relative flex min-h-[22rem] min-w-0 items-center justify-center overflow-hidden border-t border-brand-blue-grey/30 bg-brand-gunship px-4 py-12 sm:px-6 lg:col-span-7 lg:min-h-0 lg:border-l lg:border-t-0"
+                    className="relative flex min-h-[22rem] min-w-0 items-center justify-center overflow-hidden border-t border-brand-blue-grey/30 bg-brand-gunship px-5 py-10 sm:px-8 sm:py-12 lg:col-span-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:px-10"
                 >
-                    <img
-                        src="/assets/brand/schumacher-bus-cutout.webp"
-                        alt="Ônibus Schumacher Tur com a identidade atual da frota"
-                        width={1672}
-                        height={941}
-                        className="h-auto w-full max-w-[1200px] object-contain"
-                        fetchPriority="high"
-                        decoding="async"
-                    />
+                    <Testimonials />
                     <div className="absolute inset-x-0 top-0 h-2 bg-brand-ember" aria-hidden="true" />
-
-                    <div className="absolute bottom-6 right-6 hidden items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-brand-lynx sm:flex">
-                        <span>Scroll</span>
-                        <ArrowDown aria-hidden="true" size={16} />
-                    </div>
-                </Motion.figure>
+                </Motion.div>
             </div>
         </section>
     )

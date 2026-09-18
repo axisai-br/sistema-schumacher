@@ -64,11 +64,8 @@ function StaticBusSection({ busUnavailable, onBusError }) {
         <section data-bus-mode="static" className="border-t border-brand-blue-grey/30">
             <div className="flex flex-col items-center gap-8 bg-brand-gunship py-12 sm:py-16">
                 <JourneyHeading />
-                {/* Mobile keeps the Hero bus as the single vehicle introduction. */}
                 {!busUnavailable && (
-                    <div className="hidden md:contents">
-                        <BusImage onError={onBusError} />
-                    </div>
+                    <BusImage onError={onBusError} />
                 )}
             </div>
             <div className="flex justify-center bg-brand-lynx py-8">
