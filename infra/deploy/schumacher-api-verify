@@ -1,0 +1,119 @@
+#!/bin/bash
+# Contract v3: shared journal validation and exact 1/1 digest convergence.
+set -euo pipefail
+set +x
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV CDPATH DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
+[[ $EUID == 0 && $# == 1 ]] || exit 1
+if [[ $1 == --ledger || $1 == --lock ]]; then
+  # --ledger is called with the exclusive flock held; --lock precedes open.
+  # Read-only: never repairs or silently discards incomplete state.
+  base=/var/lib/schumacher-api-deploy
+  [[ -d $base && ! -L $base && $(stat -c '%u:%g:%a' "$base") == 0:0:700 ]] || exit 1
+  [[ -f $base/lock && ! -L $base/lock &&
+     $(stat -c '%u:%g:%a' "$base/lock") == 0:0:600 ]] || exit 1
+  # --lock is read-only and runs BEFORE opening the inode for flock.
+  [[ $1 != --lock ]] || exit 0
+  [[ -d $base/attempts && ! -L $base/attempts &&
+     $(stat -c '%u:%g:%a' "$base/attempts") == 0:0:700 ]] || exit 1
+  [[ ! -e $base/active.tmp && ! -L $base/active.tmp ]] || exit 1
+  declare -A states=() parents=()
+  shopt -s nullglob dotglob
+  count=0
+  for record in "$base"/attempts/*; do
+    id=${record##*/}
+    [[ $id =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ &&
+       -d $record && ! -L $record && $(stat -c '%u:%g:%a' "$record") == 0:0:700 ]] || exit 1
+    for field in id parent previous candidate phase; do
+      [[ -f $record/$field && ! -L $record/$field &&
+         $(stat -c '%u:%g:%a' "$record/$field") == 0:0:600 ]] || exit 1
+    done
+    # Directory is mandatory, even after config cleanup. Reject partial paths,
+    # unexpected Docker temporaries and symlinks before any consumer or cleanup.
+    [[ -d $record/docker && ! -L $record/docker &&
+       $(stat -c '%u:%g:%a' "$record/docker") == 0:0:700 ]] || exit 1
+    for credential in "$record"/docker/*; do
+      [[ $credential == "$record/docker/config.json" &&
+         -f $credential && ! -L $credential &&
+         $(stat -c '%u:%g:%a' "$credential") == 0:0:600 ]] || exit 1
+    done
+    [[ $(<"$record/id") == "$id" ]] || exit 1
+    [[ ! -e $record/phase.tmp && ! -L $record/phase.tmp ]] || exit 1
+    for field in previous candidate; do
+      value=$(<"$record/$field")
+      [[ $value =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api@sha256:[a-f0-9]{64}$ ]] || exit 1
+    done
+    state=$(<"$record/phase")
+    [[ $state == prepared || $state == started || $state == completed ||
+       $state == rolling_back || $state == rolled_back || $state == aborted ]] || exit 1
+    parent=$(<"$record/parent")
+    [[ $parent == NONE || $parent =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]] || exit 1
+    states[$id]=$state parents[$id]=$parent
+    count=$((count + 1))
+  done
+  if [[ ! -e $base/active && ! -L $base/active ]]; then
+    [[ $count == 0 ]] || exit 1
+    exit 0
+  fi
+  [[ -f $base/active && ! -L $base/active &&
+     $(stat -c '%u:%g:%a' "$base/active") == 0:0:600 ]] || exit 1
+  active=$(<"$base/active")
+  [[ $active =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]] || exit 1
+  # Every record must belong to the one active predecessor chain. This rejects
+  # missing ownership, missing records, cycles, forks and orphaned partial writes.
+  cursor=$active
+  seen=0
+  while [[ $cursor != NONE ]]; do
+    [[ -n ${states[$cursor]:-} && $seen -lt $count ]] || exit 1
+    if [[ $cursor != "$active" ]]; then
+      [[ ${states[$cursor]} == completed || ${states[$cursor]} == rolled_back ||
+         ${states[$cursor]} == aborted ]] || exit 1
+    fi
+    cursor=${parents[$cursor]}
+    seen=$((seen + 1))
+  done
+  [[ $seen == "$count" ]] || exit 1
+  exit 0
+fi
+image=$1
+[[ $image =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api@sha256:[a-f0-9]{64}$ ]] || exit 1
+service=schumacher-api_schumacher-api
+same_image() {
+  [[ $1 =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api(:[a-zA-Z0-9_.-]+)?@sha256:[a-f0-9]{64}$ ]] &&
+    [[ ${1##*@} == ${image##*@} ]]
+}
+converged() {
+  local info spec replicas update ids task status desired task_image count=0
+  # Whitelisted fields only; never print service/container environment or errors.
+  info=$(/usr/bin/docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}|{{if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{end}}|{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}' "$service") || return 1
+  IFS='|' read -r spec replicas update <<< "$info"
+  same_image "$spec" || return 1
+  [[ $replicas == 1 && $update == completed ]] || return 1
+  ids=$(/usr/bin/docker service ps --no-trunc --format '{{.ID}}' "$service") || return 1
+  [[ -n $ids ]] || return 1
+  while IFS= read -r task; do
+    [[ $task =~ ^[a-z0-9]+$ ]] || return 1
+    info=$(/usr/bin/docker inspect --type task --format '{{.Status.State}}|{{.DesiredState}}|{{.Spec.ContainerSpec.Image}}' "$task") || return 1
+    IFS='|' read -r status desired task_image <<< "$info"
+    if [[ $desired == running ]]; then
+      [[ $status == running ]] || return 1
+      same_image "$task_image" || return 1
+      count=$((count + 1))
+    else
+      # Historical terminal tasks may use old digests. Everything else is
+      # still active or uncertain, including shutdown-desired / running-now.
+      case "$desired" in shutdown|remove) ;; *) return 1 ;; esac
+      case "$status" in shutdown|complete|failed|rejected) ;; *) return 1 ;; esac
+    fi
+  done <<< "$ids"
+  [[ $count == 1 ]]
+}
+for ((attempt=1; attempt<=30; attempt++)); do
+  if converged 2>/dev/null; then
+    echo 'convergence=ok'
+    exit 0
+  fi
+  sleep 2
+done
+echo 'convergence=failed' >&2
+exit 1

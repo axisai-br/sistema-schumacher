@@ -1,0 +1,134 @@
+#!/bin/bash
+# Contract v3. Installed root:root, 0755. No caller-controlled paths or commands.
+set -euo pipefail
+set +x
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV CDPATH DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
+umask 077
+[[ $EUID == 0 ]] || exit 1
+[[ $# == 4 ]] || exit 1
+mode=$1 attempt=$2 image=$3 registry_user=$4
+[[ $registry_user =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*(\[bot\])?$ ]] || exit 1
+[[ $mode == prepare || $mode == apply ]] || exit 1
+[[ $attempt =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]] || exit 1
+[[ $image =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api@sha256:[a-f0-9]{64}$ ]] || exit 1
+base=/var/lib/schumacher-api-deploy
+service=schumacher-api_schumacher-api
+if [[ ! -e $base && ! -L $base ]]; then
+  [[ $mode == prepare ]] || exit 1
+  mkdir "$base"
+  mkdir "$base/attempts"
+fi
+[[ -d $base && ! -L $base && $(stat -c '%u:%g:%a' "$base") == 0:0:700 ]] || exit 1
+if [[ ! -e $base/lock && ! -L $base/lock ]]; then
+  # O_EXCL via noclobber: a racing creator or dangling symlink fails closed.
+  (set -o noclobber; : > "$base/lock") || exit 1
+fi
+/usr/local/sbin/schumacher-api-verify --lock
+# Root-only base cannot be changed by the runner between validation and open.
+# Append preserves existing bytes; this inode is never replaced by a wrapper.
+exec 9>>"$base/lock"
+flock -x 9
+txn="$base/attempts/$attempt"
+/usr/local/sbin/schumacher-api-verify --ledger
+
+cleanup() {
+  # Docker may have failed after writing config: revalidate even on EXIT.
+  /usr/local/sbin/schumacher-api-verify --ledger || return 1
+  rm -f "$txn/docker/config.json"
+}
+
+phase() {
+  printf '%s\n' "$1" > "$txn/phase.tmp"
+  mv -T "$txn/phase.tmp" "$txn/phase"
+  sync -f "$base"
+}
+
+current_image() {
+  local ref
+  ref=$(/usr/bin/docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$service")
+  [[ $ref =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api(:[a-zA-Z0-9_.-]+)?@sha256:[a-f0-9]{64}$ ]] || return 1
+  printf 'ghcr.io/joaovitormessias/sistema-schumacher-api@%s\n' "${ref##*@}"
+}
+
+if [[ $mode == prepare ]]; then
+  # mkdir is exclusive: a rerun never replaces a previous-image record.
+  [[ ! -e $txn ]] || exit 1
+  active=NONE
+  if [[ -f $base/active ]]; then
+    active=$(<"$base/active")
+    [[ $active =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]] || exit 1
+    # An interrupted mutation must be recovered before accepting a successor.
+    state=$(<"$base/attempts/$active/phase")
+    [[ $state == completed || $state == rolled_back || $state == aborted ]] || exit 1
+  fi
+  previous=$(current_image)
+  /usr/local/sbin/schumacher-api-verify "$previous"
+  mkdir "$txn"
+  mkdir "$txn/docker"
+  printf '%s\n' "$attempt" > "$txn/id"
+  printf '%s\n' "$active" > "$txn/parent"
+  printf '%s\n' "$previous" > "$txn/previous"
+  printf '%s\n' "$image" > "$txn/candidate"
+  phase prepared
+  printf '%s\n' "$attempt" > "$base/active.tmp"
+  mv -T "$base/active.tmp" "$base/active"
+  sync -f "$base"
+  # Registry credentials stay in this root-only attempt directory, never argv/logs.
+  /usr/local/sbin/schumacher-api-verify --ledger
+  trap cleanup EXIT
+  /usr/bin/docker --config "$txn/docker" login ghcr.io --username "$registry_user" --password-stdin >/dev/null 2>&1
+  /usr/local/sbin/schumacher-api-verify --ledger
+  /usr/bin/docker --config "$txn/docker" pull "$image" >/dev/null 2>&1
+  /usr/local/sbin/schumacher-api-verify --ledger
+  # Keep auth until apply; Swarm workers receive it through --with-registry-auth.
+  trap - EXIT
+  echo 'mutation=none'
+  exit 0
+fi
+
+[[ -d $txn && $(<"$txn/phase") == prepared ]] || exit 1
+[[ $(<"$base/active") == "$attempt" ]] || exit 1
+[[ $(<"$txn/candidate") == "$image" ]] || exit 1
+[[ -f $txn/docker/config.json ]] || exit 1
+trap 'unset api_token; cleanup' EXIT
+IFS= read -r api_token
+[[ $api_token =~ ^[a-zA-Z0-9_.-]+$ ]] || exit 1
+expected_sha=${attempt##*-}
+current_main() {
+  local response head status
+  # Fixed origin/repository/ref. Token stays in memory and curl stdin, not argv,
+  # disk, diagnostics or service auth. No redirect, retry or caller URL.
+  response=$(printf 'header = "Authorization: Bearer %s"\n' "$api_token" |
+    /usr/bin/curl --disable --silent --fail --max-time 15 --connect-timeout 5 \
+      --proto '=https' --config - --header 'Accept: application/vnd.github+json' \
+      --header 'Cache-Control: no-cache' --write-out '\n%{http_code}' \
+      https://api.github.com/repos/joaovitormessias/sistema-schumacher/git/ref/heads/main) || return 1
+  status=${response##*$'\n'}
+  [[ $status == 200 ]] || return 1
+  head=$(jq -er 'select(.ref == "refs/heads/main") | .object |
+    select(.type == "commit") | .sha | select(type == "string")' \
+    <<< "${response%$'\n'*}") || return 1
+  [[ $head =~ ^[a-f0-9]{40}$ && $head == "$expected_sha" ]]
+}
+previous=$(<"$txn/previous")
+[[ $(current_image) == "$previous" ]] || exit 1
+# Write-ahead record and ownership are durable BEFORE Docker may change service.
+phase started
+echo 'mutation=started'
+/usr/local/sbin/schumacher-api-verify --ledger
+if ! current_main; then
+  # Docker has not been called. Keep ownership; recovery must not update service.
+  phase aborted
+  echo 'deploy=main_gate_refused' >&2
+  exit 1
+fi
+/usr/bin/docker --config "$txn/docker" service update --detach=true \
+  --with-registry-auth --image "$image" "$service" >/dev/null 2>&1
+/usr/local/sbin/schumacher-api-verify "$image"
+# Merges do not participate in flock. An advance DURING update/convergence
+# cannot be made atomic across APIs; fail with started intact for same-attempt
+# rollback rather than declaring success for a now-obsolete revision.
+current_main || { echo 'deploy=main_advanced_during_update' >&2; exit 1; }
+phase completed
+echo 'mutation=completed'

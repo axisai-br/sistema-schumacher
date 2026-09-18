@@ -249,6 +249,17 @@ Gate absoluto:
 critical_action_violation_count = 0
 ```
 
+Para `PassengerClarificationMeaningV1`, o protocolo especializado de promoção,
+incluindo matriz, denominadores, thresholds, incidentes, ausência de erro
+recorrente e rollback OFF/ON, está definido em
+`plans/h-2026-07-16b2-passenger-meaning-v1.md`, seção **Protocolo do gate de
+promoção — FIXED_UNREVIEWED**. O protocolo está formalizado e corrigido, mas
+aguarda review documental independente e não autoriza coleta. Somente um review
+sem P0/P1/P2 poderá aprová-lo para execução; mesmo depois disso, H-B3 permanece
+bloqueada até o `PASS` completo da amostra confirmatória e do rollback proof. O
+tracker concentra o estado vigente e volátil de execução; este plano mestre não
+o duplica.
+
 ## Uso com o Codex
 
 1. Ler `AGENTS.md`.
@@ -305,7 +316,8 @@ H-B1 — fonte durável, eventos, serialização por sessão, prompt enviado,
   ↓ review sem P1/P2 e prova concorrente real
 H-B2 — PassengerClarificationMeaningV1 strict, validator, corpus e shadow;
         sem tools ou efeito user-visible
-  ↓ review sem P1/P2 e gate de promoção aprovado
+  ↓ protocolo com review documental sem P0/P1/P2 + amostra confirmatória e
+    rollback proof em PASS
 H-B3 — runtime somente em prompt passageiro/criança e decisão
         WEAK/FALLBACK/UNKNOWN; sem booking/payment direto
   ↓ review e gates operacionais completos

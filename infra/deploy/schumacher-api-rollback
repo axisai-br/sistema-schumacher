@@ -1,0 +1,67 @@
+#!/bin/bash
+# Contract v3: rollback requires a consistent journal owned by THIS attempt.
+set -euo pipefail
+set +x
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV CDPATH DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
+umask 077
+[[ $EUID == 0 && $# == 2 ]] || exit 1
+attempt=$1 registry_user=$2
+[[ $registry_user =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*(\[bot\])?$ ]] || exit 1
+[[ $attempt =~ ^[1-9][0-9]*-[1-9][0-9]*-[a-f0-9]{40}$ ]] || exit 1
+base=/var/lib/schumacher-api-deploy
+service=schumacher-api_schumacher-api
+if [[ ! -e $base ]]; then
+  echo 'rollback=journal_missing' >&2
+  exit 1
+fi
+[[ -d $base && ! -L $base && $(stat -c '%u:%g:%a' "$base") == 0:0:700 ]] || exit 1
+if [[ ! -e $base/lock && ! -L $base/lock ]]; then
+  (set -o noclobber; : > "$base/lock") || exit 1
+fi
+/usr/local/sbin/schumacher-api-verify --lock
+# Same root-only, stable inode contract as deploy; never truncate the lock.
+exec 9>>"$base/lock"
+flock -x 9
+txn="$base/attempts/$attempt"
+/usr/local/sbin/schumacher-api-verify --ledger
+cleanup() {
+  /usr/local/sbin/schumacher-api-verify --ledger || return 1
+  rm -f "$txn/docker/config.json"
+}
+if [[ ! -e $txn ]]; then
+  echo 'rollback=attempt_missing' >&2
+  exit 1
+fi
+[[ $(<"$base/active") == "$attempt" ]] || exit 1
+state=$(<"$txn/phase")
+if [[ $state == prepared || $state == aborted ]]; then
+  cleanup
+  printf '%s\n' aborted > "$txn/phase.tmp"
+  mv -T "$txn/phase.tmp" "$txn/phase"
+  sync -f "$base"
+  echo 'rollback=not_needed'
+  exit 0
+fi
+[[ $state == started || $state == completed || $state == rolling_back || $state == rolled_back ]] || exit 1
+[[ $(<"$base/active") == "$attempt" ]] || exit 1
+previous=$(<"$txn/previous")
+[[ $previous =~ ^ghcr\.io/joaovitormessias/sistema-schumacher-api@sha256:[a-f0-9]{64}$ ]] || exit 1
+trap cleanup EXIT
+if [[ $state != rolled_back ]]; then
+  /usr/bin/docker --config "$txn/docker" login ghcr.io --username "$registry_user" --password-stdin >/dev/null 2>&1
+  /usr/local/sbin/schumacher-api-verify --ledger
+  /usr/bin/docker --config "$txn/docker" pull "$previous" >/dev/null 2>&1
+  /usr/local/sbin/schumacher-api-verify --ledger
+  printf '%s\n' rolling_back > "$txn/phase.tmp"
+  mv -T "$txn/phase.tmp" "$txn/phase"
+  sync -f "$base"
+  /usr/bin/docker --config "$txn/docker" service update --detach=true \
+    --with-registry-auth --image "$previous" "$service" >/dev/null 2>&1
+fi
+# A failed mutable rollback remains rolling_back and only this attempt can retry.
+/usr/local/sbin/schumacher-api-verify "$previous"
+printf '%s\n' rolled_back > "$txn/phase.tmp"
+mv -T "$txn/phase.tmp" "$txn/phase"
+sync -f "$base"
+echo 'rollback=completed'
