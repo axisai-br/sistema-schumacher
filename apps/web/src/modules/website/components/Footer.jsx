@@ -22,7 +22,7 @@ const links = {
     ],
     contato: [
         { name: contacts.commercial.display, href: createTelUrl(contacts.commercial), icon: <Phone aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
-        { name: contacts.commercial.display, href: createWhatsAppUrl(contacts.commercial), icon: <MessageCircle aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
+        { name: contacts.secondaryWhatsApp.display, href: createWhatsAppUrl(contacts.secondaryWhatsApp), icon: <MessageCircle aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
         { name: 'turismo@schumacher.tur.br', href: 'mailto:turismo@schumacher.tur.br', icon: <Mail aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
         { name: 'SC-355, KM 35 - Fraiburgo/SC', href: 'https://maps.google.com/?q=SC-355+KM+35+Fraiburgo+SC', icon: <MapPin aria-hidden="true" className="shrink-0" size={18} strokeWidth={1.8} /> },
     ],
