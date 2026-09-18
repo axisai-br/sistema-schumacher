@@ -1,13 +1,13 @@
 import { Button } from '@heroui/react'
 import { motion as Motion } from 'framer-motion'
 import schumacherGraphicNeutral from '../../../assets/brand/graphics/schumacher-graphic-neutral.svg'
+import { contacts, createWhatsAppUrl } from '../data/contacts'
 
-const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de solicitar um orçamento de viagem'
 
 export default function FinalCTA() {
     const handleWhatsApp = () => {
-        window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_MESSAGE)}`, '_blank')
+        window.open(createWhatsAppUrl(contacts.commercial, WHATSAPP_MESSAGE), '_blank')
     }
 
     return (

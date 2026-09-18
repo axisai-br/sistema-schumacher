@@ -2,8 +2,7 @@ import { Button, Input, Select, SelectItem, Textarea } from '@heroui/react'
 import { motion as Motion } from 'framer-motion'
 import { Calendar, CheckCircle, Mail, MapPin, MessageCircle, Phone, User, Users } from 'lucide-react'
 import { useState } from 'react'
-
-const WHATSAPP_NUMBER = '5549999862222'
+import { createWhatsAppUrl, resolveBookingContact } from '../data/contacts'
 
 const destinations = [
     { key: 'maranhao', label: 'Lençóis Maranhenses (6-7 dias)' },
@@ -54,7 +53,8 @@ export default function BookingForm({ defaultDestination = '', onSuccess }) {
         setIsSubmitting(true)
 
         const message = formatWhatsAppMessage()
-        window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`, '_blank')
+        const contact = resolveBookingContact(formData.destination)
+        window.open(createWhatsAppUrl(contact, message), '_blank')
 
         setTimeout(() => {
             setIsSubmitting(false)

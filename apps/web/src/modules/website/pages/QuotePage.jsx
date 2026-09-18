@@ -2,6 +2,7 @@ import { motion as Motion } from 'framer-motion'
 import { Clock, Mail, MapPin, Phone } from 'lucide-react'
 import schumacherGraphicEmber from '../../../assets/brand/graphics/schumacher-graphic-ember.svg'
 import BookingForm from '../components/BookingForm'
+import { contacts, createTelUrl, createWhatsAppUrl } from '../data/contacts'
 
 const contactLinkClass = 'flex min-h-11 items-center gap-3 rounded-sm text-brand-gunship transition-colors hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gunship focus-visible:ring-offset-2 focus-visible:ring-offset-brand-lynx'
 const iconClass = 'flex h-11 w-11 shrink-0 items-center justify-center border border-brand-blue-grey/60 bg-brand-lynx text-brand-gunship'
@@ -63,17 +64,17 @@ export default function QuotePage() {
                             <section className="py-7 lg:first:pt-0">
                                 <h2 className="mb-5 text-lg font-bold text-brand-gunship">Contatos Diretos</h2>
                                 <div className="space-y-4">
-                                    <a href="tel:+554932466666" className={contactLinkClass}>
+                                    <a href={createTelUrl(contacts.legacyVoice)} className={contactLinkClass}>
                                         <span className={iconClass} aria-hidden="true">
                                             <Phone size={18} />
                                         </span>
                                         <span>
                                             <span className="block text-sm text-brand-gunship/80">Telefone</span>
-                                            <span className="font-medium">(49) 3246-6666</span>
+                                            <span className="font-medium">{contacts.legacyVoice.display}</span>
                                         </span>
                                     </a>
                                     <a
-                                        href="https://wa.me/5549999862222"
+                                        href={createWhatsAppUrl(contacts.commercial)}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className={contactLinkClass}
@@ -83,7 +84,7 @@ export default function QuotePage() {
                                         </span>
                                         <span>
                                             <span className="block text-sm text-brand-gunship/80">WhatsApp</span>
-                                            <span className="font-medium">(49) 99986-2222</span>
+                                            <span className="font-medium">{contacts.commercial.display}</span>
                                         </span>
                                     </a>
                                     <a href="mailto:turismo@schumacher.tur.br" className={contactLinkClass}>

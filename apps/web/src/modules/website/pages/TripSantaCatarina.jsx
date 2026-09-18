@@ -1,8 +1,8 @@
 import { Button, Card, CardBody, Chip } from '@heroui/react'
-import { motion } from 'framer-motion'
+import { motion as Motion } from 'framer-motion'
 import { MapPin, Calendar, Users, Clock, Check, Phone, MessageCircle, Star, ChevronRight, Waves, Sparkles, Palmtree, Heart } from 'lucide-react'
+import { contacts, createTelUrl, createWhatsAppUrl } from '../data/contacts'
 
-const WHATSAPP_NUMBER = '5549999862222'
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de informações sobre viagens em Santa Catarina'
 
 // Destinos
@@ -55,7 +55,7 @@ const packages = [
 
 export default function TripSantaCatarina() {
     const handleWhatsApp = (message = WHATSAPP_MESSAGE) => {
-        window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`, '_blank')
+        window.open(createWhatsAppUrl(contacts.travelAi, message), '_blank')
     }
 
     return (
@@ -72,7 +72,7 @@ export default function TripSantaCatarina() {
                 </div>
 
                 <div className="container-max relative z-10 py-20">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 30 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8 }}
@@ -114,7 +114,7 @@ export default function TripSantaCatarina() {
                                 Reservar Agora
                             </Button>
                         </div>
-                    </motion.div>
+                    </Motion.div>
                 </div>
             </section>
 
@@ -128,7 +128,7 @@ export default function TripSantaCatarina() {
                             { icon: Palmtree, label: 'Balneário', value: 'Bada' },
                             { icon: Heart, label: 'Para família', value: 'Todas idades' },
                         ].map((item, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 20 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -141,7 +141,7 @@ export default function TripSantaCatarina() {
                                 </div>
                                 <div className="font-bold text-dark-900">{item.value}</div>
                                 <div className="text-sm text-dark-500">{item.label}</div>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -150,7 +150,7 @@ export default function TripSantaCatarina() {
             {/* Destinos */}
             <section className="section-padding">
                 <div className="container-max">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -160,11 +160,11 @@ export default function TripSantaCatarina() {
                             Destinos <span className="text-gradient-gold">Incríveis</span>
                         </h2>
                         <p className="section-subtitle">Conheça o que te espera</p>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="grid md:grid-cols-3 gap-8">
                         {destinations.map((dest, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 30 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -191,7 +191,7 @@ export default function TripSantaCatarina() {
                                         </div>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -200,7 +200,7 @@ export default function TripSantaCatarina() {
             {/* Pacotes */}
             <section className="section-padding bg-light-100">
                 <div className="container-max">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -209,11 +209,11 @@ export default function TripSantaCatarina() {
                         <h2 className="section-title">
                             Escolha seu <span className="text-gradient-gold">Pacote</span>
                         </h2>
-                    </motion.div>
+                    </Motion.div>
 
                     <div className="grid md:grid-cols-3 gap-8">
                         {packages.map((pkg, index) => (
-                            <motion.div
+                            <Motion.div
                                 key={index}
                                 initial={{ opacity: 0, y: 30 }}
                                 whileInView={{ opacity: 1, y: 0 }}
@@ -253,7 +253,7 @@ export default function TripSantaCatarina() {
                                         </Button>
                                     </CardBody>
                                 </Card>
-                            </motion.div>
+                            </Motion.div>
                         ))}
                     </div>
                 </div>
@@ -262,7 +262,7 @@ export default function TripSantaCatarina() {
             {/* CTA Final */}
             <section className="section-padding bg-gradient-to-br from-cyan-500 to-cyan-600">
                 <div className="container-max text-center">
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -286,13 +286,13 @@ export default function TripSantaCatarina() {
                                 size="lg"
                                 variant="bordered"
                                 className="border-white text-white hover:bg-white/10"
-                                onClick={() => window.location.href = 'tel:+554932466666'}
+                                onClick={() => window.location.href = createTelUrl(contacts.legacyVoice)}
                             >
                                 <Phone size={20} className="mr-2" />
-                                (49) 3246-6666
+                                {contacts.legacyVoice.display}
                             </Button>
                         </div>
-                    </motion.div>
+                    </Motion.div>
                 </div>
             </section>
         </div>
