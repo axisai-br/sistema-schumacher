@@ -1,28 +1,3 @@
-import { Armchair, Clock3, MessageCircle, ShieldCheck } from 'lucide-react'
-
-const features = [
-    {
-        icon: <ShieldCheck aria-hidden="true" className="mb-5 text-brand-ember" size={30} strokeWidth={1.8} />,
-        title: 'Segurança',
-        description: 'Frota com manutenção rigorosa e motoristas qualificados',
-    },
-    {
-        icon: <Clock3 aria-hidden="true" className="mb-5 text-brand-ember" size={30} strokeWidth={1.8} />,
-        title: 'Pontualidade',
-        description: 'Compromisso com horários e planejamento de rotas',
-    },
-    {
-        icon: <Armchair aria-hidden="true" className="mb-5 text-brand-ember" size={30} strokeWidth={1.8} />,
-        title: 'Conforto',
-        description: 'Veículos modernos equipados para sua comodidade',
-    },
-    {
-        icon: <MessageCircle aria-hidden="true" className="mb-5 text-brand-ember" size={30} strokeWidth={1.8} />,
-        title: 'Atendimento',
-        description: 'Suporte dedicado do planejamento à execução',
-    },
-]
-
 export default function About() {
     return (
         <section id="sobre" className="border-b border-brand-blue-grey/35 bg-brand-lynx px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
@@ -46,21 +21,6 @@ export default function About() {
                         </p>
                     </div>
                 </div>
-
-                <ul className="mt-14 grid border-t border-brand-blue-grey/55 sm:grid-cols-2 lg:mt-20 lg:grid-cols-4">
-                    {features.map(({ icon, title, description }) => (
-                        <li
-                            key={title}
-                            className="border-b border-brand-blue-grey/55 py-8 sm:px-6 sm:first:pl-0 sm:[&:nth-child(odd)]:border-r lg:border-b-0 lg:border-r lg:last:border-r-0 lg:[&:nth-child(odd)]:border-r"
-                        >
-                            {icon}
-                            <h3 className="mb-2 text-xl font-bold text-brand-gunship">{title}</h3>
-                            <p className="max-w-xs text-sm leading-6 text-brand-gunship/80 sm:text-base">
-                                {description}
-                            </p>
-                        </li>
-                    ))}
-                </ul>
             </div>
         </section>
     )
