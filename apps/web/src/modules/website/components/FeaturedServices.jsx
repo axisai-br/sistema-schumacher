@@ -1,24 +1,13 @@
 import { Building2, CalendarCheck, Check, MessageCircle } from 'lucide-react'
 import { contacts, createWhatsAppUrl } from '../data/contacts'
+import { featuredServices } from '../data/services'
 
 const WHATSAPP_MESSAGE = 'Olá! Gostaria de solicitar um orçamento de viagem'
 
-const featuredServices = [
-    {
-        id: 'fretamento-empresarial',
-        icon: <Building2 size={28} strokeWidth={1.8} />,
-        title: 'Fretamento Empresarial',
-        description: 'Transporte regular de colaboradores com rotas personalizadas e pontualidade garantida.',
-        features: ['Rotas customizadas', 'Contratos flexíveis'],
-    },
-    {
-        id: 'eventos-transfers',
-        icon: <CalendarCheck size={28} strokeWidth={1.8} />,
-        title: 'Eventos e Transfers',
-        description: 'Transporte para eventos corporativos, casamentos, formaturas e ocasiões especiais.',
-        features: ['Logística completa', 'Atendimento VIP'],
-    },
-]
+const featuredIcons = {
+    'fretamento-empresarial': <Building2 size={28} strokeWidth={1.8} />,
+    'eventos-transfers': <CalendarCheck size={28} strokeWidth={1.8} />,
+}
 
 export default function FeaturedServices() {
     const whatsappUrl = createWhatsAppUrl(contacts.commercial, WHATSAPP_MESSAGE)
@@ -33,14 +22,14 @@ export default function FeaturedServices() {
                 </header>
 
                 <div className="grid gap-6 md:grid-cols-2 lg:gap-8">
-                    {featuredServices.map(({ id, icon, title, description, features }) => (
+                    {featuredServices.map(({ id, title, description, features }) => (
                         <article
                             key={id}
                             id={id}
                             className="flex flex-col border border-brand-blue-grey/55 bg-white/35 p-6 sm:p-8 lg:p-10"
                         >
                             <span className="mb-8 flex h-14 w-14 items-center justify-center bg-brand-ember text-black" aria-hidden="true">
-                                {icon}
+                                {featuredIcons[id]}
                             </span>
 
                             <h3 className="text-2xl font-bold text-brand-gunship sm:text-3xl">{title}</h3>
