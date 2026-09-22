@@ -1,14 +1,22 @@
 import { BusFront } from 'lucide-react'
 import { buses, micros } from '../data/fleet'
 
-function FleetGroup({ title, vehicles }) {
+function FleetGroup({ title, vehicles, imageSrc, imageAlt }) {
     return (
         <div className="grid gap-7 lg:grid-cols-12 lg:gap-10">
-            <div className="lg:col-span-3">
-                <div className="flex items-center gap-4 lg:sticky lg:top-28">
-                    <span className="h-1 w-10 bg-brand-ember" aria-hidden="true" />
+            <div className="lg:col-span-3 lg:sticky lg:top-28 lg:self-start">
+                <div className="flex items-center gap-4">
+                    <span className="h-1 w-10 shrink-0 bg-brand-ember" aria-hidden="true" />
                     <h3 className="text-2xl font-bold text-brand-gunship">{title}</h3>
                 </div>
+                <img
+                    src={imageSrc}
+                    alt={imageAlt}
+                    width={1672}
+                    height={941}
+                    loading="lazy"
+                    className="mt-6 block h-auto w-full max-w-sm object-contain"
+                />
             </div>
 
             <ul className="grid gap-px border border-brand-blue-grey/55 bg-brand-blue-grey/55 sm:grid-cols-2 lg:col-span-9 lg:grid-cols-3">
@@ -43,8 +51,18 @@ export default function Fleet() {
                 </header>
 
                 <div className="space-y-16 sm:space-y-20">
-                    <FleetGroup title="Ônibus" vehicles={buses} />
-                    <FleetGroup title="Micro-ônibus e Vans" vehicles={micros} />
+                    <FleetGroup
+                        title="Ônibus"
+                        vehicles={buses}
+                        imageSrc="/assets/brand/schumacher-bus-cutout.webp"
+                        imageAlt="Ônibus da frota Schumacher Tur"
+                    />
+                    <FleetGroup
+                        title="Micro-ônibus e Vans"
+                        vehicles={micros}
+                        imageSrc="/assets/brand/schumacher-van-cutout.webp"
+                        imageAlt="Van da frota Schumacher Tur"
+                    />
                 </div>
             </div>
         </section>
