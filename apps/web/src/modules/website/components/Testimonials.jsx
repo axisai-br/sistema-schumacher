@@ -1,14 +1,25 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { ChevronLeft, ChevronRight, Quote, Star, UserRound } from 'lucide-react'
-import { motion as Motion, useReducedMotion } from 'framer-motion'
+import { motion as Motion } from 'framer-motion'
 import { testimonials } from '../data/testimonials'
 
 const SWIPE_THRESHOLD = 48
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+function subscribeReducedMotion(onChange) {
+    const query = window.matchMedia?.(REDUCED_MOTION_QUERY)
+    query?.addEventListener('change', onChange)
+    return () => query?.removeEventListener('change', onChange)
+}
+
+function getReducedMotionSnapshot() {
+    return window.matchMedia?.(REDUCED_MOTION_QUERY).matches ?? false
+}
 
 export default function Testimonials() {
     const [activeIndex, setActiveIndex] = useState(0)
     const pointerStart = useRef(null)
-    const prefersReducedMotion = useReducedMotion()
+    const prefersReducedMotion = useSyncExternalStore(subscribeReducedMotion, getReducedMotionSnapshot, () => true)
 
     if (testimonials.length === 0) return null
 
