@@ -26,14 +26,15 @@ H-2026-07-27A — REVIEW_CLOSED + MERGED + DEPLOYED + SMOKE_VERIFIED
 runtime revision 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
 runtime digest sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
 H-2026-07-16B2 — REVIEW_CLOSED + MERGED + DEPLOYED;
-protocolo com 2 P1 + 2 P2 documentais FIXED_UNREVIEWED; coleta bloqueada
+promotion protocol = REVIEW_CLOSED / APPROVED_FOR_COLLECTION
+confirmatory gate = NOT_EXECUTED; APPROVED_FOR_COLLECTION != PASS
 H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
 ```
 
-Esta é a única declaração vigente de H-2026-07-27A neste handoff. Todos os
+Este bloco e os checkpoints vigentes abaixo definem o estado atual de IA. Todos os
 status e próximas ações nas seções cronológicas abaixo são históricos e estão
-**SUPERADOS** por este bloco.
+**SUPERADOS** pelos checkpoints vigentes.
 
 ## Fechamento operacional vigente de H-2026-07-27A
 
@@ -1354,20 +1355,28 @@ bloqueadas.
 
 ## Estado operacional vigente de H-B2
 
-O bloco anterior registra o checkpoint histórico antes do review final. O
-estado reconciliado posterior é:
+Os blocos anteriores de execução e correções de H-B2 são históricos, anteriores
+ao review final do código. O checkpoint vigente após review documental e merge
+do PR #83, reconciliado em 2026-09-29, é:
 
 ```text
-main remoto (GitHub) = origin/main = d7b585abcb69c3055759de82c9346762a5ebb020
+branch = reconcile/h-b2-promotion-post-review
+HEAD de base = b19b7ca02cc37685f67f0bd10143d9fd76c39f96
+main remoto (GitHub) = origin/main = b19b7ca02cc37685f67f0bd10143d9fd76c39f96
 main local = f674e65f9001ee360e4e0a21b898446229e416b3 (stale; não alterar ref nesta tarefa)
 commit H-B2 = a9c74852a43a24ba838decc5b2dee46eff3a03f8
 PR #82 = merged
-review final = sem P0/P1/P2
+review final do código = sem P0/P1/P2
 CI de publicação = verde
 imagem = sha-d7b585a
 digest = sha256:1eecfa4902e30e3c471432a02ca0d5fb1ce0e28e28e6773af5d0077ff28f993c
-delivery = DEPLOYED
-promotion gate = PROTOCOL_FIXED_UNREVIEWED; COLLECTION_BLOCKED
+delivery = REVIEW_CLOSED + MERGED + DEPLOYED
+commit documental = a18ad07b2eb9fc474c19d7cf7e2e41dd7d5542b1
+PR #83 = merged
+merge PR #83 = 0346dc9e8b50c01c71d1585537ff319d5542d0e8
+review documental final do protocolo = "review sem P0/P1/P2"
+promotion protocol = REVIEW_CLOSED / APPROVED_FOR_COLLECTION
+confirmatory gate = NOT_EXECUTED
 H-B3 = BLOCKED
 3.6F-D = BLOCKED
 ```
@@ -1388,25 +1397,55 @@ manifesto em `LEFT JOIN`; O-100 mede somente a projeção persistida; R-100 é o
 owner exclusivo da semantic accuracy completa; cada repetição 18→19 compartilha
 uma sessão dedicada com mensagens/epochs/keys distintos; e
 `validator_acceptance_rate` usa apenas propostas naturais schema-valid
-efetivamente avaliadas. Os quatro findings estão `FIXED_UNREVIEWED`.
+efetivamente avaliadas. Os quatro findings e o P1 posterior do plano mestre
+estão `REVIEW_CLOSED`; nenhum P0/P1/P2 documental do protocolo permanece aberto.
+
+Lifecycle documental histórico:
+
+```text
+formalização inicial do protocolo
+→ review encontrou 2 P1 + 2 P2
+→ correções FIXED_UNREVIEWED (histórico)
+→ novo review encontrou P1 no plano mestre
+→ correção FIXED_UNREVIEWED (histórico)
+→ review documental final sem P0/P1/P2
+→ commit documental
+→ PR #83
+→ PR #83 merged
+→ PROTOCOL_REVIEW_CLOSED
+→ APPROVED_FOR_COLLECTION
+```
+
+O objetivo forneceu o parecer literal; a descrição do
+[PR #83](https://github.com/joaovitormessias/sistema-schumacher/pull/83)
+corrobora o review final sem P0/P1/P2 e a ausência de coleta confirmatória,
+sem anexar o parecer original na discussão. GitHub confirmou o merge; Git
+local confirmou sua ancestralidade em `origin/main`, e `git ls-remote`
+confirmou `main` remoto no checkpoint acima. A ref local `main` permaneceu
+intacta. O delivery e o piloto são evidências operacionais documentadas, sem
+nova verificação de produção nesta reconciliação.
 
 Os dois conjuntos preservam 100 casos, 20 classes × 5 repetições, duas janelas
 separadas por pelo menos 24 horas (2 + 3 repetições por classe), todos os
 thresholds originais, 20 controles inelegíveis, 20 propostas adversariais e 20
-turnos OFF. O protocolo ainda **não está aprovado para coleta**. Nenhuma coleta,
+turnos OFF. **APPROVED_FOR_COLLECTION != PASS**: somente o protocolo documental
+está aprovado para execução futura. O-100, R-100, INE-20, ADV-20, OFF-20 e
+rollback proof permanecem `NOT_EXECUTED`. Nenhuma coleta,
 chamada OpenAI, alteração de flag, execução do runner, deploy, rollback ou smoke
-foi feita nesta correção documental.
+foi feita nesta reconciliação documental. H-B3 continua **BLOCKED** até PASS
+completo de H-B2 e 3.6F-D continua **BLOCKED** pelo fechamento integral de H-B.
 
 ## Próxima ação
 
 H-2026-07-27A está operacionalmente encerrado, o gate de H-B1 está concluído e
-H-B2 está revisado, integrado e implantado. O lifecycle documental do seu gate
-está em `2 P1 + 2 P2 FIXED_UNREVIEWED`; a amostra confirmatória e o rollback
-proof continuam bloqueados.
+H-B2 está revisado, integrado e implantado. O protocolo de promoção está
+`REVIEW_CLOSED / APPROVED_FOR_COLLECTION`; o gate confirmatório permanece
+`NOT_EXECUTED`.
 
-A próxima ação canônica única é um novo `/review` documental independente dos
-quatro findings. Não coletar amostra, executar runner/rollback ou iniciar H-B3
-ou 3.6F-D. Não alterar código durante esse gate.
+A próxima ação canônica única é novo `/review` documental independente desta
+reconciliação pós-merge, ainda pendente. Não registrar coleta como próxima ação
+antes de esse review fechar limpo. Não coletar amostra, executar runner/rollback
+ou iniciar H-B3 ou 3.6F-D. Não alterar código durante esse gate.
 H-B3 permanece **BLOCKED** por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
 integral de H-B.
 

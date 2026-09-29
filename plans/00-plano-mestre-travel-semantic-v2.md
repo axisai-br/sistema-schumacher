@@ -253,9 +253,9 @@ Para `PassengerClarificationMeaningV1`, o protocolo especializado de promoção,
 incluindo matriz, denominadores, thresholds, incidentes, ausência de erro
 recorrente e rollback OFF/ON, está definido em
 `plans/h-2026-07-16b2-passenger-meaning-v1.md`, seção **Protocolo do gate de
-promoção — FIXED_UNREVIEWED**. O protocolo está formalizado e corrigido, mas
-aguarda review documental independente e não autoriza coleta. Somente um review
-sem P0/P1/P2 poderá aprová-lo para execução; mesmo depois disso, H-B3 permanece
+promoção — REVIEW_CLOSED / APPROVED_FOR_COLLECTION**. O review documental final
+fechou com "review sem P0/P1/P2" e o PR #83 foi integrado. A aprovação é somente
+do protocolo para execução futura: `APPROVED_FOR_COLLECTION != PASS`. H-B3 permanece
 bloqueada até o `PASS` completo da amostra confirmatória e do rollback proof. O
 tracker concentra o estado vigente e volátil de execução; este plano mestre não
 o duplica.

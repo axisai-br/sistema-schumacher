@@ -287,13 +287,13 @@ Regras:
 | 5 | 3.6F-B | **CONCLUÍDA — REVIEW FINAL SEM P1/P2** | `plans/3.6f-b-validator-v2.md` | validator factual V2. |
 | 6 | 3.6F-C | **CONCLUÍDA EM CÓDIGO — GATE OPERACIONAL REABERTO** | `plans/3.6f-c-openai-v2-shadow.md` | review local limpo; smoke real não criou claims e recovery falhou. |
 | 7 | H-2026-07-16A | **CONCLUÍDO — SMOKE OPERACIONAL VERDE** | `plans/h-2026-07-16a-travel-v2-shadow-operacional.md` | 8 claims reais terminalizados em `COMPLETED`; sem novo `sweep_failed`. |
-| 8 | H-2026-07-16B | **EM ANDAMENTO — H-B2 REVIEW_CLOSED, MERGED E DEPLOYED; PROTOCOLO COM 2 P1 + 2 P2 FIXED_UNREVIEWED** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; B1 concluída e o protocolo H-B2 aguarda novo review documental antes de qualquer coleta; H-B3 segue bloqueada. |
+| 8 | H-2026-07-16B | **EM ANDAMENTO — H-B2 REVIEW_CLOSED + MERGED + DEPLOYED; PROMOTION PROTOCOL REVIEW_CLOSED; APPROVED_FOR_COLLECTION; CONFIRMATORY GATE NOT EXECUTED** | `plans/h-2026-07-16b-passenger-child-state.md` | Umbrella não executável; B1 concluída; H-B3 segue BLOCKED até PASS completo do protocolo H-B2. |
 | 9 | H-2026-07-16B1 | **CONCLUÍDA — GATE OPERACIONAL ENCERRADO** | `plans/h-2026-07-16b1-passenger-state-foundation.md` | fundação, review, PostgreSQL e gate operacional estão concluídos; H-A fechou o blocker posterior de autoridade materializada. |
 | 10 | H-2026-07-22A | **CORRIGIDO E DEPLOYADO — SMOKE RED HISTÓRICO; BLOCKER FECHADO POR H-A** | `plans/h-2026-07-22a-fresh-session-passenger-gate.md` | o problema original foi removido; o RED posterior na transição availability → passageiros originou H-A e permanece preservado como histórico. |
 | 11 | H-2026-07-27A | **REVIEW_CLOSED — MERGED — DEPLOYED — SMOKE_VERIFIED** | `plans/h-2026-07-27a-structural-reconciliation-fixes.md` | correção `2784b731` integrada por `c8f4e453`; runtime `4eb543cb`; smoke de 2026-08-28 verde e atribuível ao runtime. |
-| 12 | H-2026-07-16B2 | **REVIEW_CLOSED — MERGED — DEPLOYED; PROTOCOLO CORRIGIDO APÓS REVIEW DOCUMENTAL — 2 P1 + 2 P2 FIXED_UNREVIEWED** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | O delivery do código permanece encerrado; SQL, ownership O-100/R-100, sequência 18→19 e denominador foram corrigidos. Coleta não autorizada até novo review documental; H-B3 não está liberada. |
-| 13 | H-2026-07-16B3 | **BLOQUEADA por H-2026-07-16B2** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto. |
-| 14 | 3.6F-D | **BLOQUEADA por H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
+| 12 | H-2026-07-16B2 | **REVIEW_CLOSED + MERGED + DEPLOYED; PROMOTION PROTOCOL REVIEW_CLOSED; APPROVED_FOR_COLLECTION; CONFIRMATORY GATE NOT EXECUTED** | `plans/h-2026-07-16b2-passenger-meaning-v1.md` | Review documental final sem P0/P1/P2 e PR #83 merged. APPROVED_FOR_COLLECTION != PASS; amostra, controles e rollback proof não executados. |
+| 13 | H-2026-07-16B3 | **BLOCKED por H-2026-07-16B2 até PASS completo** | `plans/h-2026-07-16b3-passenger-meaning-runtime.md` | promoção gated sem booking/payment direto; depende do gate confirmatório e rollback OFF/ON de H-B2. |
+| 14 | 3.6F-D | **BLOCKED pelo fechamento integral de H-2026-07-16B** | `plans/3.6f-d-corpus-evaluator-v2.md` | corpus/evaluator V2 somente após fechamento integral do umbrella H-B. |
 | 15 | 3.6F-E | **PENDENTE após 3.6F-D** | `plans/3.6f-e-observabilidade-v2.md` | métricas V2 sanitizadas e read-only. |
 | 16 | 3.6F-F | **PENDENTE** | `plans/3.6f-f-templates-seguros.md` | templates seguros. |
 | 17 | 3.6F-G | **PENDENTE** | `plans/3.6f-g-earliest-available.md` | `EARLIEST_AVAILABLE` read-only. |
@@ -304,6 +304,11 @@ A fila acima é a única declaração canônica vigente. Status e próximas aç�
 registrados nas seções cronológicas abaixo são históricos e estão
 **SUPERADOS** por esta tabela, salvo indicação explícita de que atualizam a
 própria fila.
+
+**Próxima ação canônica única de IA:** novo `/review` documental independente
+desta reconciliação pós-merge. O review do protocolo já fechou; o review desta
+reconciliação ainda não foi executado. Não registrar coleta como próxima ação
+antes de esse novo review fechar limpo.
 
 ### Regra de desbloqueio
 
@@ -5320,10 +5325,11 @@ commit, push, PR, deploy ou smoke. O P2 está `FIXED_UNREVIEWED`; H-B2 permanece
 `/review`**. H-B3 e 3.6F-D permanecem bloqueados. Próxima ação canônica única:
 novo `/review` independente e read-only de H-B2.
 
-### 8.12.1 Fechamento de delivery de H-B2 e correção documental do gate de promoção (2026-09-08)
+### 8.12.1 Histórico — fechamento de delivery de H-B2 e correção documental do gate de promoção (2026-09-08)
 
-Esta seção atualiza somente o estado vigente; a seção 8.12 acima permanece como
-histórico da última rodada corretiva.
+Esta seção preserva o checkpoint histórico de 2026-09-08. Seus estados do
+protocolo e próxima ação estão **SUPERADOS** pela fila e pela seção 8.12.2;
+`FIXED_UNREVIEWED` abaixo descreve somente aquela rodada.
 
 **Estado reconciliado:** `main` remoto (GitHub) e `origin/main` em
 `d7b585abcb69c3055759de82c9346762a5ebb020`; commit H-B2
@@ -5395,8 +5401,89 @@ lifecycle documental separado está em primeira formalização → review com 2 
 e 2 P2 → quatro correções `FIXED_UNREVIEWED` → novo review pendente. Amostra e
 rollback proof não estão autorizados. H-B3 e 3.6F-D permanecem **BLOCKED**.
 
-**Próxima ação canônica única:** novo `/review` documental independente dos
+**Próxima ação histórica daquela rodada:** novo `/review` documental independente dos
 quatro findings, sem coletar amostra e sem iniciar H-B3.
+
+### 8.12.2 Reconciliação documental pós-review e pós-merge do protocolo H-B2 (2026-09-29)
+
+**Estado vigente:** delivery H-B2 `REVIEW_CLOSED + MERGED + DEPLOYED`;
+promotion protocol `REVIEW_CLOSED + APPROVED_FOR_COLLECTION`;
+confirmatory gate `NOT_EXECUTED`. Nenhum P0/P1/P2 documental do protocolo
+permanece aberto. O review independente desta reconciliação permanece pendente.
+
+Checkpoint verificado em modo read-only antes do patch:
+
+```text
+branch = reconcile/h-b2-promotion-post-review
+HEAD de base = b19b7ca02cc37685f67f0bd10143d9fd76c39f96
+main remoto / origin/main local = b19b7ca02cc37685f67f0bd10143d9fd76c39f96
+working tree / índice iniciais = limpos
+commit documental = a18ad07b2eb9fc474c19d7cf7e2e41dd7d5542b1
+PR #83 = merged
+merge PR #83 = 0346dc9e8b50c01c71d1585537ff319d5542d0e8
+merge PR #83 é ancestral de origin/main = sim
+```
+
+O GitHub confirmou estado e merge do [PR #83](https://github.com/joaovitormessias/sistema-schumacher/pull/83),
+cuja descrição registra review documental final sem P0/P1/P2 e nenhuma coleta
+confirmatória ou rollback executados. A formulação literal fornecida no
+objetivo desta reconciliação é **"review sem P0/P1/P2"**; a descrição do PR
+corrobora o resultado, sem disponibilizar o parecer original na discussão.
+Deploy e piloto continuam como evidência operacional documentada na seção
+8.12.1, sem nova inspeção ou execução em produção.
+
+Lifecycle documental, separado do delivery do código:
+
+```text
+formalização inicial do protocolo
+→ review encontrou 2 P1 + 2 P2
+→ correções FIXED_UNREVIEWED (histórico)
+→ novo review encontrou P1 no plano mestre
+→ correção FIXED_UNREVIEWED (histórico)
+→ review documental final sem P0/P1/P2
+→ commit documental
+→ PR #83
+→ PR #83 merged
+→ PROTOCOL_REVIEW_CLOSED
+→ APPROVED_FOR_COLLECTION
+```
+
+**APPROVED_FOR_COLLECTION != PASS.** A aprovação cobre somente o protocolo
+documental para execução futura. O-100, R-100, INE-20, ADV-20, OFF-20 e rollback
+proof permanecem `NOT_EXECUTED`. H-B3 continua **BLOCKED** até PASS completo de
+H-B2; 3.6F-D continua **BLOCKED** pelo fechamento integral de H-B. O piloto
+histórico permanece fora de todos os denominadores confirmatórios.
+
+Antes, os documentos vigentes ainda indicavam correções aguardando review;
+agora registram o fechamento e merge do protocolo. Desenho, matriz, tamanhos,
+janelas, thresholds, denominadores, SQL, incidentes e rollback OFF/ON
+permanecem inalterados no plano H-B2.
+
+Arquivos alterados nesta reconciliação:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+plans/00-plano-mestre-travel-semantic-v2.md
+plans/h-2026-07-16b2-passenger-meaning-v1.md
+plans/h-2026-07-16b3-passenger-meaning-runtime.md
+```
+
+Verificação documental: `git diff --check` **PASS**; `git status --short` e
+inspeção do diff confirmam somente os cinco documentos autorizados. Comparação
+estática com o HEAD de base: **PASS**, seções técnicas do H-B2, SQL, piloto
+excluído, critérios PASS e escopo técnico H-B3 preservados byte a byte.
+Estados vigentes sem `FIXED_UNREVIEWED`; ocorrências restantes explicitamente
+históricas. Branch, HEAD e refs preservados; índice sem alterações.
+Testes de aplicação
+não se aplicam ao patch documental. Teste em produção nesta reconciliação:
+não necessário e não executado; o gate operacional futuro continua obrigatório.
+Nenhuma execução OpenAI, runner, coleta, flag, deploy, rollback ou smoke.
+Resultado do review desta reconciliação: **PENDENTE**, sem reviewer automático.
+
+**Próxima ação canônica única:** novo `/review` documental independente desta
+reconciliação pós-merge. Não registrar coleta como próxima ação antes de esse
+review fechar limpo.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 
