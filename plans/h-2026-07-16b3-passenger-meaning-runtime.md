@@ -3,15 +3,16 @@
 ## Status esperado no tracker
 
 ```text
-BLOQUEADA por H-2026-07-16B2 — PROTOCOLO COM 2 P1 + 2 P2 FIXED_UNREVIEWED; COLETA NÃO AUTORIZADA
+BLOCKED por H-2026-07-16B2 — CONFIRMATORY GATE NOT_EXECUTED
 ```
 
 Esta definição não inicia H-B3. O protocolo corrigido em
 `plans/h-2026-07-16b2-passenger-meaning-v1.md`, seção **Protocolo do gate de
-promoção — FIXED_UNREVIEWED**, ainda depende de novo review documental
-independente. Somente após esse fechamento poderão ser executados os dois
-conjuntos de 100 casos, controles de inelegibilidade e adversariais e rollback
-proof OFF/ON. Todos precisam resultar em `PASS`; resultado `FAIL` ou
+promoção — REVIEW_CLOSED / APPROVED_FOR_COLLECTION**, teve review documental
+encerrado sem P0/P1/P2 e foi integrado pelo PR #83.
+`APPROVED_FOR_COLLECTION != PASS`: os dois conjuntos de 100 casos, controles de inelegibilidade e
+adversariais e rollback proof OFF/ON permanecem não executados.
+Todos precisam resultar em `PASS`; resultado `FAIL` ou
 `INCONCLUSIVE` mantém este slice bloqueado.
 
 ## Objetivo
@@ -26,8 +27,8 @@ prompt for passageiro/criança e a decisão determinística for
 - B2 `REVIEW_CLOSED`, merged e deployed;
 - corpus obrigatório verde;
 - shadow sem influência runtime e sem violações críticas;
-- novo review documental fecha P1-A, P1-B, P2-A e P2-B e aprova o protocolo
-  antes da coleta;
+- review documental do protocolo encerrado sem P0/P1/P2, incluindo P1-A,
+  P1-B, P2-A, P2-B e o P1 posterior do plano mestre; condição satisfeita;
 - amostra confirmatória operacional e do runner isolado aprovadas conforme o
   protocolo H-B2;
 - controles de inelegibilidade e adversariais aprovados;
@@ -36,9 +37,11 @@ prompt for passageiro/criança e a decisão determinística for
 - flag de rollout e rollback definidas antes da implementação.
 
 O delivery, review e os gates locais do código B2 estão encerrados. O protocolo
-de promoção possui quatro correções documentais `FIXED_UNREVIEWED`; amostra,
-controles operacionais, prova de ausência de recorrência e rollback proof não
-estão autorizados antes do novo review. H-B3 permanece **BLOCKED**, e nenhum
+de promoção está `REVIEW_CLOSED / APPROVED_FOR_COLLECTION`; amostra,
+controles operacionais, prova de ausência de recorrência e rollback proof
+permanecem pendentes. A próxima ação canônica é novo `/review` documental
+independente da reconciliação pós-merge, antes de indicar coleta como próxima
+ação. H-B3 permanece **BLOCKED** até PASS integral de H-B2, e nenhum
 arquivo ou fluxo de H-B3 está autorizado para execução.
 
 ## Escopo autorizado

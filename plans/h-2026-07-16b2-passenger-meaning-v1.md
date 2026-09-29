@@ -3,7 +3,10 @@
 ## Status atual no tracker
 
 ```text
-REVIEW_CLOSED — MERGED — DEPLOYED; PROTOCOLO CORRIGIDO APÓS REVIEW DOCUMENTAL — 2 P1 + 2 P2 FIXED_UNREVIEWED; COLETA NÃO AUTORIZADA
+Delivery H-B2: REVIEW_CLOSED + MERGED + DEPLOYED
+Promotion protocol: REVIEW_CLOSED + APPROVED_FOR_COLLECTION
+Confirmatory gate: NOT_EXECUTED
+H-B3: BLOCKED; 3.6F-D: BLOCKED
 ```
 
 H-2026-07-22A corrigiu o bootstrap `UNKNOWN`, passou por review, foi implantado
@@ -18,22 +21,24 @@ foi integrada pelo PR #82 em
 `d7b585abcb69c3055759de82c9346762a5ebb020`, publicada como `sha-d7b585a` após
 CI verde e implantada. O piloto operacional confirmou execução do shadow sem
 influência no B1. A promoção ainda depende da amostra confirmatória e do
-rollback proof definidos abaixo, mas o protocolo corrigido ainda requer novo
-review documental independente antes de qualquer coleta. B3 permanece
+rollback proof definidos abaixo. O review documental final do protocolo fechou
+sem P0/P1/P2 e o PR #83 foi integrado. A próxima ação é o review independente
+desta reconciliação pós-merge, conforme o tracker. B3 permanece
 bloqueada por B2, e 3.6F-D
 permanece bloqueada pelo fechamento integral de H-B.
 
 As frases `"eu e mais 2 crianças"` e `"eu e mais duas crianças"` pertencem ao
 corpus de H-B2. Sua eventual influência runtime continua exclusiva de B3.
 
-### Reavaliação arquitetural após o terceiro review
+### Histórico — reavaliação arquitetural após o terceiro review
 
 A decisão é **KEEP H-B2**. Os findings recorrentes mostraram ausência de uma
 matriz factual completa no validator e de mutações adversariais no corpus, não
 uma fronteira arquitetural nova. Contract, validator, corpus/evaluator e shadow
 continuam no mesmo slice; nenhum plano B2a/B2b deve ser criado.
 
-Os dois P2 do terceiro review, já `FIXED_UNREVIEWED`, eram:
+Os dois P2 do terceiro review, então `FIXED_UNREVIEWED` e posteriormente
+fechados pelo review final do código, eram:
 
 1. referências infantis conhecidas podiam ser omitidas ou reclassificadas sem
    `CHILD_AGGREGATE`/`FULL_AGGREGATE`;
@@ -285,7 +290,7 @@ Os gates também devem comprovar
 `tool_call_count=0`. Esses gates locais e o review independente já foram
 concluídos; eles não substituem o protocolo operacional de promoção abaixo.
 
-## Protocolo do gate de promoção — FIXED_UNREVIEWED
+## Protocolo do gate de promoção — REVIEW_CLOSED / APPROVED_FOR_COLLECTION
 
 Este protocolo foi congelado em 2026-09-08, **antes de qualquer nova coleta**.
 Qualquer mudança em código, schema, prompt, validator, modelo, parâmetros do
@@ -308,13 +313,35 @@ congelamento dos thresholds.
 
 ### Lifecycle do review documental do protocolo
 
-O review posterior à primeira formalização encontrou quatro findings: P1-A nos
-caminhos SQL, P1-B no ownership da semantic accuracy completa, P2-A na sessão
-das classes 18→19 e P2-B no denominador do validator. As correções desta seção
-deixam os quatro findings `FIXED_UNREVIEWED`. Isso não altera o estado
-`REVIEW_CLOSED`, `MERGED` e `DEPLOYED` do código H-B2, mas o protocolo permanece
-**não aprovado para coleta** até novo review documental independente fechar os
-quatro findings.
+Sequência histórica preservada:
+
+```text
+formalização inicial do protocolo
+→ review encontrou 2 P1 + 2 P2
+→ correções FIXED_UNREVIEWED (histórico)
+→ novo review encontrou P1 no plano mestre
+→ correção FIXED_UNREVIEWED (histórico)
+→ review documental final: "review sem P0/P1/P2"
+→ commit documental a18ad07b2eb9fc474c19d7cf7e2e41dd7d5542b1
+→ PR #83
+→ PR #83 merged: 0346dc9e8b50c01c71d1585537ff319d5542d0e8
+→ PROTOCOL_REVIEW_CLOSED
+→ APPROVED_FOR_COLLECTION
+```
+
+Os quatro findings iniciais eram P1-A nos caminhos SQL, P1-B no ownership da
+semantic accuracy completa, P2-A na sessão das classes 18→19 e P2-B no
+denominador do validator. Eles e o P1 posterior do plano mestre estão
+`REVIEW_CLOSED`; nenhum P0/P1/P2 documental permanece aberto. O parecer final
+foi informado no objetivo desta reconciliação e seu resultado sem P0/P1/P2 é
+corroborado pela descrição do [PR #83](https://github.com/joaovitormessias/sistema-schumacher/pull/83).
+O delivery do código permanece `REVIEW_CLOSED + MERGED + DEPLOYED`.
+
+`APPROVED_FOR_COLLECTION != PASS`: somente o protocolo documental foi aprovado
+para execução futura. O-100, R-100, INE-20, ADV-20, OFF-20 e rollback proof
+continuam `NOT_EXECUTED`. Essa aprovação não libera H-B3 nem 3.6F-D. A próxima
+ação única é novo `/review` documental independente desta reconciliação
+pós-merge; a coleta não é a próxima ação antes de esse review fechar limpo.
 
 ### Desenho da amostra
 
@@ -676,10 +703,12 @@ atribuição, correlação ou observabilidade resulta em `INCONCLUSIVE`. `FAIL` 
 `INCONCLUSIVE` mantêm H-B3 bloqueada; nenhum deles pode ser reclassificado por
 juízo subjetivo.
 
-A única próxima ação autorizada depois desta correção é um novo `/review`
-documental independente dos quatro findings. Enquanto esse review não fechar
-P1-A, P1-B, P2-A e P2-B, o protocolo não está aprovado para coleta; não executar
-OpenAI, runner, amostra, rollback ou H-B3.
+A única próxima ação é novo `/review` documental independente desta
+reconciliação pós-merge. O review do protocolo já está encerrado e o protocolo
+está `APPROVED_FOR_COLLECTION`; o gate confirmatório permanece `NOT_EXECUTED`.
+Antes de o review desta reconciliação fechar limpo, não registrar coleta como
+próxima ação. Este trabalho documental não executa OpenAI, runner, amostra ou
+rollback e não libera H-B3.
 
 ## Gate de desbloqueio do B3
 
