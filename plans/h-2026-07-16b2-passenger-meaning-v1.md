@@ -5,6 +5,8 @@
 ```text
 Delivery H-B2: REVIEW_CLOSED + MERGED + DEPLOYED
 Promotion protocol: REVIEW_CLOSED + APPROVED_FOR_COLLECTION
+Reconciliação documental pós-review/pós-merge: REVIEW_CLOSED + MERGED (PR #96)
+Documentary gate remaining: NONE
 Confirmatory gate: NOT_EXECUTED
 H-B3: BLOCKED; 3.6F-D: BLOCKED
 ```
@@ -22,8 +24,10 @@ foi integrada pelo PR #82 em
 CI verde e implantada. O piloto operacional confirmou execução do shadow sem
 influência no B1. A promoção ainda depende da amostra confirmatória e do
 rollback proof definidos abaixo. O review documental final do protocolo fechou
-sem P0/P1/P2 e o PR #83 foi integrado. A próxima ação é o review independente
-desta reconciliação pós-merge, conforme o tracker. B3 permanece
+sem P0/P1/P2 e o PR #83 foi integrado. A reconciliação posterior também recebeu
+review sem P0/P1/P2 e foi integrada pelo PR #96; não existe gate documental
+pendente dessa reconciliação ou do protocolo. A próxima ação é o review
+independente deste novo closeout, conforme o tracker. B3 permanece
 bloqueada por B2, e 3.6F-D
 permanece bloqueada pelo fechamento integral de H-B.
 
@@ -337,11 +341,21 @@ foi informado no objetivo desta reconciliação e seu resultado sem P0/P1/P2 é
 corroborado pela descrição do [PR #83](https://github.com/joaovitormessias/sistema-schumacher/pull/83).
 O delivery do código permanece `REVIEW_CLOSED + MERGED + DEPLOYED`.
 
+A reconciliação documental posterior recebeu **"review sem P0/P1/P2"**, com
+evidência literal anterior verificada e segurança para commit certificadas.
+Foi registrada no commit `bbce0b295c854bace43d606ef5e64486bbd1d226` e integrada
+pelo [PR #96](https://github.com/joaovitormessias/sistema-schumacher/pull/96),
+cuja descrição corrobora o parecer fornecido no objetivo. Seu merge é
+`bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e`.
+A reconciliação está `REVIEW_CLOSED + MERGED`;
+`documentary gate remaining = NONE` para ela e para o protocolo.
+
 `APPROVED_FOR_COLLECTION != PASS`: somente o protocolo documental foi aprovado
 para execução futura. O-100, R-100, INE-20, ADV-20, OFF-20 e rollback proof
 continuam `NOT_EXECUTED`. Essa aprovação não libera H-B3 nem 3.6F-D. A próxima
-ação única é novo `/review` documental independente desta reconciliação
-pós-merge; a coleta não é a próxima ação antes de esse review fechar limpo.
+ação única é novo `/review` documental independente deste closeout; somente
+após review limpo e integração deste novo patch poderá ser indicado um `/goal`
+separado para iniciar o gate confirmatório H-B2.
 
 ### Desenho da amostra
 
@@ -703,12 +717,13 @@ atribuição, correlação ou observabilidade resulta em `INCONCLUSIVE`. `FAIL` 
 `INCONCLUSIVE` mantêm H-B3 bloqueada; nenhum deles pode ser reclassificado por
 juízo subjetivo.
 
-A única próxima ação é novo `/review` documental independente desta
-reconciliação pós-merge. O review do protocolo já está encerrado e o protocolo
-está `APPROVED_FOR_COLLECTION`; o gate confirmatório permanece `NOT_EXECUTED`.
-Antes de o review desta reconciliação fechar limpo, não registrar coleta como
-próxima ação. Este trabalho documental não executa OpenAI, runner, amostra ou
-rollback e não libera H-B3.
+A reconciliação anterior está `REVIEW_CLOSED + MERGED` pelo PR #96, com review
+sem P0/P1/P2 e `documentary gate remaining = NONE`. O protocolo permanece
+`APPROVED_FOR_COLLECTION`; o gate confirmatório permanece `NOT_EXECUTED`.
+A única próxima ação é novo `/review` documental independente deste closeout.
+Somente após review limpo e integração deste novo patch poderá ser indicado um
+`/goal` separado para iniciar o gate confirmatório H-B2. Este trabalho documental
+não executa OpenAI, runner, amostra ou rollback e não libera H-B3.
 
 ## Gate de desbloqueio do B3
 
