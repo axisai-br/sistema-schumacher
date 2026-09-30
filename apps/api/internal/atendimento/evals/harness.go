@@ -139,6 +139,8 @@ type ConfigAmbiente struct {
 	ModeloNome string // nome do modelo do agente (vai no pedido ao llm.Modelo)
 	Juiz       agente.Juiz
 	Agora      func() time.Time // padrao time.Now
+	// SinalPorPagante e o valor do sinal por pagante (padrao das ferramentas: 250).
+	SinalPorPagante float64
 }
 
 // Ambiente reune store em memoria, canal fake, fakes de dominio, ferramentas
@@ -152,6 +154,9 @@ type Ambiente struct {
 	Catalogo   *ferramentas.Catalogo
 	Agente     *agente.Agente
 	Agora      func() time.Time
+	// NomeCliente e o nome enviado nas entradas do cliente (padrao "Cliente Eval").
+	NomeCliente string
+	seqLocal    int
 }
 
 // fusoSP devolve America/Sao_Paulo (com reserva fixa em UTC-3).
@@ -171,7 +176,7 @@ func NovoAmbiente(modelo llm.Modelo, cfg ConfigAmbiente) *Ambiente {
 	fx := NovasFixtures(agora().In(fusoSP()))
 	cat := ferramentas.NovoCatalogo(fx.FonteCatalogo(), agora)
 	reservas, pagamentos := fx.Reservas(), NovosPagamentos()
-	reg := ferramentas.Padrao(cat, fx.Buscador(), fx.Cotador(), reservas, pagamentos, ferramentas.Config{})
+	reg := ferramentas.Padrao(cat, fx.Buscador(), fx.Cotador(), reservas, pagamentos, ferramentas.Config{SinalPorPagante: cfg.SinalPorPagante})
 	store := conversa.NewStoreMem(agora)
 	canalFake := &CanalFake{}
 	nome := cfg.ModeloNome
@@ -338,11 +343,31 @@ func (a *Ambiente) registrarCliente(ctx context.Context, n int, texto string) er
 		tipo = conversa.TipoAudio
 	}
 	_, _, _, err := a.Store.RegistrarEntrada(ctx, conversa.NovaEntrada{
-		Canal: "WHATSAPP", Contato: contatoEval, Telefone: telefoneEval, Nome: "Cliente Eval",
+		Canal: "WHATSAPP", Contato: contatoEval, Telefone: telefoneEval, Nome: a.nomeCliente(),
 		Autor: conversa.AutorCliente, Tipo: tipo, Texto: texto,
 		ProvedorID: fmt.Sprintf("eval-in-%d", n), RecebidaEm: a.Agora(),
 	})
 	return err
+}
+
+func (a *Ambiente) nomeCliente() string {
+	if a.NomeCliente != "" {
+		return a.NomeCliente
+	}
+	return "Cliente Eval"
+}
+
+// EnviarDoCliente registra uma mensagem do cliente como entrada pendente, sem
+// processar (uso interativo: o chamador decide quando rodar o agente).
+func (a *Ambiente) EnviarDoCliente(ctx context.Context, texto string) error {
+	a.seqLocal++
+	return a.registrarCliente(ctx, 1_000_000+a.seqLocal, texto)
+}
+
+// ConversaAtual devolve a (unica) conversa do ambiente; erro se ainda nao
+// houve nenhuma entrada.
+func (a *Ambiente) ConversaAtual(ctx context.Context) (conversa.Conversa, error) {
+	return a.lerConversa(ctx, "")
 }
 
 // Executar roda um caso: o cliente simulado conversa com o agente real ate o

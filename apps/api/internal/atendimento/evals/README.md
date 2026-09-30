@@ -102,3 +102,11 @@ registra os envios. As 13 viagens são relativas a "hoje": MA>SC nas segundas e 
 
 O cliente simulado responde `[FIM]` quando o objetivo foi atingido; o loop também termina quando o status vira
 `HUMANO` ou em `max_turnos`. `"llm_fora": true` roda o caso com um modelo que sempre falha (sem rede).
+
+## Testar conversas localmente
+
+Para conversar com o agente pelo terminal (sem WhatsApp, banco ou resto do sistema, com dados de teste em
+memória) e para rodar os casos deste pacote com o cliente simulado, use o simulador
+`apps/api/cmd/atendimento-local`: veja o
+[README do simulador](../../../cmd/atendimento-local/README.md) (chave em `apps/api/.env.atendimento-local`,
+`go run ./cmd/atendimento-local`, `-roteiro`, `-caso`, dica de UTF-8 no PowerShell). Reservas e PIX são falsos.
