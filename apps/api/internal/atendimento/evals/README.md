@@ -13,8 +13,11 @@ cd apps/api
 # inclusive o caso llm_fora (LLM fora do ar -> mensagem técnica + humano).
 go test ./internal/atendimento/evals
 
-# Com LLM real (gasta tokens):
-OPENAI_API_KEY=sk-... go test -tags eval ./internal/atendimento/evals -v -timeout 30m
+# Com LLM real (gasta tokens). Padrão: NVIDIA (LLM_PROVEDOR=nvidia):
+NVIDIA_API_KEY=nvapi-... go test -tags eval ./internal/atendimento/evals -v -timeout 30m
+
+# Com a OpenAI como alternativa:
+LLM_PROVEDOR=openai OPENAI_API_KEY=sk-... go test -tags eval ./internal/atendimento/evals -v -timeout 30m
 
 # Só alguns casos, K=5:
 EVAL_CASOS='pede_ajuda|irritado' EVAL_K=5 go test -tags eval -run TestEvalCasos ./internal/atendimento/evals -v
@@ -23,16 +26,24 @@ EVAL_CASOS='pede_ajuda|irritado' EVAL_K=5 go test -tags eval -run TestEvalCasos 
 go test -tags eval -run TestJuiz ./internal/atendimento/evals -v
 ```
 
-Sem `OPENAI_API_KEY` os testes com a tag `eval` são ignorados (skip).
+Sem a chave do provedor escolhido (`NVIDIA_API_KEY` ou `OPENAI_API_KEY`) os testes com a tag `eval` são
+ignorados (skip). Agente, cliente simulado e juiz usam o mesmo provedor (`provedor.ConfigDoAmbiente`); só o
+nome do modelo muda.
 
 ## Variáveis
 
 | Variável | Padrão | Uso |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | (obrigatória) | chave da OpenAI |
+| `LLM_PROVEDOR` | `nvidia` | `nvidia` (NIM, Chat Completions) ou `openai` (Responses API) |
+| `NVIDIA_API_KEY` | (obrigatória com `nvidia`) | chave da NVIDIA |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | base alternativa |
+| `LLM_MODO_JSON` | `nvext` | saída estruturada na NVIDIA: `nvext`, `response_format` ou `prompt` |
+| `LLM_REASONING_EFFORT` | `low` | esforço de raciocínio (NVIDIA): `low`, `medium`, `high` ou `max` |
+| `LLM_TEMPERATURA` | `0.6` | temperatura (NVIDIA) |
+| `OPENAI_API_KEY` | (obrigatória com `openai`) | chave da OpenAI |
 | `OPENAI_BASE_URL` | API da OpenAI | base alternativa (proxy) |
-| `EVAL_MODELO_AGENTE` | `gpt-4.1-mini` | modelo do agente |
-| `EVAL_MODELO_CLIENTE` | `gpt-4.1-mini` | modelo do cliente simulado |
+| `EVAL_MODELO_AGENTE` | padrão do provedor (`moonshotai/kimi-k3` / `gpt-4.1-mini`) | modelo do agente |
+| `EVAL_MODELO_CLIENTE` | igual ao do provedor | modelo do cliente simulado |
 | `EVAL_MODELO_JUIZ` | igual ao do agente | modelo do juiz LLM |
 | `EVAL_K` | `3` | execuções por caso (pass^K) |
 | `EVAL_PARALELO` | `4` | chamadas de execução em paralelo |

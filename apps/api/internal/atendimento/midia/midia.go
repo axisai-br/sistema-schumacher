@@ -42,8 +42,21 @@ type Config struct {
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
 	ModeloTranscricao string // padrao "gpt-4o-mini-transcribe"
-	ModeloVisao       string // vazio desabilita a leitura de imagens
-	HTTP              *http.Client
+	ModeloVisao       string // vazio desabilita a leitura de imagens (visao via OpenAI Responses)
+	// Visao, quando Provedor = "nvidia", le imagens por Chat Completions
+	// OpenAI-compatible (NVIDIA NIM) e ignora OpenAIAPIKey/ModeloVisao na visao.
+	Visao VisaoConfig
+	HTTP  *http.Client
+}
+
+// VisaoConfig configura a leitura de imagens por um provedor compativel com
+// Chat Completions. Provedor vazio ou "openai" usa o caminho Responses da OpenAI.
+type VisaoConfig struct {
+	Provedor          string // "nvidia" | "openai" | ""
+	APIKey            string
+	BaseURL           string // padrao https://integrate.api.nvidia.com/v1
+	Modelo            string
+	EsforcoRaciocinio string // opcional ("reasoning_effort")
 }
 
 // Preparador transforma mensagens de entrada em texto.
@@ -53,6 +66,7 @@ type Preparador struct {
 	baseURL string
 	modeloT string
 	modeloV string
+	visao   VisaoConfig // so usado quando Provedor == "nvidia"
 	http    *http.Client
 }
 
@@ -70,14 +84,40 @@ func Novo(c canal.Canal, cfg Config) *Preparador {
 	if mt == "" {
 		mt = modeloTranscricaoPadrao
 	}
+	v := cfg.Visao
+	v.Provedor = strings.ToLower(strings.TrimSpace(v.Provedor))
+	v.APIKey = strings.TrimSpace(v.APIKey)
+	v.Modelo = strings.TrimSpace(v.Modelo)
+	v.BaseURL = strings.TrimRight(strings.TrimSpace(v.BaseURL), "/")
+	if v.BaseURL == "" {
+		v.BaseURL = nvidiaBaseURLPadrao
+	}
 	return &Preparador{
 		canal:   c,
 		apiKey:  strings.TrimSpace(cfg.OpenAIAPIKey),
 		baseURL: base,
 		modeloT: mt,
 		modeloV: strings.TrimSpace(cfg.ModeloVisao),
+		visao:   v,
 		http:    h,
 	}
+}
+
+func (p *Preparador) visaoNvidia() bool { return p.visao.Provedor == "nvidia" }
+
+// visaoAtiva diz se a leitura de imagens esta configurada.
+func (p *Preparador) visaoAtiva() bool {
+	if p.visaoNvidia() {
+		return p.visao.APIKey != "" && p.visao.Modelo != ""
+	}
+	return p.modeloV != "" && p.apiKey != ""
+}
+
+func (p *Preparador) modeloVisaoUsado() string {
+	if p.visaoNvidia() {
+		return p.visao.Modelo
+	}
+	return p.modeloV
 }
 
 // Preparar converte a mensagem em texto para o agente. Falhas de midia nao
@@ -216,7 +256,7 @@ type leituraImagem struct {
 
 func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, map[string]any) {
 	padrao := comLegenda("[imagem recebida]", m.Texto)
-	if p.modeloV == "" || p.apiKey == "" {
+	if !p.visaoAtiva() {
 		return padrao, nil
 	}
 	dataURL, _, err := p.canal.BaixarMidia(ctx, m)
@@ -229,7 +269,7 @@ func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, m
 		log.Printf("atendimento_midia_imagem_falhou conversa=%s etapa=visao erro=%v", m.ConversaID, err)
 		return padrao, map[string]any{"visao_status": "FALHOU", "visao_erro": err.Error()}
 	}
-	extra := map[string]any{"visao_status": "OK", "visao_modelo": p.modeloV, "e_documento": l.EDocumento}
+	extra := map[string]any{"visao_status": "OK", "visao_modelo": p.modeloVisaoUsado(), "e_documento": l.EDocumento}
 	if l.EDocumento {
 		var partes []string
 		if v := strings.TrimSpace(l.Nome); v != "" {
@@ -255,18 +295,10 @@ func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, m
 }
 
 func (p *Preparador) lerImagem(ctx context.Context, dataURL string) (leituraImagem, error) {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"e_documento": map[string]any{"type": "boolean"},
-			"nome":        map[string]any{"type": "string"},
-			"cpf":         map[string]any{"type": "string"},
-			"rg":          map[string]any{"type": "string"},
-			"descricao":   map[string]any{"type": "string"},
-		},
-		"required":             []string{"e_documento", "nome", "cpf", "rg", "descricao"},
-		"additionalProperties": false,
+	if p.visaoNvidia() {
+		return p.lerImagemChat(ctx, dataURL)
 	}
+	schema := esquemaLeituraImagem()
 	reqBody, err := json.Marshal(map[string]any{
 		"model": p.modeloV,
 		"input": []any{map[string]any{

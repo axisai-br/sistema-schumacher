@@ -191,3 +191,77 @@ func TestImagemFallbacks(t *testing.T) {
 		t.Fatalf("json ruim: %q %v", s, err)
 	}
 }
+
+func servidorVisaoChat(t *testing.T, conteudo string, corpo *map[string]any, auth *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		if auth != nil {
+			*auth = r.Header.Get("Authorization")
+		}
+		b, _ := io.ReadAll(r.Body)
+		if corpo != nil {
+			_ = json.Unmarshal(b, corpo)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": conteudo}}}})
+	}))
+}
+
+func TestImagemNvidiaDocumento(t *testing.T) {
+	var req map[string]any
+	var auth string
+	srv := servidorVisaoChat(t, "<think>analisando</think>\n```json\n{\"e_documento\":true,\"nome\":\"Maria Silva\",\"cpf\":\"123.456.789-09\",\"rg\":\"\",\"descricao\":\"rg\"}\n```", &req, &auth)
+	defer srv.Close()
+	p := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA", mime: "image/jpeg"},
+		Config{Visao: VisaoConfig{Provedor: "nvidia", APIKey: "nv-key", BaseURL: srv.URL, Modelo: "moonshotai/kimi-k3", EsforcoRaciocinio: "low"}})
+	s, extra, err := p.Preparar(context.Background(), conversa.Mensagem{Tipo: conversa.TipoImagem, Texto: "meu documento"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "[foto de documento: nome Maria Silva, CPF 123.456.789-09] meu documento" {
+		t.Fatalf("s=%q", s)
+	}
+	if extra["visao_status"] != "OK" || extra["visao_modelo"] != "moonshotai/kimi-k3" || extra["e_documento"] != true {
+		t.Fatalf("extra=%v", extra)
+	}
+	if auth != "Bearer nv-key" || req["model"] != "moonshotai/kimi-k3" || req["reasoning_effort"] != "low" {
+		t.Fatalf("auth=%q req=%v", auth, req)
+	}
+	raw, _ := json.Marshal(req)
+	for _, frag := range []string{`"image_url"`, `"url":"data:image/jpeg;base64,AAAA"`, `"type":"text"`, `"guided_json"`, `"e_documento"`} {
+		if !strings.Contains(string(raw), frag) {
+			t.Errorf("request sem %s: %s", frag, raw)
+		}
+	}
+}
+
+func TestImagemNvidiaComumFallbacksESemChave(t *testing.T) {
+	ctx := context.Background()
+	m := conversa.Mensagem{Tipo: conversa.TipoImagem, Texto: "olha"}
+	srv := servidorVisaoChat(t, "Claro! {\"e_documento\":false,\"nome\":\"\",\"cpf\":\"\",\"rg\":\"\",\"descricao\":\"uma paisagem\"}", nil, nil)
+	defer srv.Close()
+	cfg := Config{Visao: VisaoConfig{Provedor: "NVIDIA", APIKey: "k", BaseURL: srv.URL, Modelo: "m"}}
+	if s, _, _ := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA"}, cfg).Preparar(ctx, m); s != "[imagem: uma paisagem] olha" {
+		t.Fatalf("comum: %q", s)
+	}
+	// sem chave da visao: nem baixa a midia, mesmo com OPENAI_API_KEY e modelo legado
+	cf := &canalFake{dataURL: "data:image/jpeg;base64,AAAA"}
+	semChave := Config{OpenAIAPIKey: "sk", ModeloVisao: "gpt", Visao: VisaoConfig{Provedor: "nvidia", Modelo: "m"}}
+	if s, _, _ := Novo(cf, semChave).Preparar(ctx, m); s != "[imagem recebida] olha" || cf.chamadas != 0 {
+		t.Fatalf("sem chave: %q chamadas=%d", s, cf.chamadas)
+	}
+	// erro 500 e texto sem JSON degradam para o padrao sem vazar a chave
+	e500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "falhou nv-key", 500) }))
+	defer e500.Close()
+	s, extra, _ := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA"}, Config{Visao: VisaoConfig{Provedor: "nvidia", APIKey: "nv-key", BaseURL: e500.URL, Modelo: "m"}}).Preparar(ctx, m)
+	if s != "[imagem recebida] olha" || extra["visao_status"] != "FALHOU" || strings.Contains(extra["visao_erro"].(string), "nv-key") {
+		t.Fatalf("500: %q %v", s, extra)
+	}
+	sem := servidorVisaoChat(t, "nao sei", nil, nil)
+	defer sem.Close()
+	if s, extra, _ := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA"}, Config{Visao: VisaoConfig{Provedor: "nvidia", APIKey: "k", BaseURL: sem.URL, Modelo: "m"}}).Preparar(ctx, m); s != "[imagem recebida] olha" || extra["visao_status"] != "FALHOU" {
+		t.Fatalf("sem json: %q %v", s, extra)
+	}
+}

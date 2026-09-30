@@ -57,6 +57,13 @@ type Config struct {
 	AtendimentoV2Enabled               bool
 	AtendimentoV2Telefones             []string
 	AtendimentoV2Modelo                string
+	AtendimentoV2ModeloVisao           string
+	LLMProvedor                        string
+	LLMModoJSON                        string
+	LLMEsforcoRaciocinio               string
+	LLMTemperatura                     *float64
+	NvidiaAPIKey                       string
+	NvidiaBaseURL                      string
 	AtendimentoV2Concorrencia          int
 	AtendimentoV2DebounceMS            int
 	AtendimentoV2SinalPorPagante       float64
@@ -79,6 +86,7 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	provedor := strings.ToLower(firstNonEmpty(os.Getenv("LLM_PROVEDOR"), "nvidia"))
 	cfg := Config{
 		AppEnv:                             getEnv("APP_ENV", "production"),
 		Port:                               getEnv("PORT", "8080"),
@@ -122,7 +130,14 @@ func Load() (Config, error) {
 		EvolutionWebhookSecret:             strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
 		AtendimentoV2Enabled:               parseBool(os.Getenv("ATENDIMENTO_V2_ENABLED")),
 		AtendimentoV2Telefones:             parsePhoneDigitsList(os.Getenv("ATENDIMENTO_V2_TELEFONES")),
-		AtendimentoV2Modelo:                firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"), os.Getenv("OPENAI_MODEL")),
+		AtendimentoV2Modelo:                atendimentoV2Modelo(provedor),
+		AtendimentoV2ModeloVisao:           strings.TrimSpace(os.Getenv("ATENDIMENTO_V2_MODELO_VISAO")),
+		LLMProvedor:                        provedor,
+		LLMModoJSON:                        strings.ToLower(strings.TrimSpace(os.Getenv("LLM_MODO_JSON"))),
+		LLMEsforcoRaciocinio:               strings.ToLower(strings.TrimSpace(os.Getenv("LLM_REASONING_EFFORT"))),
+		LLMTemperatura:                     optFloat("LLM_TEMPERATURA"),
+		NvidiaAPIKey:                       strings.TrimSpace(os.Getenv("NVIDIA_API_KEY")),
+		NvidiaBaseURL:                      strings.TrimSpace(os.Getenv("NVIDIA_BASE_URL")),
 		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
 		AtendimentoV2DebounceMS:            positiveInt(getEnvAsInt("ATENDIMENTO_V2_DEBOUNCE_MS", 2000), 2000),
 		AtendimentoV2SinalPorPagante:       getEnvAsFloat("ATENDIMENTO_V2_SINAL_POR_PAGANTE", 250),
@@ -274,6 +289,24 @@ func getEnvAsFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	return n
+}
+
+// atendimentoV2Modelo devolve ATENDIMENTO_V2_MODELO; so o provedor openai
+// herda OPENAI_MODEL (um modelo da OpenAI nao serve para a NVIDIA).
+func atendimentoV2Modelo(provedor string) string {
+	if provedor == "openai" {
+		return firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"), os.Getenv("OPENAI_MODEL"))
+	}
+	return firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"))
+}
+
+// optFloat devolve nil quando a variavel esta vazia ou invalida.
+func optFloat(key string) *float64 {
+	n, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(key)), 64)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
 }
 
 // parseJuiz aceita "llm", "jev" ou "off"; qualquer outro valor vira "llm".

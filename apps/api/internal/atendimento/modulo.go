@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"schumacher-tur/api/internal/atendimento/conversa"
 	"schumacher-tur/api/internal/atendimento/ferramentas"
 	"schumacher-tur/api/internal/atendimento/fila"
-	"schumacher-tur/api/internal/atendimento/llm/openai"
+	"schumacher-tur/api/internal/atendimento/llm/provedor"
 	"schumacher-tur/api/internal/atendimento/midia"
 	"schumacher-tur/api/internal/shared/config"
 )
@@ -28,6 +29,35 @@ type Dominio struct {
 	Pagamentos ferramentas.Pagamentos
 }
 
+// ConfigLLM monta a configuracao do provedor de LLM (agente e juiz) a partir do
+// cfg, com os mesmos padroes de provedor.ConfigDoAmbiente.
+func ConfigLLM(cfg config.Config) provedor.Config {
+	env := map[string]string{
+		"LLM_PROVEDOR":          cfg.LLMProvedor,
+		"NVIDIA_API_KEY":        cfg.NvidiaAPIKey,
+		"NVIDIA_BASE_URL":       cfg.NvidiaBaseURL,
+		"OPENAI_API_KEY":        cfg.OpenAIAPIKey,
+		"OPENAI_BASE_URL":       cfg.OpenAIBaseURL,
+		"OPENAI_MODEL":          cfg.OpenAIModel,
+		"ATENDIMENTO_V2_MODELO": cfg.AtendimentoV2Modelo,
+		"LLM_MODO_JSON":         cfg.LLMModoJSON,
+		"LLM_REASONING_EFFORT":  cfg.LLMEsforcoRaciocinio,
+	}
+	if cfg.LLMTemperatura != nil {
+		env["LLM_TEMPERATURA"] = strconv.FormatFloat(*cfg.LLMTemperatura, 'f', -1, 64)
+	}
+	return provedor.ConfigDoAmbiente(func(k string) string { return env[k] })
+}
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
 // Montar conecta todas as pecas do atendimento v2. Nao inicia o worker: quem
 // chama deve invocar Worker.Iniciar(ctx).
 func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Dominio, lg *log.Logger) (*Handler, *fila.Worker, error) {
@@ -37,9 +67,12 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 	if pool == nil {
 		return nil, nil, errors.New("atendimento v2: pool do banco e obrigatorio")
 	}
-	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
-		return nil, nil, errors.New("atendimento v2: OPENAI_API_KEY e obrigatoria")
+	pc := ConfigLLM(cfg)
+	cliente, err := provedor.Novo(pc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("atendimento v2: %w", err)
 	}
+	modelo := pc.Modelo
 	var faltaEvo []string
 	if strings.TrimSpace(cfg.EvolutionBaseURL) == "" {
 		faltaEvo = append(faltaEvo, "EVOLUTION_BASE_URL")
@@ -52,13 +85,6 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 	}
 	if len(faltaEvo) > 0 {
 		return nil, nil, fmt.Errorf("atendimento v2: configuracao da Evolution incompleta, faltando %s", strings.Join(faltaEvo, ", "))
-	}
-	modelo := strings.TrimSpace(cfg.AtendimentoV2Modelo)
-	if modelo == "" {
-		modelo = strings.TrimSpace(cfg.OpenAIModel)
-	}
-	if modelo == "" {
-		return nil, nil, errors.New("atendimento v2: defina ATENDIMENTO_V2_MODELO ou OPENAI_MODEL")
 	}
 	var faltaDom []string
 	if dom.Busca == nil {
@@ -79,13 +105,26 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 
 	store := conversa.NewStorePG(pool)
 	canal := evolution.Novo(evolution.Config{BaseURL: cfg.EvolutionBaseURL, APIKey: cfg.EvolutionAPIKey, Instancia: cfg.EvolutionInstance})
-	prep := midia.Novo(canal, midia.Config{
+	lg.Printf("atendimento v2: llm = %s", pc.Descricao())
+	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
+		lg.Printf("atendimento v2: OPENAI_API_KEY vazia; audios nao serao transcritos ([audio nao compreendido])")
+	}
+	mc := midia.Config{
 		OpenAIAPIKey:      cfg.OpenAIAPIKey,
 		OpenAIBaseURL:     cfg.OpenAIBaseURL,
 		ModeloTranscricao: cfg.OpenAITranscriptionModel,
 		ModeloVisao:       cfg.OpenAIVisionModel,
-	})
-	cliente := openai.Novo(openai.Config{APIKey: cfg.OpenAIAPIKey, BaseURL: cfg.OpenAIBaseURL, Modelo: modelo})
+	}
+	if pc.Provedor == provedor.Nvidia {
+		// Visao pela NVIDIA (Chat Completions com image_url); transcricao segue na OpenAI.
+		mc.ModeloVisao = ""
+		mc.Visao = midia.VisaoConfig{
+			Provedor: provedor.Nvidia, APIKey: pc.APIKey, BaseURL: pc.BaseURL,
+			Modelo:            firstNonEmpty(cfg.AtendimentoV2ModeloVisao, modelo),
+			EsforcoRaciocinio: pc.EsforcoRaciocinio,
+		}
+	}
+	prep := midia.Novo(canal, mc)
 
 	cat := ferramentas.NovoCatalogo(ferramentas.NovaFontePG(pool), time.Now)
 	reg := ferramentas.Padrao(cat, dom.Busca, dom.Cotacao, dom.Reservas, dom.Pagamentos, ferramentas.Config{SinalPorPagante: cfg.AtendimentoV2SinalPorPagante})

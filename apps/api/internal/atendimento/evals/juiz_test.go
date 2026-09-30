@@ -122,8 +122,8 @@ func avaliarJuiz(t *testing.T, nome string, j agente.Juiz) resultadoJuiz {
 func fmtF(v float64) string { return fmt.Sprintf("%.2f", v) }
 
 func TestJuizLLMvsJev(t *testing.T) {
-	real := novoOpenAI(t)
-	modelo := envOu("EVAL_MODELO_JUIZ", envOu("EVAL_MODELO_AGENTE", "gpt-4.1-mini"))
+	real, pc := novoModelo(t)
+	modelo := envOu("EVAL_MODELO_JUIZ", envOu("EVAL_MODELO_AGENTE", pc.Modelo))
 
 	juizes := []struct {
 		nome string

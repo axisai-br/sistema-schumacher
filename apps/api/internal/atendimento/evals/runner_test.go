@@ -17,7 +17,7 @@ import (
 
 	"schumacher-tur/api/internal/atendimento/agente"
 	"schumacher-tur/api/internal/atendimento/llm"
-	"schumacher-tur/api/internal/atendimento/llm/openai"
+	"schumacher-tur/api/internal/atendimento/llm/provedor"
 )
 
 const taxaMinimaReserva = 0.9
@@ -36,18 +36,22 @@ func envInt(nome string, padrao int) int {
 	return padrao
 }
 
-// novoOpenAI cria o cliente real (um so serve agente, cliente e juiz: o nome
-// do modelo vai em cada pedido).
-func novoOpenAI(t testing.TB) *openai.Cliente {
+// novoModelo cria o cliente real do provedor escolhido em LLM_PROVEDOR (nvidia
+// por padrão, ou openai). Um só cliente serve agente, cliente simulado e juiz:
+// o nome do modelo vai em cada pedido. Devolve também a config, cujo Modelo é o
+// padrão quando EVAL_MODELO_* não está definido.
+func novoModelo(t testing.TB) (llm.Modelo, provedor.Config) {
 	t.Helper()
-	key := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	if key == "" {
-		t.Skip("OPENAI_API_KEY não definida; evals com LLM real foram ignorados")
+	cfg := provedor.ConfigDoAmbiente(os.Getenv)
+	cfg.Timeout = 90 * time.Second
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		t.Skipf("%s não definida; evals com LLM real foram ignorados", cfg.VariavelChave())
 	}
-	return openai.Novo(openai.Config{
-		APIKey: key, BaseURL: os.Getenv("OPENAI_BASE_URL"),
-		Modelo: envOu("EVAL_MODELO_AGENTE", "gpt-4.1-mini"), Timeout: 90 * time.Second,
-	})
+	m, err := provedor.Novo(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, cfg
 }
 
 type configRodada struct {
@@ -88,12 +92,12 @@ type placar struct {
 }
 
 func TestEvalCasos(t *testing.T) {
-	real := novoOpenAI(t)
+	real, pc := novoModelo(t)
 	k := envInt("EVAL_K", 3)
 	cfg := configRodada{
 		real:          real,
-		modeloAgente:  envOu("EVAL_MODELO_AGENTE", "gpt-4.1-mini"),
-		modeloCliente: envOu("EVAL_MODELO_CLIENTE", "gpt-4.1-mini"),
+		modeloAgente:  envOu("EVAL_MODELO_AGENTE", pc.Modelo),
+		modeloCliente: envOu("EVAL_MODELO_CLIENTE", pc.Modelo),
 	}
 	cfg.modeloJuiz = envOu("EVAL_MODELO_JUIZ", cfg.modeloAgente)
 	sem := make(chan struct{}, envInt("EVAL_PARALELO", 4))
@@ -163,7 +167,7 @@ func TestEvalCasos(t *testing.T) {
 		}
 	}
 	w.Flush()
-	t.Logf("modelo agente=%s cliente=%s juiz=%s K=%d\n%s", cfg.modeloAgente, cfg.modeloCliente, cfg.modeloJuiz, k, b.String())
+	t.Logf("provedor=%s modelo agente=%s cliente=%s juiz=%s K=%d\n%s", pc.Descricao(), cfg.modeloAgente, cfg.modeloCliente, cfg.modeloJuiz, k, b.String())
 	if totRes > 0 {
 		taxa := float64(okRes) / float64(totRes)
 		t.Logf("taxa agregada dos casos de reserva: %d/%d = %.0f%%", okRes, totRes, 100*taxa)

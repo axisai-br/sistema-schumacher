@@ -69,7 +69,7 @@ func TestLoadAtendimentoV2Defaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://test")
 	t.Setenv("SUPABASE_JWT_SECRET", "jwt-secret")
 	t.Setenv("SUPABASE_ISSUER", "https://supabase.example.com/auth/v1")
-	for _, k := range []string{"ATENDIMENTO_V2_ENABLED", "ATENDIMENTO_V2_TELEFONES", "ATENDIMENTO_V2_MODELO", "ATENDIMENTO_V2_CONCORRENCIA", "ATENDIMENTO_V2_DEBOUNCE_MS", "ATENDIMENTO_V2_SINAL_POR_PAGANTE", "ATENDIMENTO_V2_JUIZ", "TYPESAFE_API_KEY", "ATENDIMENTO_V2_ALERTA_WEBHOOK_URL"} {
+	for _, k := range []string{"ATENDIMENTO_V2_ENABLED", "ATENDIMENTO_V2_TELEFONES", "ATENDIMENTO_V2_MODELO", "ATENDIMENTO_V2_CONCORRENCIA", "ATENDIMENTO_V2_DEBOUNCE_MS", "ATENDIMENTO_V2_SINAL_POR_PAGANTE", "ATENDIMENTO_V2_JUIZ", "TYPESAFE_API_KEY", "ATENDIMENTO_V2_ALERTA_WEBHOOK_URL", "LLM_PROVEDOR", "LLM_MODO_JSON", "LLM_REASONING_EFFORT", "LLM_TEMPERATURA", "NVIDIA_API_KEY", "NVIDIA_BASE_URL", "ATENDIMENTO_V2_MODELO_VISAO"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("OPENAI_MODEL", "gpt-fallback")
@@ -85,8 +85,19 @@ func TestLoadAtendimentoV2Defaults(t *testing.T) {
 	if len(cfg.AtendimentoV2Telefones) != 0 {
 		t.Fatalf("expected empty allowlist, got %v", cfg.AtendimentoV2Telefones)
 	}
-	if cfg.AtendimentoV2Modelo != "gpt-fallback" {
-		t.Fatalf("expected OPENAI_MODEL fallback, got %q", cfg.AtendimentoV2Modelo)
+	if cfg.LLMProvedor != "nvidia" || cfg.NvidiaAPIKey != "" || cfg.NvidiaBaseURL != "" || cfg.LLMModoJSON != "" || cfg.LLMTemperatura != nil {
+		t.Fatalf("unexpected llm defaults: %q %q %q %v", cfg.LLMProvedor, cfg.NvidiaAPIKey, cfg.LLMModoJSON, cfg.LLMTemperatura)
+	}
+	if cfg.AtendimentoV2Modelo != "" {
+		t.Fatalf("nvidia must not inherit OPENAI_MODEL, got %q", cfg.AtendimentoV2Modelo)
+	}
+	t.Setenv("LLM_PROVEDOR", "OpenAI")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LLMProvedor != "openai" || cfg.AtendimentoV2Modelo != "gpt-fallback" {
+		t.Fatalf("expected OPENAI_MODEL fallback for openai, got %q %q", cfg.LLMProvedor, cfg.AtendimentoV2Modelo)
 	}
 	if cfg.AtendimentoV2Concorrencia != 4 || cfg.AtendimentoV2DebounceMS != 2000 || cfg.AtendimentoV2SinalPorPagante != 250 {
 		t.Fatalf("unexpected defaults: %d %d %v", cfg.AtendimentoV2Concorrencia, cfg.AtendimentoV2DebounceMS, cfg.AtendimentoV2SinalPorPagante)
@@ -113,6 +124,13 @@ func TestLoadAtendimentoV2ReadsExplicitValues(t *testing.T) {
 	t.Setenv("ATENDIMENTO_V2_JUIZ", "JEV")
 	t.Setenv("TYPESAFE_API_KEY", "ts-key")
 	t.Setenv("ATENDIMENTO_V2_ALERTA_WEBHOOK_URL", "https://v2.example.com")
+	t.Setenv("LLM_PROVEDOR", "OpenAI")
+	t.Setenv("NVIDIA_API_KEY", "nv-key")
+	t.Setenv("NVIDIA_BASE_URL", "https://nim.example.com/v1")
+	t.Setenv("LLM_MODO_JSON", "Response_Format")
+	t.Setenv("LLM_REASONING_EFFORT", "HIGH")
+	t.Setenv("LLM_TEMPERATURA", "0.3")
+	t.Setenv("ATENDIMENTO_V2_MODELO_VISAO", "nvidia/vlm")
 
 	cfg, err := Load()
 	if err != nil {
@@ -122,6 +140,11 @@ func TestLoadAtendimentoV2ReadsExplicitValues(t *testing.T) {
 		cfg.AtendimentoV2DebounceMS != 500 || cfg.AtendimentoV2SinalPorPagante != 300.5 ||
 		cfg.AtendimentoV2Juiz != "jev" || cfg.TypesafeAPIKey != "ts-key" || cfg.AtendimentoV2AlertaWebhookURL != "https://v2.example.com" {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if cfg.LLMProvedor != "openai" || cfg.NvidiaAPIKey != "nv-key" || cfg.NvidiaBaseURL != "https://nim.example.com/v1" ||
+		cfg.LLMModoJSON != "response_format" || cfg.LLMEsforcoRaciocinio != "high" || cfg.LLMTemperatura == nil || *cfg.LLMTemperatura != 0.3 ||
+		cfg.AtendimentoV2ModeloVisao != "nvidia/vlm" {
+		t.Fatalf("unexpected llm config: %+v", cfg)
 	}
 	want := []string{"5549988709047", "554988709048"}
 	if len(cfg.AtendimentoV2Telefones) != 2 || cfg.AtendimentoV2Telefones[0] != want[0] || cfg.AtendimentoV2Telefones[1] != want[1] {

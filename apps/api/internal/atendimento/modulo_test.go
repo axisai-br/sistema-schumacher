@@ -31,7 +31,7 @@ func TestMontar(t *testing.T) {
 	lg := log.New(io.Discard, "", 0)
 	dom := Dominio{Busca: buscaNula{}, Cotacao: cotacaoNula{}, Reservas: reservasNula{}, Pagamentos: pagamentosNulo{}}
 	ok := config.Config{
-		OpenAIAPIKey: "k", OpenAIModel: "m", EvolutionBaseURL: "http://evo", EvolutionAPIKey: "k", EvolutionInstance: "i",
+		LLMProvedor: "nvidia", NvidiaAPIKey: "nv", EvolutionBaseURL: "http://evo", EvolutionAPIKey: "k", EvolutionInstance: "i",
 		EvolutionWebhookSecret: "s", AtendimentoV2Juiz: "jev", AtendimentoV2Concorrencia: 2, AtendimentoV2DebounceMS: 100,
 	}
 
@@ -40,9 +40,10 @@ func TestMontar(t *testing.T) {
 		mut  func(*config.Config, *Dominio)
 		erro string
 	}{
-		{"sem openai", func(c *config.Config, _ *Dominio) { c.OpenAIAPIKey = "" }, "OPENAI_API_KEY"},
+		{"sem nvidia", func(c *config.Config, _ *Dominio) { c.NvidiaAPIKey = "" }, "NVIDIA_API_KEY"},
+		{"sem openai", func(c *config.Config, _ *Dominio) { c.LLMProvedor, c.OpenAIAPIKey = "openai", "" }, "OPENAI_API_KEY"},
+		{"provedor desconhecido", func(c *config.Config, _ *Dominio) { c.LLMProvedor = "xyz" }, "xyz"},
 		{"sem evolution", func(c *config.Config, _ *Dominio) { c.EvolutionBaseURL, c.EvolutionInstance = "", "" }, "EVOLUTION_BASE_URL, EVOLUTION_INSTANCE"},
-		{"sem modelo", func(c *config.Config, _ *Dominio) { c.OpenAIModel = "" }, "ATENDIMENTO_V2_MODELO"},
 		{"dominio incompleto", func(_ *config.Config, d *Dominio) { d.Cotacao = nil }, "Cotacao"},
 	}
 	for _, c := range casos {
@@ -61,5 +62,28 @@ func TestMontar(t *testing.T) {
 	h, w, err := Montar(ctx, pool, ok, dom, lg)
 	if err != nil || h == nil || w == nil {
 		t.Fatalf("montagem valida falhou: %v", err)
+	}
+
+	// openai como alternativa, e nvidia sem OPENAI_API_KEY (audio degrada, nao falha).
+	oa := ok
+	oa.LLMProvedor, oa.OpenAIAPIKey, oa.OpenAIModel = "openai", "sk", "gpt-x"
+	if _, w, err := Montar(ctx, pool, oa, dom, lg); err != nil || w == nil {
+		t.Fatalf("montagem openai falhou: %v", err)
+	}
+}
+
+func TestConfigLLM(t *testing.T) {
+	temp := 0.3
+	c := ConfigLLM(config.Config{LLMProvedor: "nvidia", NvidiaAPIKey: "nv", LLMTemperatura: &temp, OpenAIModel: "gpt-x"})
+	if c.Provedor != "nvidia" || c.APIKey != "nv" || c.Modelo != "moonshotai/kimi-k3" || c.ModoJSON != "nvext" ||
+		c.EsforcoRaciocinio != "low" || c.Temperatura == nil || *c.Temperatura != 0.3 {
+		t.Errorf("nvidia: %+v", c)
+	}
+	c = ConfigLLM(config.Config{LLMProvedor: "openai", OpenAIAPIKey: "sk", OpenAIModel: "gpt-x", NvidiaAPIKey: "nv"})
+	if c.Provedor != "openai" || c.APIKey != "sk" || c.Modelo != "gpt-x" {
+		t.Errorf("openai: %+v", c)
+	}
+	if c = ConfigLLM(config.Config{AtendimentoV2Modelo: "meta/llama-3.3-70b-instruct"}); c.Provedor != "nvidia" || c.Modelo != "meta/llama-3.3-70b-instruct" {
+		t.Errorf("padrao: %+v", c)
 	}
 }
