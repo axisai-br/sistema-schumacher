@@ -306,9 +306,11 @@ registrados nas seções cronológicas abaixo são históricos e estão
 própria fila.
 
 **Próxima ação canônica única de IA:** novo `/review` documental independente
-desta reconciliação pós-merge. O review do protocolo já fechou; o review desta
-reconciliação ainda não foi executado. Não registrar coleta como próxima ação
-antes de esse novo review fechar limpo.
+deste closeout. A reconciliação anterior está `REVIEW_CLOSED + MERGED` pelo
+PR #96; `documentary gate remaining = NONE` para o protocolo e essa
+reconciliação. Este novo patch ainda aguarda review independente e integração.
+Somente depois de ambos poderá ser indicado um `/goal` separado para iniciar
+o gate confirmatório H-B2, que permanece `NOT_EXECUTED`.
 
 ### Regra de desbloqueio
 
@@ -5404,9 +5406,9 @@ rollback proof não estão autorizados. H-B3 e 3.6F-D permanecem **BLOCKED**.
 **Próxima ação histórica daquela rodada:** novo `/review` documental independente dos
 quatro findings, sem coletar amostra e sem iniciar H-B3.
 
-### 8.12.2 Reconciliação documental pós-review e pós-merge do protocolo H-B2 (2026-09-29)
+### 8.12.2 Histórico — reconciliação documental pós-review e pós-merge do protocolo H-B2 (2026-09-29)
 
-**Estado vigente:** delivery H-B2 `REVIEW_CLOSED + MERGED + DEPLOYED`;
+**Checkpoint histórico, superado pela seção 8.12.3:** delivery H-B2 `REVIEW_CLOSED + MERGED + DEPLOYED`;
 promotion protocol `REVIEW_CLOSED + APPROVED_FOR_COLLECTION`;
 confirmatory gate `NOT_EXECUTED`. Nenhum P0/P1/P2 documental do protocolo
 permanece aberto. O review independente desta reconciliação permanece pendente.
@@ -5484,6 +5486,74 @@ Resultado do review desta reconciliação: **PENDENTE**, sem reviewer automátic
 **Próxima ação canônica única:** novo `/review` documental independente desta
 reconciliação pós-merge. Não registrar coleta como próxima ação antes de esse
 review fechar limpo.
+
+### 8.12.3 Closeout documental após o merge do PR #96 (2026-09-30)
+
+**Estado vigente:** delivery H-B2 `REVIEW_CLOSED + MERGED + DEPLOYED`;
+promotion protocol `REVIEW_CLOSED + APPROVED_FOR_COLLECTION`;
+reconciliação documental anterior `REVIEW_CLOSED + MERGED`;
+`documentary gate remaining = NONE`; confirmatory gate `NOT_EXECUTED`.
+O review e a próxima ação pendentes na seção 8.12.2 são históricos.
+
+Checkpoint confirmado em modo read-only antes deste patch:
+
+```text
+branch = reconcile/h-b2-promotion-closeout
+HEAD de base = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+main remoto / origin/main = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+working tree / índice iniciais = limpos; untracked = nenhum
+reconciliation commit = bbce0b295c854bace43d606ef5e64486bbd1d226
+PR #96 = merged
+merge PR #96 = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+reconciliation review = review sem P0/P1/P2
+```
+
+O parecer fornecido no objetivo certificou evidência literal anterior
+verificada, segurança para commit e reconciliação `REVIEW_CLOSED`, sem gate
+documental restante. A descrição do [PR #96](https://github.com/joaovitormessias/sistema-schumacher/pull/96)
+corrobora esse parecer; a API do GitHub confirmou head e merge, o Git local
+confirmou o commit de reconciliação como pai do merge e `git ls-remote`
+confirmou `main` remoto. Isso não constitui nova evidência de produção.
+
+```text
+reconciliação documental
+→ review sem P0/P1/P2
+→ evidência literal verificada
+→ commit bbce0b2
+→ PR #96
+→ PR #96 merged
+→ main bcf07f2
+→ DOCUMENTARY RECONCILIATION CLOSED
+```
+
+Antes, o estado vigente ainda tratava o review da reconciliação como pendente;
+agora registra seu fechamento e merge. **APPROVED_FOR_COLLECTION != PASS.**
+O-100, R-100, INE-20, ADV-20, OFF-20 e rollback proof continuam `NOT_EXECUTED`.
+H-B3 permanece **BLOCKED** até PASS completo do gate H-B2; 3.6F-D permanece
+**BLOCKED** pelo fechamento integral de H-B.
+
+Arquivos alterados neste closeout: `docs/EXECUTION_TRACKER.md`,
+`docs/SESSION_HANDOFF.md`, `plans/h-2026-07-16b2-passenger-meaning-v1.md` e
+`plans/h-2026-07-16b3-passenger-meaning-runtime.md`. O plano mestre já estava
+consistente e foi preservado.
+
+Verificação documental: `git diff --check` PASS; status e diff restritos aos
+quatro documentos, sem staged ou untracked. Comparação com o HEAD de base:
+seções técnicas H-B2, critérios de decisão do gate, SQL, piloto histórico e
+escopo técnico H-B3 preservados byte a byte. Nenhuma mecânica do protocolo
+mudou. Testes de aplicação não se aplicam; teste em produção deste closeout
+não é necessário nem foi executado. Nenhuma chamada OpenAI, runner, coleta,
+flag, deploy, smoke ou rollback foi executada.
+
+Review da reconciliação integrada pelo PR #96: **sem P0/P1/P2**.
+Review independente deste novo closeout: **PENDENTE**, sem reviewer automático.
+`documentary gate remaining = NONE` descreve o protocolo e a reconciliação
+integrada; não declara este novo patch revisado ou integrado.
+
+**Próxima ação canônica única:** novo `/review` documental independente deste
+closeout. Somente após review limpo e integração deste patch poderá ser indicado
+como próxima ação operacional um `/goal` separado para iniciar o gate
+confirmatório H-B2.
 
 ### 8.13 Slice de segurança — coexistência Supabase HS256/JWKS e credencial administrativa (2026-08-10)
 

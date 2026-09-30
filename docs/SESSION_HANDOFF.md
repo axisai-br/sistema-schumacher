@@ -27,6 +27,8 @@ runtime revision 4eb543cb27cfa6527c0f225383d2f07fb9d38b97
 runtime digest sha256:94ff2831c47066c11860f789794df9cc1a5a317262c9a1b42edd155cf238c512
 H-2026-07-16B2 — REVIEW_CLOSED + MERGED + DEPLOYED;
 promotion protocol = REVIEW_CLOSED / APPROVED_FOR_COLLECTION
+reconciliação documental pós-review/pós-merge = REVIEW_CLOSED + MERGED (PR #96)
+documentary gate remaining = NONE
 confirmatory gate = NOT_EXECUTED; APPROVED_FOR_COLLECTION != PASS
 H-2026-07-16B3 bloqueada por H-B2
 3.6F-D bloqueada por H-B
@@ -1355,8 +1357,49 @@ bloqueadas.
 
 ## Estado operacional vigente de H-B2
 
+Checkpoint vigente deste closeout, confirmado em modo read-only em 2026-09-30:
+
+```text
+branch = reconcile/h-b2-promotion-closeout
+HEAD de base = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+main remoto / origin/main = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+reconciliation commit = bbce0b295c854bace43d606ef5e64486bbd1d226
+PR #96 = merged
+merge PR #96 = bcf07f2f9ab80796df8ff6c7dd6ea8f9aeb7729e
+reconciliation review = review sem P0/P1/P2
+reconciliação documental pós-review/pós-merge = REVIEW_CLOSED + MERGED
+documentary gate remaining = NONE
+delivery H-B2 = REVIEW_CLOSED + MERGED + DEPLOYED
+promotion protocol = REVIEW_CLOSED / APPROVED_FOR_COLLECTION
+confirmatory gate = NOT_EXECUTED
+H-B3 = BLOCKED
+3.6F-D = BLOCKED
+```
+
+O review independente da reconciliação anterior certificou evidência literal
+verificada, segurança para commit, `REVIEW_CLOSED` e ausência de gate
+documental restante, conforme o parecer fornecido no objetivo e corroborado
+pela descrição do [PR #96](https://github.com/joaovitormessias/sistema-schumacher/pull/96).
+A API do GitHub confirmou o merge e o head `bbce0b2`; o Git local confirmou
+esse commit como pai de `bcf07f2`, e `git ls-remote` confirmou `main` remoto.
+Lifecycle posterior: reconciliação documental → review sem P0/P1/P2 → evidência
+literal verificada → commit `bbce0b2` → PR #96 → merged → main `bcf07f2` →
+`DOCUMENTARY RECONCILIATION CLOSED`.
+
+**APPROVED_FOR_COLLECTION != PASS.** Nenhum resultado operacional novo foi
+produzido. O-100, R-100, INE-20, ADV-20, OFF-20, thresholds, ausência de
+incidentes/recorrência e rollback proof OFF/ON continuam dependentes do gate
+confirmatório completo. H-B3 permanece **BLOCKED** até PASS de H-B2 e 3.6F-D
+permanece **BLOCKED** pelo fechamento integral de H-B.
+
+`documentary gate remaining = NONE` refere-se ao protocolo e à reconciliação
+já integrada. Este novo closeout aguarda seu próprio review independente e
+integração, conforme a próxima ação abaixo.
+
+### Histórico — checkpoint anterior ao closeout (2026-09-29)
+
 Os blocos anteriores de execução e correções de H-B2 são históricos, anteriores
-ao review final do código. O checkpoint vigente após review documental e merge
+ao review final do código. O checkpoint então vigente após review documental e merge
 do PR #83, reconciliado em 2026-09-29, é:
 
 ```text
@@ -1442,10 +1485,12 @@ H-B2 está revisado, integrado e implantado. O protocolo de promoção está
 `REVIEW_CLOSED / APPROVED_FOR_COLLECTION`; o gate confirmatório permanece
 `NOT_EXECUTED`.
 
-A próxima ação canônica única é novo `/review` documental independente desta
-reconciliação pós-merge, ainda pendente. Não registrar coleta como próxima ação
-antes de esse review fechar limpo. Não coletar amostra, executar runner/rollback
-ou iniciar H-B3 ou 3.6F-D. Não alterar código durante esse gate.
+A reconciliação anterior está `REVIEW_CLOSED + MERGED` pelo PR #96;
+`documentary gate remaining = NONE`. A próxima ação canônica única é novo
+`/review` documental independente deste closeout. Somente após esse review
+fechar limpo e este closeout ser integrado poderá ser indicado um `/goal`
+separado para iniciar o gate confirmatório H-B2. Não coletar amostra, executar
+runner/rollback ou iniciar H-B3 ou 3.6F-D neste trabalho.
 H-B3 permanece **BLOCKED** por H-B2 e 3.6F-D permanece bloqueada pelo fechamento
 integral de H-B.
 

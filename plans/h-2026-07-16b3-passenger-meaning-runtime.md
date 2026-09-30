@@ -39,10 +39,17 @@ prompt for passageiro/criança e a decisão determinística for
 O delivery, review e os gates locais do código B2 estão encerrados. O protocolo
 de promoção está `REVIEW_CLOSED / APPROVED_FOR_COLLECTION`; amostra,
 controles operacionais, prova de ausência de recorrência e rollback proof
-permanecem pendentes. A próxima ação canônica é novo `/review` documental
-independente da reconciliação pós-merge, antes de indicar coleta como próxima
-ação. H-B3 permanece **BLOCKED** até PASS integral de H-B2, e nenhum
-arquivo ou fluxo de H-B3 está autorizado para execução.
+permanecem pendentes: O-100, R-100, INE-20, ADV-20, OFF-20, todos os thresholds,
+ausência de incidentes e rollback proof OFF/ON exigem PASS completo de H-B2.
+A reconciliação documental anterior recebeu review sem P0/P1/P2 e foi
+integrada pelo PR #96 (`REVIEW_CLOSED + MERGED`);
+`documentary gate remaining = NONE`, enquanto o gate confirmatório continua
+`NOT_EXECUTED`. A próxima ação canônica é novo `/review` documental independente
+deste closeout. Somente após review limpo e integração deste novo patch poderá
+ser indicado um `/goal` separado para iniciar o gate confirmatório H-B2.
+H-B3 permanece **BLOCKED** até PASS integral de H-B2, e nenhum arquivo ou fluxo
+de H-B3 está autorizado para execução. 3.6F-D permanece **BLOCKED** pelo
+fechamento integral de H-B.
 
 ## Escopo autorizado
 
