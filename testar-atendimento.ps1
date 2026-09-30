@@ -113,11 +113,14 @@ function Gravar-Credenciais {
         break
     }
     $openai = Ler-Segredo 'OPENAI_API_KEY (opcional, so para transcrever audio - Enter para pular)'
+    $jev = Ler-Segredo 'TYPESAFE_API_KEY do Jev (opcional; se colar, o juiz passa a ser o Jev - Enter para pular)'
 
     $linhas = Get-Content -LiteralPath $envExemplo -Encoding UTF8
     $saida = foreach ($l in $linhas) {
         if ($l -match '^NVIDIA_API_KEY=') { "NVIDIA_API_KEY=$nvidia" }
         elseif ($l -match '^OPENAI_API_KEY=' -and $openai -ne '') { "OPENAI_API_KEY=$openai" }
+        elseif ($l -match '^TYPESAFE_API_KEY=' -and $jev -ne '') { "TYPESAFE_API_KEY=$jev" }
+        elseif ($l -match '^ATENDIMENTO_V2_JUIZ=' -and $jev -ne '') { 'ATENDIMENTO_V2_JUIZ=jev' }
         else { $l }
     }
     $texto = ($saida -join "`r`n") + "`r`n"
@@ -126,6 +129,8 @@ function Gravar-Credenciais {
     Write-Host "Salvo em apps\api\.env.atendimento-local (ignorado pelo git)." -ForegroundColor Green
     Write-Host ("  NVIDIA_API_KEY = " + (Mascarar $nvidia 'nvapi-'))
     if ($openai -ne '') { Write-Host ("  OPENAI_API_KEY = " + (Mascarar $openai 'sk-')) }
+    if ($jev -ne '') { Write-Host ("  TYPESAFE_API_KEY = " + (Mascarar $jev '') + "  (juiz: jev)") }
+    else { Write-Host "  Juiz: llm (sem chave do Jev)" }
     Write-Host ""
 }
 
