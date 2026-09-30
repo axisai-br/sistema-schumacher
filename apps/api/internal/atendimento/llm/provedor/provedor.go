@@ -18,11 +18,11 @@ const (
 	OpenAI = "openai"
 
 	NvidiaBaseURLPadrao = "https://integrate.api.nvidia.com/v1"
-	NvidiaModeloPadrao  = "moonshotai/kimi-k3"
+	NvidiaModeloPadrao  = "z-ai/glm-5.3"
 	OpenAIBaseURLPadrao = "https://api.openai.com/v1"
 	OpenAIModeloPadrao  = "gpt-4.1-mini"
 
-	temperaturaNvidiaPadrao = 0.6
+	temperaturaNvidiaPadrao = 0.3
 	esforcoNvidiaPadrao     = "low"
 )
 

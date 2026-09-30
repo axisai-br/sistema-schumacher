@@ -18,11 +18,11 @@ func mapa(m map[string]string) func(string) string { return func(k string) strin
 func TestConfigDoAmbientePadraoNvidia(t *testing.T) {
 	c := ConfigDoAmbiente(mapa(map[string]string{"NVIDIA_API_KEY": " k "}))
 	if c.Provedor != "nvidia" || c.APIKey != "k" || c.BaseURL != "https://integrate.api.nvidia.com/v1" ||
-		c.Modelo != "moonshotai/kimi-k3" || c.ModoJSON != "nvext" || c.EsforcoRaciocinio != "low" ||
-		c.Temperatura == nil || *c.Temperatura != 0.6 {
+		c.Modelo != "z-ai/glm-5.3" || c.ModoJSON != "nvext" || c.EsforcoRaciocinio != "low" ||
+		c.Temperatura == nil || *c.Temperatura != 0.3 {
 		t.Errorf("%+v", c)
 	}
-	if c.VariavelChave() != "NVIDIA_API_KEY" || c.Descricao() != "nvidia · moonshotai/kimi-k3" {
+	if c.VariavelChave() != "NVIDIA_API_KEY" || c.Descricao() != "nvidia · z-ai/glm-5.3" {
 		t.Errorf("%q %q", c.VariavelChave(), c.Descricao())
 	}
 }
@@ -37,7 +37,7 @@ func TestConfigDoAmbienteNvidiaCustom(t *testing.T) {
 		t.Errorf("%+v", c)
 	}
 	c = ConfigDoAmbiente(mapa(map[string]string{"LLM_TEMPERATURA": "abc"}))
-	if *c.Temperatura != 0.6 {
+	if *c.Temperatura != 0.3 {
 		t.Errorf("temperatura invalida deveria cair no padrao: %v", *c.Temperatura)
 	}
 }
@@ -98,7 +98,7 @@ func TestNvidiaEndToEndOffline(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"m","choices":[{"message":{"content":"oi"}}]}`))
 	}))
 	defer srv.Close()
-	m, err := Novo(Config{Provedor: "nvidia", APIKey: "segredo", BaseURL: srv.URL, Modelo: "moonshotai/kimi-k3", EsforcoRaciocinio: "low"})
+	m, err := Novo(Config{Provedor: "nvidia", APIKey: "segredo", BaseURL: srv.URL, Modelo: "z-ai/glm-5.3", EsforcoRaciocinio: "low"})
 	if err != nil {
 		t.Fatal(err)
 	}

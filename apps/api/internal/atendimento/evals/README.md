@@ -39,10 +39,10 @@ nome do modelo muda.
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | base alternativa |
 | `LLM_MODO_JSON` | `nvext` | saída estruturada na NVIDIA: `nvext`, `response_format` ou `prompt` |
 | `LLM_REASONING_EFFORT` | `low` | esforço de raciocínio (NVIDIA): `low`, `medium`, `high` ou `max` |
-| `LLM_TEMPERATURA` | `0.6` | temperatura (NVIDIA) |
+| `LLM_TEMPERATURA` | `0.3` | temperatura (NVIDIA) |
 | `OPENAI_API_KEY` | (obrigatória com `openai`) | chave da OpenAI |
 | `OPENAI_BASE_URL` | API da OpenAI | base alternativa (proxy) |
-| `EVAL_MODELO_AGENTE` | padrão do provedor (`moonshotai/kimi-k3` / `gpt-4.1-mini`) | modelo do agente |
+| `EVAL_MODELO_AGENTE` | padrão do provedor (`z-ai/glm-5.3` / `gpt-4.1-mini`) | modelo do agente |
 | `EVAL_MODELO_CLIENTE` | igual ao do provedor | modelo do cliente simulado |
 | `EVAL_MODELO_JUIZ` | igual ao do agente | modelo do juiz LLM |
 | `EVAL_K` | `3` | execuções por caso (pass^K) |

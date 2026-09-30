@@ -8,7 +8,7 @@ Agente de atendimento por WhatsApp (pacote `internal/atendimento`), desligado po
 
 ### Provedor de LLM
 
-O agente e o juiz usam a API da NVIDIA (NVIDIA NIM, `POST {NVIDIA_BASE_URL}/chat/completions`, compativel com OpenAI) por padrao; a OpenAI (Responses API) continua disponivel com `LLM_PROVEDOR=openai`. Com a NVIDIA o modelo padrao e `moonshotai/kimi-k3` (modelo de raciocinio; o conteudo de raciocinio e descartado). Alternativas com tool calling: `meta/llama-3.3-70b-instruct`, `meta/llama-3.1-405b-instruct`, `mistralai/mistral-large-2-instruct` e `nvidia/llama-3.3-nemotron-super-49b-v1` (este com "detailed thinking off"). Se o modelo devolver a chamada de ferramenta como texto JSON (comum em Llama), o cliente converte para chamada real. A saida estruturada (juiz) usa `nvext.guided_json` por padrao (`LLM_MODO_JSON`).
+O agente e o juiz usam a API da NVIDIA (NVIDIA NIM, `POST {NVIDIA_BASE_URL}/chat/completions`, compativel com OpenAI) por padrao; a OpenAI (Responses API) continua disponivel com `LLM_PROVEDOR=openai`. Com a NVIDIA o modelo padrao e `z-ai/glm-5.3`, escolhido em teste de 30/09/2026 (tool calling correto, ~8 s por resposta). Alternativas disponiveis: `deepseek-ai/deepseek-v4.1-flash` (correto, porem ~40 s), `nvidia/nemotron-3-super-120b-a12b` (rapido, mas tende a nao chamar ferramentas) e `moonshotai/kimi-k3` (modelo de raciocinio, ~30 s; so funciona com `LLM_TEMPERATURA=1`, com 0.6 degenera). O conteudo de raciocinio e descartado. Se o modelo devolver a chamada de ferramenta como texto JSON (comum em Llama), o cliente converte para chamada real. A saida estruturada (juiz) usa `nvext.guided_json` por padrao (`LLM_MODO_JSON`).
 
 Audio e visao: com `LLM_PROVEDOR=nvidia`, a leitura de imagens usa a NVIDIA (`ATENDIMENTO_V2_MODELO_VISAO`, padrao = modelo do agente); a transcricao de audio ainda usa a OpenAI e `OPENAI_API_KEY` passa a ser opcional (sem ela o audio vira "[audio nao compreendido]", com um aviso no log).
 
@@ -19,14 +19,14 @@ Audio e visao: com `LLM_PROVEDOR=nvidia`, a leitura de imagens usa a NVIDIA (`AT
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Base da API da NVIDIA. |
 | `LLM_MODO_JSON` | `nvext` | Saida JSON na NVIDIA: `nvext` (guided_json), `response_format` ou `prompt` (schema no prompt + extracao do JSON). |
 | `LLM_REASONING_EFFORT` | `low` | `reasoning_effort` enviado na NVIDIA: `low`, `medium`, `high` ou `max` (baixo = menor latencia). |
-| `LLM_TEMPERATURA` | `0.6` | Temperatura na NVIDIA. |
+| `LLM_TEMPERATURA` | `0.3` | Temperatura na NVIDIA. |
 | `ATENDIMENTO_V2_MODELO_VISAO` | modelo do agente | Modelo de visao (so `nvidia`). |
 
 | Variavel | Padrao | Descricao |
 | --- | --- | --- |
 | `ATENDIMENTO_V2_ENABLED` | `false` | Liga o modulo. |
 | `ATENDIMENTO_V2_TELEFONES` | vazio | Telefones (so digitos, separados por virgula) atendidos pelo v2; vazio = todos. |
-| `ATENDIMENTO_V2_MODELO` | `moonshotai/kimi-k3` (nvidia) / `OPENAI_MODEL` ou `gpt-4.1-mini` (openai) | Modelo do agente. |
+| `ATENDIMENTO_V2_MODELO` | `z-ai/glm-5.3` (nvidia) / `OPENAI_MODEL` ou `gpt-4.1-mini` (openai) | Modelo do agente. |
 | `ATENDIMENTO_V2_CONCORRENCIA` | `4` | Conversas processadas em paralelo. |
 | `ATENDIMENTO_V2_DEBOUNCE_MS` | `2000` | Espera por novas mensagens antes de responder. |
 | `ATENDIMENTO_V2_SINAL_POR_PAGANTE` | `250` | Sinal (R$) por passageiro pagante. |

@@ -75,7 +75,7 @@ func TestMontar(t *testing.T) {
 func TestConfigLLM(t *testing.T) {
 	temp := 0.3
 	c := ConfigLLM(config.Config{LLMProvedor: "nvidia", NvidiaAPIKey: "nv", LLMTemperatura: &temp, OpenAIModel: "gpt-x"})
-	if c.Provedor != "nvidia" || c.APIKey != "nv" || c.Modelo != "moonshotai/kimi-k3" || c.ModoJSON != "nvext" ||
+	if c.Provedor != "nvidia" || c.APIKey != "nv" || c.Modelo != "z-ai/glm-5.3" || c.ModoJSON != "nvext" ||
 		c.EsforcoRaciocinio != "low" || c.Temperatura == nil || *c.Temperatura != 0.3 {
 		t.Errorf("nvidia: %+v", c)
 	}

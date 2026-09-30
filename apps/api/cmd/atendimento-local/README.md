@@ -37,10 +37,10 @@ prioridade sobre o arquivo. Sem a chave, o simulador diz onde colocá-la e sai c
 | `NVIDIA_API_KEY` | (obrigatória com nvidia) | chave da NVIDIA (build.nvidia.com) |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | base da API |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | vazio | só com `LLM_PROVEDOR=openai` (ou para áudio) |
-| `ATENDIMENTO_V2_MODELO` | `moonshotai/kimi-k3` (nvidia), `gpt-4.1-mini` (openai) | modelo do agente e do juiz |
+| `ATENDIMENTO_V2_MODELO` | `z-ai/glm-5.3` (nvidia), `gpt-4.1-mini` (openai) | modelo do agente e do juiz |
 | `LLM_MODO_JSON` | `nvext` | `nvext`, `response_format` ou `prompt` (nvidia) |
 | `LLM_REASONING_EFFORT` | `low` | `low`, `medium`, `high` ou `max`; mais alto = mais lento (nvidia) |
-| `LLM_TEMPERATURA` | `0.6` | temperatura (nvidia) |
+| `LLM_TEMPERATURA` | `0.3` | temperatura (nvidia) |
 | `ATENDIMENTO_V2_JUIZ` | `llm` | `llm`, `jev` ou `off` |
 | `TYPESAFE_API_KEY` | vazio | só se o juiz for `jev` |
 | `ATENDIMENTO_V2_SINAL_POR_PAGANTE` | `250` | sinal por passageiro pagante (R$) |
