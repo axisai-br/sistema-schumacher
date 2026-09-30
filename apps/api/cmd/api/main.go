@@ -14,6 +14,7 @@ import (
 
 	"schumacher-tur/api/internal/advance_returns"
 	"schumacher-tur/api/internal/affiliate"
+	"schumacher-tur/api/internal/atendimento"
 	"schumacher-tur/api/internal/auth"
 	"schumacher-tur/api/internal/automation"
 	"schumacher-tur/api/internal/availability"
@@ -134,6 +135,24 @@ func main() {
 	automationHandler := automation.NewHandler(automationSvc)
 	automationHandler.RegisterWebhooks(r)
 
+	var atendimentoV2 *atendimento.Handler
+	if cfg.AtendimentoV2Enabled {
+		handlerV2, workerV2, err := atendimento.Montar(ctx, pool, cfg, atendimento.Dominio{
+			Busca:      availabilitySvc,
+			Cotacao:    pricingSvc,
+			Reservas:   bookingsSvc,
+			Pagamentos: paymentsSvc,
+		}, log.Default())
+		if err != nil {
+			log.Fatalf("atendimento v2 habilitado (ATENDIMENTO_V2_ENABLED=true) mas nao foi possivel montar o modulo: %v", err)
+		}
+		workerV2.Iniciar(ctx)
+		handlerV2.RegisterWebhooks(r)
+		automationHandler.UsarAtendimentoV2(handlerV2)
+		atendimentoV2 = handlerV2
+		log.Printf("atendimento v2 habilitado (allowlist de telefones: %d)", len(cfg.AtendimentoV2Telefones))
+	}
+
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware.Middleware)
 
@@ -158,6 +177,9 @@ func main() {
 		affiliateHandler.RegisterRoutes(pr)
 		chatHandler.RegisterRoutes(pr)
 		automationHandler.RegisterRoutes(pr)
+		if atendimentoV2 != nil {
+			atendimentoV2.RegisterRoutes(pr)
+		}
 		reportsHandler.RegisterRoutes(pr)
 		pricingHandler.RegisterRoutes(pr)
 

@@ -2764,6 +2764,12 @@ func (s *Service) Reprocess(ctx context.Context, input ReprocessInput) (output R
 			rolloutMetadata.FallbackReason = "unsafe_or_looping_draft_replaced"
 		}
 	}
+	if handoffRun, ok := repeatedQuestionHandoffRun(inferenceHistory, run, toolContext.Calls); ok {
+		run = handoffRun
+		rolloutMetadata.DecisionSource = "repeated_question_handoff"
+		rolloutMetadata.DecisionValid = boolPtr(true)
+		rolloutMetadata.FallbackReason = repeatedQuestionHandoffReason
+	}
 	if toolContext.BookingPassengerSnapshot == nil && shouldPersistBookingPassengerSnapshotForRun(run) {
 		bookingDraft := collectBookingDraftContextFromState(persisted.Session, inferenceHistory, currentTurn)
 		if len(bookingDraft.PassengerSnapshot.Passengers) > 0 {
@@ -4226,6 +4232,7 @@ func (s *Service) finishReprocessWithAutoSend(ctx context.Context, result Reproc
 		)
 		return ReprocessResult{}, err
 	}
+	updated = s.requestHandoffAfterSentDraft(ctx, updated)
 	updatedDraftID := ""
 	if updated.Draft != nil {
 		updatedDraftID = strings.TrimSpace(updated.Draft.ID)
@@ -4516,4 +4523,28 @@ func normalizeTimePointer(input *time.Time) *time.Time {
 	}
 	value := input.UTC()
 	return &value
+}
+
+// requestHandoffAfterSentDraft puts the session in human handoff once a draft
+// flagged with fallback_reason=repeated_question_handoff was actually delivered to the customer. Errors
+// are logged and ignored: the message was already sent and ErrHandoffAlreadyActive
+// makes this idempotent.
+func (s *Service) requestHandoffAfterSentDraft(ctx context.Context, result ReprocessResult) ReprocessResult {
+	if result.Draft == nil || result.Reason != "draft_auto_sent" || !draftRequestsHandoffAfterSend(*result.Draft) {
+		return result
+	}
+	handoff, err := s.RequestHandoff(ctx, RequestHandoffInput{
+		SessionID:   result.Session.ID,
+		RequestedBy: "BOT",
+		Reason:      repeatedQuestionHandoffReason,
+		Metadata:    map[string]interface{}{"draft_message_id": result.Draft.ID},
+	})
+	if err != nil {
+		if !errors.Is(err, ErrHandoffAlreadyActive) {
+			s.logReprocess("chat reprocess event=handoff_after_send_failed session_id=%s error=%v", result.Session.ID, err)
+		}
+		return result
+	}
+	result.Session = handoff.Session
+	return result
 }

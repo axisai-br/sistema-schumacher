@@ -1,0 +1,9 @@
+{
+  "nome": "quantidade_livre_c",
+  "descricao": "Quantidade em texto livre: 'eu mais 2 crianças'. Reserva com 1 pagante e 2 crianças de até 5 anos.",
+  "objetivo_cliente": "Você é a Juliana Martins Costa, 31 anos, CPF 789.123.456-64, de Igarapé do Meio (MA), indo para Videira (SC) com as filhas Alice Martins Costa (3 anos) e Helena Martins Costa (5 anos), ambas sem documento (só certidão, que você não tem aqui; diga isso se insistirem). Quando o atendente mostrar opções, escolha a primeira. Quando perguntarem quantas pessoas vão, responda exatamente: eu mais 2 crianças. Se perguntarem a idade das crianças, diga 3 e 5 anos. Informe nomes e o seu CPF quando pedirem. Quer pagar só o sinal, por PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Olá! Preciso de passagem de Igarapé do Meio para Videira",
+  "max_turnos": 16,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "destino": "Videira", "pagantes": 1, "criancas": 2}
+}

@@ -1,3 +1,11 @@
+// NOTE: a deliberately narrow extension was added for atendimento v2 (migration
+// 0023). Outside FUNCTION migrations it accepts ONLY: CREATE TABLE IF NOT EXISTS
+// <name> (...) with nothing after the closing parenthesis, CREATE [UNIQUE] INDEX
+// IF NOT EXISTS <name> ON <table> ..., and REVOKE ALL ON TABLE ... FROM anon,
+// authenticated [, public]. Everything else (GRANT on tables, ALTER, DROP, CREATE
+// TABLE AS, DML) stays unmodeled and fails closed. Nothing on the FUNCTION path
+// was relaxed: mixing these statements with FUNCTIONs is rejected.
+
 // Package migrationguard enforces the deliberately small FUNCTION-DDL policy
 // introduced after migration 0022. Unsupported syntax fails closed and needs
 // separate review; this package is not a general PostgreSQL parser.
@@ -114,6 +122,10 @@ func globalFindings(filename string, statements []parsedStatement, functionState
 			findings = append(findings, fmt.Errorf("%s: EXTENSION DDL can create, move, update, or remove routines and requires separate authorization", filename))
 		case statementDropRoutine:
 			findings = append(findings, fmt.Errorf("%s: DROP FUNCTION/ROUTINE is outside lot 2A option B and requires separate authorization", filename))
+		case statementAtendimentoTable:
+			if functionStateMachineActive {
+				findings = append(findings, fmt.Errorf("%s: table DDL at byte %d is not allowed in a migration that also declares FUNCTIONs", filename, statement.offset))
+			}
 		case statementDo:
 			findings = append(findings, fmt.Errorf("%s: executable DO blocks cannot be validated safely after migration 0022", filename))
 		case statementAlterGroup:
@@ -206,7 +218,7 @@ func functionMigrationFindings(filename string, statements []parsedStatement) []
 			findings = append(findings, fmt.Errorf("%s: FUNCTION migrations allow one exact BEGIN and one final COMMIT or END", filename))
 		case statementFunctionDefaults, statementCreateProcedure, statementExtensionMutation, statementAlterRoutine, statementDropRoutine, statementDo,
 			statementAlterGroup, statementRoleMembership, statementExecutionRoleMutation,
-			statementUnsupportedFunctionACL:
+			statementUnsupportedFunctionACL, statementAtendimentoTable:
 			// globalFindings already emitted the specific finding.
 		case statementUnknown:
 			// globalFindings already emitted the fail-closed finding.

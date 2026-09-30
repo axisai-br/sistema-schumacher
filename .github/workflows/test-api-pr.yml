@@ -38,5 +38,8 @@ jobs:
       - name: Test chat package
         run: go test -count=1 ./internal/chat
 
+      - name: Test atendimento v2 and migration guard
+        run: go test -count=1 ./internal/atendimento/... ./internal/migrationguard/...
+
       - name: Test API
         run: go test -count=1 ./...

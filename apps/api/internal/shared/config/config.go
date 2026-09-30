@@ -54,6 +54,15 @@ type Config struct {
 	EvolutionAPIKey                    string
 	EvolutionInstance                  string
 	EvolutionWebhookSecret             string
+	AtendimentoV2Enabled               bool
+	AtendimentoV2Telefones             []string
+	AtendimentoV2Modelo                string
+	AtendimentoV2Concorrencia          int
+	AtendimentoV2DebounceMS            int
+	AtendimentoV2SinalPorPagante       float64
+	AtendimentoV2Juiz                  string
+	TypesafeAPIKey                     string
+	AtendimentoV2AlertaWebhookURL      string
 	ChatDebounceWindowMS               int
 	ChatBufferAutoFlushEnabled         bool
 	ChatBufferAutoFlushIntervalSeconds int
@@ -111,6 +120,15 @@ func Load() (Config, error) {
 		EvolutionAPIKey:                    strings.TrimSpace(os.Getenv("EVOLUTION_API_KEY")),
 		EvolutionInstance:                  strings.TrimSpace(os.Getenv("EVOLUTION_INSTANCE")),
 		EvolutionWebhookSecret:             strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
+		AtendimentoV2Enabled:               parseBool(os.Getenv("ATENDIMENTO_V2_ENABLED")),
+		AtendimentoV2Telefones:             parsePhoneDigitsList(os.Getenv("ATENDIMENTO_V2_TELEFONES")),
+		AtendimentoV2Modelo:                firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"), os.Getenv("OPENAI_MODEL")),
+		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
+		AtendimentoV2DebounceMS:            positiveInt(getEnvAsInt("ATENDIMENTO_V2_DEBOUNCE_MS", 2000), 2000),
+		AtendimentoV2SinalPorPagante:       getEnvAsFloat("ATENDIMENTO_V2_SINAL_POR_PAGANTE", 250),
+		AtendimentoV2Juiz:                  parseJuiz(os.Getenv("ATENDIMENTO_V2_JUIZ")),
+		TypesafeAPIKey:                     strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),
+		AtendimentoV2AlertaWebhookURL:      firstNonEmpty(os.Getenv("ATENDIMENTO_V2_ALERTA_WEBHOOK_URL"), os.Getenv("CHAT_REVIEW_ALERT_WEBHOOK_URL")),
 		ChatDebounceWindowMS:               getEnvAsInt("CHAT_DEBOUNCE_WINDOW_MS", 1500),
 		ChatBufferAutoFlushEnabled:         parseBool(os.Getenv("CHAT_BUFFER_AUTO_FLUSH_ENABLED")),
 		ChatBufferAutoFlushIntervalSeconds: getEnvAsInt("CHAT_BUFFER_AUTO_FLUSH_INTERVAL_SECONDS", 2),
@@ -211,4 +229,59 @@ func getEnvAsInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// parsePhoneDigitsList converte "+55 (49) 9999-0000, 5549..." em telefones so com digitos.
+func parsePhoneDigitsList(val string) []string {
+	var out []string
+	for _, part := range splitCSV(val) {
+		var b strings.Builder
+		for _, r := range part {
+			if r >= '0' && r <= '9' {
+				b.WriteRune(r)
+			}
+		}
+		if b.Len() > 0 {
+			out = append(out, b.String())
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+func positiveInt(n, fallback int) int {
+	if n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func getEnvAsFloat(key string, fallback float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+// parseJuiz aceita "llm", "jev" ou "off"; qualquer outro valor vira "llm".
+func parseJuiz(val string) string {
+	switch v := strings.ToLower(strings.TrimSpace(val)); v {
+	case "llm", "jev", "off":
+		return v
+	default:
+		return "llm"
+	}
 }

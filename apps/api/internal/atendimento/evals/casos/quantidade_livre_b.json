@@ -1,0 +1,9 @@
+{
+  "nome": "quantidade_livre_b",
+  "descricao": "Quantidade em texto livre: 'somos 3'. Reserva com 3 pagantes adultos.",
+  "objetivo_cliente": "Você é o Antônio Marcos Ribeiro, 45 anos, CPF 456.789.123-64, de Monção (MA). Vai para Fraiburgo (SC) com dois amigos adultos: Luiz Fernando Souza (CPF 567.891.234-82) e Paulo Roberto Lima (CPF 678.912.345-82). Quando o atendente mostrar opções, escolha a primeira. Quando perguntarem quantas pessoas vão, responda exatamente: somos 3. Informe os nomes completos e CPFs quando pedirem. Quer pagar só o sinal, por PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "oi, queria ir de moncao pra fraiburgo",
+  "max_turnos": 16,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "destino": "Fraiburgo", "pagantes": 3, "criancas": 0}
+}

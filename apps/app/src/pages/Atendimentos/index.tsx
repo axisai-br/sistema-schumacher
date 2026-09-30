@@ -15,6 +15,7 @@ import ConversationListItem from "./ConversationListItem";
 import ConversationThreadHeader from "./ConversationThreadHeader";
 import MessageBubble from "./MessageBubble";
 import ReplyComposer from "./ReplyComposer";
+import AtendimentosV2 from "./AtendimentosV2";
 import type { ChatMessage, ChatSession } from "./types";
 import useMessageAutoScroll from "./useMessageAutoScroll";
 import {
@@ -36,7 +37,7 @@ function dedupeMessages(messages: ChatMessage[]) {
     return true;
   });
 }
-export default function AtendimentosPage() {
+function LegacyAtendimentosPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const currentUserQuery = useCurrentUser();
@@ -392,3 +393,7 @@ export default function AtendimentosPage() {
 
 
 
+
+export default function AtendimentosPage() {
+  return import.meta.env.VITE_ATENDIMENTO_V2 === "true" ? <AtendimentosV2 /> : <LegacyAtendimentosPage />;
+}

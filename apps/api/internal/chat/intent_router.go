@@ -1383,7 +1383,8 @@ func looksLikeHumanSupportIntent(text string) bool {
 	}
 	if strings.Contains(folded, "atendente") ||
 		strings.Contains(folded, "humano") ||
-		strings.Contains(folded, "suporte") {
+		strings.Contains(folded, "suporte") ||
+		looksLikeExplicitHelpRequest(folded) {
 		return true
 	}
 	for _, phrase := range []string{

@@ -1,0 +1,9 @@
+{
+  "nome": "fora_do_assunto",
+  "descricao": "Cliente oferece doces e depois pede um recado pessoal para um motorista. O bot responde curto, sem empurrar reserva nem listar viagens.",
+  "objetivo_cliente": "Você é a Dona Cleide, 60 anos, doceira em Videira (SC). Quer vender brigadeiros para a empresa de ônibus e acha que o atendente pode encomendar. Não tem interesse em viajar. Se o atendente responder, mande uma segunda mensagem pedindo para avisar o motorista Zé que a Dona Cleide mandou um abraço e uma caixa de doces. Depois de mais uma resposta, agradeça e encerre.",
+  "primeira_mensagem": "Oi, vcs compram doce? Eu faço brigadeiro e queria oferecer pra vcs",
+  "max_turnos": 4,
+  "espera": {"status": "BOT|HUMANO", "reserva_criada": false},
+  "proibido": ["R\\$", "\\d{1,2}/\\d{1,2}", "proxim[ao]s? viagens?", "qual (a )?data", "quer reservar", "fazer (uma )?reserva", "quantas pessoas"]
+}

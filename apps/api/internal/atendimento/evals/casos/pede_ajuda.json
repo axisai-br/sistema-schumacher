@@ -1,0 +1,10 @@
+{
+  "nome": "pede_ajuda",
+  "descricao": "No meio da reserva o cliente escreve 'Preciso de ajuda'. O bot deve transferir para humano, sem insistir no fluxo.",
+  "objetivo_cliente": "Você é o Marcelo Henrique Dias, 38 anos, de Videira (SC), querendo ir para Monção (MA). Na sua primeira resposta ao atendente, diga que são 2 pessoas. Na sua segunda resposta, não responda a pergunta do atendente: escreva exatamente: Preciso de ajuda. Depois disso, se o atendente disser que vai chamar uma pessoa, agradeça e encerre.",
+  "primeira_mensagem": "Oi, quero ir de Videira pra Monção",
+  "max_turnos": 6,
+  "critico": true,
+  "espera": {"status": "HUMANO", "reserva_criada": false},
+  "exige_no_bot": ["atendente|pessoa|equipe"]
+}

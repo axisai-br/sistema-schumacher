@@ -1,0 +1,10 @@
+{
+  "nome": "reserva_completa_sinal",
+  "descricao": "Reserva completa de 2 adultos de Santa Inês a Fraiburgo, até o PIX do sinal com o copia-e-cola enviado ao cliente.",
+  "objetivo_cliente": "Você é o Francisco das Chagas Moura, 49 anos, CPF 234.567.891-73, morador de Santa Inês (MA). Vai para Fraiburgo (SC) com a sua esposa Rita de Cássia Moura (CPF 345.678.912-28). Dá qualquer data, mas prefere a primeira opção que o atendente mostrar. Informe nomes completos e CPFs quando pedirem, um passageiro por vez. Quando perguntarem como quer pagar, escolha pagar só o sinal, por PIX. Se o atendente pedir o CPF de quem vai pagar, use o seu. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Boa noite, quero passagem de Santa Inês para Fraiburgo",
+  "max_turnos": 16,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "origem": "Santa Inês", "destino": "Fraiburgo", "pagantes": 2, "criancas": 0},
+  "exige_no_bot": ["00020126"]
+}

@@ -1,0 +1,143 @@
+package ferramentas
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"schumacher-tur/api/internal/atendimento/llm"
+	"schumacher-tur/api/internal/bookings"
+	"schumacher-tur/api/internal/payments"
+)
+
+type consultarReserva struct {
+	r Reservas
+	p Pagamentos
+}
+
+func (t *consultarReserva) Def() llm.DefFerramenta {
+	return llm.DefFerramenta{
+		Nome: "consultar_reserva",
+		Descricao: "Consulta o status de uma reserva e do pagamento dela. Use quando o cliente perguntar se a reserva/pagamento esta confirmado ou pedir informacoes de uma reserva. " +
+			"Sem codigo, consulta a reserva desta conversa; para outra reserva, peca o codigo da reserva.",
+		Parametros: defJSON(`{
+  "type":"object",
+  "properties":{"codigo":{"type":"string","description":"Codigo da reserva (opcional)."}},
+  "additionalProperties":false
+}`),
+	}
+}
+
+func statusReservaPT(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "CONFIRMED":
+		return "confirmada"
+	case "PENDING":
+		return "aguardando pagamento"
+	case "CANCELLED":
+		return "cancelada"
+	case "EXPIRED":
+		return "expirada"
+	}
+	return strings.ToLower(s)
+}
+
+func statusPagamentoPT(s string) string {
+	switch {
+	case statusPago(s):
+		return "pago"
+	case statusPendente(s):
+		return "pendente"
+	}
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+func (t *consultarReserva) Executar(ctx context.Context, c *Contexto, raw json.RawMessage) Saida {
+	var a struct {
+		Codigo string `json:"codigo"`
+	}
+	if s := lerArgs(raw, &a); s != nil {
+		return *s
+	}
+	e := c.Estado
+	codigo := strings.ToUpper(strings.TrimSpace(a.Codigo))
+	id := ""
+	proprio := false
+	switch {
+	case codigo != "":
+		itens, err := t.r.List(ctx, bookings.ListFilter{ReservationCode: codigo, Limit: 1})
+		if err != nil {
+			return falha("erro_consulta", "Nao consegui consultar agora. Tente de novo ou transfira para um atendente.")
+		}
+		if len(itens) == 0 {
+			return falha("reserva_nao_encontrada", "Nao achei reserva com esse codigo. Peca para o cliente conferir o codigo.")
+		}
+		id = itens[0].ID
+		proprio = id == e.ReservaID
+	case e.ReservaID != "":
+		id, proprio = e.ReservaID, true
+	default:
+		// bookings.ListFilter nao filtra por telefone: sem codigo nao ha como localizar.
+		return falha("informe_o_codigo", "Nao ha reserva nesta conversa. Peca o codigo da reserva ao cliente.")
+	}
+
+	det, err := t.r.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return falha("reserva_nao_encontrada", "Nao achei essa reserva.")
+		}
+		return falha("erro_consulta", "Nao consegui consultar agora. Tente de novo ou transfira para um atendente.")
+	}
+	b := det.Booking
+	dados := map[string]any{
+		"codigo_reserva":         b.ReservationCode,
+		"status":                 b.Status,
+		"status_legivel":         statusReservaPT(b.Status),
+		"total":                  b.TotalAmount,
+		"valor_pago":             b.DepositAmount,
+		"valor_restante":         b.RemainderAmount,
+		"quantidade_passageiros": len(det.Passengers),
+	}
+	if b.ExpiresAt != nil {
+		dados["reservada_ate"] = b.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+	if proprio {
+		nomes := make([]string, 0, len(det.Passengers))
+		for _, p := range det.Passengers {
+			nomes = append(nomes, p.Name)
+		}
+		dados["passageiros"] = nomes
+	}
+
+	var pag *payments.PaymentStatusResponse
+	if proprio && e.PagamentoID != "" {
+		if st, err := t.p.GetStatus(ctx, e.PagamentoID); err == nil {
+			pag = &st
+		}
+	}
+	if pag == nil {
+		if lista, err := t.p.List(ctx, payments.PaymentListFilter{BookingID: id, Limit: 20}); err == nil && len(lista) > 0 {
+			escolhido := lista[0]
+			for _, p := range lista {
+				if statusPago(p.Status) {
+					escolhido = p
+					break
+				}
+			}
+			pag = &payments.PaymentStatusResponse{ID: escolhido.ID, Status: escolhido.Status, Amount: escolhido.Amount}
+		}
+	}
+	if pag != nil {
+		dados["pagamento"] = map[string]any{
+			"status":         pag.Status,
+			"status_legivel": statusPagamentoPT(pag.Status),
+			"valor":          pag.Amount,
+		}
+	} else {
+		dados["pagamento"] = map[string]any{"status_legivel": "nenhum pagamento registrado"}
+	}
+	return sucesso(dados)
+}

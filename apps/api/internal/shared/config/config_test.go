@@ -64,3 +64,67 @@ func TestLoadPassengerMeaningV1ShadowFlagDefaultsOffAndParsesExplicitOn(t *testi
 		t.Fatal("explicit passenger meaning v1 shadow flag must parse on")
 	}
 }
+
+func TestLoadAtendimentoV2Defaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("SUPABASE_JWT_SECRET", "jwt-secret")
+	t.Setenv("SUPABASE_ISSUER", "https://supabase.example.com/auth/v1")
+	for _, k := range []string{"ATENDIMENTO_V2_ENABLED", "ATENDIMENTO_V2_TELEFONES", "ATENDIMENTO_V2_MODELO", "ATENDIMENTO_V2_CONCORRENCIA", "ATENDIMENTO_V2_DEBOUNCE_MS", "ATENDIMENTO_V2_SINAL_POR_PAGANTE", "ATENDIMENTO_V2_JUIZ", "TYPESAFE_API_KEY", "ATENDIMENTO_V2_ALERTA_WEBHOOK_URL"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("OPENAI_MODEL", "gpt-fallback")
+	t.Setenv("CHAT_REVIEW_ALERT_WEBHOOK_URL", "https://alerta.example.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.AtendimentoV2Enabled {
+		t.Fatal("atendimento v2 must default off")
+	}
+	if len(cfg.AtendimentoV2Telefones) != 0 {
+		t.Fatalf("expected empty allowlist, got %v", cfg.AtendimentoV2Telefones)
+	}
+	if cfg.AtendimentoV2Modelo != "gpt-fallback" {
+		t.Fatalf("expected OPENAI_MODEL fallback, got %q", cfg.AtendimentoV2Modelo)
+	}
+	if cfg.AtendimentoV2Concorrencia != 4 || cfg.AtendimentoV2DebounceMS != 2000 || cfg.AtendimentoV2SinalPorPagante != 250 {
+		t.Fatalf("unexpected defaults: %d %d %v", cfg.AtendimentoV2Concorrencia, cfg.AtendimentoV2DebounceMS, cfg.AtendimentoV2SinalPorPagante)
+	}
+	if cfg.AtendimentoV2Juiz != "llm" {
+		t.Fatalf("expected judge llm, got %q", cfg.AtendimentoV2Juiz)
+	}
+	if cfg.AtendimentoV2AlertaWebhookURL != "https://alerta.example.com" {
+		t.Fatalf("expected alert webhook fallback, got %q", cfg.AtendimentoV2AlertaWebhookURL)
+	}
+}
+
+func TestLoadAtendimentoV2ReadsExplicitValues(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("SUPABASE_JWT_SECRET", "jwt-secret")
+	t.Setenv("SUPABASE_ISSUER", "https://supabase.example.com/auth/v1")
+	t.Setenv("OPENAI_MODEL", "gpt-fallback")
+	t.Setenv("ATENDIMENTO_V2_ENABLED", "true")
+	t.Setenv("ATENDIMENTO_V2_TELEFONES", "+55 (49) 98870-9047, 554988709048,, abc")
+	t.Setenv("ATENDIMENTO_V2_MODELO", "gpt-v2")
+	t.Setenv("ATENDIMENTO_V2_CONCORRENCIA", "8")
+	t.Setenv("ATENDIMENTO_V2_DEBOUNCE_MS", "500")
+	t.Setenv("ATENDIMENTO_V2_SINAL_POR_PAGANTE", "300.5")
+	t.Setenv("ATENDIMENTO_V2_JUIZ", "JEV")
+	t.Setenv("TYPESAFE_API_KEY", "ts-key")
+	t.Setenv("ATENDIMENTO_V2_ALERTA_WEBHOOK_URL", "https://v2.example.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.AtendimentoV2Enabled || cfg.AtendimentoV2Modelo != "gpt-v2" || cfg.AtendimentoV2Concorrencia != 8 ||
+		cfg.AtendimentoV2DebounceMS != 500 || cfg.AtendimentoV2SinalPorPagante != 300.5 ||
+		cfg.AtendimentoV2Juiz != "jev" || cfg.TypesafeAPIKey != "ts-key" || cfg.AtendimentoV2AlertaWebhookURL != "https://v2.example.com" {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	want := []string{"5549988709047", "554988709048"}
+	if len(cfg.AtendimentoV2Telefones) != 2 || cfg.AtendimentoV2Telefones[0] != want[0] || cfg.AtendimentoV2Telefones[1] != want[1] {
+		t.Fatalf("unexpected phones: %v", cfg.AtendimentoV2Telefones)
+	}
+}

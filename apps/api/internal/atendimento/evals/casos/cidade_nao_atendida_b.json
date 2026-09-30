@@ -1,0 +1,15 @@
+{
+  "nome": "cidade_nao_atendida_b",
+  "descricao": "Variante: origem e destino fora da área de atendimento (Cocal do Sul para Pomerode). O bot lista as cidades atendidas e não promete nada.",
+  "objetivo_cliente": "Você é o Adilson, 47 anos, mora em Cocal do Sul (SC) e quer ir para Pomerode (SC) visitar um irmão. Não sabe que a empresa só atende algumas cidades entre SC e MA. Se o atendente explicar que não atende, responda que entendeu, agradeça e encerre. Se ele oferecer falar com uma pessoa, aceite.",
+  "primeira_mensagem": "Cocal do Sul para Pomerode",
+  "max_turnos": 5,
+  "critico": true,
+  "espera": {"status": "BOT|HUMANO", "reserva_criada": false},
+  "proibido": [
+    "claro[,!.]? (vou|posso|consigo|temos|tem|vamos)\\b.{0,60}(pomerode|cocal)",
+    "(^|[.!?]\\s*)sim[,!.]? (temos|tem|atendemos|vamos)\\b.{0,60}(pomerode|cocal)",
+    "temos (viagem|viagens|passagem|passagens|onibus) (para|pra) pomerode"
+  ],
+  "exige_no_bot": ["santa ines|monc|igarape|chapec|videira|fraiburgo"]
+}
