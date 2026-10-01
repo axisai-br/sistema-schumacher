@@ -63,7 +63,7 @@ type Config struct {
 	LLMEsforcoRaciocinio               string
 	LLMTemperatura                     *float64
 	LLMModeloReserva                   string // vazio = padrao do provedor; "off" desliga
-	LLMHedgeMS                         *int   // nil = padrao (6000); 0 desliga o hedge
+	LLMHedgeMS                         *int   // nil = padrao (3000); 0 desliga o hedge
 	LLMSemRaciocinio                   *bool  // nil = padrao (true so para o modelo reserva)
 	NvidiaAPIKey                       string
 	NvidiaBaseURL                      string

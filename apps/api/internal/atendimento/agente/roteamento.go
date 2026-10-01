@@ -18,6 +18,10 @@ const limiarDetalhes = 0.5
 
 const idPreBusca = "pre_1"
 
+// limiarVolta: acima disso o cliente pergunta pela volta e a busca previa usa
+// a rota invertida.
+const limiarVolta = 0.7
+
 // resultadoRota e a decisao do codigo a partir da Rota.
 type resultadoRota struct {
 	transf   *transf        // transferir para humano
@@ -43,7 +47,7 @@ func jaHouveResposta(hist []conversa.Mensagem) bool {
 }
 
 // argsPreBusca decide se da para executar buscar_viagens antes do LLM.
-func (a *Agente) argsPreBusca(rt Rota) (map[string]string, bool) {
+func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado) (map[string]string, bool) {
 	lim := a.cfg.LimiarRota
 	if rt.Intencao != IntencaoBuscarViagens || rt.ConfIntencao < lim || rt.DetalhesExtras >= limiarDetalhes {
 		return nil, false
@@ -60,6 +64,17 @@ func (a *Agente) argsPreBusca(rt Rota) (map[string]string, bool) {
 	}
 	if len(args) == 0 || (len(args) == 2 && args["origem"] == args["destino"]) {
 		return nil, false
+	}
+	// Com rota ja no estado, uma busca de um lado so apagaria o outro lado, e a
+	// mesma rota com opcoes nao traz nada novo: fica para o LLM.
+	if est.Origem != nil || est.Destino != nil {
+		if len(args) < 2 {
+			return nil, false
+		}
+		if est.Origem != nil && est.Destino != nil && len(est.Opcoes) > 0 &&
+			chaveRota(est.Origem.Nome, est.Destino.Nome) == chaveRota(args["origem"], args["destino"]) {
+			return nil, false
+		}
 	}
 	return args, true
 }
@@ -124,7 +139,13 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 			}
 		}
 	}
-	args, ok := a.argsPreBusca(rt)
+	saida["pede_volta"] = rt.PedeVolta
+	args, ok := a.argsPreBusca(rt, tc.estado)
+	decisao := "pre_busca"
+	if o, d := tc.estado.Origem, tc.estado.Destino; rt.PedeVolta >= limiarVolta && o != nil && d != nil {
+		// Volta: busca o sentido oposto da rota ja buscada.
+		args, ok, decisao = map[string]string{"origem": d.Nome, "destino": o.Nome}, true, "pre_busca_volta"
+	}
 	if !ok {
 		finalizar("llm")
 		return resultadoRota{}
@@ -148,7 +169,7 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 	tc.estado = est
 	tc.resultados = append(tc.resultados, string(js))
-	finalizar("pre_busca")
+	finalizar(decisao)
 	return resultadoRota{pre: []llm.Mensagem{
 		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: idPreBusca, Nome: "buscar_viagens", Argumentos: argsJSON}}},
 		{Papel: llm.PapelFerramenta, ChamadaID: idPreBusca, Texto: string(js)},

@@ -268,23 +268,33 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 		return err
 	}
 
-	// Checagem de fatos: valores, datas e horarios precisam ter origem.
-	faltam := itensSemOrigem(texto, a.fontes(tc, catalogo, agora), textosCliente)
-	if len(faltam) > 0 {
-		lista := listarItens(faltam)
-		tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem: " + lista})
+	// Checagem de fatos: valores, datas e horarios precisam ter origem, e rotas
+	// com horarios precisam ter sido buscadas (ex.: volta inventada com as datas
+	// da ida).
+	cidades := a.nomesCidades(ctx)
+	if prob := a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); prob != "" {
+		tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem: " + prob})
 		msgs = append(msgs,
 			llm.Mensagem{Papel: llm.PapelAssistente, Texto: texto},
-			llm.Mensagem{Papel: llm.PapelUsuario, Texto: fmt.Sprintf("Sua resposta citou %s que não vieram das ferramentas. Reescreva usando só dados das ferramentas.", lista)},
+			llm.Mensagem{Papel: llm.PapelUsuario, Texto: fmt.Sprintf("Sua resposta citou %s que não vieram das ferramentas. Reescreva usando só dados das ferramentas; para outra rota (por exemplo, a volta), chame buscar_viagens antes.", prob)},
 		)
 		texto, _, err = a.gerar(ctx, tc, instr, msgs)
 		if err != nil {
 			return err
 		}
-		faltam = itensSemOrigem(texto, a.fontes(tc, catalogo, agora), textosCliente)
-		if len(faltam) > 0 {
-			tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + listarItens(faltam)})
-			return &transf{motivo: "resposta com dados sem origem nas ferramentas: " + listarItens(faltam)}
+		if prob = a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); prob != "" {
+			// Se houve busca neste turno, responde com as opcoes reais montadas
+			// em codigo em vez de transferir.
+			if px := pixDoTurno(tc.resultados); len(px) > 0 {
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob + "; respondendo com os PIX gerados"})
+				texto = textoPix(px)
+			} else if bs := opcoesDoTurno(tc.resultados); len(bs) > 0 {
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob + "; respondendo com as opcoes da busca"})
+				texto = textoOpcoes(bs[len(bs)-1])
+			} else {
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob})
+				return &transf{motivo: "resposta com dados sem origem nas ferramentas: " + prob}
+			}
 		}
 	}
 
@@ -406,6 +416,33 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 		}
 	}
 	return "", msgs, &transf{motivo: "sem resposta apos o limite de passos", tecnico: true}
+}
+
+// problemasResposta junta itens sem origem e rotas nao buscadas; vazio se ok.
+func (a *Agente) problemasResposta(tc *turno, texto, catalogo string, agora time.Time, cliente, cidades []string) string {
+	var p []string
+	if f := itensSemOrigem(texto, a.fontes(tc, catalogo, agora), cliente); len(f) > 0 {
+		p = append(p, listarItens(f))
+	}
+	if rs := rotasSemBusca(texto, cidades, rotasConhecidas(tc)); len(rs) > 0 {
+		p = append(p, "a rota "+strings.Join(rs, ", ")+" sem busca")
+	}
+	return strings.Join(p, "; ")
+}
+
+func (a *Agente) nomesCidades(ctx context.Context) []string {
+	if a.d.Cidades == nil {
+		return nil
+	}
+	cs, err := a.d.Cidades.Cidades(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.Nome)
+	}
+	return out
 }
 
 // fontes reune o que e confiavel para a checagem de fatos.

@@ -59,6 +59,10 @@ type Rota struct {
 	// DetalhesExtras e a probabilidade de a conversa ja trazer data, periodo ou
 	// numero de pessoas (a busca previa sem esses filtros nao seria fiel).
 	DetalhesExtras float64
+
+	// PedeVolta e a probabilidade de o cliente perguntar pela volta (sentido
+	// oposto da rota ja buscada). So e perguntado quando o estado tem a rota.
+	PedeVolta float64
 }
 
 // Roteador classifica a ultima mensagem do cliente (intencao, cidades,

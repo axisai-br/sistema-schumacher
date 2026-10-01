@@ -179,6 +179,16 @@ func perguntasJev(e EntradaRota) map[string]any {
 		q["origem"] = lado("From which city does the customer want to depart? Consider `latest_customer_message` together with the earlier `conversation`: the latest message may give only one side of the route or change one side, and the other side then comes from the context. The answer must be one of `served_cities`.", "departure")
 		q["destino"] = lado("To which city does the customer want to travel? Consider `latest_customer_message` together with the earlier `conversation`: the latest message may give only one side of the route or change one side, and the other side then comes from the context. The answer must be one of `served_cities`.", "destination")
 	}
+	if o, d := e.Estado.Origem, e.Estado.Destino; o != nil && d != nil {
+		q["pede_volta"] = map[string]any{
+			"type":         "noul",
+			"instructions": fmt.Sprintf("The trips discussed so far go from %s to %s. In `latest_customer_message`, is the customer asking about the RETURN trip, i.e. traveling back from %s to %s (its dates, times or prices)?", o.Nome, d.Nome, d.Nome, o.Nome),
+			"criteria": map[string]any{
+				"true":  "Asks about the way back / return ('volta', 'retorno', 'e pra voltar?').",
+				"false": "Talks about the outbound trip, another route, or something else.",
+			},
+		}
+	}
 	if len(e.Estado.Opcoes) > 0 {
 		crit := map[string]any{OpcaoNenhuma: "The customer is not clearly picking one of the `current_options` in `latest_customer_message`."}
 		for _, o := range e.Estado.Opcoes {
@@ -221,6 +231,9 @@ func rotaDeRespostas(resp map[string]respostaJev, e EntradaRota) Rota {
 	}
 	if a, ok := resp["menciona_data_ou_pessoas"]; ok && a.Noul != nil {
 		rt.DetalhesExtras = limitar01(*a.Noul)
+	}
+	if a, ok := resp["pede_volta"]; ok && a.Noul != nil {
+		rt.PedeVolta = limitar01(*a.Noul)
 	}
 	if a, ok := resp["intencao"]; ok {
 		rt.Intencao, rt.ConfIntencao = a.Choice, conf(a)

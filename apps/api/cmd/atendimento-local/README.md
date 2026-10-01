@@ -42,7 +42,7 @@ prioridade sobre o arquivo. Sem a chave, o simulador diz onde colocá-la e sai c
 | `LLM_REASONING_EFFORT` | `low` | `low`, `medium`, `high` ou `max`; mais alto = mais lento (nvidia) |
 | `LLM_TEMPERATURA` | `0.3` | temperatura (nvidia) |
 | `LLM_MODELO_RESERVA` | `nvidia/nemotron-3.5-lightning-30b-a3b` (nvidia) | modelo reserva do hedge; `off` desliga |
-| `LLM_HEDGE_MS` | `6000` | se o principal não respondeu em N ms, o mesmo pedido vai ao reserva e vale a primeira resposta; `0` desliga o hedge |
+| `LLM_HEDGE_MS` | `3000` | se o principal não respondeu em N ms, o mesmo pedido vai ao reserva e vale a primeira resposta; `0` desliga o hedge |
 | `LLM_SEM_RACIOCINIO` | `true` só no reserva | envia `chat_template_kwargs {"enable_thinking":false}`; se definida, vale para principal e reserva |
 | `ATENDIMENTO_V2_JUIZ` | `llm` | `llm`, `jev` ou `off`. Com `jev` e `TYPESAFE_API_KEY`, o **roteador Jev** (1 requisição por turno: humano, irritação, intenção, origem/destino, opção) substitui o juiz e responde saudação e "quais cidades" sem LLM, além de pré-executar `buscar_viagens` |
 | `TYPESAFE_API_KEY` | vazio | só se o juiz/roteador for `jev` |

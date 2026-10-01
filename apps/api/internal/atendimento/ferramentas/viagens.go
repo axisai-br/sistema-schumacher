@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,6 +245,9 @@ func (t *buscarViagens) Executar(ctx context.Context, c *Contexto, raw json.RawM
 	// Os trechos ja escolhidos (e.Trechos) nao dependem desta busca: buscar a
 	// volta nao pode apagar a ida. So escolher_viagem/remover_trecho mexem neles.
 	e.Opcoes = abertas
+	if origem != nil && destino != nil && len(abertas) > 0 {
+		e.RegistrarRotaBuscada(resumoRota(origem.Nome, destino.Nome, abertas))
+	}
 
 	if len(abertas) > 0 {
 		views := make([]opcaoView, len(abertas))
@@ -300,7 +304,8 @@ type escolherViagem struct {
 func (t *escolherViagem) Def() llm.DefFerramenta {
 	return llm.DefFerramenta{
 		Nome: "escolher_viagem",
-		Descricao: "ADICIONA um trecho (viagem) a compra a partir das opcoes numeradas devolvidas por buscar_viagens. " +
+		Descricao: "ADICIONA um trecho (viagem) a compra. Identifique a viagem por opcao (numero da ULTIMA busca) OU por origem + destino + data (+ horario se houver mais de uma no dia); " +
+			"prefira origem/destino/data quando o cliente escolhe por data ou quando a viagem e de uma busca anterior (ex.: ida e volta: duas chamadas, uma por trecho, sem precisar buscar de novo). " +
 			"Use quando o cliente disser qual opcao quer (numero, data ou horario). Ida e volta (ou varias viagens, ate 4) sao trechos da mesma compra: " +
 			"chame uma vez por trecho, mesmo que um trecho anterior ja tenha reserva ou PIX. A mesma viagem nao entra duas vezes. " +
 			"Para TROCAR um trecho que ainda nao tem reserva por outra viagem, informe substituir_trecho (numero do trecho, 1..n). " +
@@ -308,13 +313,67 @@ func (t *escolherViagem) Def() llm.DefFerramenta {
 		Parametros: defJSON(`{
   "type":"object",
   "properties":{
-    "opcao":{"type":"integer","minimum":1,"description":"Numero da opcao conforme buscar_viagens."},
+    "opcao":{"type":"integer","minimum":1,"description":"Numero da opcao conforme a ULTIMA buscar_viagens."},
+    "origem":{"type":"string","description":"Cidade de partida (use com destino e data, no lugar de opcao)."},
+    "destino":{"type":"string","description":"Cidade de chegada."},
+    "data":{"type":"string","description":"Data da viagem AAAA-MM-DD."},
+    "horario":{"type":"string","description":"Opcional: HH:MM, se houver mais de uma viagem no dia."},
     "substituir_trecho":{"type":"integer","minimum":1,"description":"Opcional: numero do trecho (sem reserva) a trocar por esta opcao, em vez de adicionar."}
   },
-  "required":["opcao"],
   "additionalProperties":false
 }`),
 	}
+}
+
+// porRotaEData acha a viagem pela rota e data (sem depender do numero da
+// ultima busca). Varias no dia sem horario: devolve as candidatas.
+func (t *escolherViagem) porRotaEData(ctx context.Context, origemTxt, destinoTxt, dataTxt, horario string) (conversa.Opcao, *Saida) {
+	if strings.TrimSpace(origemTxt) == "" || strings.TrimSpace(destinoTxt) == "" || strings.TrimSpace(dataTxt) == "" {
+		s := falha("viagem_nao_identificada", "Informe opcao (numero da ultima busca) ou origem, destino e data (AAAA-MM-DD).")
+		return conversa.Opcao{}, &s
+	}
+	origem, s := resolverLado(ctx, t.cat, origemTxt)
+	if s != nil {
+		return conversa.Opcao{}, s
+	}
+	destino, s := resolverLado(ctx, t.cat, destinoTxt)
+	if s != nil {
+		return conversa.Opcao{}, s
+	}
+	d, err := parseData(dataTxt)
+	if err != nil {
+		x := falha("data_invalida", "Use a data no formato AAAA-MM-DD.")
+		return conversa.Opcao{}, &x
+	}
+	res, err := t.b.Search(ctx, availability.SearchFilter{
+		OriginStopID: origem.StopID, DestinationStopID: destino.StopID,
+		DateFrom: &d, DateTo: &d, OnlyActive: true, Limit: 50,
+	})
+	if err != nil {
+		x := falha("erro_busca", "A busca falhou agora. Tente de novo; se repetir, transfira para um atendente.")
+		return conversa.Opcao{}, &x
+	}
+	var cands []conversa.Opcao
+	for _, r := range res {
+		o := opcaoDeResultado(r)
+		if h := strings.TrimSpace(horario); h != "" && !strings.HasPrefix(o.Horario, h) {
+			continue
+		}
+		cands = append(cands, o)
+	}
+	switch len(cands) {
+	case 0:
+		x := falha("sem_viagem_na_data", "Nao ha viagem dessa rota nessa data. Rode buscar_viagens para mostrar as datas disponiveis.")
+		return conversa.Opcao{}, &x
+	case 1:
+		return cands[0], nil
+	}
+	vs := make([]opcaoView, 0, len(cands))
+	for _, o := range cands {
+		vs = append(vs, viewDe(o))
+	}
+	x := falhaDados("varias_viagens_no_dia", map[string]any{"viagens": vs, "mensagem": "Ha mais de uma viagem nesse dia. Pergunte o horario ao cliente e chame de novo com horario."})
+	return conversa.Opcao{}, &x
 }
 
 func (t *escolherViagem) stopID(ctx context.Context, nome string, cands ...*conversa.Parada) string {
@@ -334,6 +393,10 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 	var a struct {
 		Opcao            inteiro `json:"opcao"`
 		SubstituirTrecho inteiro `json:"substituir_trecho"`
+		Origem           string  `json:"origem"`
+		Destino          string  `json:"destino"`
+		Data             string  `json:"data"`
+		Horario          string  `json:"horario"`
 	}
 	if s := lerArgs(raw, &a); s != nil {
 		return *s
@@ -357,9 +420,19 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 	}
 	var op *conversa.Opcao
 	var validas []int
+	// Rota + data identificam a viagem sem ambiguidade e tem prioridade sobre o
+	// numero (que so vale para a ultima busca).
+	porData := strings.TrimSpace(a.Origem) != "" && strings.TrimSpace(a.Destino) != "" && strings.TrimSpace(a.Data) != ""
+	if porData || a.Opcao == 0 {
+		o, s := t.porRotaEData(ctx, a.Origem, a.Destino, a.Data, a.Horario)
+		if s != nil {
+			return *s
+		}
+		op = &o
+	}
 	for i := range e.Opcoes {
 		validas = append(validas, e.Opcoes[i].Numero)
-		if e.Opcoes[i].Numero == int(a.Opcao) {
+		if !porData && a.Opcao != 0 && e.Opcoes[i].Numero == int(a.Opcao) {
 			op = &e.Opcoes[i]
 		}
 	}
@@ -433,7 +506,16 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 		dados["substituiu"] = true
 	} else {
 		e.Trechos = append(e.Trechos, conversa.Trecho{Viagem: escolhida})
-		n = len(e.Trechos)
+	}
+	// Trechos em ordem cronologica: o 1o e sempre a ida.
+	sort.SliceStable(e.Trechos, func(i, j int) bool {
+		a, b := e.Trechos[i].Viagem, e.Trechos[j].Viagem
+		return a.Data+a.Horario < b.Data+b.Horario
+	})
+	for i, tr := range e.Trechos {
+		if mesmaViagem(tr.Viagem, escolhida) {
+			n = i + 1
+		}
 	}
 	dados["trecho"] = n
 	dados["viagem"] = viewDe(escolhida)
@@ -523,3 +605,19 @@ func cotar(ctx context.Context, q Cotador, o conversa.Opcao) (float64, error) {
 }
 
 func diferePreco(a, b float64) bool { return math.Abs(a-b) > 0.01 }
+
+// resumoRota descreve a rota buscada com os dias da semana e horarios das
+// opcoes (ex.: "Fraiburgo → Monção: quinta-feira 16:30"), para o modelo
+// responder perguntas gerais sem confundir ida e volta.
+func resumoRota(origem, destino string, os []conversa.Opcao) string {
+	var partes []string
+	visto := map[string]bool{}
+	for _, o := range os {
+		k := diaSemana(o.Data) + " " + o.Horario
+		if !visto[k] {
+			visto[k] = true
+			partes = append(partes, k)
+		}
+	}
+	return origem + " → " + destino + ": " + strings.Join(partes, ", ")
+}

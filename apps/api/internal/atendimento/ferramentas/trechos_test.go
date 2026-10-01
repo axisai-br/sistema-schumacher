@@ -243,3 +243,25 @@ func TestConsultarReservaTodosOsTrechos(t *testing.T) {
 		t.Fatalf("pagamentos: %+v / %+v", r0["pagamento"], r1["pagamento"])
 	}
 }
+
+func TestEscolherPorRotaEDataSemNumeroDaBusca(t *testing.T) {
+	a := novoAmbiente(t)
+	// Ultima busca e a volta; a ida e escolhida por rota e data.
+	a.exec(t, "buscar_viagens", `{"origem":"Santa Inês","destino":"Chapecó"}`)
+	if s, m := a.exec(t, "escolher_viagem", `{"origem":"Chapecó","destino":"Santa Inês","data":"2026-10-10"}`); !s.OK {
+		t.Fatalf("ida por data: %+v", m)
+	}
+	if s, m := a.exec(t, "escolher_viagem", `{"origem":"Santa Inês","destino":"Chapecó","data":"2026-11-25","horario":"07:00"}`); !s.OK {
+		t.Fatalf("volta por data: %+v", m)
+	}
+	tr := a.ctx.Estado.Trechos
+	if len(tr) != 2 || tr[0].Viagem.TripID != "t1" || tr[1].Viagem.TripID != "t4" {
+		t.Fatalf("trechos: %+v", tr)
+	}
+	if s, _ := a.exec(t, "escolher_viagem", `{"origem":"Chapecó","destino":"Santa Inês","data":"2026-10-11"}`); s.OK || s.Motivo != "sem_viagem_na_data" {
+		t.Fatalf("data sem viagem: %+v", s)
+	}
+	if s, _ := a.exec(t, "escolher_viagem", `{"origem":"Chapecó"}`); s.OK || s.Motivo != "viagem_nao_identificada" {
+		t.Fatalf("sem dados: %+v", s)
+	}
+}

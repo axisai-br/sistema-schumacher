@@ -107,10 +107,14 @@ type Trecho struct {
 func (t Trecho) Rota() string { return t.Viagem.Origem + " para " + t.Viagem.Destino }
 
 type Estado struct {
-	Origem            *Parada      `json:"origem,omitempty"`
-	Destino           *Parada      `json:"destino,omitempty"`
-	Opcoes            []Opcao      `json:"opcoes,omitempty"`
-	Trechos           []Trecho     `json:"trechos,omitempty"`
+	Origem  *Parada  `json:"origem,omitempty"`
+	Destino *Parada  `json:"destino,omitempty"`
+	Opcoes  []Opcao  `json:"opcoes,omitempty"`
+	Trechos []Trecho `json:"trechos,omitempty"`
+	// RotasBuscadas: rotas completas ja buscadas, em ordem (a 1a costuma ser a
+	// ida), com dias da semana e horarios. Ajuda o modelo a nao inverter ida e
+	// volta.
+	RotasBuscadas     []string     `json:"rotas_buscadas,omitempty"`
 	PessoasInformadas int          `json:"pessoas_informadas,omitempty"` // quantidade dita pelo cliente antes dos nomes
 	Passageiros       []Passageiro `json:"passageiros,omitempty"`        // os mesmos para todos os trechos
 	Pagamento         string       `json:"pagamento,omitempty"`          // "integral" | "sinal"; vale para todos os trechos
@@ -160,6 +164,27 @@ func (e Estado) TodosReservados() bool {
 		}
 	}
 	return len(e.Trechos) > 0
+}
+
+// RegistrarRotaBuscada guarda "Origem → Destino: dias e horarios" (a mesma
+// rota e atualizada no lugar; no maximo 6).
+func (e *Estado) RegistrarRotaBuscada(r string) {
+	chave := func(s string) string {
+		if i := strings.Index(s, ":"); i >= 0 {
+			return s[:i]
+		}
+		return s
+	}
+	for i, x := range e.RotasBuscadas {
+		if chave(x) == chave(r) {
+			e.RotasBuscadas[i] = r
+			return
+		}
+	}
+	if len(e.RotasBuscadas) >= 6 {
+		return
+	}
+	e.RotasBuscadas = append(e.RotasBuscadas, r)
 }
 
 // Pendencias lista, em ordem, o que falta para fechar a compra. Vazio quando

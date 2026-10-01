@@ -130,8 +130,10 @@ func NovasFixtures(hoje time.Time) *Fixtures {
 	if dia12.Before(h.AddDate(0, 0, 2)) {
 		dia12 = time.Date(h.Year(), h.Month()+1, 12, 0, 0, 0, 0, time.UTC)
 	}
-	n++
-	f.viagens = append(f.viagens, f.novaViagem(fmt.Sprintf("trip-%02d", n), "MA>SC", dia12))
+	if dia12.Weekday() != time.Monday || dia12.After(seg.AddDate(0, 0, 35)) { // nao duplica a viagem de segunda
+		n++
+		f.viagens = append(f.viagens, f.novaViagem(fmt.Sprintf("trip-%02d", n), "MA>SC", dia12))
+	}
 	sort.SliceStable(f.viagens, func(i, j int) bool { return f.viagens[i].Data < f.viagens[j].Data })
 	return f
 }

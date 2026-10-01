@@ -212,6 +212,7 @@ func (t *criarReserva) Executar(ctx context.Context, c *Contexto, raw json.RawMe
 	if totalGeral > 0 {
 		dados["total_geral"] = arredondar(totalGeral)
 		dados["valor_a_pagar_agora"] = arredondar(aPagarAgora)
+		dados["restante_no_embarque_total"] = arredondar(totalGeral - aPagarAgora)
 	}
 	if len(falhas) == 0 {
 		dados["proximo_passo"] = "gerar_pix"
@@ -239,7 +240,9 @@ func preencherReserva(dados map[string]any, d bookings.BookingDetails, pagamento
 	}
 	if b.TotalAmount > 0 {
 		dados["total"] = b.TotalAmount
-		dados["valor_a_pagar_agora"] = valorAPagar(pagamento, b.TotalAmount, pagantes, sinal)
+		agora := valorAPagar(pagamento, b.TotalAmount, pagantes, sinal)
+		dados["valor_a_pagar_agora"] = agora
+		dados["restante_no_embarque"] = arredondar(b.TotalAmount - agora)
 	}
 	if b.ExpiresAt != nil {
 		dados["reservada_ate"] = b.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
