@@ -76,7 +76,7 @@ func TestAudioOK(t *testing.T) {
 		_, _ = w.Write([]byte(`{"text":" quero ir para Fraiburgo "}`))
 	}))
 	defer srv.Close()
-	p := Novo(&canalFake{dataURL: audioURL, mime: "audio/ogg; codecs=opus"}, Config{OpenAIAPIKey: "sk-x", OpenAIBaseURL: srv.URL})
+	p := Novo(&canalFake{dataURL: audioURL, mime: "audio/ogg; codecs=opus"}, Config{OpenAIAPIKey: "sk-x", OpenAIBaseURL: srv.URL, Cidades: func(context.Context) []string { return []string{"Fraiburgo", "Monção"} }})
 	s, extra, err := p.Preparar(context.Background(), conversa.Mensagem{Tipo: conversa.TipoAudio})
 	if err != nil || s != "quero ir para Fraiburgo" {
 		t.Fatalf("s=%q err=%v", s, err)

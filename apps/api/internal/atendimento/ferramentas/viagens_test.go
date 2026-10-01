@@ -291,10 +291,11 @@ func TestEscolherViagemRespeitaPessoasInformadas(t *testing.T) {
 
 var _ = conversa.Estado{}
 
-func TestBuscarMesmoEstadoNaoExiste(t *testing.T) {
+// Rota sem nenhuma viagem no sistema (decidido pelos dados, nao por regra fixa).
+func TestBuscarRotaSemViagens(t *testing.T) {
 	a := novoAmbiente(t)
-	s, _ := a.exec(t, "buscar_viagens", `{"origem":"Chapecó","destino":"Fraiburgo"}`)
-	if s.OK || s.Motivo != "rota_mesmo_estado" {
-		t.Fatalf("got %+v", s)
+	s, m := a.exec(t, "buscar_viagens", `{"origem":"Chapecó","destino":"Fraiburgo"}`)
+	if !s.OK || dadosDe(m)["rota_sem_viagens"] != true {
+		t.Fatalf("got %+v", m)
 	}
 }

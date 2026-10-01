@@ -26,11 +26,9 @@ const (
 	openAIBaseURLPadrao     = "https://api.openai.com/v1"
 
 	promptVocabulario = "Português do Brasil. Atendimento Schumacher Tur. O cliente pode responder perguntas de reserva. " +
-		"Destinos comuns em Santa Catarina: Fraiburgo, Monte Carlo, Videira, Campos Novos, Chapecó, Concórdia, Ipumirim, Petrolândia, Ituporanga, Seara. " +
-		"Origens comuns no Maranhão: Santa Inês, Monção, Igarapé do Meio. " +
 		"Preserve de forma literal respostas curtas sobre passageiros e crianças, como 'só eu', 'só pra mim', 'é só pra mim', 'a passagem é só pra mim', " +
 		"'vou sozinho', 'sou só eu', 'não tem criança', 'sem criança', 'não vai criança' e 'tem uma criança'. " +
-		"Não troque 'só pra mim' por uma frase ambígua. Transcreva nomes de cidades conforme essa lista."
+		"Não troque 'só pra mim' por uma frase ambígua."
 
 	promptVisao = "Analise a imagem enviada por um cliente de uma empresa de transporte rodoviário. " +
 		"Diga se é uma foto de documento de identificação (RG, CPF, CNH) e, se for, extraia nome completo, CPF e RG exatamente como aparecem " +
@@ -47,6 +45,9 @@ type Config struct {
 	// OpenAI-compatible (NVIDIA NIM) e ignora OpenAIAPIKey/ModeloVisao na visao.
 	Visao VisaoConfig
 	HTTP  *http.Client
+	// Cidades fornece os nomes das cidades atendidas (catalogo do banco) para
+	// orientar a transcricao. Opcional.
+	Cidades func(ctx context.Context) []string
 }
 
 // VisaoConfig configura a leitura de imagens por um provedor compativel com
@@ -68,6 +69,7 @@ type Preparador struct {
 	modeloV string
 	visao   VisaoConfig // so usado quando Provedor == "nvidia"
 	http    *http.Client
+	cidades func(ctx context.Context) []string
 }
 
 // Novo cria o Preparador.
@@ -100,7 +102,20 @@ func Novo(c canal.Canal, cfg Config) *Preparador {
 		modeloV: strings.TrimSpace(cfg.ModeloVisao),
 		visao:   v,
 		http:    h,
+		cidades: cfg.Cidades,
 	}
+}
+
+// promptTranscricao orienta a transcricao com as cidades do catalogo (banco).
+func (p *Preparador) promptTranscricao(ctx context.Context) string {
+	if p.cidades == nil {
+		return promptVocabulario
+	}
+	nomes := p.cidades(ctx)
+	if len(nomes) == 0 {
+		return promptVocabulario
+	}
+	return promptVocabulario + " Cidades atendidas (transcreva os nomes assim): " + strings.Join(nomes, ", ") + "."
 }
 
 func (p *Preparador) visaoNvidia() bool { return p.visao.Provedor == "nvidia" }
@@ -211,7 +226,7 @@ func (p *Preparador) transcrever(ctx context.Context, dataURL, mimeType string) 
 	for k, v := range map[string]string{
 		"model":           p.modeloT,
 		"language":        "pt",
-		"prompt":          promptVocabulario,
+		"prompt":          p.promptTranscricao(ctx),
 		"response_format": "json",
 	} {
 		if err := w.WriteField(k, v); err != nil {

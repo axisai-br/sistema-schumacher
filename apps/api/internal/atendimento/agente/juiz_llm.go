@@ -12,7 +12,7 @@ import (
 
 const esquemaJuiz = `{"type":"object","properties":{"pede_humano":{"type":"number"},"irritacao":{"type":"number"},"fora_do_assunto":{"type":"number"}},"required":["pede_humano","irritacao","fora_do_assunto"],"additionalProperties":false}`
 
-const instrucoesJuiz = `Você avalia a última mensagem do CLIENTE em uma conversa de atendimento de uma empresa de ônibus (viagens entre Maranhão e Santa Catarina). Responda só com JSON, com números de 0 a 1:
+const instrucoesJuiz = `Você avalia a última mensagem do CLIENTE em uma conversa de atendimento de uma empresa de ônibus (venda de passagens). Responda só com JSON, com números de 0 a 1:
 - pede_humano: o cliente pede atendente, ajuda de uma pessoa, suporte humano (1 = pede claramente).
 - irritacao: quão irritado ou frustrado o cliente está (0 = calmo, 1 = muito irritado).
 - fora_do_assunto: a última mensagem não tem relação com viagens de ônibus, passagens ou reservas (1 = totalmente fora).`

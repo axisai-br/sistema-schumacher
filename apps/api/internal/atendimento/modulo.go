@@ -134,9 +134,20 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 			EsforcoRaciocinio: pc.EsforcoRaciocinio,
 		}
 	}
+	cat := ferramentas.NovoCatalogo(ferramentas.NovaFontePG(pool), time.Now)
+	mc.Cidades = func(ctx context.Context) []string {
+		cs, err := cat.Cidades(ctx)
+		if err != nil {
+			return nil
+		}
+		nomes := make([]string, 0, len(cs))
+		for _, c := range cs {
+			nomes = append(nomes, c.Nome)
+		}
+		return nomes
+	}
 	prep := midia.Novo(canal, mc)
 
-	cat := ferramentas.NovoCatalogo(ferramentas.NovaFontePG(pool), time.Now)
 	reg := ferramentas.Padrao(cat, dom.Busca, dom.Cotacao, dom.Reservas, dom.Pagamentos, ferramentas.Config{SinalPorPagante: cfg.AtendimentoV2SinalPorPagante})
 
 	var juiz agente.Juiz
