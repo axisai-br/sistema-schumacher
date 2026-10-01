@@ -290,3 +290,11 @@ func TestEscolherViagemRespeitaPessoasInformadas(t *testing.T) {
 }
 
 var _ = conversa.Estado{}
+
+func TestBuscarMesmoEstadoNaoExiste(t *testing.T) {
+	a := novoAmbiente(t)
+	s, _ := a.exec(t, "buscar_viagens", `{"origem":"Chapecó","destino":"Fraiburgo"}`)
+	if s.OK || s.Motivo != "rota_mesmo_estado" {
+		t.Fatalf("got %+v", s)
+	}
+}

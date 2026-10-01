@@ -12,9 +12,9 @@ import (
 // TextoSaudacao e a resposta fixa para um cumprimento no inicio da conversa.
 const TextoSaudacao = "Olá! 😊 Aqui é o Shabas, da Schumacher Tur.\n\nPra onde você quer viajar?"
 
-// limiarDetalhes: acima disso a conversa ja traz data/periodo/pessoas e a busca
-// previa (sem esses filtros) fica para o LLM.
-const limiarDetalhes = 0.5
+// A busca previa roda mesmo quando o cliente citou data ou pessoas: sem esses
+// filtros ela ainda mostra ao LLM as datas reais (evita inventar uma viagem
+// "amanha"); o LLM refina com outra busca se precisar.
 
 const idPreBusca = "pre_1"
 
@@ -49,7 +49,7 @@ func jaHouveResposta(hist []conversa.Mensagem) bool {
 // argsPreBusca decide se da para executar buscar_viagens antes do LLM.
 func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado) (map[string]string, bool) {
 	lim := a.cfg.LimiarRota
-	if rt.Intencao != IntencaoBuscarViagens || rt.ConfIntencao < lim || rt.DetalhesExtras >= limiarDetalhes {
+	if rt.Intencao != IntencaoBuscarViagens || rt.ConfIntencao < lim {
 		return nil, false
 	}
 	if (rt.Origem == CidadeNaoAtendida && rt.ConfOrigem >= lim) || (rt.Destino == CidadeNaoAtendida && rt.ConfDestino >= lim) {

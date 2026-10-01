@@ -1,9 +1,13 @@
 package agente
 
 import (
+	"context"
+	"errors"
+
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"schumacher-tur/api/internal/atendimento/ferramentas"
 	"strings"
 	"time"
 
@@ -41,7 +45,7 @@ func rotasConhecidas(tc *turno) map[string]bool {
 			m[chaveRota(o.Origem, o.Destino)] = true
 		}
 	}
-	for _, os := range opcoesDoTurno(tc.resultados) {
+	for _, os := range opcoesDoTurno(append(append([]string{}, tc.anteriores...), tc.resultados...)) {
 		add(os)
 	}
 	for _, e := range []conversa.Estado{tc.antes, tc.estado} {
@@ -146,7 +150,11 @@ func textoOpcoes(os []conversa.Opcao) string {
 				b.WriteString("\n")
 			}
 			rota = r
-			fmt.Fprintf(&b, "Opções de %s:\n", r)
+			if o.Origem != "" && o.Destino != "" {
+				fmt.Fprintf(&b, "Opções de %s:\n", r)
+			} else {
+				b.WriteString("Opções:\n")
+			}
 		}
 		data := o.Data
 		if t, err := time.Parse("2006-01-02", o.Data); err == nil {
@@ -205,4 +213,72 @@ func textoPix(itens []map[string]any) string {
 		fmt.Fprintf(&b, "\nTotal a pagar agora: %s.", formatarReais(total))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// TextoPedirRota e a resposta segura quando ainda nao ha rota para buscar.
+const TextoPedirRota = "Pra eu te passar as datas e horários certinhos, me diz: de qual cidade você sai e pra qual cidade vai?"
+
+// respostaSegura e o ultimo recurso quando o LLM insiste em citar dados sem
+// origem e nao houve busca no turno: com rota no estado, busca e responde com
+// as opcoes reais; sem rota, pede a rota. Vazio = transferir.
+func (a *Agente) respostaSegura(ctx context.Context, tc *turno) string {
+	o, d := tc.estado.Origem, tc.estado.Destino
+	if o == nil && d == nil {
+		return TextoPedirRota
+	}
+	args := map[string]string{}
+	if o != nil {
+		args["origem"] = o.Nome
+	}
+	if d != nil {
+		args["destino"] = d.Nome
+	}
+	js, _ := json.Marshal(args)
+	s := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora()}, "buscar_viagens", js)
+	tc.passos = append(tc.passos, conversa.Passo{Tipo: "ferramenta", Nome: "buscar_viagens", Entrada: json.RawMessage(js), Saida: s})
+	if out, err := json.Marshal(s); err == nil {
+		tc.resultados = append(tc.resultados, string(out))
+	}
+	if bs := opcoesDoTurno(tc.resultados); s.OK && len(bs) > 0 {
+		return textoOpcoes(bs[len(bs)-1])
+	}
+	return ""
+}
+
+const motivoLimitePassos = "sem resposta apos o limite de passos"
+
+// recuperar trata estouro do orcamento de tempo do turno ou do limite de
+// passos: responde com o que ja foi obtido (PIX, opcoes da busca, ou busca da
+// rota do estado). Sem nada aproveitavel, devolve false e o erro segue.
+func (a *Agente) recuperar(ctx context.Context, tc *turno, err error) (string, bool) {
+	var t *transf
+	limite := errors.As(err, &t) && t.motivo == motivoLimitePassos
+	tempo := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
+	if !limite && !tempo {
+		return "", false
+	}
+	motivo := "limite de passos"
+	if tempo {
+		motivo = "orcamento de tempo do turno"
+	}
+	texto := ""
+	switch px, bs := pixDoTurno(tc.resultados), opcoesDoTurno(tc.resultados); {
+	case len(px) > 0:
+		texto = textoPix(px)
+	case len(bs) > 0:
+		texto = textoOpcoes(bs[len(bs)-1])
+	case tc.estado.Origem != nil || tc.estado.Destino != nil:
+		texto = a.respostaSegura(ctx, tc)
+	}
+	tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "recuperacao", Saida: map[string]any{"motivo": motivo, "resposta_segura": texto != ""}})
+	return texto, texto != ""
+}
+
+// semRecuperacao: estouro do orcamento sem nada aproveitavel vira
+// transferencia tecnica (o cliente recebe aviso, nao fica sem resposta).
+func (a *Agente) semRecuperacao(ctx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return &transf{motivo: "LLM lento: orcamento de tempo do turno esgotado", tecnico: true}
+	}
+	return err
 }

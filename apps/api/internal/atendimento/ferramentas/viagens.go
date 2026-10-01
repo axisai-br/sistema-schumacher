@@ -177,6 +177,14 @@ func (t *buscarViagens) Executar(ctx context.Context, c *Contexto, raw json.RawM
 	if origem != nil && destino != nil && origem.StopID == destino.StopID {
 		return falha("origem_igual_destino", "Origem e destino sao a mesma cidade. Pergunte de onde para onde o cliente quer ir.")
 	}
+	// So ha viagens entre MA e SC: dentro do mesmo estado nao existe em
+	// nenhuma data (nao sugira outra data).
+	if origem != nil && destino != nil && origem.UF != "" && origem.UF == destino.UF {
+		return falhaDados("rota_mesmo_estado", map[string]any{
+			"estado":   nomeUF(origem.UF),
+			"mensagem": "Nao existe viagem entre duas cidades do mesmo estado, em nenhuma data. Diga isso uma vez, explique que as viagens sao entre Maranhao e Santa Catarina e ofereca o suporte humano. Nao sugira outra data.",
+		})
+	}
 
 	hoje := dataLocal(c.Agora, t.fuso)
 	de, ate := hoje, hoje.AddDate(0, 0, janelaPadraoDias)

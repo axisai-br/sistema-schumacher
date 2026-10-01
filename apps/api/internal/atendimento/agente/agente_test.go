@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -377,7 +378,8 @@ func TestFatosReescreveUmaVez(t *testing.T) {
 	}
 }
 
-func TestFatosFalhaDuasVezesTransfere(t *testing.T) {
+// Sem busca no turno e sem rota no estado: em vez de transferir, pede a rota.
+func TestFatosFalhaDuasVezesPedeRota(t *testing.T) {
 	f := novoFx(t)
 	f.modelo.repetir = ptr(texto("Sai dia 20/10 às 09:30 por R$ 999,00."))
 	f.iniciar("quanto custa?")
@@ -387,7 +389,7 @@ func TestFatosFalhaDuasVezesTransfere(t *testing.T) {
 	if len(f.modelo.pedidos) != 2 {
 		t.Fatalf("pedidos %d", len(f.modelo.pedidos))
 	}
-	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoTransferencia || f.conversa().Status != conversa.StatusHumano {
+	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoPedirRota || f.conversa().Status != conversa.StatusBot {
 		t.Fatalf("envios %v", f.canal.envios)
 	}
 }
@@ -451,14 +453,28 @@ func TestErroDoModeloMensagemTecnicaETransfere(t *testing.T) {
 	}
 }
 
-func TestSemTextoAposMaxPassosTransfere(t *testing.T) {
+// Limite de passos depois de uma busca: responde com as opcoes reais.
+func TestMaxPassosComBuscaRespondeOpcoes(t *testing.T) {
 	f := novoFx(t, buscarViagens())
 	f.modelo.repetir = ptr(chamada("buscar_viagens", `{}`))
 	f.iniciar("oi")
 	if err := f.ag.Processar(context.Background(), f.c); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.modelo.pedidos) != 6 || len(f.canal.envios) != 1 || f.canal.envios[0] != TextoTecnico {
+	if len(f.modelo.pedidos) != 6 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "1. qui 15/10 às 08:00") || f.conversa().Status != conversa.StatusBot {
+		t.Fatalf("pedidos=%d envios=%v", len(f.modelo.pedidos), f.canal.envios)
+	}
+}
+
+// Limite de passos sem nada aproveitavel: transferencia tecnica.
+func TestSemTextoAposMaxPassosTransfere(t *testing.T) {
+	f := novoFx(t, transferirFerr())
+	f.modelo.repetir = ptr(chamada("ferramenta_inexistente", `{}`))
+	f.iniciar("oi")
+	if err := f.ag.Processar(context.Background(), f.c); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoTecnico {
 		t.Fatalf("pedidos=%d envios=%v", len(f.modelo.pedidos), f.canal.envios)
 	}
 }

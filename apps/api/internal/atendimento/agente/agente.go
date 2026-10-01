@@ -68,6 +68,9 @@ type Config struct {
 	LimiarHumano    float64 // 0.7
 	LimiarIrritacao float64 // 0.75
 	LimiarRota      float64 // 0.8: confianca minima do Roteador para agir sozinho
+	// OrcamentoTurno limita o tempo das chamadas ao LLM no turno (padrao 50s):
+	// estourou, o turno responde com dados ja obtidos em vez de esperar.
+	OrcamentoTurno time.Duration
 }
 
 type Agente struct {
@@ -91,6 +94,9 @@ func Novo(d Deps, cfg Config) *Agente {
 	}
 	if cfg.LimiarRota <= 0 {
 		cfg.LimiarRota = 0.8
+	}
+	if cfg.OrcamentoTurno <= 0 {
+		cfg.OrcamentoTurno = 50 * time.Second
 	}
 	if d.Agora == nil {
 		d.Agora = time.Now
@@ -121,6 +127,7 @@ type turno struct {
 	tokOut     int
 	modelo     string
 	resultados []string // JSON das saidas de ferramenta deste turno
+	anteriores []string // JSON das saidas de ferramenta dos ultimos turnos
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -219,6 +226,8 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 		return fmt.Errorf("historico: %w", err)
 	}
 
+	tc.anteriores = a.saidasAnteriores(ctx, c.ID)
+
 	var pre []llm.Mensagem // chamada de ferramenta executada antes do LLM (pre-busca)
 	if a.d.Roteador != nil {
 		res := a.rotear(ctx, tc, hist)
@@ -263,26 +272,33 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	instr := a.instrucoes(tc, catalogo, agora)
 	msgs := append(mapearHistorico(hist), pre...)
 
-	texto, msgs, err := a.gerar(ctx, tc, instr, msgs)
+	ctxG, cancelG := context.WithTimeout(ctx, a.cfg.OrcamentoTurno)
+	defer cancelG()
+	seguro := false // resposta montada em codigo (dispensa a checagem de fatos)
+	texto, msgs, err := a.gerar(ctxG, tc, instr, msgs)
 	if err != nil {
-		return err
+		if texto, seguro = a.recuperar(ctx, tc, err); !seguro {
+			return a.semRecuperacao(ctx, err)
+		}
 	}
 
 	// Checagem de fatos: valores, datas e horarios precisam ter origem, e rotas
 	// com horarios precisam ter sido buscadas (ex.: volta inventada com as datas
 	// da ida).
 	cidades := a.nomesCidades(ctx)
-	if prob := a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); prob != "" {
+	if prob := a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); !seguro && prob != "" {
 		tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem: " + prob})
 		msgs = append(msgs,
 			llm.Mensagem{Papel: llm.PapelAssistente, Texto: texto},
 			llm.Mensagem{Papel: llm.PapelUsuario, Texto: fmt.Sprintf("Sua resposta citou %s que não vieram das ferramentas. Reescreva usando só dados das ferramentas; para outra rota (por exemplo, a volta), chame buscar_viagens antes.", prob)},
 		)
-		texto, _, err = a.gerar(ctx, tc, instr, msgs)
+		texto, _, err = a.gerar(ctxG, tc, instr, msgs)
 		if err != nil {
-			return err
+			if texto, seguro = a.recuperar(ctx, tc, err); !seguro {
+				return a.semRecuperacao(ctx, err)
+			}
 		}
-		if prob = a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); prob != "" {
+		if prob = a.problemasResposta(tc, texto, catalogo, agora, textosCliente, cidades); !seguro && prob != "" {
 			// Se houve busca neste turno, responde com as opcoes reais montadas
 			// em codigo em vez de transferir.
 			if px := pixDoTurno(tc.resultados); len(px) > 0 {
@@ -291,6 +307,9 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 			} else if bs := opcoesDoTurno(tc.resultados); len(bs) > 0 {
 				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob + "; respondendo com as opcoes da busca"})
 				texto = textoOpcoes(bs[len(bs)-1])
+			} else if seg := a.respostaSegura(ctx, tc); seg != "" {
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob + "; resposta segura"})
+				texto = seg
 			} else {
 				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob})
 				return &transf{motivo: "resposta com dados sem origem nas ferramentas: " + prob}
@@ -415,7 +434,7 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 			}
 		}
 	}
-	return "", msgs, &transf{motivo: "sem resposta apos o limite de passos", tecnico: true}
+	return "", msgs, &transf{motivo: motivoLimitePassos, tecnico: true}
 }
 
 // problemasResposta junta itens sem origem e rotas nao buscadas; vazio se ok.
@@ -450,7 +469,62 @@ func (a *Agente) fontes(tc *turno, catalogo string, agora time.Time) []string {
 	est, _ := json.Marshal(tc.estado)
 	antes, _ := json.Marshal(tc.antes)
 	f := []string{catalogo, string(est), string(antes), agora.Format("02/01/2006")}
+	f = append(f, tc.anteriores...)
+	f = append(f, valoresDerivados(tc))
 	return append(f, tc.resultados...)
+}
+
+// valoresDerivados: contas simples que o modelo pode fazer com precos reais
+// (preco x pessoas, soma dos trechos x pessoas), para nao barrar "2 x R$ 950 =
+// R$ 1.900".
+func valoresDerivados(tc *turno) string {
+	var precos []float64
+	for _, e := range []conversa.Estado{tc.antes, tc.estado} {
+		for _, o := range e.Opcoes {
+			precos = append(precos, o.Preco)
+		}
+		soma := 0.0
+		for _, t := range e.Trechos {
+			precos = append(precos, t.Viagem.Preco)
+			soma += t.Viagem.Preco
+		}
+		if soma > 0 {
+			precos = append(precos, soma)
+		}
+	}
+	var b strings.Builder
+	visto := map[float64]bool{}
+	for _, p := range precos {
+		if p <= 0 || visto[p] {
+			continue
+		}
+		visto[p] = true
+		for k := 2; k <= 10; k++ {
+			fmt.Fprintf(&b, "%.2f ", p*float64(k))
+		}
+	}
+	return b.String()
+}
+
+// saidasAnteriores devolve as saidas de ferramenta dos ultimos turnos: dados
+// mostrados ao cliente ha pouco continuam valendo como fonte.
+func (a *Agente) saidasAnteriores(ctx context.Context, conversaID string) []string {
+	turnos, err := a.d.Store.Turnos(ctx, conversaID, 3)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, t := range turnos {
+		for _, p := range t.Passos {
+			if p.Tipo != "ferramenta" || p.Saida == nil {
+				continue
+			}
+			if js, err := json.Marshal(p.Saida); err == nil {
+				out = append(out, string(js))
+			}
+		}
+	}
+	return out
 }
 
 // transferir e o caminho unico de transferencia para humano.

@@ -71,3 +71,14 @@ func TestPixDoTurnoETextoPix(t *testing.T) {
 		}
 	}
 }
+
+func TestValoresDerivadosAceitaMultiplo(t *testing.T) {
+	tc := &turno{estado: conversa.Estado{Opcoes: []conversa.Opcao{{Preco: 950}}}}
+	f := []string{valoresDerivados(tc)}
+	if falt := itensSemOrigem("Para 2 pessoas fica R$ 1.900,00.", f, nil); len(falt) != 0 {
+		t.Fatalf("1.900 deveria valer: %+v", falt)
+	}
+	if falt := itensSemOrigem("Fica R$ 1.234,00.", f, nil); len(falt) == 0 {
+		t.Fatal("valor arbitrario nao deveria valer")
+	}
+}

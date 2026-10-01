@@ -216,7 +216,6 @@ func TestRoteadorBaixaConfiancaOuCasosSemPreBuscaVaoAoLLM(t *testing.T) {
 		"busca confianca baixa": {Intencao: IntencaoBuscarViagens, ConfIntencao: 0.6, Destino: "Chapecó", ConfDestino: 0.99},
 		"cidade baixa":          {Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Destino: "Chapecó", ConfDestino: 0.5},
 		"nao atendida":          {Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Destino: CidadeNaoAtendida, ConfDestino: 0.95},
-		"com data":              {Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Destino: "Chapecó", ConfDestino: 0.95, DetalhesExtras: 0.9},
 		"outra intencao":        {Intencao: IntencaoDuvidaInformativa, ConfIntencao: 0.95},
 	}
 	for nome, rt := range casos {
