@@ -1,0 +1,9 @@
+{
+  "nome": "audio_nao_compreendido",
+  "descricao": "A primeira mensagem é um áudio que não foi transcrito. O bot deve pedir que o cliente escreva, nunca ficar em silêncio.",
+  "objetivo_cliente": "Você é a Lúcia Helena Ferreira, 55 anos, mora em Santa Inês (MA) e mandou um áudio (que o sistema não conseguiu entender). Se o atendente pedir para você escrever, escreva: quero ir pra Chapecó. Quando o atendente mostrar as opções, agradeça e encerre.",
+  "primeira_mensagem": "[áudio não compreendido]",
+  "max_turnos": 5,
+  "espera": {"status": "BOT", "destino": "Chapecó"},
+  "exige_primeira_resposta": ["escrev|digit|texto|mensagem"]
+}

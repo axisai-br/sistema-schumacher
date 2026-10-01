@@ -24,6 +24,7 @@ const (
 	statementRoleMembership
 	statementExecutionRoleMutation
 	statementUnsupportedFunctionACL
+	statementAtendimentoTable
 )
 
 type parsedStatement struct {
@@ -80,6 +81,10 @@ func parseStatement(statement sqlStatement) parsedStatement {
 	}
 	if startsWithKeywords(tokens, "alter", "group") {
 		parsed.kind = statementAlterGroup
+		return parsed
+	}
+	if matchAtendimentoTableDDL(tokens) {
+		parsed.kind = statementAtendimentoTable
 		return parsed
 	}
 	if executionRoleMutation(tokens) {
@@ -538,4 +543,97 @@ func qualified(schema, name string) string {
 
 func signature(name string, types []string) string {
 	return name + "(" + strings.Join(types, ",") + ")"
+}
+
+// matchAtendimentoTableDDL reports whether the statement is one of the three
+// narrow table-DDL shapes authorized for atendimento v2 (see guard.go).
+func matchAtendimentoTableDDL(tokens []sqlToken) bool {
+	return matchCreateTableIfNotExists(tokens) ||
+		matchCreateIndexIfNotExists(tokens) ||
+		matchRevokeAllOnTables(tokens)
+}
+
+// qualifiedNameAt consumes an unquoted, canonical name or schema.name starting
+// at index and returns the next index.
+func qualifiedNameAt(tokens []sqlToken, index int) (int, bool) {
+	if index >= len(tokens) || tokens[index].kind != tokenWord || !isCanonicalIdentifier(tokens[index].value) {
+		return index, false
+	}
+	index++
+	if index < len(tokens) && tokens[index].isSymbol(".") {
+		if index+1 >= len(tokens) || tokens[index+1].kind != tokenWord || !isCanonicalIdentifier(tokens[index+1].value) {
+			return index, false
+		}
+		index += 2
+	}
+	return index, true
+}
+
+// CREATE TABLE IF NOT EXISTS <name> ( ... ) with nothing after the closing
+// parenthesis (rejects AS SELECT, INHERITS, PARTITION BY, etc.).
+func matchCreateTableIfNotExists(tokens []sqlToken) bool {
+	if !startsWithKeywords(tokens, "create", "table", "if", "not", "exists") {
+		return false
+	}
+	index, ok := qualifiedNameAt(tokens, 5)
+	if !ok || index >= len(tokens) || !tokens[index].isSymbol("(") {
+		return false
+	}
+	_, close, err := parenthesizedTokens(tokens, index)
+	return err == nil && close == len(tokens)
+}
+
+// CREATE [UNIQUE] INDEX IF NOT EXISTS <name> ON <table> ...
+func matchCreateIndexIfNotExists(tokens []sqlToken) bool {
+	if !startsWithKeywords(tokens, "create") {
+		return false
+	}
+	index := 1
+	if index < len(tokens) && tokens[index].isKeyword("unique") {
+		index++
+	}
+	if !startsWithKeywords(tokens[index:], "index", "if", "not", "exists") {
+		return false
+	}
+	index, ok := qualifiedNameAt(tokens, index+4)
+	if !ok || index >= len(tokens) || !tokens[index].isKeyword("on") {
+		return false
+	}
+	index, ok = qualifiedNameAt(tokens, index+1)
+	return ok && index < len(tokens)
+}
+
+// REVOKE ALL ON TABLE <t>[, <t>...] FROM anon, authenticated [, public]
+func matchRevokeAllOnTables(tokens []sqlToken) bool {
+	if !startsWithKeywords(tokens, "revoke", "all", "on", "table") {
+		return false
+	}
+	index := 4
+	for {
+		var ok bool
+		index, ok = qualifiedNameAt(tokens, index)
+		if !ok || index >= len(tokens) {
+			return false
+		}
+		if tokens[index].isSymbol(",") {
+			index++
+			continue
+		}
+		break
+	}
+	if !tokens[index].isKeyword("from") {
+		return false
+	}
+	roles, modifier, err := parseRoleList(tokens[index+1:])
+	if err != nil || modifier {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, role := range roles {
+		if !isOneOf(role, "anon", "authenticated", "public") {
+			return false
+		}
+		seen[role] = true
+	}
+	return seen["anon"] && seen["authenticated"]
 }

@@ -1,0 +1,9 @@
+{
+  "nome": "muda_de_ideia",
+  "descricao": "Cliente pede Videira para Monção, vê as opções, troca o destino para Igarapé do Meio e reserva a nova viagem para 1 pessoa.",
+  "objetivo_cliente": "Você é o Edson Luiz Barbosa, 42 anos, CPF 456.789.123-64, de Videira (SC). Começa querendo ir para Monção (MA). Assim que o atendente mostrar as opções para Monção, mude de ideia: diga que na verdade o seu irmão te buscaria em Igarapé do Meio e você prefere ir para lá. Depois, escolha a primeira opção para Igarapé do Meio. Vai sozinho (só você). Informe nome completo e CPF quando pedirem. Quer pagar só o sinal, por PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Quero ir de Videira pra Monção",
+  "max_turnos": 16,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "origem": "Videira", "destino": "Igarapé do Meio", "pagantes": 1, "criancas": 0}
+}

@@ -1,0 +1,10 @@
+{
+  "nome": "quantidade_no_inicio",
+  "descricao": "Cliente já informa rota e quantidade na primeira mensagem (3 pessoas, 1 criança). O bot não pode perguntar a quantidade de novo e deve chegar à reserva com 2 pagantes e 1 criança.",
+  "objetivo_cliente": "Você é a Maria Aparecida da Silva, 34 anos, CPF 123.456.789-09, moradora de Videira (SC). Vai para Monção (MA) com seu marido João Carlos da Silva (CPF 234.567.891-73) e o filho Pedro da Silva, de 4 anos (não tem CPF nem RG, só certidão de nascimento, que você não tem em mãos; diga isso se insistirem). Quando o atendente mostrar as opções, escolha a primeira. Forneça nomes e CPFs quando pedirem, um por vez. Você quer pagar só o sinal e receber o PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Sair de Videira para Monção, somos 3 pessoas sendo 1 criança",
+  "max_turnos": 14,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "origem": "Videira", "destino": "Monção", "pagantes": 2, "criancas": 1},
+  "proibido": ["so para voce", "vai mais alguem", "quantas pessoas", "quantos passageiros", "quantidade de (pessoas|passageiros)"]
+}

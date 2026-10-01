@@ -1,0 +1,9 @@
+{
+  "nome": "quantidade_livre_a",
+  "descricao": "Quantidade em texto livre: 'só eu'. Reserva com 1 pagante.",
+  "objetivo_cliente": "Você é o Carlos Eduardo Pereira, 29 anos, CPF 345.678.912-28, mora em Santa Inês (MA) e quer ir para Chapecó (SC). Quando o atendente mostrar opções, escolha a primeira. Quando perguntarem quantas pessoas vão (ou se é só para você), responda exatamente: só eu. Informe nome completo e CPF quando pedirem. Quer pagar só o sinal, por PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Boa tarde, preciso de uma passagem de Santa Inês pra Chapecó",
+  "max_turnos": 14,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "destino": "Chapecó", "pagantes": 1, "criancas": 0}
+}

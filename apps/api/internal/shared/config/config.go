@@ -54,6 +54,25 @@ type Config struct {
 	EvolutionAPIKey                    string
 	EvolutionInstance                  string
 	EvolutionWebhookSecret             string
+	AtendimentoV2Enabled               bool
+	AtendimentoV2Telefones             []string
+	AtendimentoV2Modelo                string
+	AtendimentoV2ModeloVisao           string
+	LLMProvedor                        string
+	LLMModoJSON                        string
+	LLMEsforcoRaciocinio               string
+	LLMTemperatura                     *float64
+	LLMModeloReserva                   string // vazio = padrao do provedor; "off" desliga
+	LLMHedgeMS                         *int   // nil = padrao (15000); 0 desliga o hedge
+	LLMSemRaciocinio                   *bool  // nil = padrao (true so para o modelo reserva)
+	NvidiaAPIKey                       string
+	NvidiaBaseURL                      string
+	AtendimentoV2Concorrencia          int
+	AtendimentoV2DebounceMS            int
+	AtendimentoV2SinalPorPagante       float64
+	AtendimentoV2Juiz                  string
+	TypesafeAPIKey                     string
+	AtendimentoV2AlertaWebhookURL      string
 	ChatDebounceWindowMS               int
 	ChatBufferAutoFlushEnabled         bool
 	ChatBufferAutoFlushIntervalSeconds int
@@ -70,6 +89,7 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	provedor := strings.ToLower(firstNonEmpty(os.Getenv("LLM_PROVEDOR"), "nvidia"))
 	cfg := Config{
 		AppEnv:                             getEnv("APP_ENV", "production"),
 		Port:                               getEnv("PORT", "8080"),
@@ -111,6 +131,25 @@ func Load() (Config, error) {
 		EvolutionAPIKey:                    strings.TrimSpace(os.Getenv("EVOLUTION_API_KEY")),
 		EvolutionInstance:                  strings.TrimSpace(os.Getenv("EVOLUTION_INSTANCE")),
 		EvolutionWebhookSecret:             strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
+		AtendimentoV2Enabled:               parseBool(os.Getenv("ATENDIMENTO_V2_ENABLED")),
+		AtendimentoV2Telefones:             parsePhoneDigitsList(os.Getenv("ATENDIMENTO_V2_TELEFONES")),
+		AtendimentoV2Modelo:                atendimentoV2Modelo(provedor),
+		AtendimentoV2ModeloVisao:           strings.TrimSpace(os.Getenv("ATENDIMENTO_V2_MODELO_VISAO")),
+		LLMProvedor:                        provedor,
+		LLMModoJSON:                        strings.ToLower(strings.TrimSpace(os.Getenv("LLM_MODO_JSON"))),
+		LLMEsforcoRaciocinio:               strings.ToLower(strings.TrimSpace(os.Getenv("LLM_REASONING_EFFORT"))),
+		LLMTemperatura:                     optFloat("LLM_TEMPERATURA"),
+		LLMModeloReserva:                   strings.TrimSpace(os.Getenv("LLM_MODELO_RESERVA")),
+		LLMHedgeMS:                         optInt("LLM_HEDGE_MS"),
+		LLMSemRaciocinio:                   optBool("LLM_SEM_RACIOCINIO"),
+		NvidiaAPIKey:                       strings.TrimSpace(os.Getenv("NVIDIA_API_KEY")),
+		NvidiaBaseURL:                      strings.TrimSpace(os.Getenv("NVIDIA_BASE_URL")),
+		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
+		AtendimentoV2DebounceMS:            positiveInt(getEnvAsInt("ATENDIMENTO_V2_DEBOUNCE_MS", 2000), 2000),
+		AtendimentoV2SinalPorPagante:       getEnvAsFloat("ATENDIMENTO_V2_SINAL_POR_PAGANTE", 250),
+		AtendimentoV2Juiz:                  parseJuiz(os.Getenv("ATENDIMENTO_V2_JUIZ")),
+		TypesafeAPIKey:                     strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),
+		AtendimentoV2AlertaWebhookURL:      firstNonEmpty(os.Getenv("ATENDIMENTO_V2_ALERTA_WEBHOOK_URL"), os.Getenv("CHAT_REVIEW_ALERT_WEBHOOK_URL")),
 		ChatDebounceWindowMS:               getEnvAsInt("CHAT_DEBOUNCE_WINDOW_MS", 1500),
 		ChatBufferAutoFlushEnabled:         parseBool(os.Getenv("CHAT_BUFFER_AUTO_FLUSH_ENABLED")),
 		ChatBufferAutoFlushIntervalSeconds: getEnvAsInt("CHAT_BUFFER_AUTO_FLUSH_INTERVAL_SECONDS", 2),
@@ -211,4 +250,95 @@ func getEnvAsInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// parsePhoneDigitsList converte "+55 (49) 9999-0000, 5549..." em telefones so com digitos.
+func parsePhoneDigitsList(val string) []string {
+	var out []string
+	for _, part := range splitCSV(val) {
+		var b strings.Builder
+		for _, r := range part {
+			if r >= '0' && r <= '9' {
+				b.WriteRune(r)
+			}
+		}
+		if b.Len() > 0 {
+			out = append(out, b.String())
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+func positiveInt(n, fallback int) int {
+	if n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func getEnvAsFloat(key string, fallback float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+// atendimentoV2Modelo devolve ATENDIMENTO_V2_MODELO; so o provedor openai
+// herda OPENAI_MODEL (um modelo da OpenAI nao serve para a NVIDIA).
+func atendimentoV2Modelo(provedor string) string {
+	if provedor == "openai" {
+		return firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"), os.Getenv("OPENAI_MODEL"))
+	}
+	return firstNonEmpty(os.Getenv("ATENDIMENTO_V2_MODELO"))
+}
+
+// optFloat devolve nil quando a variavel esta vazia ou invalida.
+func optFloat(key string) *float64 {
+	n, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(key)), 64)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
+}
+
+// optInt devolve nil quando a variavel esta vazia ou invalida (aceita 0).
+func optInt(key string) *int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
+}
+
+// optBool devolve nil quando a variavel esta vazia.
+func optBool(key string) *bool {
+	if strings.TrimSpace(os.Getenv(key)) == "" {
+		return nil
+	}
+	b := parseBool(os.Getenv(key))
+	return &b
+}
+
+// parseJuiz aceita "llm", "jev" ou "off"; qualquer outro valor vira "llm".
+func parseJuiz(val string) string {
+	switch v := strings.ToLower(strings.TrimSpace(val)); v {
+	case "llm", "jev", "off":
+		return v
+	default:
+		return "llm"
+	}
 }

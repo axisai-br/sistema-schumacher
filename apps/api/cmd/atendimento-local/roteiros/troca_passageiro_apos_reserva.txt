@@ -1,0 +1,9 @@
+# Troca de passageiro DEPOIS da reserva criada (deve transferir para atendente).
+/nome Ana
+de monção pra videira
+quero a primeira
+ana souza cpf 52998224725 e pedro souza cpf 11144477735
+sinal
+/reservas
+na verdade o pedro nao vai mais, vai a maria souza cpf 39053344705 no lugar
+/turno

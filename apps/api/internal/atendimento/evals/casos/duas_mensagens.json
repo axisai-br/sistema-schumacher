@@ -1,0 +1,10 @@
+{
+  "nome": "duas_mensagens",
+  "descricao": "O cliente manda 'oi' e 'quero ir pra fraiburgo dia 12' antes do agente processar. Deve haver uma única resposta coerente com as duas mensagens.",
+  "objetivo_cliente": "Você é o Valdir Antunes, 44 anos, de Monção (MA). Mandou duas mensagens seguidas: oi e depois que quer ir para Fraiburgo no dia 12. Se o atendente mostrar viagens ou perguntar algo sobre a viagem, responda em poucas palavras se for pergunta simples; quando ele mostrar as opções, agradeça e encerre.",
+  "primeira_mensagem": "oi",
+  "mensagens_seguidas": ["quero ir pra fraiburgo dia 12"],
+  "max_turnos": 4,
+  "espera": {"status": "BOT", "destino": "Fraiburgo", "max_respostas_primeiro_turno": 1},
+  "exige_primeira_resposta": ["fraiburgo"]
+}

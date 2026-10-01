@@ -1,0 +1,15 @@
+{
+  "nome": "cidade_nao_atendida",
+  "descricao": "Cliente quer ir para São Paulo, cidade que a empresa não atende. O bot deve dizer uma vez quais cidades atende e oferecer suporte, sem prometer nada.",
+  "objetivo_cliente": "Você é o Rogério, 35 anos, mora em Santa Inês (MA) e precisa ir para São Paulo a trabalho. Escreva de forma direta. Se o atendente disser que não atende São Paulo, insista UMA vez perguntando se não tem nenhum ônibus que vá pra lá nem com baldeação. Depois aceite, agradeça e encerre. Se o atendente ofereceu falar com uma pessoa, diga que sim.",
+  "primeira_mensagem": "Quero ir pra São Paulo",
+  "max_turnos": 5,
+  "critico": true,
+  "espera": {"status": "BOT|HUMANO", "reserva_criada": false},
+  "proibido": [
+    "claro[,!.]? (vou|posso|consigo|temos|tem|vamos)\\b.{0,60}sao paulo",
+    "(^|[.!?]\\s*)sim[,!.]? (temos|tem|atendemos|vamos)\\b.{0,60}sao paulo",
+    "temos (viagem|viagens|passagem|passagens|onibus) (para|pra) sao paulo"
+  ],
+  "exige_no_bot": ["santa ines|monc|igarape|chapec|videira|fraiburgo|santa catarina|maranh"]
+}

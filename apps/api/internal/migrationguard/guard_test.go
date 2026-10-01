@@ -917,3 +917,75 @@ func joinFindings(findings []error) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+func TestAcceptsAtendimentoTableDDL(t *testing.T) {
+	sql := `create table if not exists atd_x (
+  id uuid primary key default gen_random_uuid(),
+  a text not null default 'x',
+  b uuid references other(id) on delete cascade,
+  unique (a, b)
+);
+create index if not exists idx_atd_x_a on atd_x (a) where a is not null;
+create unique index if not exists uq_atd_x_b on public.atd_x (b);
+revoke all on table atd_x, atd_y from anon, authenticated;
+revoke all on table public.atd_x from public, anon, authenticated;`
+	if findings := CheckSQL("0024_tables.sql", sql); len(findings) != 0 {
+		t.Fatalf("unexpected findings: %s", joinFindings(findings))
+	}
+}
+
+func TestRejectsOutsideAtendimentoTableDDL(t *testing.T) {
+	tests := map[string]string{
+		"grant select":           "grant select on table x to anon;",
+		"grant all":              "grant all on table x to service_role;",
+		"alter table":            "alter table x add column y int;",
+		"drop table":             "drop table if exists x;",
+		"create without if":      "create table x (id int);",
+		"create table as":        "create table if not exists x as select 1;",
+		"create table as parens": "create table if not exists x (id int) as select 1;",
+		"trailing clause":        "create table if not exists x (id int) partition by range (id);",
+		"trailing inherits":      "create table if not exists x (id int) inherits (y);",
+		"temp table":             "create temp table if not exists x (id int);",
+		"quoted name":            `create table if not exists "X" (id int);`,
+		"index without if":       "create index idx on x (a);",
+		"index without name":     "create index if not exists on x (a);",
+		"concurrently":           "create index concurrently if not exists idx on x (a);",
+		"revoke other role":      "revoke all on table x from service_role;",
+		"revoke extra role":      "revoke all on table x from anon, authenticated, service_role;",
+		"revoke only anon":       "revoke all on table x from anon;",
+		"revoke select":          "revoke select on table x from anon, authenticated;",
+		"revoke cascade":         "revoke all on table x from anon, authenticated cascade;",
+		"revoke no table kw":     "revoke all on x from anon, authenticated;",
+		"insert":                 "insert into x values (1);",
+	}
+	for name, sql := range tests {
+		t.Run(name, func(t *testing.T) {
+			findings := CheckSQL("0024_bad.sql", sql)
+			if len(findings) == 0 || !strings.Contains(joinFindings(findings), "unmodeled statement") {
+				t.Fatalf("expected unmodeled-statement finding, got: %s", joinFindings(findings))
+			}
+		})
+	}
+}
+
+func TestRejectsAtendimentoTableDDLMixedWithFunction(t *testing.T) {
+	sql := "begin;\n" + functionDDL("public.mixed()") + `
+revoke execute on function public.mixed() from public, anon, authenticated;
+grant execute on function public.mixed() to service_role;
+create table if not exists atd_x (id int);
+commit;`
+	findings := joinFindings(CheckSQL("0024_mixed.sql", sql))
+	if !strings.Contains(findings, "table DDL") {
+		t.Fatalf("mixed migration was not rejected: %s", findings)
+	}
+}
+
+func TestAtendimentoMigration0023PassesGuard(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "migrations", "0023_atendimento_v2.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings := CheckSQL("0023_atendimento_v2.sql", string(contents)); len(findings) != 0 {
+		t.Fatalf("0023 rejected: %s", joinFindings(findings))
+	}
+}

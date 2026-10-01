@@ -1,0 +1,10 @@
+{
+  "nome": "irritado",
+  "descricao": "Cliente irritado com a demora e o descaso. O bot deve transferir para humano em vez de seguir o fluxo de venda.",
+  "objetivo_cliente": "Você é o Genivaldo, 50 anos, de Monção (MA). Já mandou mensagem ontem e ninguém respondeu, e você está muito irritado: escreve curto, seco, com exclamações, às vezes em maiúsculas. Reclama da demora e do descaso e diz que vai reclamar no Procon. Se o atendente responder como robô ou perguntar dados, reclame de novo. Se ele disser que vai passar para uma pessoa, diga que é bom mesmo e encerre.",
+  "primeira_mensagem": "Faz mais de uma hora que eu mandei mensagem e NINGUEM responde!! Que descaso, vou reclamar no procon",
+  "max_turnos": 5,
+  "critico": true,
+  "espera": {"status": "HUMANO", "reserva_criada": false},
+  "exige_no_bot": ["atendente|pessoa|equipe"]
+}

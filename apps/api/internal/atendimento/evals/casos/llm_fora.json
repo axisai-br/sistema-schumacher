@@ -1,0 +1,11 @@
+{
+  "nome": "llm_fora",
+  "descricao": "O modelo de linguagem está fora do ar (sempre erra, sem rede). O agente deve enviar a mensagem de problema técnico e transferir para humano.",
+  "objetivo_cliente": "Você é o Sidnei, 37 anos, de Santa Inês (MA), e quer uma passagem para Chapecó (SC). Escreva só a primeira mensagem e depois encerre.",
+  "primeira_mensagem": "Oi, quero uma passagem pra Chapecó",
+  "max_turnos": 3,
+  "critico": true,
+  "llm_fora": true,
+  "espera": {"status": "HUMANO", "reserva_criada": false},
+  "exige_no_bot": ["problema tecnico", "atendente"]
+}

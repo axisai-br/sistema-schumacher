@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"schumacher-tur/api/internal/atendimento"
 	"schumacher-tur/api/internal/bookings"
 	"schumacher-tur/api/internal/chat"
 	"schumacher-tur/api/internal/payments"
@@ -2856,5 +2858,109 @@ func (f *fakeChatBufferFlushLogger) Printf(format string, v ...interface{}) {
 	select {
 	case f.ch <- struct{}{}:
 	default:
+	}
+}
+
+type roteadorV2Fake struct {
+	aceita       bool
+	err          error
+	atendeCalls  int
+	receberCalls int
+}
+
+func (f *roteadorV2Fake) Atende(context.Context, []byte) bool {
+	f.atendeCalls++
+	return f.aceita
+}
+
+func (f *roteadorV2Fake) Receber(context.Context, []byte) (atendimento.Recebimento, error) {
+	f.receberCalls++
+	if f.err != nil {
+		return atendimento.Recebimento{}, f.err
+	}
+	return atendimento.Recebimento{Status: "registrado", ConversaID: "c1"}, nil
+}
+
+const corpoUpsertV2 = `{"event":"messages.upsert","instance":"belle","data":{"key":{"remoteJid":"554988709047@s.whatsapp.net","fromMe":false,"id":"MSG-V2"},"pushName":"x","message":{"conversation":"oi"},"messageType":"conversation","messageTimestamp":1772544357}}`
+
+func postEvolutionV2(t *testing.T, h *Handler, corpo string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := chi.NewRouter()
+	h.RegisterWebhooks(r)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/webhooks/evolution/messages", bytes.NewBufferString(corpo)))
+	return rec
+}
+
+func TestEvolutionWebhookRoutesToAtendimentoV2WhenAccepted(t *testing.T) {
+	chatSvc := &fakeChatIngestor{}
+	handler := NewHandler(NewService(&fakeAutomationStore{}, chatSvc, config.Config{}))
+	v2 := &roteadorV2Fake{aceita: true}
+	handler.UsarAtendimentoV2(v2)
+
+	rec := postEvolutionV2(t, handler, corpoUpsertV2)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"registrado"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if v2.receberCalls != 1 || chatSvc.calls != 0 {
+		t.Fatalf("v2 receber=%d, legacy ingest=%d", v2.receberCalls, chatSvc.calls)
+	}
+}
+
+func TestEvolutionWebhookV2ReceiveErrorReturns500WithoutLegacyFlow(t *testing.T) {
+	chatSvc := &fakeChatIngestor{}
+	handler := NewHandler(NewService(&fakeAutomationStore{}, chatSvc, config.Config{}))
+	handler.UsarAtendimentoV2(&roteadorV2Fake{aceita: true, err: errors.New("boom")})
+
+	rec := postEvolutionV2(t, handler, corpoUpsertV2)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if chatSvc.calls != 0 {
+		t.Fatal("legacy flow must not run when v2 accepted the event")
+	}
+}
+
+func TestEvolutionWebhookFallsBackToLegacyWhenV2DoesNotAccept(t *testing.T) {
+	chatSvc := &fakeChatIngestor{}
+	handler := NewHandler(NewService(&fakeAutomationStore{}, chatSvc, config.Config{}))
+	v2 := &roteadorV2Fake{aceita: false}
+	handler.UsarAtendimentoV2(v2)
+
+	rec := postEvolutionV2(t, handler, corpoUpsertV2)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if v2.atendeCalls != 1 || v2.receberCalls != 0 || chatSvc.calls != 1 {
+		t.Fatalf("atende=%d receber=%d legacy=%d", v2.atendeCalls, v2.receberCalls, chatSvc.calls)
+	}
+}
+
+func TestEvolutionWebhookV2IgnoredForNonUpsertEvents(t *testing.T) {
+	handler := NewHandler(NewService(&fakeAutomationStore{}, &fakeChatIngestor{}, config.Config{}))
+	v2 := &roteadorV2Fake{aceita: true}
+	handler.UsarAtendimentoV2(v2)
+
+	postEvolutionV2(t, handler, `{"event":"presence.update","instance":"belle","data":{"id":"554988709047@s.whatsapp.net","presences":{}}}`)
+
+	if v2.atendeCalls != 0 || v2.receberCalls != 0 {
+		t.Fatalf("v2 must only see messages.upsert, atende=%d receber=%d", v2.atendeCalls, v2.receberCalls)
+	}
+}
+
+func TestEvolutionWebhookWithoutV2RouterIsUnchanged(t *testing.T) {
+	chatSvc := &fakeChatIngestor{}
+	handler := NewHandler(NewService(&fakeAutomationStore{}, chatSvc, config.Config{}))
+
+	rec := postEvolutionV2(t, handler, corpoUpsertV2)
+
+	if rec.Code != http.StatusAccepted || chatSvc.calls != 1 {
+		t.Fatalf("status=%d legacy=%d", rec.Code, chatSvc.calls)
 	}
 }

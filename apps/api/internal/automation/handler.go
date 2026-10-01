@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -9,16 +10,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"schumacher-tur/api/internal/atendimento"
 	"schumacher-tur/api/internal/payments"
 	httpx "schumacher-tur/api/internal/shared/http"
 )
 
+// RoteadorV2 encaminha mensagens do webhook antigo para o atendimento v2.
+// Quando Atende retorna true, o fluxo antigo nao e executado.
+type RoteadorV2 interface {
+	Atende(ctx context.Context, corpo []byte) bool
+	Receber(ctx context.Context, corpo []byte) (atendimento.Recebimento, error)
+}
+
 type Handler struct {
 	svc *Service
+	v2  RoteadorV2
 }
 
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// UsarAtendimentoV2 ativa o roteamento de messages.upsert para o atendimento v2.
+func (h *Handler) UsarAtendimentoV2(r RoteadorV2) {
+	h.v2 = r
 }
 
 func (h *Handler) RegisterWebhooks(r chi.Router) {
@@ -71,6 +86,16 @@ func (h *Handler) handleEvolutionEvent(w http.ResponseWriter, r *http.Request) {
 	event, err := resolveEvolutionWebhookEvent(body)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+
+	if h.v2 != nil && event == "messages.upsert" && h.v2.Atende(r.Context(), body) {
+		res, err := h.v2.Receber(r.Context(), body)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "ATENDIMENTO_V2_ERROR", "could not process evolution webhook in atendimento v2", err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, res)
 		return
 	}
 

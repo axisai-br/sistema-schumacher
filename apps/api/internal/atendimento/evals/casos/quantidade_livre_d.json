@@ -1,0 +1,9 @@
+{
+  "nome": "quantidade_livre_d",
+  "descricao": "Quantidade vaga: 'vai mais junto'. O bot deve esclarecer quantas pessoas; depois a reserva sai com 2 pagantes.",
+  "objetivo_cliente": "Você é o Roberto Alves Nunes, 58 anos, CPF 891.234.567-28, de Santa Inês (MA), indo para Campos Novos (SC). Sua esposa Leila Maria Nunes (CPF 123.456.789-09) vai junto. Quando o atendente mostrar opções, escolha a primeira. Quando perguntarem quantas pessoas vão, responda exatamente: vai mais junto. Se o atendente pedir para esclarecer, diga que é você e a sua esposa, só os dois. Informe nomes completos e CPFs quando pedirem. Quer pagar só o sinal, por PIX. Quando receber o PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "bom dia, passagem pra campos novos saindo de santa ines",
+  "max_turnos": 16,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "destino": "Campos Novos", "pagantes": 2, "criancas": 0}
+}

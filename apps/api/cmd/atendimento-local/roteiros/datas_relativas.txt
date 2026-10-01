@@ -1,0 +1,8 @@
+# Datas em linguagem natural: daqui 15 dias, mes que vem, fim de outubro.
+/nome Carla
+oi, quero ir de chapeco pra santa ines daqui 15 dias
+/turno
+e no mes que vem?
+tem no fim de outubro?
+/turno
+e quinta que vem?

@@ -1,0 +1,11 @@
+{
+  "nome": "destino_direto",
+  "descricao": "Cliente pergunta só se há viagem para Chapecó. O bot deve buscar e mostrar as próximas datas sem pedir quantidade de pessoas antes.",
+  "objetivo_cliente": "Você é o Sérgio, 41 anos, morador de Santa Inês (MA). Uma prima sua mora em Chapecó (SC) e você só quer saber se existe viagem de ônibus até lá e em quais datas, para comentar com a família. Você NÃO vai comprar agora. Se o atendente perguntar de onde você sai, diga Santa Inês. Quando o atendente mostrar as opções de datas, agradeça (por exemplo: valeu, vou ver com a familia e te aviso) e encerre. Se o atendente perguntar quantas pessoas, diga que por enquanto é só pra saber.",
+  "primeira_mensagem": "Tem viagem pra Chapecó?",
+  "max_turnos": 5,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "destino": "Chapecó", "min_opcoes_mostradas": 1},
+  "proibido_primeira_resposta": ["quantas pessoas", "quantos passageiros", "quantidade de (pessoas|passageiros)", "so para voce", "vai mais alguem", "qual a data", "qual data"],
+  "exige_primeira_resposta": ["R\\$|\\d{1,2}/\\d{1,2}|\\d{1,2} de (janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"]
+}

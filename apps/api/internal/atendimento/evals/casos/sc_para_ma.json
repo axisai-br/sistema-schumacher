@@ -1,0 +1,10 @@
+{
+  "nome": "sc_para_ma",
+  "descricao": "Cliente pede passagem de Santa Catarina para o Maranhão sem dizer a cidade. O bot deve perguntar a cidade de SC e não despejar tabela de valores.",
+  "objetivo_cliente": "Você é a Aparecida, 52 anos, mora em Videira (SC) e quer visitar a filha que mora em Monção (MA). Você só diz a cidade quando o atendente perguntar: a de saída é Videira e a de chegada é Monção. Não informe data, a não ser que perguntem; se perguntarem, diga que qualquer data do próximo mês serve. Quando o atendente mostrar opções de viagem, agradeça e encerre.",
+  "primeira_mensagem": "Passagem de Santa Catarina para o Maranhão",
+  "max_turnos": 6,
+  "espera": {"status": "BOT", "origem": "Videira", "min_opcoes_mostradas": 1},
+  "proibido": ["tabela de valores"],
+  "exige_no_bot": ["(qual|que|de qual|em qual|saindo de qual) (a )?cidade|cidade (de|em) (santa catarina|sc)|de onde (voce|vc) (sai|vai sair)"]
+}
