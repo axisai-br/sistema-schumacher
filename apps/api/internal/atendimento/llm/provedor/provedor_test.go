@@ -111,10 +111,10 @@ func TestNvidiaEndToEndOffline(t *testing.T) {
 
 func TestReservaEHedgeDoAmbiente(t *testing.T) {
 	c := ConfigDoAmbiente(mapa(map[string]string{"NVIDIA_API_KEY": "k"}))
-	if c.ModeloReserva != "nvidia/nemotron-3.5-lightning-30b-a3b" || c.HedgeApos != 3*time.Second || !c.SemRaciocinioReserva || c.SemRaciocinio {
+	if c.ModeloReserva != "nvidia/nemotron-3.5-lightning-30b-a3b" || c.HedgeApos != 15*time.Second || !c.SemRaciocinioReserva || c.SemRaciocinio {
 		t.Errorf("padroes: %+v", c)
 	}
-	if !strings.Contains(c.DescricaoReserva(), "nemotron-3.5-lightning-30b-a3b") || !strings.Contains(c.DescricaoReserva(), "3s") {
+	if !strings.Contains(c.DescricaoReserva(), "nemotron-3.5-lightning-30b-a3b") || !strings.Contains(c.DescricaoReserva(), "15s") {
 		t.Errorf("descricao reserva: %q", c.DescricaoReserva())
 	}
 	c = ConfigDoAmbiente(mapa(map[string]string{"LLM_MODELO_RESERVA": "x/y", "LLM_HEDGE_MS": "1500", "LLM_SEM_RACIOCINIO": "false"}))

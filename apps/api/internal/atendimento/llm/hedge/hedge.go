@@ -12,7 +12,7 @@ import (
 )
 
 // HedgeAposPadrao e o tempo de espera pelo principal antes de acionar o reserva.
-const HedgeAposPadrao = 3 * time.Second
+const HedgeAposPadrao = 15 * time.Second
 
 type Config struct {
 	Principal llm.Modelo
@@ -22,7 +22,7 @@ type Config struct {
 	// vai para o reserva).
 	NomeReserva string
 	// HedgeApos e quanto esperar o principal antes de disparar o reserva
-	// (padrao 3s).
+	// (padrao 15s).
 	HedgeApos time.Duration
 }
 

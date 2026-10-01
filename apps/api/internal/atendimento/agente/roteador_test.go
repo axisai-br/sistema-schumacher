@@ -394,3 +394,28 @@ func TestArgsPreBuscaRespeitaRotaDoEstado(t *testing.T) {
 		t.Fatalf("rota nova completa deve buscar: %v %v", args, ok)
 	}
 }
+
+func TestOpcaoClara(t *testing.T) {
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	est := conversa.Estado{Opcoes: []conversa.Opcao{{Numero: 1, TripID: "t1"}, {Numero: 2, TripID: "t2"}}}
+	rt := Rota{Intencao: IntencaoEscolherOpcao, ConfIntencao: 0.95, Opcao: "2", ConfOpcao: 0.95}
+	if n, ok := a.opcaoClara(rt, est); !ok || n != 2 {
+		t.Fatalf("escolha clara: %d %v", n, ok)
+	}
+	baixa := rt
+	baixa.ConfOpcao = 0.7
+	volta := rt
+	volta.PedeVolta = 0.9
+	inexistente := rt
+	inexistente.Opcao = "9"
+	jaEscolhida := est
+	jaEscolhida.Trechos = []conversa.Trecho{{Viagem: conversa.Opcao{TripID: "t2"}}}
+	for nome, c := range map[string]struct {
+		rt  Rota
+		est conversa.Estado
+	}{"confianca baixa": {baixa, est}, "volta": {volta, est}, "inexistente": {inexistente, est}, "ja escolhida": {rt, jaEscolhida}} {
+		if _, ok := a.opcaoClara(c.rt, c.est); ok {
+			t.Errorf("%s: nao deveria escolher", nome)
+		}
+	}
+}

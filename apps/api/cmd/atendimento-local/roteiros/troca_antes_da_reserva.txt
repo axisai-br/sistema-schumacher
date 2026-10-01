@@ -1,0 +1,9 @@
+# Troca de data e de pagamento ANTES da reserva (deve trocar sem atendente).
+/nome Joao
+fraiburgo pra moncao
+quero a do dia 8
+pensando bem, prefiro dia 15
+/estado
+joao pereira cpf 52998224725
+integral
+/turno

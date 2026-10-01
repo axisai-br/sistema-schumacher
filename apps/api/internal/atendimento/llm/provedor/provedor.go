@@ -21,7 +21,7 @@ const (
 	NvidiaBaseURLPadrao       = "https://integrate.api.nvidia.com/v1"
 	NvidiaModeloPadrao        = "z-ai/glm-5.3"
 	NvidiaModeloReservaPadrao = "nvidia/nemotron-3.5-lightning-30b-a3b"
-	HedgeMSPadrao             = 3000
+	HedgeMSPadrao             = 15000
 	OpenAIBaseURLPadrao       = "https://api.openai.com/v1"
 	OpenAIModeloPadrao        = "gpt-4.1-mini"
 

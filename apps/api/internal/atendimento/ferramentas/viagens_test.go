@@ -22,9 +22,9 @@ func TestListarRotas(t *testing.T) {
 	}
 }
 
-func TestPadraoRegistraNoveNaOrdem(t *testing.T) {
+func TestPadraoRegistraFerramentasNaOrdem(t *testing.T) {
 	a := novoAmbiente(t)
-	quer := []string{"listar_rotas", "buscar_viagens", "escolher_viagem", "remover_trecho", "registrar_passageiros", "criar_reserva", "gerar_pix", "consultar_reserva", "transferir_para_humano"}
+	quer := []string{"listar_rotas", "buscar_viagens", "interpretar_data", "escolher_viagem", "remover_trecho", "registrar_passageiros", "criar_reserva", "gerar_pix", "consultar_reserva", "transferir_para_humano"}
 	defs := a.reg.Defs()
 	if len(defs) != len(quer) {
 		t.Fatalf("got %d defs", len(defs))

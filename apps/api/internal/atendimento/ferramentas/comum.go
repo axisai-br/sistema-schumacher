@@ -70,6 +70,7 @@ func Padrao(cat *Catalogo, b Buscador, q Cotador, r Reservas, p Pagamentos, cfg 
 	return NovoRegistro(
 		&listarRotas{cat: cat},
 		&buscarViagens{cat: cat, b: b, fuso: cfg.Fuso},
+		&interpretarData{fuso: cfg.Fuso},
 		&escolherViagem{cat: cat, b: b, q: q, fuso: cfg.Fuso},
 		&removerTrecho{},
 		&registrarPassageiros{},

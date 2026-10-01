@@ -3,6 +3,8 @@ package agente
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 	"schumacher-tur/api/internal/atendimento/ferramentas"
@@ -140,6 +142,17 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		}
 	}
 	saida["pede_volta"] = rt.PedeVolta
+
+	// Escolha clara de uma das opcoes mostradas ("a primeira", "dia 8"): o
+	// codigo registra a escolha antes do LLM, que so confirma ao cliente.
+	if n, ok := a.opcaoClara(rt, tc.estado); ok {
+		if pre, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"opcao": n}); ok {
+			finalizar("pre_escolha")
+			return resultadoRota{pre: pre}
+		}
+		saida["pre_escolha"] = "falhou"
+	}
+
 	args, ok := a.argsPreBusca(rt, tc.estado)
 	decisao := "pre_busca"
 	if o, d := tc.estado.Origem, tc.estado.Destino; rt.PedeVolta >= limiarVolta && o != nil && d != nil {
@@ -150,28 +163,86 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		finalizar("llm")
 		return resultadoRota{}
 	}
+	argsAny := map[string]any{}
+	for k, v := range args {
+		argsAny[k] = v
+	}
+	// Data/periodo citado pelo cliente ("daqui 15 dias", "mes que vem") entra na
+	// busca, interpretado em codigo.
+	if p, ok := ferramentas.ResolverQuando(textoRecenteCliente(hist), a.d.Agora().In(a.loc)); ok {
+		argsAny["quando"] = p.Expressao
+		saida["quando"] = p.Descricao
+	}
+	pre, ok := a.preExecutar(ctx, tc, "buscar_viagens", argsAny)
+	if !ok {
+		finalizar("pre_busca_falhou")
+		return resultadoRota{}
+	}
+	finalizar(decisao)
+	return resultadoRota{pre: pre}
+}
+
+// limiarOpcao: confianca minima (intencao e opcao) para o codigo escolher a
+// viagem sozinho; errar aqui custa uma troca, entao e mais alto que LimiarRota.
+const limiarOpcao = 0.9
+
+// opcaoClara devolve o numero da opcao quando o Roteador tem certeza de que o
+// cliente escolheu UMA das opcoes atuais (e nao esta falando da volta).
+func (a *Agente) opcaoClara(rt Rota, est conversa.Estado) (int, bool) {
+	if rt.Intencao != IntencaoEscolherOpcao || rt.ConfIntencao < limiarOpcao || rt.ConfOpcao < limiarOpcao || rt.PedeVolta >= 0.5 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rt.Opcao)
+	if err != nil {
+		return 0, false
+	}
+	for _, o := range est.Opcoes {
+		if o.Numero == n {
+			for _, t := range est.Trechos {
+				if t.Viagem.TripID == o.TripID {
+					return 0, false // ja escolhida: nada a fazer
+				}
+			}
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// preExecutar roda uma ferramenta antes do LLM (sobre um clone do estado, que
+// so vale se der certo) e devolve a chamada + resultado para o historico.
+func (a *Agente) preExecutar(ctx context.Context, tc *turno, nome string, args map[string]any) ([]llm.Mensagem, bool) {
 	argsJSON, _ := json.Marshal(args)
 	t1 := a.d.Agora()
-	est := clonarEstado(tc.estado) // so vale se a busca der certo
-	s := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{Conversa: tc.c, Estado: &est, Agora: a.d.Agora()}, "buscar_viagens", argsJSON)
+	est := clonarEstado(tc.estado)
+	s := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{Conversa: tc.c, Estado: &est, Agora: a.d.Agora()}, nome, argsJSON)
 	tc.passos = append(tc.passos, conversa.Passo{
-		Tipo: "ferramenta", Nome: "buscar_viagens", Entrada: json.RawMessage(argsJSON), Saida: s,
+		Tipo: "ferramenta", Nome: nome, Entrada: json.RawMessage(argsJSON), Saida: s,
 		DuracaoMS: a.d.Agora().Sub(t1).Milliseconds(),
 	})
 	if !s.OK || s.Transferir {
-		finalizar("pre_busca_falhou")
-		return resultadoRota{}
+		return nil, false
 	}
 	js, err := json.Marshal(s)
 	if err != nil {
-		finalizar("pre_busca_falhou")
-		return resultadoRota{}
+		return nil, false
 	}
 	tc.estado = est
 	tc.resultados = append(tc.resultados, string(js))
-	finalizar(decisao)
-	return resultadoRota{pre: []llm.Mensagem{
-		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: idPreBusca, Nome: "buscar_viagens", Argumentos: argsJSON}}},
+	return []llm.Mensagem{
+		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: idPreBusca, Nome: nome, Argumentos: argsJSON}}},
 		{Papel: llm.PapelFerramenta, ChamadaID: idPreBusca, Texto: string(js)},
-	}}
+	}, true
+}
+
+// textoRecenteCliente junta as mensagens do cliente desde a ultima resposta.
+func textoRecenteCliente(hist []conversa.Mensagem) string {
+	var partes []string
+	for i := len(hist) - 1; i >= 0; i-- {
+		if hist[i].Autor != conversa.AutorCliente {
+			break
+		}
+		partes = append([]string{hist[i].Texto}, partes...)
+	}
+	return strings.Join(partes, " ")
 }

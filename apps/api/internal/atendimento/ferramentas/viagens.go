@@ -108,7 +108,8 @@ func (t *buscarViagens) Def() llm.DefFerramenta {
     "destino":{"type":"string","description":"Cidade de destino como o cliente disse. Omita se nao informada."},
     "data_de":{"type":"string","description":"Data inicial AAAA-MM-DD. Sozinha, busca so esse dia."},
     "data_ate":{"type":"string","description":"Data final AAAA-MM-DD."},
-    "pessoas":{"type":"integer","minimum":1,"description":"Quantidade de passageiros, se o cliente ja disse."}
+    "pessoas":{"type":"integer","minimum":1,"description":"Quantidade de passageiros, se o cliente ja disse."},
+    "quando":{"type":"string","description":"Quando o cliente quer viajar, nas palavras dele (ex.: 'daqui 15 dias', 'mes que vem', 'quinta que vem', 'fim de outubro', 'dia 12'). Use no lugar de data_de/data_ate: o sistema calcula as datas."}
   },
   "additionalProperties":false
 }`),
@@ -121,6 +122,7 @@ type argsBuscar struct {
 	DataDe  string  `json:"data_de"`
 	DataAte string  `json:"data_ate"`
 	Pessoas inteiro `json:"pessoas"`
+	Quando  string  `json:"quando"`
 }
 
 // resolverLado resolve o texto de origem/destino. Retorna a parada ou uma Saida de falha.
@@ -147,10 +149,24 @@ func resolverLado(ctx context.Context, cat *Catalogo, texto string) (*conversa.P
 	return &p, nil
 }
 
-func (t *buscarViagens) Executar(ctx context.Context, c *Contexto, raw json.RawMessage) Saida {
+func (t *buscarViagens) Executar(ctx context.Context, c *Contexto, raw json.RawMessage) (saida Saida) {
 	var a argsBuscar
 	if s := lerArgs(raw, &a); s != nil {
 		return *s
+	}
+	// "quando" em linguagem natural (daqui 15 dias, mes que vem...) vira
+	// data_de/data_ate em codigo; o periodo entendido volta na saida.
+	if q := strings.TrimSpace(a.Quando); q != "" && strings.TrimSpace(a.DataDe) == "" && strings.TrimSpace(a.DataAte) == "" {
+		p, ok := ResolverQuando(q, dataLocal(c.Agora, t.fuso))
+		if !ok {
+			return falha("quando_nao_entendido", "Nao entendi a data '"+q+"'. Busque sem data ou pergunte o dia ao cliente.")
+		}
+		a.DataDe, a.DataAte = p.De.Format("2006-01-02"), p.Ate.Format("2006-01-02")
+		defer func() {
+			if d, ok := saida.Dados.(map[string]any); ok {
+				d["periodo_entendido"] = p.Descricao
+			}
+		}()
 	}
 	origemTxt, destinoTxt := strings.TrimSpace(a.Origem), strings.TrimSpace(a.Destino)
 	if origemTxt == "" && destinoTxt == "" {
