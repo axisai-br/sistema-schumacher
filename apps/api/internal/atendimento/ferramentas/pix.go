@@ -22,8 +22,9 @@ type gerarPix struct {
 func (t *gerarPix) Def() llm.DefFerramenta {
 	return llm.DefFerramenta{
 		Nome: "gerar_pix",
-		Descricao: "Gera o PIX copia-e-cola da reserva ja criada (valor integral ou sinal, conforme escolhido em criar_reserva). " +
-			"Use logo apos criar_reserva ou quando o cliente pedir o PIX de novo: se ja houver PIX pendente, devolve o mesmo codigo sem criar outra cobranca. " +
+		Descricao: "Gera o PIX copia-e-cola de CADA trecho ja reservado (valor integral ou sinal, conforme escolhido em criar_reserva): um PIX por trecho, e devolve a lista com o total. " +
+			"Use logo apos criar_reserva ou quando o cliente pedir o PIX de novo: trechos que ja tem PIX pendente devolvem o mesmo codigo sem criar outra cobranca, e trechos ja pagos sao informados como pagos. " +
+			"Envie todos os PIX juntos ao cliente, dizendo a qual trecho cada um se refere. " +
 			"O PIX exige CPF do pagador: se nenhum passageiro adulto informou CPF, peca o CPF de quem vai pagar e envie em cpf_pagador.",
 		Parametros: defJSON(`{
   "type":"object",
@@ -114,16 +115,72 @@ func (t *gerarPix) Executar(ctx context.Context, c *Contexto, raw json.RawMessag
 		return *s
 	}
 	e := c.Estado
-	if e.ReservaID == "" {
+	if !e.AlgumReservado() {
 		return falha("reserva_nao_criada", "Crie a reserva com criar_reserva antes de gerar o PIX.")
 	}
-	det, err := t.r.Get(ctx, e.ReservaID)
+	var itens []map[string]any
+	var semReserva []int
+	var falhas []Saida
+	var total float64
+	geradosOuPagos := 0
+	for i := range e.Trechos {
+		if e.Trechos[i].ReservaID == "" {
+			semReserva = append(semReserva, i+1)
+			continue
+		}
+		item, s := t.pixDoTrecho(ctx, c, i, a.CPFPagador)
+		if s != nil {
+			falhas = append(falhas, *s)
+			itens = append(itens, itemFalha(item, *s))
+			continue
+		}
+		item["ok"] = true
+		if v, ok := item["valor"].(float64); ok && item["status"] == nil {
+			total += v
+		}
+		geradosOuPagos++
+		itens = append(itens, item)
+	}
+
+	dados := map[string]any{"pix": itens}
+	if total > 0 {
+		dados["total"] = arredondar(total)
+	}
+	if len(semReserva) > 0 {
+		dados["trechos_sem_reserva"] = semReserva
+	}
+	if len(falhas) == 0 {
+		if len(semReserva) > 0 {
+			dados["mensagem"] = "Ha trechos ainda sem reserva (trechos_sem_reserva): rode criar_reserva para eles e depois gerar_pix de novo."
+		}
+		return sucesso(dados)
+	}
+	motivo := falhas[0].Motivo
+	if geradosOuPagos > 0 {
+		motivo = "pix_parcial"
+		dados["mensagem"] = "Alguns PIX foram gerados e outros falharam (veja ok/motivo em pix). Envie os PIX gerados dizendo o trecho de cada um e trate os que falharam; nao invente codigo."
+	} else if d, ok := falhas[0].Dados.(map[string]any); ok {
+		dados["mensagem"] = d["mensagem"]
+	}
+	return falhaDados(motivo, dados)
+}
+
+// pixDoTrecho gera ou reaproveita o PIX do trecho i (que ja tem reserva).
+// Devolve o item do trecho (trecho, rota, data, valor, pix_copia_e_cola,
+// expira_em) ou uma falha.
+func (t *gerarPix) pixDoTrecho(ctx context.Context, c *Contexto, i int, cpfInformado string) (map[string]any, *Saida) {
+	e := c.Estado
+	tr := &e.Trechos[i]
+	item := itemTrecho(i, *tr)
+	fail := func(s Saida) (map[string]any, *Saida) { return item, &s }
+
+	det, err := t.r.Get(ctx, tr.ReservaID)
 	if err != nil {
-		return falha("erro_consultar_reserva", "Nao consegui consultar a reserva agora. Tente de novo ou transfira para um atendente.")
+		return fail(falha("erro_consultar_reserva", "Nao consegui consultar a reserva agora. Tente de novo ou transfira para um atendente."))
 	}
 	switch strings.ToUpper(strings.TrimSpace(det.Booking.Status)) {
 	case "CANCELLED", "EXPIRED":
-		return falha("reserva_cancelada_ou_expirada", "Essa reserva esta cancelada ou expirada; nao gere PIX. Transfira para um atendente.")
+		return fail(falha("reserva_cancelada_ou_expirada", "Essa reserva esta cancelada ou expirada; nao gere PIX. Transfira para um atendente."))
 	}
 	pagamento := e.Pagamento
 	if pagamento == "" {
@@ -133,20 +190,22 @@ func (t *gerarPix) Executar(ctx context.Context, c *Contexto, raw json.RawMessag
 	valor := valorAPagar(pagamento, total, e.Pagantes(), t.cfg.SinalPorPagante)
 
 	// Reaproveita cobranca pendente.
-	if e.PagamentoID != "" {
-		st, err := t.p.GetStatus(ctx, e.PagamentoID)
+	if tr.PagamentoID != "" {
+		st, err := t.p.GetStatus(ctx, tr.PagamentoID)
 		if err != nil {
-			return falha("erro_consultar_pagamento", "Nao consegui consultar o pagamento agora. Nao gere outra cobranca; tente de novo ou transfira para um atendente.")
+			return fail(falha("erro_consultar_pagamento", "Nao consegui consultar o pagamento agora. Nao gere outra cobranca; tente de novo ou transfira para um atendente."))
 		}
 		switch {
 		case statusPago(st.Status):
-			return sucesso(map[string]any{"status": "pago", "mensagem": "Esse pagamento ja foi confirmado. Nao gere outro PIX."})
+			item["status"] = "pago"
+			item["mensagem"] = "Esse pagamento ja foi confirmado. Nao gere outro PIX."
+			return item, nil
 		case statusPendente(st.Status):
 			codigo, expira := extrairPix(st.Metadata)
 			var criado time.Time
-			if lista, err := t.p.List(ctx, payments.PaymentListFilter{BookingID: e.ReservaID, Limit: 20}); err == nil {
+			if lista, err := t.p.List(ctx, payments.PaymentListFilter{BookingID: tr.ReservaID, Limit: 20}); err == nil {
 				for _, p := range lista {
-					if p.ID == e.PagamentoID {
+					if p.ID == tr.PagamentoID {
 						criado = p.CreatedAt
 					}
 				}
@@ -157,46 +216,51 @@ func (t *gerarPix) Executar(ctx context.Context, c *Contexto, raw json.RawMessag
 			}
 			vigente := expira == nil || c.Agora.Before(*expira)
 			if codigo == "" && vigente {
-				return falha("pix_indisponivel", "O PIX existe mas o codigo nao esta disponivel. Nao invente codigo; transfira para um atendente.")
+				return fail(falha("pix_indisponivel", "O PIX existe mas o codigo nao esta disponivel. Nao invente codigo; transfira para um atendente."))
 			}
 			if vigente {
-				d := dadosPix(st.Amount, codigo, expira, time.Time{})
-				d["reaproveitado"] = true
-				return sucesso(d)
+				for k, v := range dadosPix(st.Amount, codigo, expira, time.Time{}) {
+					item[k] = v
+				}
+				item["reaproveitado"] = true
+				return item, nil
 			}
 			// PIX pendente vencido: gera novo abaixo.
 		}
 	}
 
-	pagador, falhaPagador := escolherPagador(e.Passageiros, a.CPFPagador)
+	pagador, falhaPagador := escolherPagador(e.Passageiros, cpfInformado)
 	if falhaPagador != nil {
-		return *falhaPagador
+		return fail(*falhaPagador)
 	}
 	telefone := apenasDigitos(c.Conversa.Telefone)
 	if len(telefone) < 10 {
-		return falha("telefone_pagador_necessario", "Preciso de um telefone com DDD do pagador para gerar o PIX. Peca ao cliente.")
+		return fail(falha("telefone_pagador_necessario", "Preciso de um telefone com DDD do pagador para gerar o PIX. Peca ao cliente."))
 	}
 	rotulo := firstNonEmpty(det.Booking.ReservationCode, det.Booking.ID)
 	pay, rawPix, err := t.p.Create(ctx, payments.CreatePaymentInput{
-		BookingID:   e.ReservaID,
+		BookingID:   tr.ReservaID,
 		Amount:      valor,
 		Method:      "PIX",
 		Description: "Pagamento " + pagamento + " reserva " + rotulo,
 		Customer:    &payments.CustomerInput{Name: pagador.nome, Phone: telefone, Document: pagador.cpf},
 	})
 	if err != nil {
-		return falha("erro_gerar_pix", "Nao consegui gerar o PIX agora. Nao invente codigo; tente uma vez mais ou transfira para um atendente.")
+		return fail(falha("erro_gerar_pix", "Nao consegui gerar o PIX agora. Nao invente codigo; tente uma vez mais ou transfira para um atendente."))
 	}
-	e.PagamentoID = pay.ID
+	tr.PagamentoID = pay.ID
 	codigo, expira := extrairPix(rawPix)
 	if codigo == "" {
-		return falha("pix_indisponivel", "A cobranca foi criada mas o codigo PIX nao veio. Nao invente codigo; transfira para um atendente.")
+		return fail(falha("pix_indisponivel", "A cobranca foi criada mas o codigo PIX nao veio. Nao invente codigo; transfira para um atendente."))
 	}
 	criado := pay.CreatedAt
 	if criado.IsZero() {
 		criado = c.Agora
 	}
-	return sucesso(dadosPix(valor, codigo, expira, criado))
+	for k, v := range dadosPix(valor, codigo, expira, criado) {
+		item[k] = v
+	}
+	return item, nil
 }
 
 type pagadorPix struct{ nome, cpf string }

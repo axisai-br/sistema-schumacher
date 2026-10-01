@@ -134,6 +134,10 @@ func TestJuizLLMvsJev(t *testing.T) {
 			nome string
 			j    agente.Juiz
 		}{"Jev (TypeSafe)", agente.NovoJuizJev(k, nil)})
+		juizes = append(juizes, struct {
+			nome string
+			j    agente.Juiz
+		}{"Roteador Jev (TypeSafe)", agente.JuizDeRoteador(agente.NovoRoteadorJev(k, nil))})
 	} else {
 		t.Log("TYPESAFE_API_KEY ausente: juiz Jev não será avaliado")
 	}

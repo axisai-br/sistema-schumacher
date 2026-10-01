@@ -19,7 +19,7 @@ import (
 
 var casosEsperados = []string{
 	"audio_nao_compreendido", "cidade_nao_atendida", "cidade_nao_atendida_b", "destino_direto", "duas_mensagens",
-	"fora_do_assunto", "irritado", "llm_fora", "muda_de_ideia", "pede_ajuda",
+	"fora_do_assunto", "ida_e_volta", "irritado", "llm_fora", "muda_de_ideia", "pede_ajuda",
 	"quantidade_livre_a", "quantidade_livre_b", "quantidade_livre_c", "quantidade_livre_d",
 	"quantidade_no_inicio", "reserva_completa_sinal", "sc_para_ma",
 }
@@ -453,4 +453,19 @@ func TestAvaliarDetectaViolacoes(t *testing.T) {
 
 func quoteIn(o availability.SearchResult) pricing.QuoteInput {
 	return pricing.QuoteInput{TripID: o.TripID, BoardStopID: o.BoardStopID, AlightStopID: o.AlightStopID}
+}
+
+func TestAvaliarContagensDeTrechos(t *testing.T) {
+	c := casoPorNome(t, "ida_e_volta")
+	if c.Espera.Trechos == nil || *c.Espera.Trechos != 2 || *c.Espera.Reservas != 2 || *c.Espera.Pix != 2 {
+		t.Fatalf("espera de ida_e_volta: %+v", c.Espera)
+	}
+	amb := NovoAmbiente(modeloRoteirizado(), ConfigAmbiente{})
+	ex := &Execucao{Caso: c.Nome, Amb: amb, Status: conversa.StatusBot, Estado: conversa.Estado{Trechos: []conversa.Trecho{{}}}}
+	joined := strings.Join(Avaliar(c, ex), "\n")
+	for _, want := range []string{"reservas = 0, esperado 2", "pix = 0, esperado 2", "trechos = 1, esperado 2"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("faltou %q em:\n%s", want, joined)
+		}
+	}
 }

@@ -151,3 +151,29 @@ func TestLoadAtendimentoV2ReadsExplicitValues(t *testing.T) {
 		t.Fatalf("unexpected phones: %v", cfg.AtendimentoV2Telefones)
 	}
 }
+
+func TestLoadLLMReservaEHedge(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("SUPABASE_JWT_SECRET", "jwt-secret")
+	t.Setenv("SUPABASE_ISSUER", "https://supabase.example.com/auth/v1")
+	for _, k := range []string{"LLM_MODELO_RESERVA", "LLM_HEDGE_MS", "LLM_SEM_RACIOCINIO"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLMModeloReserva != "" || cfg.LLMHedgeMS != nil || cfg.LLMSemRaciocinio != nil {
+		t.Fatalf("padroes devem ficar vazios (o provedor aplica): %q %v %v", cfg.LLMModeloReserva, cfg.LLMHedgeMS, cfg.LLMSemRaciocinio)
+	}
+	t.Setenv("LLM_MODELO_RESERVA", " vendor/modelo-r ")
+	t.Setenv("LLM_HEDGE_MS", "0")
+	t.Setenv("LLM_SEM_RACIOCINIO", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLMModeloReserva != "vendor/modelo-r" || cfg.LLMHedgeMS == nil || *cfg.LLMHedgeMS != 0 || cfg.LLMSemRaciocinio == nil || *cfg.LLMSemRaciocinio {
+		t.Fatalf("valores explicitos: %q %v %v", cfg.LLMModeloReserva, cfg.LLMHedgeMS, cfg.LLMSemRaciocinio)
+	}
+}

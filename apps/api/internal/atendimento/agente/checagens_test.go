@@ -94,7 +94,7 @@ func TestJuizJev(t *testing.T) {
 	}))
 	defer srv.Close()
 	j := NovoJuizJev("chave-jev", nil).(*juizJev)
-	j.url = srv.URL
+	j.c.url = srv.URL
 	av, err := j.Avaliar(context.Background(), msgs("oi", "olá", "quero falar com alguém"))
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestJuizJevRetry429(t *testing.T) {
 	}))
 	defer srv.Close()
 	j := NovoJuizJev("k", nil).(*juizJev)
-	j.url, j.espera = srv.URL, time.Millisecond
+	j.c.url, j.c.espera = srv.URL, time.Millisecond
 	if _, err := j.Avaliar(context.Background(), msgs("oi")); err != nil || n != 2 {
 		t.Fatalf("err=%v n=%d", err, n)
 	}
@@ -136,7 +136,7 @@ func TestJuizJevRetry429(t *testing.T) {
 		w.WriteHeader(500)
 	}))
 	defer srv2.Close()
-	j.url = srv2.URL
+	j.c.url = srv2.URL
 	if _, err := j.Avaliar(context.Background(), msgs("oi")); err == nil || n != 1 {
 		t.Fatalf("err=%v n=%d", err, n)
 	}

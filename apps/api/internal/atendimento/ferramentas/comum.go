@@ -64,13 +64,14 @@ func (c Config) comPadroes() Config {
 	return c
 }
 
-// Padrao registra as 8 ferramentas do atendimento v2 na ordem canonica.
+// Padrao registra as 9 ferramentas do atendimento v2 na ordem canonica.
 func Padrao(cat *Catalogo, b Buscador, q Cotador, r Reservas, p Pagamentos, cfg Config) *Registro {
 	cfg = cfg.comPadroes()
 	return NovoRegistro(
 		&listarRotas{cat: cat},
 		&buscarViagens{cat: cat, b: b, fuso: cfg.Fuso},
 		&escolherViagem{cat: cat, b: b, q: q, fuso: cfg.Fuso},
+		&removerTrecho{},
 		&registrarPassageiros{},
 		&criarReserva{r: r, q: q, cfg: cfg},
 		&gerarPix{r: r, p: p, cfg: cfg},

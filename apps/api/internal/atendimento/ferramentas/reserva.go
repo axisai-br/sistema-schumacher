@@ -52,16 +52,35 @@ type criarReserva struct {
 func (t *criarReserva) Def() llm.DefFerramenta {
 	return llm.DefFerramenta{
 		Nome: "criar_reserva",
-		Descricao: "Cria a reserva depois que a viagem foi escolhida, os passageiros estao completos e o cliente decidiu como pagar: " +
+		Descricao: "Cria a reserva de CADA trecho (viagem) escolhido que ainda nao tem reserva, depois que a viagem foi escolhida, os passageiros estao completos e o cliente decidiu como pagar: " +
 			"'integral' (valor total) ou 'sinal' (valor de entrada por passageiro pagante, resto no embarque). " +
-			"Nao use antes de ter viagem e passageiros validos. Chamar de novo devolve a mesma reserva. Depois use gerar_pix.",
+			"Ida e volta geram uma reserva por trecho, com os mesmos passageiros e a mesma forma de pagamento. " +
+			"Nao use antes de ter viagem e passageiros validos. Chamar de novo nao duplica: devolve as reservas ja criadas e tenta so os trechos que faltam. " +
+			"Devolve a lista por trecho, o total geral e o valor a pagar agora somado; se um trecho falhar, os outros continuam criados e a saida diz quais. Depois use gerar_pix.",
 		Parametros: defJSON(`{
   "type":"object",
-  "properties":{"pagamento":{"type":"string","enum":["integral","sinal"],"description":"Forma de pagamento escolhida pelo cliente."}},
+  "properties":{"pagamento":{"type":"string","enum":["integral","sinal"],"description":"Forma de pagamento escolhida pelo cliente (vale para todos os trechos)."}},
   "required":["pagamento"],
   "additionalProperties":false
 }`),
 	}
+}
+
+// itemTrecho identifica o trecho nas saidas por trecho.
+func itemTrecho(i int, tr conversa.Trecho) map[string]any {
+	return map[string]any{"trecho": i + 1, "rota": tr.Rota(), "data": tr.Viagem.Data, "horario": tr.Viagem.Horario}
+}
+
+// itemFalha converte uma Saida de falha em item por trecho.
+func itemFalha(item map[string]any, s Saida) map[string]any {
+	item["ok"] = false
+	item["motivo"] = s.Motivo
+	if d, ok := s.Dados.(map[string]any); ok {
+		if m, ok := d["mensagem"]; ok {
+			item["mensagem"] = m
+		}
+	}
+	return item
 }
 
 func (t *criarReserva) Executar(ctx context.Context, c *Contexto, raw json.RawMessage) Saida {
@@ -77,41 +96,34 @@ func (t *criarReserva) Executar(ctx context.Context, c *Contexto, raw json.RawMe
 	}
 	e := c.Estado
 
-	if e.ReservaID != "" { // idempotente
-		if e.PagamentoID == "" {
-			e.Pagamento = pg // ainda sem PIX: o cliente pode trocar integral x sinal
-		}
-		dados := map[string]any{"ja_existente": true, "reserva_id": e.ReservaID, "pagamento": e.Pagamento}
-		if d, err := t.r.Get(ctx, e.ReservaID); err == nil {
-			preencherReserva(dados, d, e.Pagamento, e.Pagantes(), t.cfg.SinalPorPagante)
-		}
-		return sucesso(dados)
-	}
-
-	if pend := pendenciasParaReserva(*e); len(pend) > 0 {
+	if len(e.Trechos) == 0 {
 		return falhaDados("dados_incompletos", map[string]any{
-			"pendencias": pend,
+			"pendencias": pendenciasParaReserva(*e),
 			"mensagem":   "Ainda faltam dados antes de criar a reserva.",
 		})
 	}
-	v := e.Viagem
-	pagantes := e.Pagantes()
-	cot, err := cotar(ctx, t.q, *v)
-	if err != nil {
-		return falha("erro_cotacao", "Nao consegui confirmar o preco agora. Tente de novo; se repetir, transfira para um atendente.")
+	if !e.TodosReservados() {
+		if pend := pendenciasParaReserva(*e); len(pend) > 0 {
+			return falhaDados("dados_incompletos", map[string]any{
+				"pendencias": pend,
+				"mensagem":   "Ainda faltam dados antes de criar a reserva.",
+			})
+		}
 	}
-	avisos := map[string]any{}
-	if diferePreco(cot, v.Preco) {
-		avisos["preco_anterior"] = v.Preco
-		avisos["preco_atualizado"] = cot
-		v.Preco = cot
+	// A forma de pagamento vale para todos os trechos. Enquanto nenhum PIX foi
+	// gerado o cliente pode trocar integral x sinal; depois do primeiro PIX a
+	// forma ja cobrada e mantida.
+	pixGerado := false
+	for _, tr := range e.Trechos {
+		if tr.PagamentoID != "" {
+			pixGerado = true
+		}
 	}
-	total := arredondar(cot * float64(pagantes))
-	deposito, resto := total, 0.0
-	if pg == pagamentoSinal {
-		deposito = valorSinal(total, pagantes, t.cfg.SinalPorPagante)
-		resto = arredondar(total - deposito)
+	if !pixGerado || e.Pagamento == "" {
+		e.Pagamento = pg
 	}
+
+	nPagantes := e.Pagantes()
 	telefone := apenasDigitos(c.Conversa.Telefone)
 	pax := make([]bookings.PassengerInput, 0, len(e.Passageiros))
 	for _, p := range e.Passageiros {
@@ -124,32 +136,97 @@ func (t *criarReserva) Executar(ctx context.Context, c *Contexto, raw json.RawMe
 		})
 	}
 	origem := origemReserva
-	det, err := t.r.Create(ctx, bookings.CreateBookingInput{
-		TripID:          v.TripID,
-		BoardStopID:     v.BoardStopID,
-		AlightStopID:    v.AlightStopID,
-		Passengers:      pax,
-		IdempotencyKey:  hashReserva(c.Conversa.ID, *v, e.Passageiros),
-		Source:          &origem,
-		TotalAmount:     total,
-		DepositAmount:   deposito,
-		RemainderAmount: resto,
-	})
-	if err != nil {
-		return mapearErroReserva(err)
+
+	var itens []map[string]any
+	var totalGeral, aPagarAgora float64
+	var falhas []Saida
+	var reservados []int
+	for i := range e.Trechos {
+		tr := &e.Trechos[i]
+		item := itemTrecho(i, *tr)
+		if tr.ReservaID != "" { // idempotente
+			item["ok"], item["ja_existente"], item["reserva_id"] = true, true, tr.ReservaID
+			if d, err := t.r.Get(ctx, tr.ReservaID); err == nil {
+				preencherReserva(item, d, e.Pagamento, nPagantes, t.cfg.SinalPorPagante)
+			}
+			reservados = append(reservados, i+1)
+		} else {
+			cot, err := cotar(ctx, t.q, tr.Viagem)
+			if err != nil {
+				s := falha("erro_cotacao", "Nao consegui confirmar o preco agora. Tente de novo; se repetir, transfira para um atendente.")
+				falhas = append(falhas, s)
+				itens = append(itens, itemFalha(item, s))
+				continue
+			}
+			if diferePreco(cot, tr.Viagem.Preco) {
+				item["preco_anterior"] = tr.Viagem.Preco
+				item["preco_atualizado"] = cot
+				tr.Viagem.Preco = cot
+			}
+			total := arredondar(cot * float64(nPagantes))
+			deposito, resto := total, 0.0
+			if e.Pagamento == pagamentoSinal {
+				deposito = valorSinal(total, nPagantes, t.cfg.SinalPorPagante)
+				resto = arredondar(total - deposito)
+			}
+			det, err := t.r.Create(ctx, bookings.CreateBookingInput{
+				TripID:          tr.Viagem.TripID,
+				BoardStopID:     tr.Viagem.BoardStopID,
+				AlightStopID:    tr.Viagem.AlightStopID,
+				Passengers:      pax,
+				IdempotencyKey:  hashReserva(c.Conversa.ID, tr.Viagem, e.Passageiros),
+				Source:          &origem,
+				TotalAmount:     total,
+				DepositAmount:   deposito,
+				RemainderAmount: resto,
+			})
+			var s *Saida
+			switch {
+			case err != nil:
+				x := mapearErroReserva(err)
+				s = &x
+			case det.Booking.ID == "":
+				x := falha("erro_ao_criar_reserva", "A reserva nao retornou identificador. Transfira para um atendente.")
+				s = &x
+			}
+			if s != nil {
+				falhas = append(falhas, *s)
+				itens = append(itens, itemFalha(item, *s))
+				continue
+			}
+			tr.ReservaID = det.Booking.ID
+			item["ok"], item["ja_existente"], item["reserva_id"] = true, false, det.Booking.ID
+			preencherReserva(item, det, e.Pagamento, nPagantes, t.cfg.SinalPorPagante)
+			reservados = append(reservados, i+1)
+		}
+		if v, ok := item["total"].(float64); ok {
+			totalGeral += v
+		}
+		if v, ok := item["valor_a_pagar_agora"].(float64); ok {
+			aPagarAgora += v
+		}
+		itens = append(itens, item)
 	}
-	if det.Booking.ID == "" {
-		return falha("erro_ao_criar_reserva", "A reserva nao retornou identificador. Transfira para um atendente.")
+
+	dados := map[string]any{"pagamento": e.Pagamento, "trechos": itens}
+	if totalGeral > 0 {
+		dados["total_geral"] = arredondar(totalGeral)
+		dados["valor_a_pagar_agora"] = arredondar(aPagarAgora)
 	}
-	e.ReservaID = det.Booking.ID
-	e.Pagamento = pg
-	dados := map[string]any{"ja_existente": false, "reserva_id": det.Booking.ID, "pagamento": pg}
-	preencherReserva(dados, det, pg, pagantes, t.cfg.SinalPorPagante)
-	dados["proximo_passo"] = "gerar_pix"
-	for k, val := range avisos {
-		dados[k] = val
+	if len(falhas) == 0 {
+		dados["proximo_passo"] = "gerar_pix"
+		return sucesso(dados)
 	}
-	return sucesso(dados)
+	// Erro em um trecho nao desfaz os outros: a saida diz quais deram certo.
+	dados["trechos_reservados"] = reservados
+	motivo := falhas[0].Motivo
+	if len(reservados) > 0 {
+		motivo = "reserva_parcial"
+		dados["mensagem"] = "Alguns trechos foram reservados e outros falharam (veja ok/motivo em trechos). Informe o cliente com clareza; nao diga que tudo foi reservado. Gere o PIX dos trechos reservados e tente criar_reserva de novo para os que falharam, ou transfira para um atendente."
+	} else if d, okd := falhas[0].Dados.(map[string]any); okd {
+		dados["mensagem"] = d["mensagem"]
+	}
+	return falhaDados(motivo, dados)
 }
 
 func preencherReserva(dados map[string]any, d bookings.BookingDetails, pagamento string, pagantes int, sinal float64) {

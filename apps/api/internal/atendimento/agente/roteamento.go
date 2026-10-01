@@ -1,0 +1,156 @@
+package agente
+
+import (
+	"context"
+	"encoding/json"
+
+	"schumacher-tur/api/internal/atendimento/conversa"
+	"schumacher-tur/api/internal/atendimento/ferramentas"
+	"schumacher-tur/api/internal/atendimento/llm"
+)
+
+// TextoSaudacao e a resposta fixa para um cumprimento no inicio da conversa.
+const TextoSaudacao = "Olá! 😊 Aqui é o Shabas, da Schumacher Tur.\n\nPra onde você quer viajar?"
+
+// limiarDetalhes: acima disso a conversa ja traz data/periodo/pessoas e a busca
+// previa (sem esses filtros) fica para o LLM.
+const limiarDetalhes = 0.5
+
+const idPreBusca = "pre_1"
+
+// resultadoRota e a decisao do codigo a partir da Rota.
+type resultadoRota struct {
+	transf   *transf        // transferir para humano
+	resposta string         // resposta por template (sem LLM)
+	pre      []llm.Mensagem // chamada + resultado de buscar_viagens ja executada
+}
+
+func cidadeValida(c string) bool {
+	return c != "" && c != CidadeNaoInformada && c != CidadeNaoAtendida
+}
+
+// jaHouveResposta diz se alguem (bot ou humano) ja respondeu ao cliente.
+func jaHouveResposta(hist []conversa.Mensagem) bool {
+	for _, m := range hist {
+		if envioFalhou(m) {
+			continue
+		}
+		if m.Autor == conversa.AutorBot || m.Autor == conversa.AutorHumano {
+			return true
+		}
+	}
+	return false
+}
+
+// argsPreBusca decide se da para executar buscar_viagens antes do LLM.
+func (a *Agente) argsPreBusca(rt Rota) (map[string]string, bool) {
+	lim := a.cfg.LimiarRota
+	if rt.Intencao != IntencaoBuscarViagens || rt.ConfIntencao < lim || rt.DetalhesExtras >= limiarDetalhes {
+		return nil, false
+	}
+	if (rt.Origem == CidadeNaoAtendida && rt.ConfOrigem >= lim) || (rt.Destino == CidadeNaoAtendida && rt.ConfDestino >= lim) {
+		return nil, false // o LLM explica que a cidade nao e atendida
+	}
+	args := map[string]string{}
+	if cidadeValida(rt.Origem) && rt.ConfOrigem >= lim {
+		args["origem"] = rt.Origem
+	}
+	if cidadeValida(rt.Destino) && rt.ConfDestino >= lim {
+		args["destino"] = rt.Destino
+	}
+	if len(args) == 0 || (len(args) == 2 && args["origem"] == args["destino"]) {
+		return nil, false
+	}
+	return args, true
+}
+
+// rotear consulta o Roteador (falha ou timeout: ignora e segue no LLM) e decide:
+// transferir, responder por template, pre-executar a busca ou seguir no LLM.
+func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem) resultadoRota {
+	var cidades []ferramentas.Cidade
+	if a.d.Cidades != nil {
+		var err error
+		if cidades, err = a.d.Cidades.Cidades(ctx); err != nil {
+			a.d.Log.Printf("agente: cidades para o roteador: %v", err)
+			cidades = nil
+		}
+	}
+	ultimas := hist
+	if len(ultimas) > 6 {
+		ultimas = ultimas[len(ultimas)-6:]
+	}
+	t0 := a.d.Agora()
+	rt, err := a.d.Roteador.Rotear(ctx, EntradaRota{Mensagens: ultimas, Estado: tc.estado, Cidades: cidades})
+	saida := map[string]any{"decisao": "llm"}
+	p := conversa.Passo{Tipo: "checagem", Nome: "roteador", DuracaoMS: a.d.Agora().Sub(t0).Milliseconds()}
+	idx := len(tc.passos)
+	finalizar := func(decisao string) {
+		saida["decisao"] = decisao
+		p.Saida = saida
+		tc.passos[idx] = p
+	}
+	tc.passos = append(tc.passos, p)
+	if err != nil {
+		p.Erro = err.Error()
+		a.d.Log.Printf("agente: roteador falhou (ignorado): %v", err)
+		finalizar("llm")
+		return resultadoRota{}
+	}
+	saida["intencao"], saida["confianca"] = rt.Intencao, rt.ConfIntencao
+	saida["origem"], saida["destino"] = rt.Origem, rt.Destino
+	saida["conf_origem"], saida["conf_destino"] = rt.ConfOrigem, rt.ConfDestino
+	saida["opcao"], saida["pede_humano"], saida["irritacao"] = rt.Opcao, rt.PedeHumano, rt.Irritacao
+	saida["detalhes_extras"] = rt.DetalhesExtras
+
+	if rt.PedeHumano >= a.cfg.LimiarHumano {
+		finalizar("transfere_humano")
+		return resultadoRota{transf: &transf{motivo: "cliente pediu atendente (roteador)"}}
+	}
+	if rt.Irritacao >= a.cfg.LimiarIrritacao {
+		finalizar("transfere_irritacao")
+		return resultadoRota{transf: &transf{motivo: "cliente irritado (roteador)"}}
+	}
+	if rt.ConfIntencao >= a.cfg.LimiarRota {
+		switch rt.Intencao {
+		case IntencaoSaudacao:
+			if !jaHouveResposta(hist) {
+				finalizar("template_saudacao")
+				return resultadoRota{resposta: TextoSaudacao}
+			}
+		case IntencaoCidadesAtendidas:
+			if len(cidades) > 0 {
+				finalizar("template_cidades")
+				return resultadoRota{resposta: textoCidadesAtendidas(cidades)}
+			}
+		}
+	}
+	args, ok := a.argsPreBusca(rt)
+	if !ok {
+		finalizar("llm")
+		return resultadoRota{}
+	}
+	argsJSON, _ := json.Marshal(args)
+	t1 := a.d.Agora()
+	est := clonarEstado(tc.estado) // so vale se a busca der certo
+	s := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{Conversa: tc.c, Estado: &est, Agora: a.d.Agora()}, "buscar_viagens", argsJSON)
+	tc.passos = append(tc.passos, conversa.Passo{
+		Tipo: "ferramenta", Nome: "buscar_viagens", Entrada: json.RawMessage(argsJSON), Saida: s,
+		DuracaoMS: a.d.Agora().Sub(t1).Milliseconds(),
+	})
+	if !s.OK || s.Transferir {
+		finalizar("pre_busca_falhou")
+		return resultadoRota{}
+	}
+	js, err := json.Marshal(s)
+	if err != nil {
+		finalizar("pre_busca_falhou")
+		return resultadoRota{}
+	}
+	tc.estado = est
+	tc.resultados = append(tc.resultados, string(js))
+	finalizar("pre_busca")
+	return resultadoRota{pre: []llm.Mensagem{
+		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: idPreBusca, Nome: "buscar_viagens", Argumentos: argsJSON}}},
+		{Papel: llm.PapelFerramenta, ChamadaID: idPreBusca, Texto: string(js)},
+	}}
+}

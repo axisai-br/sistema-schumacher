@@ -320,3 +320,75 @@ func TestSemChave(t *testing.T) {
 		t.Error("esperava erro")
 	}
 }
+
+func TestSemRaciocinioEnviaChatTemplateKwargs(t *testing.T) {
+	var corpo map[string]any
+	srv := servidor(t, resp("ok"), &corpo)
+	c := Novo(Config{APIKey: chave, BaseURL: srv.URL, Modelo: "m", EsforcoRaciocinio: "low", SemRaciocinio: true})
+	if _, err := c.Gerar(context.Background(), llm.Pedido{Mensagens: []llm.Mensagem{{Papel: llm.PapelUsuario, Texto: "oi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	kw, ok := corpo["chat_template_kwargs"].(map[string]any)
+	if !ok || kw["enable_thinking"] != false || kw["thinking"] != false {
+		t.Errorf("chat_template_kwargs = %v", corpo["chat_template_kwargs"])
+	}
+	if _, tem := corpo["reasoning_effort"]; tem {
+		t.Errorf("reasoning_effort nao deve ser enviado sem raciocinio: %v", corpo)
+	}
+	if corpo["max_tokens"].(float64) != 1024 {
+		t.Errorf("max_tokens = %v", corpo["max_tokens"])
+	}
+}
+
+func TestPadraoNaoEnviaChatTemplateKwargs(t *testing.T) {
+	var corpo map[string]any
+	srv := servidor(t, resp("ok"), &corpo)
+	if _, err := novo(srv.URL, "").Gerar(context.Background(), llm.Pedido{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, tem := corpo["chat_template_kwargs"]; tem {
+		t.Errorf("nao deveria enviar chat_template_kwargs: %v", corpo)
+	}
+}
+
+func TestExtraCorpoMesclado(t *testing.T) {
+	var corpo map[string]any
+	srv := servidor(t, resp("ok"), &corpo)
+	c := Novo(Config{APIKey: chave, BaseURL: srv.URL, Modelo: "m", ExtraCorpo: map[string]any{
+		"chat_template_kwargs": map[string]any{"enable_thinking": false}, "top_p": 0.5, "model": "ignorado",
+	}})
+	if _, err := c.Gerar(context.Background(), llm.Pedido{}); err != nil {
+		t.Fatal(err)
+	}
+	kw, _ := corpo["chat_template_kwargs"].(map[string]any)
+	if kw["enable_thinking"] != false || corpo["top_p"] != 0.5 || corpo["model"] != "m" {
+		t.Errorf("corpo = %v", corpo)
+	}
+}
+
+func TestTimeoutPadraoPorTentativa(t *testing.T) {
+	c := Novo(Config{APIKey: chave})
+	if c.http.Timeout != 25*time.Second {
+		t.Errorf("timeout padrao = %v", c.http.Timeout)
+	}
+}
+
+func TestSemRetryQuandoContextoDoTurnoEstoura(t *testing.T) {
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n.Add(1)
+		time.Sleep(300 * time.Millisecond)
+	}))
+	defer srv.Close()
+	c := Novo(Config{APIKey: chave, BaseURL: srv.URL, Modelo: "m", Timeout: 50 * time.Millisecond})
+	c.backoff = []time.Duration{time.Second, time.Second}
+	ctx, cancelar := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelar()
+	t0 := time.Now()
+	if _, err := c.Gerar(ctx, llm.Pedido{}); err == nil {
+		t.Fatal("esperava erro")
+	}
+	if n.Load() != 1 || time.Since(t0) > 400*time.Millisecond {
+		t.Errorf("nao deveria refazer: chamadas=%d dur=%v", n.Load(), time.Since(t0))
+	}
+}

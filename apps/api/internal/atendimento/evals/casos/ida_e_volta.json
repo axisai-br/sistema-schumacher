@@ -1,0 +1,11 @@
+{
+  "nome": "ida_e_volta",
+  "descricao": "Cliente compra ida (Santa Inês para Fraiburgo) e volta (Fraiburgo para Santa Inês) na mesma conversa: duas reservas e dois PIX do sinal, com os mesmos passageiros.",
+  "objetivo_cliente": "Você é o Francisco das Chagas Moura, 49 anos, CPF 234.567.891-73, morador de Santa Inês (MA). Quer ir para Fraiburgo (SC) e voltar para Santa Inês, tudo na mesma compra. Vai sozinho. Diga logo no começo que quer ida e volta. Para a ida, escolha a primeira opção que o atendente mostrar; para a volta, também a primeira opção. Informe nome completo e CPF quando pedirem (uma vez só, valem para os dois trechos). Quando perguntarem como quer pagar, escolha só o sinal, por PIX. Se o atendente pedir o CPF de quem vai pagar, use o seu. Quando receber os dois PIX copia e cola, agradeça e encerre.",
+  "primeira_mensagem": "Boa noite, quero ida e volta de Santa Inês para Fraiburgo",
+  "max_turnos": 22,
+  "grupo": "reserva",
+  "espera": {"status": "BOT", "reserva_criada": true, "pix_gerado": true, "trechos": 2, "reservas": 2, "pix": 2, "pagantes": 1, "criancas": 0},
+  "proibido": ["so (e )?possivel (uma|1) reserva", "apenas (uma|1) reserva"],
+  "exige_no_bot": ["00020126"]
+}

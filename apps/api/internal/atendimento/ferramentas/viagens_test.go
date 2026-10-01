@@ -22,9 +22,9 @@ func TestListarRotas(t *testing.T) {
 	}
 }
 
-func TestPadraoRegistraOitoNaOrdem(t *testing.T) {
+func TestPadraoRegistraNoveNaOrdem(t *testing.T) {
 	a := novoAmbiente(t)
-	quer := []string{"listar_rotas", "buscar_viagens", "escolher_viagem", "registrar_passageiros", "criar_reserva", "gerar_pix", "consultar_reserva", "transferir_para_humano"}
+	quer := []string{"listar_rotas", "buscar_viagens", "escolher_viagem", "remover_trecho", "registrar_passageiros", "criar_reserva", "gerar_pix", "consultar_reserva", "transferir_para_humano"}
 	defs := a.reg.Defs()
 	if len(defs) != len(quer) {
 		t.Fatalf("got %d defs", len(defs))
@@ -201,20 +201,22 @@ func TestBuscarPessoasComoString(t *testing.T) {
 	}
 }
 
-func TestBuscarLimpaViagemQuandoSumiu(t *testing.T) {
+func TestBuscarNaoApagaTrechosEscolhidos(t *testing.T) {
 	a := novoAmbiente(t)
 	a.exec(t, "buscar_viagens", `{"origem":"Chapecó","destino":"Santa Inês"}`)
 	a.exec(t, "escolher_viagem", `{"opcao":1}`)
-	if a.ctx.Estado.Viagem == nil {
-		t.Fatal("viagem deveria estar escolhida")
+	if len(a.ctx.Estado.Trechos) != 1 {
+		t.Fatal("trecho deveria estar escolhido")
 	}
 	a.exec(t, "buscar_viagens", `{"origem":"Chapecó","destino":"Santa Inês"}`) // mesma busca mantem
-	if a.ctx.Estado.Viagem == nil {
-		t.Fatal("viagem deveria ser mantida")
+	if len(a.ctx.Estado.Trechos) != 1 {
+		t.Fatal("trecho deveria ser mantido")
 	}
+	// busca da volta (e ate de outra rota): a ida continua la
+	a.exec(t, "buscar_viagens", `{"origem":"Santa Inês","destino":"Chapecó"}`)
 	a.exec(t, "buscar_viagens", `{"origem":"Videira","destino":"Monção"}`)
-	if a.ctx.Estado.Viagem != nil {
-		t.Fatalf("viagem deveria ser limpa: %+v", a.ctx.Estado.Viagem)
+	if len(a.ctx.Estado.Trechos) != 1 || a.ctx.Estado.Trechos[0].Viagem.TripID != "t1" {
+		t.Fatalf("a ida nao pode ser apagada pela busca: %+v", a.ctx.Estado.Trechos)
 	}
 }
 
@@ -236,14 +238,17 @@ func TestEscolherViagem(t *testing.T) {
 	if s.OK || s.Motivo != "opcao_inexistente" || len(dadosDe(m)["opcoes_validas"].([]any)) != 2 {
 		t.Fatalf("opcao 9: %+v", m)
 	}
-	if a.ctx.Estado.Viagem != nil {
+	if len(a.ctx.Estado.Trechos) != 0 {
 		t.Fatal("nao deveria gravar viagem")
 	}
 	s, m = a.exec(t, "escolher_viagem", `{"opcao":"1"}`)
 	if !s.OK {
 		t.Fatalf("%+v", m)
 	}
-	v := a.ctx.Estado.Viagem
+	var v *conversa.Opcao
+	if len(a.ctx.Estado.Trechos) == 1 {
+		v = &a.ctx.Estado.Trechos[0].Viagem
+	}
 	if v == nil || v.TripID != "t1" || v.Vagas != 12 {
 		t.Fatalf("viagem: %+v", v)
 	}
@@ -265,7 +270,7 @@ func TestEscolherViagemSemVagasNaRevalidacao(t *testing.T) {
 	if s.OK || s.Motivo != "sem_vagas_suficientes" {
 		t.Fatalf("%+v", m)
 	}
-	if a.ctx.Estado.Viagem != nil {
+	if len(a.ctx.Estado.Trechos) != 0 {
 		t.Fatal("nao deveria gravar")
 	}
 	// viagem sumiu

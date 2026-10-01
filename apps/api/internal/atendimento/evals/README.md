@@ -55,7 +55,7 @@ nome do modelo muda.
 Por execução, um caso passa se **todas** as condições valem:
 
 - `espera`: `status` (`BOT`, `HUMANO` ou `BOT|HUMANO`), e, quando presentes, `reserva_criada`, `pix_gerado`,
-  `origem`, `destino`, `pagantes`, `criancas`, `min_opcoes_mostradas` (maior número de opções no estado durante a
+  `origem`, `destino`, `pagantes`, `criancas`, `reservas`, `pix`, `trechos` (quantidades exatas), `min_opcoes_mostradas` (maior número de opções no estado durante a
   conversa) e `max_respostas_primeiro_turno`.
 - `proibido`: nenhuma regex casa em mensagens do bot. `exige_no_bot`: todas casam em alguma mensagem do bot.
   `proibido_primeira_resposta` / `exige_primeira_resposta`: o mesmo, só sobre o que o bot enviou no 1º turno.

@@ -42,9 +42,16 @@ func ConfigLLM(cfg config.Config) provedor.Config {
 		"ATENDIMENTO_V2_MODELO": cfg.AtendimentoV2Modelo,
 		"LLM_MODO_JSON":         cfg.LLMModoJSON,
 		"LLM_REASONING_EFFORT":  cfg.LLMEsforcoRaciocinio,
+		"LLM_MODELO_RESERVA":    cfg.LLMModeloReserva,
 	}
 	if cfg.LLMTemperatura != nil {
 		env["LLM_TEMPERATURA"] = strconv.FormatFloat(*cfg.LLMTemperatura, 'f', -1, 64)
+	}
+	if cfg.LLMHedgeMS != nil {
+		env["LLM_HEDGE_MS"] = strconv.Itoa(*cfg.LLMHedgeMS)
+	}
+	if cfg.LLMSemRaciocinio != nil {
+		env["LLM_SEM_RACIOCINIO"] = strconv.FormatBool(*cfg.LLMSemRaciocinio)
 	}
 	return provedor.ConfigDoAmbiente(func(k string) string { return env[k] })
 }
@@ -106,6 +113,9 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 	store := conversa.NewStorePG(pool)
 	canal := evolution.Novo(evolution.Config{BaseURL: cfg.EvolutionBaseURL, APIKey: cfg.EvolutionAPIKey, Instancia: cfg.EvolutionInstance})
 	lg.Printf("atendimento v2: llm = %s", pc.Descricao())
+	if r := pc.DescricaoReserva(); r != "" {
+		lg.Printf("atendimento v2: llm reserva = %s", r)
+	}
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
 		lg.Printf("atendimento v2: OPENAI_API_KEY vazia; audios nao serao transcritos ([audio nao compreendido])")
 	}
@@ -130,6 +140,7 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 	reg := ferramentas.Padrao(cat, dom.Busca, dom.Cotacao, dom.Reservas, dom.Pagamentos, ferramentas.Config{SinalPorPagante: cfg.AtendimentoV2SinalPorPagante})
 
 	var juiz agente.Juiz
+	var roteador agente.Roteador
 	switch cfg.AtendimentoV2Juiz {
 	case "off":
 	case "jev":
@@ -137,7 +148,8 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 			lg.Printf("atendimento v2: ATENDIMENTO_V2_JUIZ=jev sem TYPESAFE_API_KEY; usando juiz llm")
 			juiz = agente.NovoJuizLLM(cliente, modelo)
 		} else {
-			juiz = agente.NovoJuizJev(cfg.TypesafeAPIKey, nil)
+			// O roteador Jev (1 requisicao por turno) substitui o juiz.
+			roteador = agente.NovoRoteadorJev(cfg.TypesafeAPIKey, nil)
 		}
 	default:
 		juiz = agente.NovoJuizLLM(cliente, modelo)
@@ -151,6 +163,8 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 		Catalogo:    cat,
 		Midia:       prep,
 		Juiz:        juiz,
+		Roteador:    roteador,
+		Cidades:     cat,
 		Notificador: agente.NovoNotificadorWebhook(cfg.AtendimentoV2AlertaWebhookURL, nil),
 		Log:         lg,
 	}, agente.Config{Modelo: modelo})

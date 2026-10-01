@@ -97,6 +97,7 @@ func (t *buscarViagens) Def() llm.DefFerramenta {
 		Nome: "buscar_viagens",
 		Descricao: "Busca viagens disponiveis (data, horario, preco, vagas). Use assim que o cliente disser a origem OU o destino, sem pedir data nem quantidade antes: " +
 			"mostre as opcoes e refine depois. Precisa de pelo menos origem ou destino (nome da cidade como o cliente disse). " +
+			"Para a VOLTA (ou outra viagem) busque de novo com origem e destino invertidos: isso nao apaga os trechos ja escolhidos. " +
 			"Sem datas busca de hoje ate 60 dias. Se pessoas for informado, so devolve viagens com vagas suficientes. " +
 			"Resultado vem numerado (opcao 1..n); depois o cliente escolhe e voce chama escolher_viagem. Nunca cite viagem, data ou preco que nao venham daqui.",
 		Parametros: defJSON(`{
@@ -240,19 +241,9 @@ func (t *buscarViagens) Executar(ctx context.Context, c *Contexto, raw json.RawM
 			lotadas = append(lotadas, map[string]any{"data": o.Data, "horario": o.Horario, "vagas": o.Vagas})
 		}
 	}
+	// Os trechos ja escolhidos (e.Trechos) nao dependem desta busca: buscar a
+	// volta nao pode apagar a ida. So escolher_viagem/remover_trecho mexem neles.
 	e.Opcoes = abertas
-	if e.Viagem != nil && e.ReservaID == "" {
-		mantem := false
-		for _, o := range abertas {
-			if mesmaViagem(o, *e.Viagem) {
-				mantem = true
-				break
-			}
-		}
-		if !mantem {
-			e.Viagem = nil
-		}
-	}
 
 	if len(abertas) > 0 {
 		views := make([]opcaoView, len(abertas))
@@ -309,11 +300,17 @@ type escolherViagem struct {
 func (t *escolherViagem) Def() llm.DefFerramenta {
 	return llm.DefFerramenta{
 		Nome: "escolher_viagem",
-		Descricao: "Registra a viagem que o cliente escolheu entre as opcoes numeradas devolvidas por buscar_viagens. " +
-			"Use quando o cliente disser qual opcao quer (numero, data ou horario). Revalida as vagas antes de gravar.",
+		Descricao: "ADICIONA um trecho (viagem) a compra a partir das opcoes numeradas devolvidas por buscar_viagens. " +
+			"Use quando o cliente disser qual opcao quer (numero, data ou horario). Ida e volta (ou varias viagens, ate 4) sao trechos da mesma compra: " +
+			"chame uma vez por trecho, mesmo que um trecho anterior ja tenha reserva ou PIX. A mesma viagem nao entra duas vezes. " +
+			"Para TROCAR um trecho que ainda nao tem reserva por outra viagem, informe substituir_trecho (numero do trecho, 1..n). " +
+			"Revalida as vagas antes de gravar.",
 		Parametros: defJSON(`{
   "type":"object",
-  "properties":{"opcao":{"type":"integer","minimum":1,"description":"Numero da opcao conforme buscar_viagens."}},
+  "properties":{
+    "opcao":{"type":"integer","minimum":1,"description":"Numero da opcao conforme buscar_viagens."},
+    "substituir_trecho":{"type":"integer","minimum":1,"description":"Opcional: numero do trecho (sem reserva) a trocar por esta opcao, em vez de adicionar."}
+  },
   "required":["opcao"],
   "additionalProperties":false
 }`),
@@ -335,14 +332,28 @@ func (t *escolherViagem) stopID(ctx context.Context, nome string, cands ...*conv
 
 func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.RawMessage) Saida {
 	var a struct {
-		Opcao inteiro `json:"opcao"`
+		Opcao            inteiro `json:"opcao"`
+		SubstituirTrecho inteiro `json:"substituir_trecho"`
 	}
 	if s := lerArgs(raw, &a); s != nil {
 		return *s
 	}
 	e := c.Estado
-	if e.ReservaID != "" {
-		return falha("reserva_ja_criada", "Ja existe reserva criada nesta conversa; para trocar de viagem transfira para um atendente.")
+	subst := -1 // indice do trecho a substituir
+	if a.SubstituirTrecho != 0 {
+		i := int(a.SubstituirTrecho) - 1
+		if i < 0 || i >= len(e.Trechos) {
+			return falhaDados("trecho_inexistente", map[string]any{
+				"trechos":  trechosView(*e),
+				"mensagem": "Esse trecho nao existe. Use o numero de um trecho de trechos.",
+			})
+		}
+		if e.Trechos[i].ReservaID != "" {
+			return falha("trecho_ja_reservado", "Esse trecho ja tem reserva criada; para trocar a viagem transfira para um atendente.")
+		}
+		subst = i
+	} else if len(e.Trechos) >= conversa.MaxTrechos {
+		return falha("limite_de_trechos", fmt.Sprintf("O limite e de %d trechos por conversa. Para mais viagens, transfira para um atendente.", conversa.MaxTrechos))
 	}
 	var op *conversa.Opcao
 	var validas []int
@@ -357,6 +368,14 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 			"opcoes_validas": validas,
 			"mensagem":       "Essa opcao nao existe. Use um numero de opcoes_validas ou rode buscar_viagens de novo.",
 		})
+	}
+	for i, tr := range e.Trechos {
+		if i != subst && mesmaViagem(tr.Viagem, *op) {
+			return falhaDados("trecho_duplicado", map[string]any{
+				"trecho":   i + 1,
+				"mensagem": "Essa viagem ja esta na compra. Se o cliente quer outra, mostre as opcoes; se e a volta, busque com origem e destino invertidos.",
+			})
+		}
 	}
 
 	origemID := t.stopID(ctx, op.Origem, e.Origem)
@@ -408,10 +427,90 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 	}
 	*op = *atual
 	escolhida := *atual
-	e.Viagem = &escolhida
+	n := subst + 1
+	if subst >= 0 {
+		e.Trechos[subst] = conversa.Trecho{Viagem: escolhida}
+		dados["substituiu"] = true
+	} else {
+		e.Trechos = append(e.Trechos, conversa.Trecho{Viagem: escolhida})
+		n = len(e.Trechos)
+	}
+	dados["trecho"] = n
 	dados["viagem"] = viewDe(escolhida)
+	dados["trechos"] = trechosView(*e)
 	dados["pendencias"] = pendenciasDados(*e)
 	return sucesso(dados)
+}
+
+// trechoView e o trecho como o modelo o ve (sem IDs internos de viagem).
+type trechoView struct {
+	Trecho  int     `json:"trecho"`
+	Rota    string  `json:"rota"`
+	Data    string  `json:"data"`
+	Horario string  `json:"horario"`
+	Preco   float64 `json:"preco"`
+	Reserva string  `json:"reserva,omitempty"` // "criada" quando ha reserva
+	PIX     string  `json:"pix,omitempty"`     // "gerado" quando ha PIX
+}
+
+func trechosView(e conversa.Estado) []trechoView {
+	out := make([]trechoView, len(e.Trechos))
+	for i, t := range e.Trechos {
+		v := trechoView{Trecho: i + 1, Rota: t.Rota(), Data: t.Viagem.Data, Horario: t.Viagem.Horario, Preco: t.Viagem.Preco}
+		if t.ReservaID != "" {
+			v.Reserva = "criada"
+		}
+		if t.PagamentoID != "" {
+			v.PIX = "gerado"
+		}
+		out[i] = v
+	}
+	return out
+}
+
+// ---- remover_trecho ----
+
+type removerTrecho struct{}
+
+func (t *removerTrecho) Def() llm.DefFerramenta {
+	return llm.DefFerramenta{
+		Nome: "remover_trecho",
+		Descricao: "Remove da compra um trecho (viagem) que o cliente desistiu e que ainda NAO tem reserva. " +
+			"Trecho ja reservado nao pode ser removido aqui: transfira para um atendente.",
+		Parametros: defJSON(`{
+  "type":"object",
+  "properties":{"trecho":{"type":"integer","minimum":1,"description":"Numero do trecho (1..n) conforme trechos do estado."}},
+  "required":["trecho"],
+  "additionalProperties":false
+}`),
+	}
+}
+
+func (t *removerTrecho) Executar(_ context.Context, c *Contexto, raw json.RawMessage) Saida {
+	var a struct {
+		Trecho inteiro `json:"trecho"`
+	}
+	if s := lerArgs(raw, &a); s != nil {
+		return *s
+	}
+	e := c.Estado
+	i := int(a.Trecho) - 1
+	if i < 0 || i >= len(e.Trechos) {
+		return falhaDados("trecho_inexistente", map[string]any{
+			"trechos":  trechosView(*e),
+			"mensagem": "Esse trecho nao existe. Use o numero de um trecho de trechos.",
+		})
+	}
+	if e.Trechos[i].ReservaID != "" {
+		return falha("trecho_ja_reservado", "Esse trecho ja tem reserva criada; para remover transfira para um atendente.")
+	}
+	removido := e.Trechos[i]
+	e.Trechos = append(e.Trechos[:i:i], e.Trechos[i+1:]...)
+	return sucesso(map[string]any{
+		"removido":   removido.Rota(),
+		"trechos":    trechosView(*e),
+		"pendencias": pendenciasDados(*e),
+	})
 }
 
 // cotar devolve o preco unitario real (pricing, FareMode AUTO), como bookings.Create.

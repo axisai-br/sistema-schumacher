@@ -25,9 +25,13 @@ var casosFS embed.FS
 // presentes no JSON.
 type Espera struct {
 	// Status: "BOT", "HUMANO" ou "BOT|HUMANO" (qualquer um dos dois serve).
-	Status                   string `json:"status"`
-	ReservaCriada            *bool  `json:"reserva_criada,omitempty"`
-	PixGerado                *bool  `json:"pix_gerado,omitempty"`
+	Status        string `json:"status"`
+	ReservaCriada *bool  `json:"reserva_criada,omitempty"`
+	PixGerado     *bool  `json:"pix_gerado,omitempty"`
+	// Reservas, Pix e Trechos: quantidades exatas (uma reserva e um PIX por trecho).
+	Reservas                 *int   `json:"reservas,omitempty"`
+	Pix                      *int   `json:"pix,omitempty"`
+	Trechos                  *int   `json:"trechos,omitempty"`
 	Destino                  string `json:"destino,omitempty"`
 	Origem                   string `json:"origem,omitempty"`
 	Pagantes                 *int   `json:"pagantes,omitempty"`
@@ -138,6 +142,7 @@ func (c Caso) Validar() error {
 type ConfigAmbiente struct {
 	ModeloNome string // nome do modelo do agente (vai no pedido ao llm.Modelo)
 	Juiz       agente.Juiz
+	Roteador   agente.Roteador  // opcional; substitui o Juiz
 	Agora      func() time.Time // padrao time.Now
 	// SinalPorPagante e o valor do sinal por pagante (padrao das ferramentas: 250).
 	SinalPorPagante float64
@@ -185,7 +190,7 @@ func NovoAmbiente(modelo llm.Modelo, cfg ConfigAmbiente) *Ambiente {
 	}
 	ag := agente.Novo(agente.Deps{
 		Store: store, Canal: canalFake, Modelo: modelo, Ferramentas: reg,
-		Catalogo: cat, Juiz: cfg.Juiz, Agora: agora,
+		Catalogo: cat, Juiz: cfg.Juiz, Roteador: cfg.Roteador, Cidades: cat, Agora: agora,
 	}, agente.Config{Modelo: nome})
 	return &Ambiente{
 		Fx: fx, Store: store, Canal: canalFake, Reservas: reservas, Pagamentos: pagamentos,
@@ -530,6 +535,15 @@ func Avaliar(c Caso, ex *Execucao) []string {
 	}
 	if e.PixGerado != nil && pix != *e.PixGerado {
 		f = append(f, fmt.Sprintf("pix gerado = %v, esperado %v", pix, *e.PixGerado))
+	}
+	if e.Reservas != nil && len(ex.Amb.Reservas.Reservas()) != *e.Reservas {
+		f = append(f, fmt.Sprintf("reservas = %d, esperado %d", len(ex.Amb.Reservas.Reservas()), *e.Reservas))
+	}
+	if e.Pix != nil && len(ex.Amb.Pagamentos.Pagamentos()) != *e.Pix {
+		f = append(f, fmt.Sprintf("pix = %d, esperado %d", len(ex.Amb.Pagamentos.Pagamentos()), *e.Pix))
+	}
+	if e.Trechos != nil && len(ex.Estado.Trechos) != *e.Trechos {
+		f = append(f, fmt.Sprintf("trechos = %d, esperado %d", len(ex.Estado.Trechos), *e.Trechos))
 	}
 	if e.Destino != "" && (ex.Estado.Destino == nil || TextoNorm(ex.Estado.Destino.Nome) != TextoNorm(e.Destino)) {
 		f = append(f, fmt.Sprintf("destino = %s, esperado %s", nomeParada(ex.Estado.Destino), e.Destino))

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"schumacher-tur/api/internal/atendimento/llm"
 	"schumacher-tur/api/internal/atendimento/llm/chatcompat"
@@ -105,5 +106,49 @@ func TestNvidiaEndToEndOffline(t *testing.T) {
 	r, err := m.Gerar(context.Background(), llm.Pedido{Mensagens: []llm.Mensagem{{Papel: llm.PapelUsuario, Texto: "x"}}})
 	if err != nil || r.Texto != "oi" || auth != "Bearer segredo" || path != "/chat/completions" || !strings.Contains(corpo, `"reasoning_effort":"low"`) {
 		t.Errorf("err=%v r=%+v auth=%q path=%q corpo=%s", err, r, auth, path, corpo)
+	}
+}
+
+func TestReservaEHedgeDoAmbiente(t *testing.T) {
+	c := ConfigDoAmbiente(mapa(map[string]string{"NVIDIA_API_KEY": "k"}))
+	if c.ModeloReserva != "nvidia/nemotron-3.5-lightning-30b-a3b" || c.HedgeApos != 6*time.Second || !c.SemRaciocinioReserva || c.SemRaciocinio {
+		t.Errorf("padroes: %+v", c)
+	}
+	if !strings.Contains(c.DescricaoReserva(), "nemotron-3.5-lightning-30b-a3b") || !strings.Contains(c.DescricaoReserva(), "6s") {
+		t.Errorf("descricao reserva: %q", c.DescricaoReserva())
+	}
+	c = ConfigDoAmbiente(mapa(map[string]string{"LLM_MODELO_RESERVA": "x/y", "LLM_HEDGE_MS": "1500", "LLM_SEM_RACIOCINIO": "false"}))
+	if c.ModeloReserva != "x/y" || c.HedgeApos != 1500*time.Millisecond || c.SemRaciocinioReserva || c.SemRaciocinio {
+		t.Errorf("custom: %+v", c)
+	}
+	c = ConfigDoAmbiente(mapa(map[string]string{"LLM_SEM_RACIOCINIO": "true"}))
+	if !c.SemRaciocinio || !c.SemRaciocinioReserva {
+		t.Errorf("sem raciocinio explicito vale para os dois: %+v", c)
+	}
+	if c = ConfigDoAmbiente(mapa(map[string]string{"LLM_MODELO_RESERVA": "off"})); c.ModeloReserva != "" || c.DescricaoReserva() != "" {
+		t.Errorf("off: %+v", c)
+	}
+	if c = ConfigDoAmbiente(mapa(map[string]string{"LLM_HEDGE_MS": "0"})); c.HedgeApos != 0 || c.DescricaoReserva() != "" {
+		t.Errorf("hedge 0 desliga: %+v", c)
+	}
+	if c = ConfigDoAmbiente(mapa(map[string]string{"LLM_PROVEDOR": "openai"})); c.ModeloReserva != "" {
+		t.Errorf("openai nao tem reserva: %+v", c)
+	}
+}
+
+func TestNovoComReservaMontaHedge(t *testing.T) {
+	m, err := Novo(Config{Provedor: "nvidia", APIKey: "k", ModeloReserva: "r", HedgeApos: time.Second, SemRaciocinioReserva: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.(*chatcompat.Cliente); ok {
+		t.Errorf("deveria ser o modelo com hedge: %T", m)
+	}
+	m, err = Novo(Config{Provedor: "nvidia", APIKey: "k", ModeloReserva: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.(*chatcompat.Cliente); !ok {
+		t.Errorf("sem hedge deveria devolver so o principal: %T", m)
 	}
 }

@@ -15,7 +15,7 @@ import {
   useResponderConversaV2,
 } from "../../hooks/useAtendimentoV2";
 import { APIRequestError } from "../../services/api";
-import type { Conversa, ConversaStatus } from "../../services/atendimentoV2";
+import type { Conversa, ConversaStatus, TrechoV2 } from "../../services/atendimentoV2";
 import ReplyComposer from "./ReplyComposer";
 import useMessageAutoScroll from "./useMessageAutoScroll";
 
@@ -111,6 +111,7 @@ export default function AtendimentosV2() {
 
   const canReply = active?.status === "HUMANO";
   const resumo = detail?.resumo ?? active?.resumo ?? "";
+  const trechos: TrechoV2[] = detail?.estado?.trechos ?? [];
 
   const run = (mutate: () => Promise<unknown>, ok: string, fail: string) => {
     setReplyError(null);
@@ -339,6 +340,19 @@ export default function AtendimentosV2() {
                     <div className="atendimento-thread-hint" aria-label="Resumo da reserva">
                       <strong>Resumo da reserva</strong>
                       <pre style={{ margin: "4px 0 0", whiteSpace: "pre-wrap", font: "inherit" }}>{resumo}</pre>
+                    </div>
+                  ) : null}
+                  {trechos.length > 0 ? (
+                    <div className="atendimento-thread-hint" aria-label="Trechos da compra">
+                      <strong>Trechos ({trechos.length})</strong>
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                        {trechos.map((t, i) => (
+                          <li key={`${t.viagem.trip_id ?? i}-${i}`}>
+                            {t.viagem.origem} para {t.viagem.destino}, {t.viagem.data.split("-").reverse().join("/")} {t.viagem.horario} -{" "}
+                            reserva {t.reserva_id ? "criada" : "pendente"}, PIX {t.pagamento_id ? "gerado" : "pendente"}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
                   {detailQuery.isLoading ? <LoadingState label="Carregando mensagens..." /> : null}

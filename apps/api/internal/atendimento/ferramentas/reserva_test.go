@@ -129,7 +129,7 @@ func TestRegistrarPassageirosErros(t *testing.T) {
 
 func TestRegistrarPassageirosAcimaDasVagas(t *testing.T) {
 	a := novoAmbiente(t)
-	a.ctx.Estado.Viagem = &conversa.Opcao{TripID: "t3", Vagas: 1}
+	a.ctx.Estado.Trechos = []conversa.Trecho{{Viagem: conversa.Opcao{TripID: "t3", Vagas: 1}}}
 	s, m := a.exec(t, "registrar_passageiros", `{"passageiros":[{"nome":"Maria Silva","documento":"`+cpfA+`"},{"nome":"Ana Lima","documento":"`+cpfB+`"}]}`)
 	if s.OK || s.Motivo != "passageiros_acima_das_vagas" {
 		t.Fatalf("%+v", m)
@@ -202,16 +202,16 @@ func TestCriarReservaSinalEIdempotente(t *testing.T) {
 		t.Fatalf("passageiros: %+v", in.Passengers)
 	}
 	e := a.ctx.Estado
-	if e.ReservaID != "bk-1" || e.Pagamento != "sinal" {
+	if e.Trechos[0].ReservaID != "bk-1" || e.Pagamento != "sinal" {
 		t.Fatalf("estado: %+v", e)
 	}
-	d := dadosDe(m)
-	if d["codigo_reserva"] != "SCH0001" || d["valor_a_pagar_agora"] != float64(500) || d["proximo_passo"] != "gerar_pix" {
+	d := item(m, "trechos", 0)
+	if d["codigo_reserva"] != "SCH0001" || d["valor_a_pagar_agora"] != float64(500) || dadosDe(m)["proximo_passo"] != "gerar_pix" || dadosDe(m)["total_geral"] != float64(2200) {
 		t.Fatalf("dados: %+v", d)
 	}
 	// segunda chamada: devolve a existente
 	s, m = a.exec(t, "criar_reserva", `{"pagamento":"sinal"}`)
-	if !s.OK || len(a.r.criadas) != 1 || dadosDe(m)["ja_existente"] != true || dadosDe(m)["codigo_reserva"] != "SCH0001" {
+	if !s.OK || len(a.r.criadas) != 1 || item(m, "trechos", 0)["ja_existente"] != true || item(m, "trechos", 0)["codigo_reserva"] != "SCH0001" {
 		t.Fatalf("idempotencia: criadas=%d %+v", len(a.r.criadas), m)
 	}
 }
@@ -257,7 +257,7 @@ func TestCriarReservaMapeiaErros(t *testing.T) {
 		if s.OK || s.Motivo != quer {
 			t.Errorf("%v: got %+v want %s", err, m, quer)
 		}
-		if a.ctx.Estado.ReservaID != "" {
+		if a.ctx.Estado.AlgumReservado() {
 			t.Errorf("%v: nao deveria gravar ReservaID", err)
 		}
 		if strings.Contains(fmt.Sprint(m), "boom") {
@@ -273,8 +273,22 @@ func TestReservaBloqueiaAlteracoesDepoisDeCriada(t *testing.T) {
 	if s, _ := a.exec(t, "registrar_passageiros", `{"passageiros":[{"nome":"Maria Silva","documento":"`+cpfA+`"}]}`); s.Motivo != "reserva_ja_criada" {
 		t.Fatalf("%+v", s)
 	}
-	if s, _ := a.exec(t, "escolher_viagem", `{"opcao":1}`); s.Motivo != "reserva_ja_criada" {
+	// reenviar a mesma lista e aceito e nao muda nada
+	if s, m := a.exec(t, "registrar_passageiros", paxTres); !s.OK {
+		t.Fatalf("mesma lista deveria ser aceita: %+v", m)
+	}
+	// a mesma viagem nao entra duas vezes; trecho reservado nao troca nem sai
+	if s, _ := a.exec(t, "escolher_viagem", `{"opcao":1}`); s.Motivo != "trecho_duplicado" {
 		t.Fatalf("%+v", s)
+	}
+	if s, _ := a.exec(t, "escolher_viagem", `{"opcao":2,"substituir_trecho":1}`); s.Motivo != "trecho_ja_reservado" {
+		t.Fatalf("%+v", s)
+	}
+	if s, _ := a.exec(t, "remover_trecho", `{"trecho":1}`); s.Motivo != "trecho_ja_reservado" {
+		t.Fatalf("%+v", s)
+	}
+	if len(a.ctx.Estado.Trechos) != 1 {
+		t.Fatalf("trechos: %+v", a.ctx.Estado.Trechos)
 	}
 }
 
@@ -291,7 +305,7 @@ func TestGerarPixNaoDuplica(t *testing.T) {
 	if !s.OK {
 		t.Fatalf("%+v", m)
 	}
-	d := dadosDe(m)
+	d := item(m, "pix", 0)
 	if d["pix_copia_e_cola"] != "000201PIXpay-1" || d["valor"] != float64(500) || d["expira_em"] != "2026-09-30T16:00:00Z" {
 		t.Fatalf("dados: %+v", d)
 	}
@@ -303,23 +317,23 @@ func TestGerarPixNaoDuplica(t *testing.T) {
 		in.Customer.Name != "Maria Silva" || in.Customer.Document != "52998224725" || in.Customer.Phone != "5549999887766" {
 		t.Fatalf("pagamento: %+v %+v", in, in.Customer)
 	}
-	if a.ctx.Estado.PagamentoID != "pay-1" {
+	if a.ctx.Estado.Trechos[0].PagamentoID != "pay-1" {
 		t.Fatalf("estado: %+v", a.ctx.Estado)
 	}
 	// chamada repetida reaproveita
 	s, m = a.exec(t, "gerar_pix", `{}`)
-	if !s.OK || len(a.p.criados) != 1 || dadosDe(m)["pix_copia_e_cola"] != "000201PIXpay-1" || dadosDe(m)["reaproveitado"] != true {
+	if !s.OK || len(a.p.criados) != 1 || item(m, "pix", 0)["pix_copia_e_cola"] != "000201PIXpay-1" || item(m, "pix", 0)["reaproveitado"] != true {
 		t.Fatalf("reuso: criados=%d %+v", len(a.p.criados), m)
 	}
 	// pago: nao gera outro
 	a.p.status["pay-1"] = "PAID"
 	s, m = a.exec(t, "gerar_pix", `{}`)
-	if !s.OK || len(a.p.criados) != 1 || dadosDe(m)["status"] != "pago" {
+	if !s.OK || len(a.p.criados) != 1 || item(m, "pix", 0)["status"] != "pago" {
 		t.Fatalf("pago: %+v", m)
 	}
 	// cancelado: gera novo
 	a.p.status["pay-1"] = "FAILED"
-	if s, m = a.exec(t, "gerar_pix", `{}`); !s.OK || len(a.p.criados) != 2 || a.ctx.Estado.PagamentoID != "pay-2" {
+	if s, m = a.exec(t, "gerar_pix", `{}`); !s.OK || len(a.p.criados) != 2 || a.ctx.Estado.Trechos[0].PagamentoID != "pay-2" {
 		t.Fatalf("falho: %+v", m)
 	}
 }
@@ -329,7 +343,7 @@ func TestGerarPixIntegralValorTotal(t *testing.T) {
 	prepararReserva(t, a)
 	a.exec(t, "criar_reserva", `{"pagamento":"integral"}`)
 	s, m := a.exec(t, "gerar_pix", `{}`)
-	if !s.OK || dadosDe(m)["valor"] != float64(2200) {
+	if !s.OK || item(m, "pix", 0)["valor"] != float64(2200) {
 		t.Fatalf("%+v", m)
 	}
 }
@@ -365,7 +379,7 @@ func TestGerarPixFalhas(t *testing.T) {
 	if s, _ := a.exec(t, "gerar_pix", `{}`); s.OK || s.Motivo != "pix_indisponivel" {
 		t.Fatalf("%+v", s)
 	}
-	if a.ctx.Estado.PagamentoID == "" {
+	if a.ctx.Estado.Trechos[0].PagamentoID == "" {
 		t.Fatal("cobranca criada deve ser gravada para nao duplicar")
 	}
 	// reserva cancelada
@@ -411,7 +425,7 @@ func TestConsultarReserva(t *testing.T) {
 	if !s.OK {
 		t.Fatalf("%+v", m)
 	}
-	d := dadosDe(m)
+	d := item(m, "reservas", 0)
 	if d["codigo_reserva"] != "SCH0001" || d["status_legivel"] != "aguardando pagamento" || len(d["passageiros"].([]any)) != 3 {
 		t.Fatalf("dados: %+v", d)
 	}
@@ -420,7 +434,7 @@ func TestConsultarReserva(t *testing.T) {
 	}
 	a.p.status["pay-1"] = "PAID"
 	_, m = a.exec(t, "consultar_reserva", `{}`)
-	if dadosDe(m)["pagamento"].(map[string]any)["status_legivel"] != "pago" {
+	if item(m, "reservas", 0)["pagamento"].(map[string]any)["status_legivel"] != "pago" {
 		t.Fatalf("%+v", m)
 	}
 }
@@ -486,8 +500,8 @@ func TestEscolherViagemCotaPrecoDivergente(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 	d := dadosDe(m)
-	if d["preco_atualizado"] != float64(1050) || d["preco_anterior"] != float64(1100) || a.ctx.Estado.Viagem.Preco != 1050 {
-		t.Fatalf("dados: %+v preco=%v", d, a.ctx.Estado.Viagem.Preco)
+	if d["preco_atualizado"] != float64(1050) || d["preco_anterior"] != float64(1100) || a.ctx.Estado.Trechos[0].Viagem.Preco != 1050 {
+		t.Fatalf("dados: %+v preco=%v", d, a.ctx.Estado.Trechos[0].Viagem.Preco)
 	}
 	if d["viagem"].(map[string]any)["preco"] != float64(1050) {
 		t.Fatalf("viagem: %+v", d["viagem"])
@@ -506,8 +520,8 @@ func TestCriarReservaUsaPrecoCotado(t *testing.T) {
 	if in.TotalAmount != 2000 || in.DepositAmount != 500 || in.RemainderAmount != 1500 {
 		t.Fatalf("valores: %+v", in)
 	}
-	d := dadosDe(m)
-	if d["preco_atualizado"] != float64(1000) || d["preco_anterior"] != float64(1100) || a.ctx.Estado.Viagem.Preco != 1000 {
+	d := item(m, "trechos", 0)
+	if d["preco_atualizado"] != float64(1000) || d["preco_anterior"] != float64(1100) || a.ctx.Estado.Trechos[0].Viagem.Preco != 1000 {
 		t.Fatalf("dados: %+v", d)
 	}
 }
@@ -519,6 +533,7 @@ func TestErroDeCotacao(t *testing.T) {
 	if s, _ := a.exec(t, "criar_reserva", `{"pagamento":"sinal"}`); s.OK || s.Motivo != "erro_cotacao" || len(a.r.criadas) != 0 {
 		t.Fatalf("%+v", s)
 	}
+	a.ctx.Estado.Trechos = nil
 	if s, _ := a.exec(t, "escolher_viagem", `{"opcao":1}`); s.Motivo != "erro_cotacao" {
 		t.Fatalf("%+v", s)
 	}

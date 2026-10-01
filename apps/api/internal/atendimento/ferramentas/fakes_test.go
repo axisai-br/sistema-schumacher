@@ -108,16 +108,20 @@ func buscadorDe(base ...availability.SearchResult) *buscadorFake {
 // ---- reservas ----
 
 type reservasFake struct {
-	criadas   []bookings.CreateBookingInput
-	porChave  map[string]bookings.BookingDetails
-	errCreate error
-	total     float64
-	itens     []bookings.BookingListItem
-	status    string
+	criadas    []bookings.CreateBookingInput
+	porChave   map[string]bookings.BookingDetails
+	errCreate  error
+	errPorTrip map[string]error // falha so para essa viagem
+	total      float64
+	itens      []bookings.BookingListItem
+	status     string
 }
 
 func (r *reservasFake) Create(_ context.Context, in bookings.CreateBookingInput) (bookings.BookingDetails, error) {
 	r.criadas = append(r.criadas, in)
+	if err := r.errPorTrip[in.TripID]; err != nil {
+		return bookings.BookingDetails{}, err
+	}
 	if r.errCreate != nil {
 		return bookings.BookingDetails{}, r.errCreate
 	}
@@ -295,4 +299,14 @@ func (c *cotadorFake) Quote(_ context.Context, in pricing.QuoteInput) (pricing.Q
 		}
 	}
 	return pricing.QuoteResult{}, errors.New("viagem desconhecida")
+}
+
+// item devolve o i-esimo item da lista dados[chave] (trechos, pix, reservas).
+func item(m map[string]any, chave string, i int) map[string]any {
+	l, _ := dadosDe(m)[chave].([]any)
+	if i >= len(l) {
+		return nil
+	}
+	r, _ := l[i].(map[string]any)
+	return r
 }

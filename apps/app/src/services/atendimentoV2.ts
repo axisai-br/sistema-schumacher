@@ -35,9 +35,35 @@ export type ConversaListItem = Conversa & {
   ultima_mensagem?: Mensagem;
 };
 
+export type OpcaoViagemV2 = {
+  numero?: number;
+  trip_id?: string;
+  origem: string;
+  destino: string;
+  data: string;
+  horario: string;
+  preco: number;
+  vagas?: number;
+};
+
+/** Um trecho da compra (ida, volta...): uma reserva e um PIX por trecho. */
+export type TrechoV2 = {
+  viagem: OpcaoViagemV2;
+  reserva_id?: string;
+  pagamento_id?: string;
+};
+
+export type EstadoV2 = {
+  trechos?: TrechoV2[];
+  passageiros?: Array<{ nome: string; documento?: string; tipo_documento?: string; crianca_ate_5?: boolean }>;
+  pagamento?: "integral" | "sinal" | "";
+  motivo_humano?: string;
+  [chave: string]: unknown;
+};
+
 export type ConversaDetalhe = {
   conversa: Conversa;
-  estado: Record<string, unknown>;
+  estado: EstadoV2;
   mensagens: Mensagem[];
   turnos: Array<Record<string, unknown>>;
   resumo: string;

@@ -54,6 +54,8 @@ type Deps struct {
 	Catalogo    FonteCatalogo
 	Midia       PreparadorMidia // opcional
 	Juiz        Juiz            // opcional
+	Roteador    Roteador        // opcional; quando presente substitui o Juiz
+	Cidades     FonteCidades    // opcional; cidades atendidas para o Roteador
 	Notificador Notificador     // opcional
 	Agora       func() time.Time
 	Log         *log.Logger
@@ -65,6 +67,7 @@ type Config struct {
 	HistoricoN      int     // 20
 	LimiarHumano    float64 // 0.7
 	LimiarIrritacao float64 // 0.75
+	LimiarRota      float64 // 0.8: confianca minima do Roteador para agir sozinho
 }
 
 type Agente struct {
@@ -85,6 +88,9 @@ func Novo(d Deps, cfg Config) *Agente {
 	}
 	if cfg.LimiarIrritacao <= 0 {
 		cfg.LimiarIrritacao = 0.75
+	}
+	if cfg.LimiarRota <= 0 {
+		cfg.LimiarRota = 0.8
 	}
 	if d.Agora == nil {
 		d.Agora = time.Now
@@ -213,7 +219,17 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 		return fmt.Errorf("historico: %w", err)
 	}
 
-	if a.d.Juiz != nil {
+	var pre []llm.Mensagem // chamada de ferramenta executada antes do LLM (pre-busca)
+	if a.d.Roteador != nil {
+		res := a.rotear(ctx, tc, hist)
+		if res.transf != nil {
+			return res.transf
+		}
+		if res.resposta != "" {
+			return a.concluirComResposta(ctx, tc, res.resposta)
+		}
+		pre = res.pre
+	} else if a.d.Juiz != nil {
 		ultimas := hist
 		if len(ultimas) > 6 {
 			ultimas = ultimas[len(ultimas)-6:]
@@ -245,7 +261,7 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	}
 	agora := a.d.Agora().In(a.loc)
 	instr := a.instrucoes(tc, catalogo, agora)
-	msgs := mapearHistorico(hist)
+	msgs := append(mapearHistorico(hist), pre...)
 
 	texto, msgs, err := a.gerar(ctx, tc, instr, msgs)
 	if err != nil {
@@ -290,6 +306,14 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 		return &transf{motivo: "bot repetindo a mesma resposta"}
 	}
 
+	return a.concluirComResposta(ctx, tc, texto)
+}
+
+// concluirComResposta e o fim comum do turno com resposta pronta (LLM ou template):
+// descarta se chegou mensagem nova, salva o estado, envia, registra o turno e
+// conclui a pendencia.
+func (a *Agente) concluirComResposta(ctx context.Context, tc *turno, texto string) error {
+	c := tc.c
 	// Mensagem nova durante o turno: descarta e mantem a pendencia.
 	chegou, err := a.d.Store.ChegouEntradaDepois(ctx, c.ID, *c.UltimaEntradaEm)
 	if err != nil {

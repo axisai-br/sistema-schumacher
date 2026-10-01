@@ -69,7 +69,7 @@ func criarJuiz(cfg config, m llm.Modelo) (agente.Juiz, string) {
 		return nil, ""
 	case "jev":
 		if cfg.TypesafeKey != "" {
-			return agente.NovoJuizJev(cfg.TypesafeKey, nil), ""
+			return nil, "" // o roteador Jev (criarRoteador) substitui o juiz
 		}
 		return agente.NovoJuizLLM(m, cfg.Modelo), "ATENDIMENTO_V2_JUIZ=jev sem TYPESAFE_API_KEY; usando juiz llm"
 	default:
@@ -77,10 +77,18 @@ func criarJuiz(cfg config, m llm.Modelo) (agente.Juiz, string) {
 	}
 }
 
+// criarRoteador monta o roteador Jev quando ATENDIMENTO_V2_JUIZ=jev e ha TYPESAFE_API_KEY.
+func criarRoteador(cfg config) agente.Roteador {
+	if cfg.Juiz == "jev" && cfg.TypesafeKey != "" {
+		return agente.NovoRoteadorJev(cfg.TypesafeKey, nil)
+	}
+	return nil
+}
+
 func (s *sessao) novoAmbiente() {
 	juiz, _ := criarJuiz(s.cfg, s.modelo)
 	s.amb = evals.NovoAmbiente(s.modelo, evals.ConfigAmbiente{
-		ModeloNome: s.cfg.Modelo, Juiz: juiz, Agora: s.agora, SinalPorPagante: s.cfg.Sinal,
+		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal,
 	})
 	s.amb.NomeCliente = s.nome
 	s.nTurnos = 0
@@ -92,7 +100,10 @@ func (s *sessao) printf(f string, a ...any) { fmt.Fprintf(s.out, f, a...) }
 func (s *sessao) cabecalho() {
 	hoje := s.agora().In(fusoSP())
 	s.printf("Simulador local do atendimento v2 (agente real + LLM real; dados de teste em memória)\n")
-	s.printf("  LLM: %s · juiz: %s · hoje (fixtures): %s\n", s.cfg.Descricao, s.cfg.Juiz, dataExtenso(hoje))
+	s.printf("  LLM: %s · %s · hoje (fixtures): %s\n", s.cfg.Descricao, s.cfg.rotuloJuiz(), dataExtenso(hoje))
+	if r := s.cfg.Prov.DescricaoReserva(); r != "" {
+		s.printf("  LLM reserva: %s\n", r)
+	}
 	s.printf("  Nada é gravado no banco nem enviado ao WhatsApp. /ajuda lista os comandos; /sair encerra.\n\n")
 }
 
@@ -426,4 +437,34 @@ func relogioCrescente(base func() time.Time) func() time.Time {
 		ultimo = t
 		return t
 	}
+}
+
+// rotuloJuiz descreve a checagem de humano/irritacao e roteamento ativos.
+func (c config) rotuloJuiz() string {
+	if c.Juiz == "jev" && c.TypesafeKey != "" {
+		return "roteador: jev"
+	}
+	return "juiz: " + c.Juiz
+}
+
+// resumoRoteador resume o passo do roteador: intencao, confianca e decisao.
+func resumoRoteador(p conversa.Passo) string {
+	m, ok := p.Saida.(map[string]any)
+	if !ok {
+		return "(roteador sem resultado)"
+	}
+	return fmt.Sprintf("intenção=%v (confiança %.2f) · origem=%v · destino=%v · decisão=%v",
+		m["intencao"], num(m["confianca"]), m["origem"], m["destino"], m["decisao"])
+}
+
+func num(v any) float64 {
+	f, _ := v.(float64)
+	return f
+}
+
+func valorOuNenhum(s string) string {
+	if s == "" {
+		return "(nenhum)"
+	}
+	return s
 }

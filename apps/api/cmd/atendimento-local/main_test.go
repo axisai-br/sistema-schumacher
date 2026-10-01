@@ -97,7 +97,7 @@ func TestParseRoteiro(t *testing.T) {
 
 func TestRoteirosEmbutidosParseiam(t *testing.T) {
 	nomes := nomesRoteiros()
-	for _, n := range []string{"loop_passageiros", "sao_paulo", "videira_3_pessoas", "doces"} {
+	for _, n := range []string{"loop_passageiros", "sao_paulo", "videira_3_pessoas", "ida_e_volta", "doces"} {
 		found := false
 		for _, x := range nomes {
 			found = found || x == n

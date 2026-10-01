@@ -398,7 +398,7 @@ func TestEntradaDeClienteReabreEncerrada(t *testing.T) {
 	s, r := novo(t)
 	ctx := context.Background()
 	c, _, _, _ := s.RegistrarEntrada(ctx, entradaCliente(r, "P1", "oi"))
-	v, _ := s.SalvarEstado(ctx, c.ID, Estado{Falhas: 2, ReservaID: "r1"}, c.Versao)
+	v, _ := s.SalvarEstado(ctx, c.ID, Estado{Falhas: 2, Trechos: []Trecho{{ReservaID: "r1"}}}, c.Versao)
 	if _, err := s.MudarStatus(ctx, c.ID, StatusEncerrada, "u1", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestEntradaDeClienteReabreEncerrada(t *testing.T) {
 	if c2.Status != StatusBot || c2.ResponsavelID != "" || c2.HumanoAte != nil {
 		t.Fatalf("conversa = %+v", c2)
 	}
-	if c2.Estado.ReservaID != "" || c2.Estado.Falhas != 0 || c2.Versao != v+1 {
+	if len(c2.Estado.Trechos) != 0 || c2.Estado.Falhas != 0 || c2.Versao != v+1 {
 		t.Fatalf("estado/versao = %+v v=%d", c2.Estado, c2.Versao)
 	}
 	if c2.PendenteDesde == nil || !c2.UltimaEntradaEm.Equal(r.Agora()) {

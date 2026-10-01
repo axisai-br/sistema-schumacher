@@ -28,12 +28,22 @@ type Config struct {
 	BaseURL           string // padrao https://integrate.api.nvidia.com/v1
 	Modelo            string
 	ModoJSON          string        // "nvext" (padrao) | "response_format" | "prompt"
-	Timeout           time.Duration // padrao 60s
+	Timeout           time.Duration // timeout POR TENTATIVA; padrao 25s
 	HTTP              *http.Client
 	Temperatura       *float64 // padrao 0.2
 	EsforcoRaciocinio string   // "reasoning_effort" (low|medium|high|max); vazio nao envia
 	Seed              *int     // opcional
+	// SemRaciocinio desliga o raciocinio do modelo enviando
+	// chat_template_kwargs {"enable_thinking":false,"thinking":false} (e nao envia
+	// reasoning_effort). Respostas bem mais rapidas em modelos com thinking.
+	SemRaciocinio bool
+	// ExtraCorpo e mesclado no corpo da requisicao (ex.: "chat_template_kwargs").
+	// Tem prioridade sobre os campos gerados, exceto model e messages.
+	ExtraCorpo map[string]any
 }
+
+// TimeoutPadrao e o timeout por tentativa quando Config.Timeout nao e informado.
+const TimeoutPadrao = 25 * time.Second
 
 type Cliente struct {
 	apiKey  string
@@ -43,6 +53,8 @@ type Cliente struct {
 	temp    float64
 	esforco string
 	seed    *int
+	semRac  bool
+	extra   map[string]any
 	http    *http.Client
 	backoff []time.Duration
 }
@@ -58,7 +70,7 @@ func Novo(cfg Config) *Cliente {
 	if hc == nil {
 		t := cfg.Timeout
 		if t <= 0 {
-			t = 60 * time.Second
+			t = TimeoutPadrao
 		}
 		hc = &http.Client{Timeout: t}
 	}
@@ -80,6 +92,8 @@ func Novo(cfg Config) *Cliente {
 		temp:    temp,
 		esforco: strings.ToLower(strings.TrimSpace(cfg.EsforcoRaciocinio)),
 		seed:    cfg.Seed,
+		semRac:  cfg.SemRaciocinio,
+		extra:   cfg.ExtraCorpo,
 		http:    hc,
 		backoff: []time.Duration{1 * time.Second, 3 * time.Second},
 	}
@@ -151,7 +165,7 @@ func (c *Cliente) montarPayload(p llm.Pedido) map[string]any {
 	maxTok := p.MaxTokens
 	if maxTok <= 0 {
 		maxTok = 1024
-		if c.esforco != "" {
+		if c.esforco != "" && !c.semRac {
 			maxTok = 4096 // modelos de raciocinio gastam tokens antes da resposta
 		}
 	}
@@ -162,8 +176,11 @@ func (c *Cliente) montarPayload(p llm.Pedido) map[string]any {
 		"temperature": c.temp,
 		"stream":      false,
 	}
-	if c.esforco != "" {
+	if c.esforco != "" && !c.semRac {
 		payload["reasoning_effort"] = c.esforco
+	}
+	if c.semRac {
+		payload["chat_template_kwargs"] = map[string]any{"enable_thinking": false, "thinking": false}
 	}
 	if c.seed != nil {
 		payload["seed"] = *c.seed
@@ -192,6 +209,12 @@ func (c *Cliente) montarPayload(p llm.Pedido) map[string]any {
 				"json_schema": map[string]any{"name": "saida", "schema": p.SaidaJSON},
 			}
 		}
+	}
+	for k, v := range c.extra {
+		if k == "model" || k == "messages" {
+			continue
+		}
+		payload[k] = v
 	}
 	return payload
 }
@@ -229,6 +252,10 @@ func (c *Cliente) Gerar(ctx context.Context, p llm.Pedido) (llm.Resposta, error)
 	var ultimo error
 	for tentativa := 0; tentativa <= len(c.backoff); tentativa++ {
 		if tentativa > 0 {
+			// Sem tempo no contexto do turno para esperar e refazer: devolve o ultimo erro.
+			if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= c.backoff[tentativa-1] {
+				return llm.Resposta{}, ultimo
+			}
 			select {
 			case <-ctx.Done():
 				return llm.Resposta{}, ctx.Err()

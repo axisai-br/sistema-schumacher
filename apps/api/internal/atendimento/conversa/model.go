@@ -2,6 +2,7 @@
 package conversa
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -90,25 +91,83 @@ type Passageiro struct {
 	CriancaAte5   bool   `json:"crianca_ate_5"`
 }
 
+// MaxTrechos e o limite de trechos (viagens) por conversa.
+const MaxTrechos = 4
+
+// Trecho e uma viagem escolhida na compra, com a reserva e o PIX dela. Ida e
+// volta (ou varias viagens) sao trechos da mesma conversa: uma reserva e um PIX
+// por trecho, porque bookings e payments trabalham com uma viagem por reserva.
+type Trecho struct {
+	Viagem      Opcao  `json:"viagem"`
+	ReservaID   string `json:"reserva_id,omitempty"`
+	PagamentoID string `json:"pagamento_id,omitempty"`
+}
+
+// Rota devolve "Origem para Destino" do trecho.
+func (t Trecho) Rota() string { return t.Viagem.Origem + " para " + t.Viagem.Destino }
+
 type Estado struct {
 	Origem            *Parada      `json:"origem,omitempty"`
 	Destino           *Parada      `json:"destino,omitempty"`
 	Opcoes            []Opcao      `json:"opcoes,omitempty"`
-	Viagem            *Opcao       `json:"viagem,omitempty"`
+	Trechos           []Trecho     `json:"trechos,omitempty"`
 	PessoasInformadas int          `json:"pessoas_informadas,omitempty"` // quantidade dita pelo cliente antes dos nomes
-	Passageiros       []Passageiro `json:"passageiros,omitempty"`
-	Pagamento         string       `json:"pagamento,omitempty"` // "integral" | "sinal"
-	ReservaID         string       `json:"reserva_id,omitempty"`
-	PagamentoID       string       `json:"pagamento_id,omitempty"`
+	Passageiros       []Passageiro `json:"passageiros,omitempty"`        // os mesmos para todos os trechos
+	Pagamento         string       `json:"pagamento,omitempty"`          // "integral" | "sinal"; vale para todos os trechos
 	Falhas            int          `json:"falhas"`
 	MotivoHumano      string       `json:"motivo_humano,omitempty"`
 }
 
-// Pendencias lista, em ordem, o que falta para fechar a reserva. Vazio quando
-// tudo esta feito. Nao ha campo de fase: e sempre calculado do estado.
+// UnmarshalJSON le tambem o formato antigo (uma unica viagem em "viagem",
+// "reserva_id" e "pagamento_id" na raiz) e o converte para um Trecho.
+func (e *Estado) UnmarshalJSON(b []byte) error {
+	type alias Estado
+	aux := struct {
+		*alias
+		Viagem      *Opcao `json:"viagem"`
+		ReservaID   string `json:"reserva_id"`
+		PagamentoID string `json:"pagamento_id"`
+	}{alias: (*alias)(e)}
+	*e = Estado{}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(e.Trechos) == 0 && (aux.Viagem != nil || aux.ReservaID != "" || aux.PagamentoID != "") {
+		t := Trecho{ReservaID: aux.ReservaID, PagamentoID: aux.PagamentoID}
+		if aux.Viagem != nil {
+			t.Viagem = *aux.Viagem
+		}
+		e.Trechos = []Trecho{t}
+	}
+	return nil
+}
+
+// AlgumReservado diz se algum trecho ja tem reserva criada.
+func (e Estado) AlgumReservado() bool {
+	for _, t := range e.Trechos {
+		if t.ReservaID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// TodosReservados diz se ha trechos e todos ja tem reserva criada.
+func (e Estado) TodosReservados() bool {
+	for _, t := range e.Trechos {
+		if t.ReservaID == "" {
+			return false
+		}
+	}
+	return len(e.Trechos) > 0
+}
+
+// Pendencias lista, em ordem, o que falta para fechar a compra. Vazio quando
+// tudo esta feito. Nao ha campo de fase: e sempre calculado do estado. Reserva
+// e PIX sao pendencias por trecho (sem sufixo quando ha um unico trecho).
 func (e Estado) Pendencias() []string {
 	var p []string
-	if e.Viagem == nil {
+	if len(e.Trechos) == 0 {
 		p = append(p, "escolher viagem")
 	}
 	if len(e.Passageiros) == 0 {
@@ -130,11 +189,17 @@ func (e Estado) Pendencias() []string {
 	if e.Pagamento == "" {
 		p = append(p, "escolher pagamento: integral ou sinal")
 	}
-	if e.ReservaID == "" {
-		p = append(p, "criar reserva")
-	}
-	if e.PagamentoID == "" {
-		p = append(p, "gerar PIX")
+	for i, t := range e.Trechos {
+		suf := ""
+		if len(e.Trechos) > 1 {
+			suf = fmt.Sprintf(" do trecho %d (%s)", i+1, t.Rota())
+		}
+		if t.ReservaID == "" {
+			p = append(p, "criar reserva"+suf)
+		}
+		if t.PagamentoID == "" {
+			p = append(p, "gerar PIX"+suf)
+		}
 	}
 	return p
 }
@@ -164,11 +229,14 @@ func (e Estado) Resumo() string {
 	default:
 		b.WriteString("Rota: ainda nao definida\n")
 	}
-	if v := e.Viagem; v != nil {
-		fmt.Fprintf(&b, "Viagem: %s para %s em %s as %s, R$ %.2f por pessoa\n",
-			v.Origem, v.Destino, formatarData(v.Data), v.Horario, v.Preco)
-	} else {
+	if len(e.Trechos) == 0 {
 		b.WriteString("Viagem: nenhuma escolhida\n")
+	}
+	for i, t := range e.Trechos {
+		v := t.Viagem
+		fmt.Fprintf(&b, "Trecho %d: %s para %s em %s as %s, R$ %.2f por pessoa; reserva: %s; PIX: %s\n",
+			i+1, v.Origem, v.Destino, formatarData(v.Data), v.Horario, v.Preco,
+			valorOu(t.ReservaID, "nao criada"), pixResumo(t.PagamentoID))
 	}
 	if len(e.Passageiros) > 0 {
 		b.WriteString("Passageiros:\n")
@@ -192,10 +260,6 @@ func (e Estado) Resumo() string {
 		b.WriteString("Passageiros: nenhum informado\n")
 	}
 	fmt.Fprintf(&b, "Pagamento: %s\n", valorOu(e.Pagamento, "nao escolhido"))
-	fmt.Fprintf(&b, "Reserva: %s\n", valorOu(e.ReservaID, "nao criada"))
-	if e.PagamentoID != "" {
-		fmt.Fprintf(&b, "PIX: gerado (%s)\n", e.PagamentoID)
-	}
 	if pend := e.Pendencias(); len(pend) > 0 {
 		fmt.Fprintf(&b, "Pendencias: %s\n", strings.Join(pend, "; "))
 	} else {
@@ -243,4 +307,11 @@ func valorOu(v, padrao string) string {
 		return padrao
 	}
 	return v
+}
+
+func pixResumo(id string) string {
+	if id == "" {
+		return "nao gerado"
+	}
+	return "gerado (" + id + ")"
 }

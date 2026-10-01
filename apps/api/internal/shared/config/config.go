@@ -62,6 +62,9 @@ type Config struct {
 	LLMModoJSON                        string
 	LLMEsforcoRaciocinio               string
 	LLMTemperatura                     *float64
+	LLMModeloReserva                   string // vazio = padrao do provedor; "off" desliga
+	LLMHedgeMS                         *int   // nil = padrao (6000); 0 desliga o hedge
+	LLMSemRaciocinio                   *bool  // nil = padrao (true so para o modelo reserva)
 	NvidiaAPIKey                       string
 	NvidiaBaseURL                      string
 	AtendimentoV2Concorrencia          int
@@ -136,6 +139,9 @@ func Load() (Config, error) {
 		LLMModoJSON:                        strings.ToLower(strings.TrimSpace(os.Getenv("LLM_MODO_JSON"))),
 		LLMEsforcoRaciocinio:               strings.ToLower(strings.TrimSpace(os.Getenv("LLM_REASONING_EFFORT"))),
 		LLMTemperatura:                     optFloat("LLM_TEMPERATURA"),
+		LLMModeloReserva:                   strings.TrimSpace(os.Getenv("LLM_MODELO_RESERVA")),
+		LLMHedgeMS:                         optInt("LLM_HEDGE_MS"),
+		LLMSemRaciocinio:                   optBool("LLM_SEM_RACIOCINIO"),
 		NvidiaAPIKey:                       strings.TrimSpace(os.Getenv("NVIDIA_API_KEY")),
 		NvidiaBaseURL:                      strings.TrimSpace(os.Getenv("NVIDIA_BASE_URL")),
 		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
@@ -307,6 +313,24 @@ func optFloat(key string) *float64 {
 		return nil
 	}
 	return &n
+}
+
+// optInt devolve nil quando a variavel esta vazia ou invalida (aceita 0).
+func optInt(key string) *int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
+}
+
+// optBool devolve nil quando a variavel esta vazia.
+func optBool(key string) *bool {
+	if strings.TrimSpace(os.Getenv(key)) == "" {
+		return nil
+	}
+	b := parseBool(os.Getenv(key))
+	return &b
 }
 
 // parseJuiz aceita "llm", "jev" ou "off"; qualquer outro valor vira "llm".
