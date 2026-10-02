@@ -228,7 +228,7 @@ func TestRespostaSimplesEnviada(t *testing.T) {
 		t.Fatalf("historico %+v", h)
 	}
 	ins := f.modelo.pedidos[0].Instrucoes
-	for _, s := range []string{"Shabas", "# CATÁLOGO", "R$ 950,00", "# ESTADO DA RESERVA", "Pendências:", "Nome do cliente: Ana", "30/09/2026 12:00"} {
+	for _, s := range []string{"Shabas", "# CATÁLOGO", "R$ 950,00", "# SITUAÇÃO DA COMPRA AGORA", "Próximo passo:", "# REGRAS QUE VALEM SEMPRE", "Nome do cliente: Ana", "30/09/2026 12:00"} {
 		if !contem(ins, s) {
 			t.Errorf("instrucoes sem %q", s)
 		}

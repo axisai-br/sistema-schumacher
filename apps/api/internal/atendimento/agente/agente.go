@@ -71,6 +71,9 @@ type Config struct {
 	// OrcamentoTurno limita o tempo das chamadas ao LLM no turno (padrao 50s):
 	// estourou, o turno responde com dados ja obtidos em vez de esperar.
 	OrcamentoTurno time.Duration
+	// SinalPorPagante vai no contexto do LLM (valores do sinal antes da
+	// reserva). Padrao 250, o mesmo das ferramentas.
+	SinalPorPagante float64
 }
 
 type Agente struct {
@@ -94,6 +97,9 @@ func Novo(d Deps, cfg Config) *Agente {
 	}
 	if cfg.LimiarRota <= 0 {
 		cfg.LimiarRota = 0.8
+	}
+	if cfg.SinalPorPagante <= 0 {
+		cfg.SinalPorPagante = 250
 	}
 	if cfg.OrcamentoTurno <= 0 {
 		cfg.OrcamentoTurno = 50 * time.Second
@@ -388,6 +394,12 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 // conclui a pendencia.
 func (a *Agente) concluirComResposta(ctx context.Context, tc *turno, texto string) error {
 	c := tc.c
+	// Ultima barreira: persona, ferramentas, texto degenerado, markdown, CPF.
+	if novo, motivos := filtrarSaida(texto, tc.estado); len(motivos) > 0 {
+		tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "saida",
+			Saida: map[string]any{"motivos": motivos, "original": texto}})
+		texto = novo
+	}
 	// Mensagem nova durante o turno: descarta e mantem a pendencia.
 	chegou, err := a.d.Store.ChegouEntradaDepois(ctx, c.ID, *c.UltimaEntradaEm)
 	if err != nil {
@@ -528,7 +540,7 @@ func (a *Agente) fontes(tc *turno, catalogo string, agora time.Time) []string {
 	antes, _ := json.Marshal(tc.antes)
 	f := []string{catalogo, string(est), string(antes), agora.Format("02/01/2006")}
 	f = append(f, tc.anteriores...)
-	f = append(f, valoresDerivados(tc))
+	f = append(f, valoresDerivados(tc), TextoSituacao(tc.estado, a.cfg.SinalPorPagante), TextoSituacao(tc.antes, a.cfg.SinalPorPagante))
 	return append(f, tc.resultados...)
 }
 

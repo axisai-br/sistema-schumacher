@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
+	"schumacher-tur/api/internal/atendimento/ferramentas"
 	"schumacher-tur/api/internal/atendimento/llm"
 )
 
@@ -75,15 +76,29 @@ func idade(nasc string, hoje time.Time) (int, bool) {
 	return anos, true
 }
 
-// reNomeCPF: "nome sobrenome [,:-] cpf 123.456.789-09".
-var reNomeCPF = regexp.MustCompile(`(?i)([\p{L}]+(?:\s+[\p{L}]+){1,5})\s*[,:-]?\s*cpf\s*[:é]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})`)
+// reNomeCPF: "nome sobrenome [,:-] [cpf] 123.456.789-09". Sem a palavra "cpf"
+// o numero so vale se for um CPF valido (evita telefone, codigo etc.).
+var reNomeCPF = regexp.MustCompile(`(?i)([\p{L}]+(?:\s+[\p{L}]+){1,7})\s*[,:-]?\s*(cpf\s*[:é]?\s*)?(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b`)
+
+// reNomeRG: "helena prado, RG 4.512.887 SSP/SC", "jose lima cnh 12345678900".
+var reNomeRG = regexp.MustCompile(`(?i)([\p{L}]+(?:\s+[\p{L}]+){1,7})\s*[,:-]?\s*(rg|cnh)\s*[:é]?\s*(\d[\d.\-]{3,14}[\dxX])`)
+
+// reChamaSe: "ele se chama Lucas Martins, tem 10 anos, cpf 123...".
+var reChamaSe = regexp.MustCompile(`(?i)(?:se chama|chama-se|o nome d[ea]l[ea] (?:é|e))\s+([\p{L}]+(?:\s+[\p{L}]+){1,7})`)
+
+var (
+	reCPFSolto  = regexp.MustCompile(`\d{3}\.?\d{3}\.?\d{3}-?\d{2}`)
+	reAnosSolto = regexp.MustCompile(`(?i)\b(\d{1,2})\s*anos?\b`)
+)
 
 // palavrasNaoNome: se aparecerem, o trecho antes do CPF nao e um nome.
 var palavrasNaoNome = map[string]bool{"meu": true, "minha": true, "seu": true, "sua": true, "nome": true, "numero": true, "número": true,
 	"é": true, "eh": true, "sou": true, "cpf": true, "rg": true, "documento": true, "dele": true, "dela": true, "passageiro": true}
 
 // conectivosInicio: palavras soltas no comeco do trecho que nao fazem parte do nome.
-var conectivosInicio = map[string]bool{"e": true, "a": true, "o": true, "com": true, "mais": true, "tambem": true, "também": true, "eu": true}
+var conectivosInicio = map[string]bool{"e": true, "a": true, "o": true, "com": true, "mais": true, "tambem": true, "também": true, "eu": true,
+	"pronto": true, "ok": true, "segue": true, "seguem": true, "aqui": true, "vai": true, "vão": true, "vao": true, "então": true, "entao": true,
+	"tá": true, "ta": true, "sim": true, "isso": true, "no": true, "na": true, "lugar": true, "dele": true, "dela": true, "outro": true, "outra": true}
 
 // passageirosDeTexto extrai pares nome + CPF escritos pelo cliente.
 func passageirosDeTexto(textos []string) []conversa.Passageiro {
@@ -154,10 +169,47 @@ func extrairPassageirosTexto(texto string, criancasAte5 ...int) (ps []conversa.P
 		}
 	}
 	for _, m := range reNomeCPF.FindAllStringSubmatchIndex(texto, -1) {
-		if n := limparNome(texto[m[2]:m[3]]); n != "" {
-			ps = append(ps, conversa.Passageiro{Nome: n, Documento: soDigitos(texto[m[4]:m[5]]), TipoDocumento: "CPF"})
+		doc := soDigitos(texto[m[6]:m[7]])
+		nome, comCPF := texto[m[2]:m[3]], m[4] >= 0
+		// O nome guloso pode engolir a palavra "cpf" ("ana lima cpf 123..."):
+		// devolve ela para o lugar dela.
+		if ws := strings.Fields(nome); len(ws) > 0 && strings.EqualFold(strings.TrimRight(ws[len(ws)-1], ":"), "cpf") {
+			nome, comCPF = strings.Join(ws[:len(ws)-1], " "), true
+		}
+		if !comCPF && !ferramentas.ValidarCPF(doc) {
+			continue // sem "cpf" escrito, so aceita CPF valido
+		}
+		if n := limparNome(nome); n != "" {
+			ps = append(ps, conversa.Passageiro{Nome: n, Documento: doc, TipoDocumento: "CPF"})
 			marcar(m[0], m[1])
 		}
+	}
+	for _, m := range reNomeRG.FindAllStringSubmatchIndex(texto, -1) {
+		if n := limparNome(texto[m[2]:m[3]]); n != "" {
+			ps = append(ps, conversa.Passageiro{Nome: n, Documento: strings.ToUpper(strings.NewReplacer(".", "", "-", "").Replace(texto[m[6]:m[7]])), TipoDocumento: strings.ToUpper(texto[m[4]:m[5]])})
+			marcar(m[0], m[1])
+		}
+	}
+	for _, m := range reChamaSe.FindAllStringSubmatchIndex(texto, -1) {
+		n := limparNome(texto[m[2]:m[3]])
+		if n == "" {
+			continue
+		}
+		depois := texto[m[1]:min(len(texto), m[1]+80)]
+		p := conversa.Passageiro{Nome: n}
+		if c := reCPFSolto.FindString(depois); c != "" {
+			p.Documento, p.TipoDocumento = soDigitos(c), "CPF"
+		}
+		if a := reAnosSolto.FindStringSubmatch(depois); a != nil {
+			if anos, _ := strconv.Atoi(a[1]); anos <= 5 {
+				p.CriancaAte5 = true
+			}
+		}
+		if p.Documento == "" && !p.CriancaAte5 {
+			continue
+		}
+		ps = append(ps, p)
+		marcar(m[0], min(len(texto), m[1]+80))
 	}
 	for _, m := range reBebe.FindAllStringSubmatchIndex(texto, -1) {
 		if n := limparNome(texto[m[2]:m[3]]); n != "" {

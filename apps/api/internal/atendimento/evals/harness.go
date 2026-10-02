@@ -192,7 +192,7 @@ func NovoAmbiente(modelo llm.Modelo, cfg ConfigAmbiente) *Ambiente {
 	ag := agente.Novo(agente.Deps{
 		Store: store, Canal: canalFake, Modelo: modelo, Ferramentas: reg,
 		Catalogo: cat, Juiz: cfg.Juiz, Roteador: cfg.Roteador, Cidades: cat, Agora: agora,
-	}, agente.Config{Modelo: nome, OrcamentoTurno: cfg.OrcamentoTurno})
+	}, agente.Config{Modelo: nome, OrcamentoTurno: cfg.OrcamentoTurno, SinalPorPagante: cfg.SinalPorPagante})
 	return &Ambiente{
 		Fx: fx, Store: store, Canal: canalFake, Reservas: reservas, Pagamentos: pagamentos,
 		Catalogo: cat, Agente: ag, Agora: agora,

@@ -470,10 +470,37 @@ func problemasForma(texto string, tc *turno, cliente []string) string {
 	if as := afirmacoesSemAcao(texto, tc.estado); len(as) > 0 {
 		p = append(p, "a resposta diz que "+strings.Join(as, " e ")+", mas a ferramenta nao foi chamada")
 	}
+	// "Atualizei/corrigi/troquei" exige mudanca NESTE turno: com passageiros
+	// de antes, o teste acima passaria mesmo sem nada gravado.
+	if reAtualizacao.MatchString(semAcento(strings.ToLower(texto))) && !mudouNoTurno(tc) {
+		p = append(p, "a resposta diz que atualizou/corrigiu/trocou dados, mas nada mudou neste turno (registrar_passageiros ou escolher_viagem nao foi chamada)")
+	}
 	if cs := cpfsNaoRegistrados(cliente, tc.estado); len(cs) > 0 {
 		p = append(p, "o cliente enviou o(s) CPF(s) "+strings.Join(cs, ", ")+" e registrar_passageiros nao foi chamada")
 	}
 	return strings.Join(p, "; ")
+}
+
+// reAtualizacao: afirmacoes de alteracao de dados ja dados (texto sem acento).
+var reAtualizacao = regexp.MustCompile(`\b(atualizei|corrigi|troquei|alterei|substitui|mudei|corrigido|atualizad[oa]s?|alterad[oa]s?|substituid[oa]|lista atualizada|passageiros registrados)\b`)
+
+// mudouNoTurno: passageiros, trechos ou pagamento diferentes do inicio do turno.
+func mudouNoTurno(tc *turno) bool {
+	a, e := tc.antes, tc.estado
+	if a.Pagamento != e.Pagamento || len(a.Trechos) != len(e.Trechos) || len(a.Passageiros) != len(e.Passageiros) {
+		return true
+	}
+	for i := range a.Passageiros {
+		if a.Passageiros[i] != e.Passageiros[i] {
+			return true
+		}
+	}
+	for i := range a.Trechos {
+		if a.Trechos[i].Viagem != e.Trechos[i].Viagem {
+			return true
+		}
+	}
+	return false
 }
 
 // TextoPedirRota e a resposta segura quando ainda nao ha rota para buscar.

@@ -178,7 +178,7 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 		Cidades:     cat,
 		Notificador: agente.NovoNotificadorWebhook(cfg.AtendimentoV2AlertaWebhookURL, nil),
 		Log:         lg,
-	}, agente.Config{Modelo: modelo})
+	}, agente.Config{Modelo: modelo, SinalPorPagante: cfg.AtendimentoV2SinalPorPagante})
 
 	worker := fila.NovoWorker(store, ag, fila.Config{
 		Concorrencia: cfg.AtendimentoV2Concorrencia,

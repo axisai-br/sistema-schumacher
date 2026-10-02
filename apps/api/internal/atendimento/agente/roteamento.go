@@ -157,12 +157,6 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 	saida["nega"], saida["corrige_passageiro"] = rt.Nega, rt.CorrigePassageiro
 	if est := tc.estado; len(est.Trechos) > 0 && !est.TodosReservados() {
-		// Correcao de dado ja dado: nada de template nem fechamento; o LLM
-		// corrige com registrar_passageiros vendo a lista atual.
-		if rt.CorrigePassageiro >= 0.8 {
-			finalizar("llm_correcao")
-			return resultadoRota{}
-		}
 		// "Nao" ao pedido de fechamento: pergunta o que ajustar.
 		if rt.Nega >= limiarFechar && rt.Confirma < 0.5 && ultimoBotPedeFechamento(hist) {
 			finalizar("template_nao_fechar")
@@ -192,6 +186,9 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 
 	novaQuantidade := aplicarQuantidade(rt, &tc.estado)
+	if !novaQuantidade {
+		novaQuantidade = aplicarQuantidadeTexto(textoRecenteCliente(hist), &tc.estado)
+	}
 	if novaQuantidade {
 		saida["quantidade"] = map[string]int{"pessoas": tc.estado.PessoasInformadas, "criancas_ate_5": tc.estado.CriancasInformadas}
 	}
@@ -221,16 +218,34 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 
 	// Passageiros escritos ("ana souza cpf 529...", "bebê Sofia Reis"): o
 	// codigo registra; se a mensagem so tem isso, responde por template.
+	// Tambem correcao ("o cpf da maria é ..."), remocao ("o bruno não vai
+	// mais"), CPF repetido ou invalido: o codigo grava a lista inteira e o
+	// template mostra o resultado, entao o texto nunca afirma o que nao houve.
 	if !tc.estado.AlgumReservado() {
-		if novosT, completo := extrairPassageirosTexto(textoRecenteCliente(hist), tc.estado.CriancasInformadas); len(novosT) > 0 {
-			if pre, ok := a.registrarEmCodigo(ctx, tc, novosT); ok {
-				if completo {
+		lista, mudou, completo, avisosT := mudancaPassageiros(tc.estado.Passageiros, textoRecenteCliente(hist), tc.estado.CriancasInformadas)
+		if mudou {
+			if pre, ok := a.registrarLista(ctx, tc, lista); ok {
+				saida["passageiros_codigo"] = len(lista)
+				if len(avisosT) > 0 {
+					finalizar("template_registro_aviso")
+					return resultadoRota{resposta: textoRegistrados(tc.estado) + "\n\n" + strings.Join(avisosT, "\n")}
+				}
+				if completo || direto {
 					finalizar("template_registro_texto")
 					return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
 				}
 				finalizar("pre_registro_texto")
 				return resultadoRota{pre: pre}
 			}
+		} else if len(avisosT) > 0 {
+			finalizar("template_passageiro_aviso")
+			return resultadoRota{resposta: strings.Join(avisosT, "\n")}
+		}
+		// Correcao que o codigo nao entendeu: o LLM corrige com
+		// registrar_passageiros vendo a lista atual (sem template nem fechamento).
+		if len(tc.estado.Trechos) > 0 && rt.CorrigePassageiro >= 0.8 {
+			finalizar("llm_correcao")
+			return resultadoRota{}
 		}
 	}
 
@@ -274,16 +289,50 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		finalizar("pre_busca_falhou")
 		return resultadoRota{}
 	}
+	// Rota nova (nao e a volta) com trecho ainda sem reserva: o cliente mudou
+	// de ideia. O trecho antigo sai, senao a reserva cobraria a rota antiga.
+	aviso := ""
+	if decisao == "pre_busca" && trocarTrechosPelaRota(&tc.estado) {
+		saida["trecho_substituido"] = true
+		aviso = "Certo, troquei a rota. "
+	}
 	// Busca limpa (opcoes, sem aviso da ferramenta) e mensagem so com a rota:
 	// a lista vai por template.
 	if direto {
 		if ops, limpa := opcoesSemAviso(tc.resultados); limpa {
 			finalizar("template_opcoes")
-			return resultadoRota{resposta: textoOpcoes(ops)}
+			return resultadoRota{resposta: aviso + textoOpcoes(ops)}
 		}
 	}
 	finalizar(decisao)
 	return resultadoRota{pre: pre}
+}
+
+// trocarTrechosPelaRota tira os trechos sem reserva quando a rota buscada
+// (Origem/Destino do estado) nao e a de nenhum trecho nem a volta de um deles.
+// Devolve se tirou algum.
+func trocarTrechosPelaRota(e *conversa.Estado) bool {
+	if e.Origem == nil || e.Destino == nil || len(e.Trechos) == 0 {
+		return false
+	}
+	o, d := semAcento(e.Origem.Nome), semAcento(e.Destino.Nome)
+	for _, t := range e.Trechos {
+		to, td := semAcento(t.Viagem.Origem), semAcento(t.Viagem.Destino)
+		if (to == o && td == d) || (to == d && td == o) {
+			return false // mesma rota ou a volta: nada a trocar
+		}
+	}
+	var fica []conversa.Trecho
+	for _, t := range e.Trechos {
+		if t.ReservaID != "" {
+			fica = append(fica, t)
+		}
+	}
+	if len(fica) == len(e.Trechos) {
+		return false
+	}
+	e.Trechos = fica
+	return true
 }
 
 // pagamentoEscolhido diz se o cliente ja escolheu integral/sinal (neste turno,
@@ -405,7 +454,9 @@ func (a *Agente) opcaoClara(rt Rota, est conversa.Estado) (int, bool) {
 	for _, o := range est.Opcoes {
 		if o.Numero == n {
 			for _, t := range est.Trechos {
-				if t.Viagem.TripID == o.TripID {
+				// O mesmo onibus (TripID) atende varias rotas: compara tambem
+				// embarque e desembarque.
+				if ferramentas.MesmaViagem(t.Viagem, o) {
 					return 0, false // ja escolhida: nada a fazer
 				}
 			}
