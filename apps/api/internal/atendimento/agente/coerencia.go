@@ -289,6 +289,9 @@ func textoProximoPasso(e conversa.Estado) string {
 // textoPedirPassageiros pede nome e documento, usando a quantidade ja dita.
 func textoPedirPassageiros(e conversa.Estado) string {
 	n, cri := e.PessoasInformadas, e.CriancasInformadas
+	if falta := n - len(e.Passageiros); len(e.Passageiros) > 0 && falta > 0 {
+		return fmt.Sprintf("%s\n\nFalta(m) %d passageiro(s): me manda o nome completo e o CPF (ou RG/CNH). Criança de até 5 anos precisa só do nome. 😊", textoRegistrados(e), falta)
+	}
 	if len(e.Passageiros) > 0 || n <= 0 {
 		return "Pra seguir com a reserva, me manda o nome completo e o CPF (ou RG/CNH) de cada passageiro. Criança de até 5 anos precisa só do nome. 😊"
 	}
@@ -465,16 +468,26 @@ const TextoPedirRota = "Pra eu te passar as datas e horários certinhos, me diz:
 // origem e nao houve busca no turno: com rota no estado, busca e responde com
 // as opcoes reais; sem rota, pede a rota. Vazio = transferir.
 func (a *Agente) respostaSegura(ctx context.Context, tc *turno) string {
-	o, d := tc.estado.Origem, tc.estado.Destino
-	if o == nil && d == nil {
+	var o, d string
+	if tc.rota != nil {
+		o, d = a.rotaDoTurno(*tc.rota, tc.estado)
+	} else {
+		if tc.estado.Origem != nil {
+			o = tc.estado.Origem.Nome
+		}
+		if tc.estado.Destino != nil {
+			d = tc.estado.Destino.Nome
+		}
+	}
+	if o == "" && d == "" {
 		return TextoPedirRota
 	}
 	args := map[string]string{}
-	if o != nil {
-		args["origem"] = o.Nome
+	if o != "" {
+		args["origem"] = o
 	}
-	if d != nil {
-		args["destino"] = d.Nome
+	if d != "" {
+		args["destino"] = d
 	}
 	js, _ := json.Marshal(args)
 	s := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora()}, "buscar_viagens", js)
@@ -490,12 +503,15 @@ func (a *Agente) respostaSegura(ctx context.Context, tc *turno) string {
 
 const motivoLimitePassos = "sem resposta apos o limite de passos"
 
+// motivoSemTexto: o modelo terminou sem texto e sem chamadas.
+const motivoSemTexto = "modelo respondeu sem texto"
+
 // recuperar trata estouro do orcamento de tempo do turno ou do limite de
 // passos: responde com o que ja foi obtido (PIX, opcoes da busca, ou busca da
 // rota do estado). Sem nada aproveitavel, devolve false e o erro segue.
 func (a *Agente) recuperar(ctx context.Context, tc *turno, err error) (string, bool) {
 	var t *transf
-	limite := errors.As(err, &t) && t.motivo == motivoLimitePassos
+	limite := errors.As(err, &t) && (t.motivo == motivoLimitePassos || t.motivo == motivoSemTexto)
 	tempo := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
 	if !limite && !tempo {
 		return "", false
@@ -503,14 +519,20 @@ func (a *Agente) recuperar(ctx context.Context, tc *turno, err error) (string, b
 	motivo := "limite de passos"
 	if tempo {
 		motivo = "orcamento de tempo do turno"
+	} else if t.motivo == motivoSemTexto {
+		motivo = "modelo sem texto"
 	}
 	texto := ""
 	switch px, bs := pixDoTurno(tc.resultados), opcoesDoTurno(tc.resultados); {
 	case len(px) > 0:
 		texto = textoPix(px)
+	case len(tc.estado.Trechos) > 0:
+		// Viagem ja escolhida: segue do proximo passo (nao volta para a busca).
+		texto = textoProximoPasso(tc.estado)
 	case len(bs) > 0:
 		texto = textoOpcoes(bs[len(bs)-1])
-	case tc.estado.Origem != nil || tc.estado.Destino != nil:
+	default:
+		// Busca a rota do estado ou a que o Roteador entendeu; sem rota, pede.
 		texto = a.respostaSegura(ctx, tc)
 	}
 	tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "recuperacao", Saida: map[string]any{"motivo": motivo, "resposta_segura": texto != ""}})

@@ -271,7 +271,7 @@ func TestPassageirosDeFotos(t *testing.T) {
 
 func TestPassageirosDeTexto(t *testing.T) {
 	ps := passageirosDeTexto([]string{"paula reis cpf 52998224725, marcos reis cpf 111.444.777-35 e a bebe sofia reis de 2 anos"})
-	if len(ps) != 2 || ps[0].Nome != "Paula Reis" || ps[1].Nome != "Marcos Reis" || ps[1].Documento != "11144477735" {
+	if len(ps) != 3 || !ps[2].CriancaAte5 || ps[0].Nome != "Paula Reis" || ps[1].Nome != "Marcos Reis" || ps[1].Documento != "11144477735" {
 		t.Fatalf("ps=%+v", ps)
 	}
 	for _, s := range []string{"meu cpf é 52998224725", "o cpf 52998224725", "cpf: 52998224725"} {
@@ -523,5 +523,42 @@ func TestCertidaoAcimaDe5Pede(t *testing.T) {
 	processar(t, f)
 	if len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "precisa de CPF ou RG") {
 		t.Fatalf("envios=%q", f.canal.envios)
+	}
+}
+
+func TestExtrairPassageirosTexto(t *testing.T) {
+	ps, completo := extrairPassageirosTexto("paula reis cpf 52998224725, marcos reis cpf 111.444.777-35, bebê sofia reis")
+	if !completo || len(ps) != 3 || ps[2].Nome != "Sofia Reis" || !ps[2].CriancaAte5 {
+		t.Fatalf("completo=%v ps=%+v", completo, ps)
+	}
+	ps, completo = extrairPassageirosTexto("paula reis cpf 52998224725 e a bebe sofia reis de 2 anos")
+	if !completo || len(ps) != 2 || ps[1].Nome != "Sofia Reis" || !ps[1].CriancaAte5 {
+		t.Fatalf("idade: completo=%v ps=%+v", completo, ps)
+	}
+	ps, completo = extrairPassageirosTexto("meu nome é paula reis cpf 52998224725, o onibus tem wifi?")
+	if completo || len(ps) != 1 || ps[0].Nome != "Paula Reis" {
+		t.Fatalf("com pergunta: completo=%v ps=%+v", completo, ps)
+	}
+	if ps, _ := extrairPassageirosTexto("pedro lima de 9 anos"); len(ps) != 0 {
+		t.Fatalf("acima de 5 sem documento fica para o LLM: %+v", ps)
+	}
+	if ps, _ := extrairPassageirosTexto("somos 2 adultos e 1 bebê"); len(ps) != 0 {
+		t.Fatalf("quantidade nao e passageiro: %+v", ps)
+	}
+}
+
+func TestRegistroPorTextoTemplate(t *testing.T) {
+	var lista int
+	reg := ferrFake{nome: "registrar_passageiros", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Passageiros = []conversa.Passageiro{{Nome: "Lucas Alves", Documento: "52998224725", TipoDocumento: "CPF"}}
+		lista++
+		return ferramentas.Saida{OK: true}
+	}}
+	f, _ := fxRoteador(t, Rota{}, reg)
+	f.iniciar("lucas alves cpf 52998224725")
+	comEstado(t, f, conversa.Estado{Trechos: estadoPronto().Trechos})
+	processar(t, f)
+	if lista != 1 || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "Lucas Alves") || !strings.Contains(f.canal.envios[0], "integral") {
+		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
 	}
 }

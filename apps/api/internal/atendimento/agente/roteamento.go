@@ -219,6 +219,21 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		return resultadoRota{resposta: strings.Join(avisos, "\n")}
 	}
 
+	// Passageiros escritos ("ana souza cpf 529...", "bebê Sofia Reis"): o
+	// codigo registra; se a mensagem so tem isso, responde por template.
+	if !tc.estado.AlgumReservado() {
+		if novosT, completo := extrairPassageirosTexto(textoRecenteCliente(hist)); len(novosT) > 0 {
+			if pre, ok := a.registrarEmCodigo(ctx, tc, novosT); ok {
+				if completo {
+					finalizar("template_registro_texto")
+					return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+				}
+				finalizar("pre_registro_texto")
+				return resultadoRota{pre: pre}
+			}
+		}
+	}
+
 	// Pagamento claro (ou "sim" para fechar) com tudo pronto: o codigo cria a
 	// reserva e o PIX e responde sem o LLM.
 	if res, dec, ok := a.preFechar(ctx, tc, rt, hist); ok {

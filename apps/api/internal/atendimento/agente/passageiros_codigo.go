@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 	"schumacher-tur/api/internal/atendimento/llm"
@@ -87,24 +89,100 @@ var conectivosInicio = map[string]bool{"e": true, "a": true, "o": true, "com": t
 func passageirosDeTexto(textos []string) []conversa.Passageiro {
 	var out []conversa.Passageiro
 	for _, t := range textos {
-		for _, m := range reNomeCPF.FindAllStringSubmatch(t, -1) {
-			ws := strings.Fields(m[1])
-			for len(ws) > 0 && conectivosInicio[strings.ToLower(ws[0])] {
-				ws = ws[1:]
-			}
-			ok := len(ws) >= 2
-			for _, w := range ws {
-				if palavrasNaoNome[strings.ToLower(w)] {
-					ok = false
-				}
-			}
-			if !ok {
-				continue
-			}
-			out = append(out, conversa.Passageiro{Nome: nomeProprio(strings.Join(ws, " ")), Documento: soDigitos(m[2]), TipoDocumento: "CPF"})
-		}
+		ps, _ := extrairPassageirosTexto(t)
+		out = append(out, ps...)
 	}
 	return out
+}
+
+// reBebe: "bebê Sofia Reis", "neném Ana Lima" (crianca de colo, ate 5 anos).
+var reBebe = regexp.MustCompile(`(?i)(?:beb[eê]|nen[eê]m?|de colo)\s+([\p{L}]+(?:\s+[\p{L}]+){1,4})`)
+
+// reIdade: "Sofia Reis de 2 anos", "Pedro Lima, 4 anos".
+var reIdade = regexp.MustCompile(`(?i)([\p{L}]+(?:\s+[\p{L}]+){1,5})\s*,?\s*(?:de|com|tem)?\s*(\d{1,2})\s*anos?`)
+
+// palavrasCrianca: palavras antes do nome que dizem "crianca", nao fazem parte dele.
+var palavrasCrianca = map[string]bool{"bebe": true, "bebê": true, "nenem": true, "neném": true, "nenê": true, "crianca": true, "criança": true,
+	"filho": true, "filha": true, "meu": true, "minha": true, "sobrinho": true, "sobrinha": true, "neto": true, "neta": true}
+
+// limparNome tira conectivos/palavras de crianca do comeco e "de"/"e"/"com" do
+// fim; vazio se sobrar menos de 2 palavras ou uma palavra que nao e de nome.
+func limparNome(s string) string {
+	ws := strings.Fields(s)
+	for len(ws) > 0 && (conectivosInicio[strings.ToLower(ws[0])] || palavrasCrianca[strings.ToLower(ws[0])] || palavrasNaoNome[strings.ToLower(ws[0])]) {
+		ws = ws[1:]
+	}
+	for len(ws) > 0 {
+		u := strings.ToLower(ws[len(ws)-1])
+		if u != "de" && u != "e" && u != "com" && u != "tem" {
+			break
+		}
+		ws = ws[:len(ws)-1]
+	}
+	if len(ws) < 2 {
+		return ""
+	}
+	for _, w := range ws {
+		if palavrasNaoNome[strings.ToLower(w)] {
+			return ""
+		}
+	}
+	return nomeProprio(strings.Join(ws, " "))
+}
+
+// palavrasVazias: o que pode sobrar numa mensagem que so traz passageiros.
+var palavrasVazias = map[string]bool{"e": true, "a": true, "o": true, "as": true, "os": true, "com": true, "mais": true, "tambem": true, "também": true,
+	"eu": true, "sou": true, "meu": true, "minha": true, "nome": true, "é": true, "eh": true, "cpf": true, "dados": true, "passageiros": true,
+	"são": true, "sao": true, "segue": true, "seguem": true, "aqui": true, "vai": true, "vão": true, "vao": true, "criancas": true, "crianças": true}
+
+// extrairPassageirosTexto acha passageiros escritos pelo cliente: "nome cpf",
+// "bebê Nome" e "Nome de N anos" (ate 5 anos vira crianca; acima fica para o
+// LLM, que pede documento). completo: a mensagem nao tem mais nada alem disso.
+func extrairPassageirosTexto(texto string) (ps []conversa.Passageiro, completo bool) {
+	usado := make([]bool, len(texto))
+	marcar := func(ini, fim int) {
+		for i := ini; i < fim; i++ {
+			usado[i] = true
+		}
+	}
+	for _, m := range reNomeCPF.FindAllStringSubmatchIndex(texto, -1) {
+		if n := limparNome(texto[m[2]:m[3]]); n != "" {
+			ps = append(ps, conversa.Passageiro{Nome: n, Documento: soDigitos(texto[m[4]:m[5]]), TipoDocumento: "CPF"})
+			marcar(m[0], m[1])
+		}
+	}
+	for _, m := range reBebe.FindAllStringSubmatchIndex(texto, -1) {
+		if n := limparNome(texto[m[2]:m[3]]); n != "" {
+			ps = append(ps, conversa.Passageiro{Nome: n, CriancaAte5: true})
+			marcar(m[0], m[1])
+		}
+	}
+	for _, m := range reIdade.FindAllStringSubmatchIndex(texto, -1) {
+		anos, err := strconv.Atoi(texto[m[4]:m[5]])
+		n := limparNome(texto[m[2]:m[3]])
+		if err != nil || n == "" {
+			continue
+		}
+		if anos <= 5 {
+			ps = append(ps, conversa.Passageiro{Nome: n, CriancaAte5: true})
+			marcar(m[0], m[1])
+		}
+	}
+	ps, _ = mesclarPassageiros(nil, ps)
+	var resto strings.Builder
+	for i := range texto {
+		if !usado[i] {
+			resto.WriteByte(texto[i])
+		}
+	}
+	completo = len(ps) > 0
+	for _, w := range strings.FieldsFunc(strings.ToLower(resto.String()), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		if !palavrasVazias[w] {
+			completo = false
+			break
+		}
+	}
+	return ps, completo
 }
 
 // nomeProprio: "JOAO DA SILVA" -> "Joao da Silva".

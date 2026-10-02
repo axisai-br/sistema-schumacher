@@ -443,7 +443,7 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 		if len(resp.Chamadas) == 0 {
 			texto := strings.TrimSpace(resp.Texto)
 			if texto == "" {
-				return "", msgs, &transf{motivo: "modelo respondeu sem texto", tecnico: true}
+				return "", msgs, &transf{motivo: motivoSemTexto, tecnico: true}
 			}
 			return texto, msgs, nil
 		}
