@@ -31,8 +31,9 @@ const (
 		"Não troque 'só pra mim' por uma frase ambígua."
 
 	promptVisao = "Analise a imagem enviada por um cliente de uma empresa de transporte rodoviário. " +
-		"Diga se é uma foto de documento de identificação (RG, CPF, CNH) e, se for, extraia nome completo, CPF e RG exatamente como aparecem " +
-		"(use string vazia para o que não estiver legível ou não existir). Em 'descricao' escreva uma frase curta em português descrevendo a imagem."
+		"Diga se é uma foto de documento pessoal (RG, CPF, CNH ou certidão de nascimento) e, se for, extraia nome completo, CPF e RG exatamente como aparecem " +
+		"(use string vazia para o que não estiver legível ou não existir). Em 'tipo' escreva RG, CPF, CNH ou CERTIDAO. " +
+		"Em 'nascimento' a data de nascimento no formato DD/MM/AAAA, se aparecer. Em 'descricao' escreva uma frase curta em português descrevendo a imagem."
 )
 
 // Config configura o Preparador.
@@ -266,6 +267,8 @@ type leituraImagem struct {
 	Nome       string `json:"nome"`
 	CPF        string `json:"cpf"`
 	RG         string `json:"rg"`
+	Tipo       string `json:"tipo"`
+	Nascimento string `json:"nascimento"`
 	Descricao  string `json:"descricao"`
 }
 
@@ -287,6 +290,9 @@ func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, m
 	extra := map[string]any{"visao_status": "OK", "visao_modelo": p.modeloVisaoUsado(), "e_documento": l.EDocumento}
 	if l.EDocumento {
 		var partes []string
+		if strings.EqualFold(strings.TrimSpace(l.Tipo), "CERTIDAO") {
+			partes = append(partes, "certidão de nascimento")
+		}
 		if v := strings.TrimSpace(l.Nome); v != "" {
 			partes = append(partes, "nome "+v)
 		}
@@ -295,6 +301,9 @@ func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, m
 		}
 		if v := strings.TrimSpace(l.RG); v != "" {
 			partes = append(partes, "RG "+v)
+		}
+		if v := strings.TrimSpace(l.Nascimento); v != "" {
+			partes = append(partes, "nascimento "+v)
 		}
 		base := "[foto de documento]"
 		if len(partes) > 0 {

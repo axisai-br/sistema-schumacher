@@ -22,9 +22,11 @@ func esquemaLeituraImagem() map[string]any {
 			"nome":        map[string]any{"type": "string"},
 			"cpf":         map[string]any{"type": "string"},
 			"rg":          map[string]any{"type": "string"},
+			"tipo":        map[string]any{"type": "string"},
+			"nascimento":  map[string]any{"type": "string"},
 			"descricao":   map[string]any{"type": "string"},
 		},
-		"required":             []string{"e_documento", "nome", "cpf", "rg", "descricao"},
+		"required":             []string{"e_documento", "nome", "cpf", "rg", "tipo", "nascimento", "descricao"},
 		"additionalProperties": false,
 	}
 }

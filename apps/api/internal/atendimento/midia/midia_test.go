@@ -157,6 +157,16 @@ func TestImagemDocumento(t *testing.T) {
 	}
 }
 
+func TestImagemCertidao(t *testing.T) {
+	srv := servidorVisao(t, `{"e_documento":true,"nome":"Ana Souza","cpf":"","rg":"","tipo":"CERTIDAO","nascimento":"03/04/2023","descricao":"certidao"}`, nil)
+	defer srv.Close()
+	p := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA"}, Config{OpenAIAPIKey: "k", OpenAIBaseURL: srv.URL, ModeloVisao: "m"})
+	s, _, _ := p.Preparar(context.Background(), conversa.Mensagem{Tipo: conversa.TipoImagem})
+	if s != "[foto de documento: certidão de nascimento, nome Ana Souza, nascimento 03/04/2023]" {
+		t.Fatalf("s=%q", s)
+	}
+}
+
 func TestImagemComum(t *testing.T) {
 	srv := servidorVisao(t, `{"e_documento":false,"nome":"","cpf":"","rg":"","descricao":"uma paisagem"}`, nil)
 	defer srv.Close()
