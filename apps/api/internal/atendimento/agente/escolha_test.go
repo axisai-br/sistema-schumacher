@@ -42,4 +42,12 @@ func TestOpcaoDoTexto(t *testing.T) {
 	if n, _ := opcaoDoTexto("pode ser essa", est, hoje); n != 0 {
 		t.Errorf("com varias opcoes, 'essa' e ambiguo: %d", n)
 	}
+	msg := "eu Francisco Alves Lima CPF 39053344705 e minha esposa Antonia Lima CPF 71460238001, dia 12/10"
+	if n := opcaoDaDataExata(msg, ops, hoje); n != 2 {
+		t.Errorf("dia 12/10 com CPF escolhe a unica opcao desse dia: %d", n)
+	}
+	duas := []conversa.Opcao{ops[1], {Numero: 4, Data: "2026-10-12", Horario: "14:00", Preco: 1000}}
+	if n := opcaoDaDataExata(msg, duas, hoje); n != 0 {
+		t.Errorf("duas opcoes no dia 12 nao escolhem: %d", n)
+	}
 }

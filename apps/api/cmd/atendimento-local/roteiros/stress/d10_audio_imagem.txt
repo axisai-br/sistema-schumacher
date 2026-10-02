@@ -1,5 +1,5 @@
-# ESPERA: passageiros=0 proibido=/\[(imagem|foto|áudio)/
-# Objetivo: áudio não compreendido -> pede para escrever; depois texto com rota -> busca. Foto de paisagem (não documento) -> não ignora, diz que não é documento e pede dados por escrito; não registra passageiro falso.
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal proibido=/\[(imagem|foto|áudio)/
+# Objetivo: áudio não compreendido -> pede para escrever; depois texto com rota -> busca. Foto de paisagem (não documento) -> não ignora, diz que não é documento e pede dados por escrito; não registra passageiro falso. Os dados escritos em seguida fecham 1 passageiro e 1 reserva.
 /nome Rafa
 [áudio não compreendido]
 quero ir de Seara pra Santa Inês

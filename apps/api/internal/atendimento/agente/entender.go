@@ -277,8 +277,23 @@ func truncarRunas(s string, n int) string {
 
 var (
 	reFormaPagamento = regexp.MustCompile(`(?i)\b(sinal|entrada|integral|inteiro|tudo|total|completo|à vista|a vista)\b`)
+	rePagamentoSinal = regexp.MustCompile(`\b(sinal|entrada)\b`)
+	rePagamentoTotal = regexp.MustCompile(`\b(integral|a vista)\b`)
 	reSinalEscolha   = regexp.MustCompile(`(?i)\b(\d{1,2}|primeir[ao]|segund[ao]|terceir[ao]|quart[ao]|quint[ao]|sext[ao]|[uú]ltim[ao]|essa|esta|dessa|desta|dia \d{1,2}|\d{1,2}/\d{1,2}|a de|a do|mais cedo|mais barat[ao]|segunda|quinta)\b`)
 )
+
+// pagamentoEscrito le a forma quando o cliente a escreveu. "tudo" e "total"
+// ficam de fora: aparecem em frases que nao escolhem pagamento.
+func pagamentoEscrito(texto string) string {
+	t := semAcento(strings.ToLower(texto))
+	switch {
+	case rePagamentoTotal.MatchString(t):
+		return PagamentoIntegral
+	case rePagamentoSinal.MatchString(t):
+		return PagamentoSinal
+	}
+	return ""
+}
 
 // enriquecerRota completa a Rota do Jev com o extrator, so onde o Jev nao
 // teve certeza e o texto do cliente sustenta a extracao.
@@ -291,6 +306,14 @@ func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cida
 	if rt.ConfPagamento < limiarFechar && (ex.Pagamento == PagamentoIntegral || ex.Pagamento == PagamentoSinal) && reFormaPagamento.MatchString(texto) {
 		rt.Pagamento, rt.ConfPagamento = ex.Pagamento, 0.95
 		usados = append(usados, "pagamento")
+	}
+	// Forma escrita ("vou pagar só o sinal") vale mesmo se o extrator vier
+	// "nenhum". Pergunta ("quanto fica o sinal?") nao escolhe a forma.
+	if rt.ConfPagamento < limiarFechar && !strings.Contains(texto, "?") && assuntoDoTexto(texto) == "" {
+		if pg := pagamentoEscrito(texto); pg != "" {
+			rt.Pagamento, rt.ConfPagamento = pg, 0.95
+			usados = append(usados, "pagamento_texto")
+		}
 	}
 	jevEscolheu := rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.ConfOpcao >= limiarOpcao
 	// Escolha lida em codigo (ordinal, data, "a de quinta", "mais cedo"...).
@@ -333,9 +356,15 @@ func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cida
 	}
 	// Rota completa e nova na mensagem ("sair de videira para monção, somos
 	// 3") e busca, mesmo que o Jev tenha classificado como quantidade.
-	if cidadeValida(rt.Origem) && cidadeValida(rt.Destino) && rt.ConfOrigem >= 0.8 && rt.ConfDestino >= 0.8 &&
-		rt.Intencao != IntencaoBuscarViagens && rt.Intencao != IntencaoEscolherOpcao && rt.Intencao != IntencaoFormaPagamento &&
-		!(e.Origem != nil && e.Destino != nil && chaveRota(e.Origem.Nome, e.Destino.Nome) == chaveRota(rt.Origem, rt.Destino)) {
+	// Tambem um lado so com o outro no estado ("saindo de igarape do meio"
+	// depois de "pra videira"), quando a lista atual nao e so dessa rota.
+	// O Jev so prevalece quando esta confiante: busca ja liberada, escolha
+	// de uma opcao de fato ou forma de pagamento.
+	jevDecidiu := (rt.Intencao == IntencaoBuscarViagens && rt.ConfIntencao >= 0.8) ||
+		(rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.Opcao != "" && rt.Opcao != OpcaoNenhuma) ||
+		(rt.Intencao == IntencaoFormaPagamento && rt.ConfIntencao >= 0.8)
+	if o, d, ok := rotaPedida(rt, e); ok && len(e.Trechos) == 0 && !jevDecidiu &&
+		!(e.Origem != nil && e.Destino != nil && chaveRota(e.Origem.Nome, e.Destino.Nome) == chaveRota(o, d) && len(e.Opcoes) > 0 && opcoesSoDaRota(e.Opcoes, o, d)) {
 		rt.Intencao, rt.ConfIntencao = IntencaoBuscarViagens, 0.9
 		usados = append(usados, "intencao_busca")
 	}
@@ -387,4 +416,29 @@ func passageirosExtraidos(ex *Extracao) []conversa.Passageiro {
 		}
 	}
 	return out
+}
+
+// rotaPedida: origem e destino da mensagem, completando um lado que faltou
+// com o estado. ok so quando a mensagem traz ao menos um lado valido.
+func rotaPedida(rt Rota, e conversa.Estado) (string, string, bool) {
+	o, d := "", ""
+	if cidadeValida(rt.Origem) && rt.ConfOrigem >= 0.8 {
+		o = rt.Origem
+	}
+	if cidadeValida(rt.Destino) && rt.ConfDestino >= 0.8 {
+		d = rt.Destino
+	}
+	if o == "" && d == "" {
+		return "", "", false
+	}
+	if o == "" && e.Origem != nil {
+		o = e.Origem.Nome
+	}
+	if d == "" && e.Destino != nil {
+		d = e.Destino.Nome
+	}
+	if o == "" || d == "" || chaveRota(o, "") == chaveRota(d, "") {
+		return "", "", false
+	}
+	return o, d, true
 }

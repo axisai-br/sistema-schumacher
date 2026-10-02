@@ -165,3 +165,10 @@ func TestCitadosForaSeguramReserva(t *testing.T) {
 		t.Fatalf("cpf repetido: fora=%d", fora)
 	}
 }
+
+func TestNomeDepoisDeFrase(t *testing.T) {
+	lista, mudou, _, _, _ := mudancaPassageiros(nil, "o terceiro é o caio costa cpf 84434891030", 0, nil)
+	if !mudou || nomesDocs(lista) != "Caio Costa:84434891030" {
+		t.Fatalf("lista=%q", nomesDocs(lista))
+	}
+}

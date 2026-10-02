@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 	"schumacher-tur/api/internal/atendimento/ferramentas"
@@ -153,6 +154,112 @@ func TestComandosVotacaoPassageiros(t *testing.T) {
 	}
 }
 
+// regConta grava a lista e anota a chamada.
+type regConta struct{ chamadas *[]string }
+
+func (r regConta) Def() llm.DefFerramenta { return regFake{}.Def() }
+func (r regConta) Executar(ctx context.Context, c *ferramentas.Contexto, args json.RawMessage) ferramentas.Saida {
+	*r.chamadas = append(*r.chamadas, "registrar_passageiros")
+	return regFake{}.Executar(ctx, c, args)
+}
+
+func opcaoDia(n int, data, hora string) conversa.Opcao {
+	return conversa.Opcao{Numero: n, TripID: "t" + string(rune('0'+n)), Origem: "Santa Inês", Destino: "Chapecó", Data: data, Horario: hora, Preco: 1000, Vagas: 40}
+}
+
+func buscaOpcoes(chamadas *[]string, ops []conversa.Opcao) ferramentas.Ferramenta {
+	return ferrFake{nome: "buscar_viagens", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		*chamadas = append(*chamadas, "buscar_viagens")
+		c.Estado.Origem = &conversa.Parada{StopID: "1", Nome: "Santa Inês", UF: "MA"}
+		c.Estado.Destino = &conversa.Parada{StopID: "3", Nome: "Chapecó", UF: "SC"}
+		c.Estado.Opcoes = append([]conversa.Opcao(nil), ops...)
+		return ferramentas.Saida{OK: true, Dados: map[string]any{"opcoes": ops}}
+	}}
+}
+
+func escolhePrimeira(chamadas *[]string) ferramentas.Ferramenta {
+	return ferrFake{nome: "escolher_viagem", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		*chamadas = append(*chamadas, "escolher_viagem")
+		if len(c.Estado.Opcoes) == 0 {
+			return ferramentas.Saida{OK: false, Motivo: "sem_opcao"}
+		}
+		c.Estado.Trechos = append(c.Estado.Trechos, conversa.Trecho{Viagem: c.Estado.Opcoes[0]})
+		return ferramentas.Saida{OK: true}
+	}}
+}
+
+func TestComandosTudoJuntoFecha(t *testing.T) {
+	var chamadas []string
+	ops := []conversa.Opcao{opcaoDia(1, "2026-10-12", "07:30")}
+	ferrs := append([]ferramentas.Ferramenta{regConta{&chamadas}, buscaOpcoes(&chamadas, ops), escolhePrimeira(&chamadas)}, ferrsFechamento(&chamadas)...)
+	f := fxComandos(t, Rota{
+		Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95,
+		Origem: "Santa Inês", ConfOrigem: 0.95, Destino: "Chapecó", ConfDestino: 0.95,
+	}, `{"pedido":"rota data passageiros e sinal","origem":"Santa Inês","destino":"Chapecó","passageiros":[{"nome":"francisco alves lima","documento":"39053344705","tipo_documento":"CPF"},{"nome":"antonia lima","documento":"71460238001","tipo_documento":"CPF"}],"pagamento":"sinal","confirma":"nenhum","assunto":"nenhum"}`,
+		ferrs...)
+	iniciarComandos(f, "Boa noite! Quero 2 passagens de Santa Inês para Chapecó no dia 12/10, eu Francisco Alves Lima CPF 39053344705 e minha esposa Antonia Lima CPF 71460238001, vou pagar só o sinal.")
+	processar(t, f)
+	semTextoLivre(t, f)
+	if strings.Join(chamadas, ",") != "registrar_passageiros,buscar_viagens,escolher_viagem,criar_reserva,gerar_pix" {
+		t.Fatalf("chamadas=%v", chamadas)
+	}
+	e := f.canal.envios[0]
+	if !strings.Contains(e, "000201PIXCODE") || strings.Contains(strings.ToLower(e), "esposa antonia") {
+		t.Errorf("resposta=%q", e)
+	}
+	ps := f.conversa().Estado.Passageiros
+	if len(ps) != 2 || !strings.Contains(ps[0].Nome, "Francisco") || !strings.Contains(ps[1].Nome, "Antonia") {
+		t.Fatalf("passageiros=%+v", ps)
+	}
+}
+
+func TestComandosTudoJuntoDuasOpcoesPergunta(t *testing.T) {
+	var chamadas []string
+	ops := []conversa.Opcao{opcaoDia(1, "2026-10-12", "07:30"), opcaoDia(2, "2026-10-12", "14:00")}
+	ferrs := append([]ferramentas.Ferramenta{regConta{&chamadas}, buscaOpcoes(&chamadas, ops), escolhePrimeira(&chamadas)}, ferrsFechamento(&chamadas)...)
+	f := fxComandos(t, Rota{
+		Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95,
+		Origem: "Santa Inês", ConfOrigem: 0.95, Destino: "Chapecó", ConfDestino: 0.95,
+	}, `{"pedido":"rota data passageiros e sinal","origem":"Santa Inês","destino":"Chapecó","passageiros":[{"nome":"francisco alves lima","documento":"39053344705","tipo_documento":"CPF"},{"nome":"antonia lima","documento":"71460238001","tipo_documento":"CPF"}],"pagamento":"sinal","confirma":"nenhum","assunto":"nenhum"}`,
+		ferrs...)
+	iniciarComandos(f, "Quero 2 passagens de Santa Inês para Chapecó no dia 12/10, Francisco Alves Lima CPF 39053344705 e Antonia Lima CPF 71460238001, sinal.")
+	processar(t, f)
+	if strings.Contains(strings.Join(chamadas, ","), "escolher_viagem") || strings.Contains(strings.Join(chamadas, ","), "criar_reserva") {
+		t.Fatalf("duas opcoes no dia nao fecham: %v", chamadas)
+	}
+	e := f.canal.envios[0]
+	if !strings.Contains(e, "Qual delas") || !strings.Contains(e, "Francisco") {
+		t.Errorf("deveria listar passageiros e perguntar a viagem: %q", e)
+	}
+}
+
+func TestComandosPassageiroESinalFecha(t *testing.T) {
+	var chamadas []string
+	ferrs := append([]ferramentas.Ferramenta{regConta{&chamadas}}, ferrsFechamento(&chamadas)...)
+	f := fxComandos(t, Rota{}, `{"pedido":"manda o jose e escolhe sinal","passageiros":[{"nome":"josé francisco dos santos de souza filho","documento":"84434891030","tipo_documento":"CPF"}],"pagamento":"sinal","confirma":"nenhum","assunto":"nenhum"}`,
+		ferrs...)
+	iniciarComandos(f, "josé francisco dos santos de souza filho, cpf 844.348.910-30 sinal")
+	comEstado(t, f, estadoPronto())
+	processar(t, f)
+	semTextoLivre(t, f)
+	if strings.Join(chamadas, ",") != "registrar_passageiros,criar_reserva,gerar_pix" {
+		t.Fatalf("chamadas=%v", chamadas)
+	}
+	ps := f.conversa().Estado.Passageiros
+	var achou bool
+	for _, p := range ps {
+		if p.Nome == "José Francisco dos Santos de Souza Filho" {
+			achou = true
+		}
+	}
+	if !achou || len(ps) < 3 {
+		t.Fatalf("nome composto nao preservado: %+v", ps)
+	}
+	if !strings.Contains(f.canal.envios[0], "000201PIXCODE") {
+		t.Errorf("sem PIX: %q", f.canal.envios[0])
+	}
+}
+
 func TestSombraRegistraExtracaoSemMudarResposta(t *testing.T) {
 	f := fxComandos(t, Rota{Intencao: IntencaoSaudacao, ConfIntencao: 0.95}, `{"pedido":"cumprimenta","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`)
 	f.iniciar("oi")
@@ -163,5 +270,26 @@ func TestSombraRegistraExtracaoSemMudarResposta(t *testing.T) {
 	}
 	if p := passo(f.ultimoTurno(), "extrator_sombra"); p == nil {
 		t.Fatal("sem passo extrator_sombra")
+	}
+}
+
+func TestEnriquecerOrigemNovaComDestinoDoEstado(t *testing.T) {
+	e := conversa.Estado{
+		Origem:  &conversa.Parada{Nome: "Santa Inês"},
+		Destino: &conversa.Parada{Nome: "Videira"},
+		Opcoes: []conversa.Opcao{
+			{Numero: 1, Origem: "Santa Inês", Destino: "Videira"},
+			{Numero: 2, Origem: "Monção", Destino: "Videira"},
+			{Numero: 3, Origem: "Igarapé do Meio", Destino: "Videira"},
+		},
+	}
+	rt := Rota{Intencao: IntencaoOutro, ConfIntencao: 0.6, Origem: "Igarapé do Meio", ConfOrigem: 0.95, Destino: CidadeNaoInformada, ConfDestino: 0.9}
+	got, _ := enriquecerRota(rt, nil, e, "saindo de igarape do meio", nil, time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	if got.Intencao != IntencaoBuscarViagens {
+		t.Fatalf("origem nova sobre lista mista deve buscar: %+v", got)
+	}
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	if args, ok := a.argsPreBusca(got, e, false); !ok || args["origem"] != "Igarapé do Meio" || args["destino"] != "Videira" {
+		t.Fatalf("args=%v ok=%v", args, ok)
 	}
 }

@@ -138,6 +138,31 @@ func opcaoDoTexto(texto string, est conversa.Estado, hoje time.Time) (int, strin
 	return 0, ""
 }
 
+// opcaoDaDataExata devolve a unica opcao do dia exato dito no texto.
+// opcaoDoTexto ignora mensagem com CPF; o dia da viagem ainda escolhe
+// quando a busca daquele dia deixou uma so opcao.
+func opcaoDaDataExata(texto string, ops []conversa.Opcao, hoje time.Time) int {
+	if len(ops) == 0 {
+		return 0
+	}
+	p, ok := ferramentas.ResolverQuando(texto, hoje)
+	if !ok || !p.De.Equal(p.Ate) {
+		return 0
+	}
+	dia := p.De.Format("2006-01-02")
+	n := 0
+	for _, o := range ops {
+		if o.Data != dia {
+			continue
+		}
+		if n != 0 {
+			return 0
+		}
+		n = o.Numero
+	}
+	return n
+}
+
 func mesmoDia(ops []conversa.Opcao, wd time.Weekday) bool {
 	for _, o := range ops {
 		d, err := time.Parse("2006-01-02", o.Data)

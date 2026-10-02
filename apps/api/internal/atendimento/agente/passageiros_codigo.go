@@ -128,11 +128,25 @@ var reIdade = regexp.MustCompile(`(?i)([\p{L}]+(?:\s+[\p{L}]+){1,5})\s*,?\s*(?:d
 var palavrasCrianca = map[string]bool{"bebe": true, "bebê": true, "nenem": true, "neném": true, "nenê": true, "crianca": true, "criança": true,
 	"filho": true, "filha": true, "meu": true, "minha": true, "sobrinho": true, "sobrinha": true, "neto": true, "neta": true}
 
+// palavrasParente: parentesco no inicio do trecho ("minha esposa Antonia Lima").
+// Chaves sem acento.
+var palavrasParente = map[string]bool{"esposa": true, "esposo": true, "marido": true, "mulher": true, "mae": true, "pai": true,
+	"irmao": true, "irma": true, "sogro": true, "sogra": true, "avo": true, "tio": true, "tia": true,
+	"namorado": true, "namorada": true, "cunhado": true, "cunhada": true, "amigo": true, "amiga": true, "primo": true, "prima": true}
+
 // limparNome tira conectivos/palavras de crianca do comeco e "de"/"e"/"com" do
 // fim; vazio se sobrar menos de 2 palavras ou uma palavra que nao e de nome.
 func limparNome(s string) string {
 	ws := strings.Fields(s)
-	for len(ws) > 0 && (conectivosInicio[strings.ToLower(ws[0])] || palavrasCrianca[strings.ToLower(ws[0])] || palavrasNaoNome[strings.ToLower(ws[0])]) {
+	// "o terceiro é o caio costa": o nome e o que vem depois da ultima palavra
+	// que nao e de nome ("é", "nome", "sou"...), nao a frase inteira.
+	for i := len(ws) - 1; i >= 0; i-- {
+		if palavrasNaoNome[strings.ToLower(ws[i])] {
+			ws = ws[i+1:]
+			break
+		}
+	}
+	for len(ws) > 0 && (conectivosInicio[strings.ToLower(ws[0])] || palavrasCrianca[strings.ToLower(ws[0])] || palavrasNaoNome[strings.ToLower(ws[0])] || palavrasParente[semAcento(strings.ToLower(ws[0]))]) {
 		ws = ws[1:]
 	}
 	for len(ws) > 0 {

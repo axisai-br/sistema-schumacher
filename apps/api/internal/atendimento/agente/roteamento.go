@@ -291,6 +291,10 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// Tambem correcao ("o cpf da maria é ..."), remocao ("o bruno não vai
 	// mais"), CPF repetido ou invalido: o codigo grava a lista inteira e o
 	// template mostra o resultado, entao o texto nunca afirma o que nao houve.
+	// No motor por comandos, rota/data/pagamento na mesma mensagem seguem
+	// depois do registro (buscar, escolher, fechar). prefixoRegistro entra
+	// na resposta desses passos.
+	prefixoRegistro := ""
 	if !tc.estado.AlgumReservado() {
 		pend := pendentesDoHistorico(hist, tc.estado.Passageiros, a.d.Agora().In(a.loc))
 		lista, mudou, completo, avisosT, fora := mudancaPassageiros(tc.estado.Passageiros, textoRecenteCliente(hist), tc.estado.CriancasInformadas, pend)
@@ -315,11 +319,16 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 					return resultadoRota{resposta: textoRegistrados(tc.estado) + "\n\n" + strings.Join(avisosT, "\n")}
 				}
 				if completo || direto {
-					finalizar("template_registro_texto")
-					return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+					if a.segueDepoisDoRegistro(tc, rt, hist) {
+						prefixoRegistro = textoRegistrados(tc.estado)
+					} else {
+						finalizar("template_registro_texto")
+						return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+					}
+				} else {
+					finalizar("pre_registro_texto")
+					return resultadoRota{pre: pre}
 				}
-				finalizar("pre_registro_texto")
-				return resultadoRota{pre: pre}
 			}
 		} else if len(avisosT) > 0 {
 			finalizar("template_passageiro_aviso")
@@ -338,6 +347,7 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	if res, dec, ok := a.preFechar(ctx, tc, rt, hist); ok {
 		saida["pagamento"], saida["conf_pagamento"], saida["confirma"] = rt.Pagamento, rt.ConfPagamento, rt.Confirma
 		finalizar(dec)
+		res.resposta = juntarResposta(prefixoRegistro, res.resposta)
 		return res
 	}
 
@@ -355,6 +365,10 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 			finalizar("template_quantidade")
 			return resultadoRota{resposta: textoProximoPasso(tc.estado)}
 		}
+		if prefixoRegistro != "" {
+			finalizar("template_registro_texto")
+			return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+		}
 		finalizar("llm")
 		return resultadoRota{}
 	}
@@ -371,6 +385,9 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	pre, ok := a.preExecutar(ctx, tc, "buscar_viagens", argsAny)
 	if !ok {
 		finalizar("pre_busca_falhou")
+		if prefixoRegistro != "" {
+			return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+		}
 		return resultadoRota{}
 	}
 	// Rota nova (nao e a volta) com trecho ainda sem reserva: o cliente mudou
@@ -382,10 +399,20 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 	// Busca limpa (opcoes, sem aviso da ferramenta) e mensagem so com a rota:
 	// a lista vai por template.
+	if tc.comandos && a.escolherDepoisDaBusca(ctx, tc, textoRecenteCliente(hist)) {
+		if res, dec, ok := a.preFechar(ctx, tc, rt, hist); ok {
+			saida["pagamento"], saida["conf_pagamento"], saida["confirma"] = rt.Pagamento, rt.ConfPagamento, rt.Confirma
+			finalizar(dec)
+			res.resposta = juntarResposta(prefixoRegistro, res.resposta)
+			return res
+		}
+		finalizar("template_escolha")
+		return resultadoRota{resposta: juntarResposta(prefixoRegistro, textoEscolhido(tc.estado))}
+	}
 	if direto {
 		if ops, limpa := opcoesSemAviso(tc.resultados); limpa {
 			finalizar("template_opcoes")
-			return resultadoRota{resposta: aviso + textoOpcoes(ops)}
+			return resultadoRota{resposta: juntarResposta(prefixoRegistro, aviso+textoOpcoes(ops))}
 		}
 	}
 	finalizar(decisao)
@@ -618,6 +645,50 @@ func pagamentoDecidido(rt Rota, est conversa.Estado, hist []conversa.Mensagem) s
 		return est.Pagamento
 	}
 	return ""
+}
+
+// segueDepoisDoRegistro: a mesma mensagem ainda pede busca ou fechamento.
+// Registro com aviso (CPF invalido, parente sem documento) nao chega aqui.
+func (a *Agente) segueDepoisDoRegistro(tc *turno, rt Rota, hist []conversa.Mensagem) bool {
+	if !tc.comandos {
+		return false
+	}
+	if pagamentoDecidido(rt, tc.estado, hist) != "" && len(tc.estado.Trechos) > 0 {
+		return true
+	}
+	texto := textoRecenteCliente(hist)
+	_, temQuando := ferramentas.ResolverQuando(texto, a.d.Agora().In(a.loc))
+	_, ok := a.argsPreBusca(rt, tc.estado, temQuando)
+	return ok
+}
+
+// escolherDepoisDaBusca escolhe a viagem que a mensagem ja indicou, agora que
+// as opcoes existem. Data exata com uma so opcao naquele dia tambem escolhe
+// (a mensagem pode trazer CPF, e opcaoDoTexto nesse caso nao escolhe).
+func (a *Agente) escolherDepoisDaBusca(ctx context.Context, tc *turno, texto string) bool {
+	if len(tc.estado.Trechos) > 0 || len(tc.estado.Opcoes) == 0 {
+		return false
+	}
+	hoje := a.d.Agora().In(a.loc)
+	n, _ := opcaoDoTexto(texto, tc.estado, hoje)
+	if n == 0 {
+		n = opcaoDaDataExata(texto, tc.estado.Opcoes, hoje)
+	}
+	if n == 0 {
+		return false
+	}
+	_, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"opcao": n})
+	return ok
+}
+
+func juntarResposta(prefixo, corpo string) string {
+	if prefixo == "" {
+		return corpo
+	}
+	if corpo == "" {
+		return prefixo
+	}
+	return prefixo + "\n\n" + corpo
 }
 
 // ultimoBotPedeFechamento diz se a ultima mensagem do bot fala em reserva, PIX

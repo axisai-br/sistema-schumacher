@@ -26,7 +26,7 @@ const (
 const (
 	textoAudio        = "Não consegui entender o áudio. 🙏 Pode me escrever?"
 	textoImagem       = "Recebi a imagem, mas ela não parece ser um documento. Se for de um passageiro, me manda o nome completo e o CPF por escrito?"
-	textoCorrigirDado = "Pra corrigir, me manda o nome do passageiro e o documento certo. Por exemplo: Maria Pereira CPF 987.654.321-00."
+	textoCorrigirDado = "Pra corrigir, me manda o nome do passageiro e o documento certo. Por exemplo: o CPF da Maria Pereira."
 	textoSemData      = "Não tem viagem nessa data. Estas são as próximas:\n\n"
 	textoSemExata     = "Não achei exatamente o que você pediu. Estas são as opções disponíveis:\n\n"
 	limiteNaoEntendi  = 2
