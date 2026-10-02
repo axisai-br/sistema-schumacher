@@ -157,6 +157,14 @@ func perguntasJev(e EntradaRota) map[string]any {
 				IntencaoOutro:              "None of the above, or unclear: thanks, acknowledgements, corrections, or several requests mixed together.",
 			},
 		},
+		"so_isso": map[string]any{
+			"type":         "noul",
+			"instructions": "Does `latest_customer_message` ONLY move the booking forward (gives a city or route, a date, picks an option, gives the number of travelers, names or documents, or a payment choice), with NO other question, doubt, complaint, condition or extra request?",
+			"criteria": map[string]any{
+				"true":  "Only booking data or a choice, e.g. 'de monção pra videira', 'a primeira', 'somos 3', 'ana souza cpf 529...', 'sinal'.",
+				"false": "Also asks something or adds a request/condition, e.g. 'tem ar condicionado?', 'qual o horario de embarque?', 'pode ser mais barato?', 'e a volta?', or is unclear.",
+			},
+		},
 		"menciona_data_ou_pessoas": map[string]any{
 			"type":         "noul",
 			"instructions": "Does the customer, in `latest_customer_message` or in earlier customer messages of the `conversation`, mention a specific travel date, a day of the week, a time of day, a date range, or how many people are traveling?",
@@ -309,6 +317,9 @@ func rotaDeRespostas(resp map[string]respostaJev, e EntradaRota) Rota {
 		case PagamentoIntegral, PagamentoSinal, PagamentoNenhum:
 			rt.Pagamento, rt.ConfPagamento = a.Choice, conf(a)
 		}
+	}
+	if a, ok := resp["so_isso"]; ok && a.Noul != nil {
+		rt.SoIsso = limitar01(*a.Noul)
 	}
 	if a, ok := resp["confirma"]; ok && a.Noul != nil {
 		rt.Confirma = limitar01(*a.Noul)

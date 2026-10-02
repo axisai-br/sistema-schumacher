@@ -308,3 +308,82 @@ func TestFormaRegistraCPFEmCodigo(t *testing.T) {
 		t.Fatalf("envios=%q", f.canal.envios)
 	}
 }
+
+func buscaFake() ferramentas.Ferramenta {
+	return ferrFake{nome: "buscar_viagens", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Origem = &conversa.Parada{StopID: "2", Nome: "Monção", UF: "MA"}
+		c.Estado.Destino = &conversa.Parada{StopID: "4", Nome: "Videira", UF: "SC"}
+		ops := []conversa.Opcao{{Numero: 1, TripID: "t1", Origem: "Monção", Destino: "Videira", Data: "2026-10-05", Horario: "08:40", Preco: 950, Vagas: 40}}
+		c.Estado.Opcoes = ops
+		return ferramentas.Saida{OK: true, Dados: map[string]any{"opcoes": ops, "total": 1}}
+	}}
+}
+
+func TestTemplateOpcoesSemLLM(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Origem: "Monção", ConfOrigem: 0.95, Destino: "Videira", ConfDestino: 0.95, SoIsso: 0.95}, buscaFake())
+	f.iniciar("de monção pra videira")
+	processar(t, f)
+	if len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "1. seg 05/10 às 08:40, R$ 950") {
+		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
+	}
+	if d := decisao(t, f.ultimoTurno()); d != "template_opcoes" {
+		t.Errorf("decisao=%s", d)
+	}
+}
+
+func TestComPerguntaExtraVaiAoLLM(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Origem: "Monção", ConfOrigem: 0.95, Destino: "Videira", ConfDestino: 0.95, SoIsso: 0.2}, buscaFake())
+	f.modelo.fila = []llm.Resposta{texto("Tem sim, a viagem de 05/10 às 08:40 por R$ 950. O ônibus tem ar.")}
+	f.iniciar("de monção pra videira, o onibus tem ar?")
+	processar(t, f)
+	if len(f.modelo.pedidos) != 1 || decisao(t, f.ultimoTurno()) != "pre_busca" {
+		t.Fatalf("pedidos=%d", len(f.modelo.pedidos))
+	}
+}
+
+func TestTemplateEscolhaPedePassageiros(t *testing.T) {
+	esc := ferrFake{nome: "escolher_viagem", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Trechos = []conversa.Trecho{{Viagem: c.Estado.Opcoes[0]}}
+		return ferramentas.Saida{OK: true}
+	}}
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoEscolherOpcao, ConfIntencao: 0.95, Opcao: "1", ConfOpcao: 0.95, SoIsso: 0.9}, esc)
+	f.iniciar("a primeira")
+	comEstado(t, f, conversa.Estado{PessoasInformadas: 3, CriancasInformadas: 2, Opcoes: []conversa.Opcao{{Numero: 1, TripID: "t1", Origem: "Monção", Destino: "Videira", Data: "2026-10-05", Horario: "08:40", Preco: 950}}})
+	processar(t, f)
+	if len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 {
+		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
+	}
+	e := f.canal.envios[0]
+	for _, s := range []string{"Escolhido", "Monção → Videira", "3 passageiros", "2 criança"} {
+		if !strings.Contains(e, s) {
+			t.Errorf("faltou %q em %q", s, e)
+		}
+	}
+}
+
+func TestGuardaEscolhaSemPedido(t *testing.T) {
+	var escolheu bool
+	esc := ferrFake{nome: "escolher_viagem", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		escolheu = true
+		return ferramentas.Saida{OK: true}
+	}}
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.6}, esc)
+	f.modelo.fila = []llm.Resposta{chamada("escolher_viagem", `{"opcao":1}`), texto("Qual opção você prefere?")}
+	f.iniciar("quero ir pra videira mês que vem")
+	processar(t, f)
+	if escolheu {
+		t.Fatal("guarda deveria recusar escolher_viagem sem pedido do cliente")
+	}
+	p := passo(f.ultimoTurno(), "escolher_viagem")
+	if p == nil || p.Saida.(ferramentas.Saida).Motivo != "cliente_nao_escolheu" {
+		t.Fatalf("passo=%+v", p)
+	}
+	// Com dia exato, a escolha passa.
+	f2, _ := fxRoteador(t, Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.6}, esc)
+	f2.modelo.fila = []llm.Resposta{chamada("escolher_viagem", `{"opcao":1}`), texto("Escolhido!")}
+	f2.iniciar("quero ir pra videira dia 15")
+	processar(t, f2)
+	if !escolheu {
+		t.Fatal("com dia exato a escolha deveria passar")
+	}
+}

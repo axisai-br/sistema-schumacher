@@ -277,11 +277,55 @@ func textoProximoPasso(e conversa.Estado) string {
 		}
 		return TextoPedirRota
 	case strings.HasPrefix(p, "informar passageiros"), strings.HasPrefix(p, "completar dados"), strings.HasPrefix(p, "incluir ao menos"):
-		return "Pra seguir com a reserva, me manda o nome completo e o CPF (ou RG/CNH) de cada passageiro. Criança de até 5 anos precisa só do nome. 😊"
+		return textoPedirPassageiros(e)
 	case strings.HasPrefix(p, "escolher pagamento"):
 		return "Você prefere pagar o valor integral agora no PIX, ou só o sinal agora e o restante no embarque?"
 	}
 	return "Posso fechar a reserva e te mandar o PIX? 😊"
+}
+
+// textoPedirPassageiros pede nome e documento, usando a quantidade ja dita.
+func textoPedirPassageiros(e conversa.Estado) string {
+	n, cri := e.PessoasInformadas, e.CriancasInformadas
+	if len(e.Passageiros) > 0 || n <= 0 {
+		return "Pra seguir com a reserva, me manda o nome completo e o CPF (ou RG/CNH) de cada passageiro. Criança de até 5 anos precisa só do nome. 😊"
+	}
+	if n == 1 {
+		return "Pra seguir com a reserva, me manda o nome completo e o CPF (ou RG/CNH) do passageiro. 😊"
+	}
+	if cri > 0 {
+		return fmt.Sprintf("Certo, %d passageiros, sendo %d criança(s) de até 5 anos. Me manda o nome completo e o CPF (ou RG/CNH) de cada adulto, e só o nome das crianças. 😊", n, cri)
+	}
+	return fmt.Sprintf("Certo, %d passageiros. Me manda o nome completo e o CPF (ou RG/CNH) de cada um. 😊", n)
+}
+
+// textoTrecho: "Monção → Fraiburgo, seg 05/10 às 08:40, R$ 950 por pessoa".
+func textoTrecho(o conversa.Opcao) string {
+	data := o.Data
+	if t, err := time.Parse("2006-01-02", o.Data); err == nil {
+		data = diasCurtos[t.Weekday()] + " " + t.Format("02/01")
+	}
+	return fmt.Sprintf("%s → %s, %s às %s, %s por pessoa", o.Origem, o.Destino, data, o.Horario, formatarReais(o.Preco))
+}
+
+// textoEscolhido confirma a(s) viagem(ns) escolhida(s) e pede o proximo passo.
+func textoEscolhido(e conversa.Estado) string {
+	var b strings.Builder
+	if len(e.Trechos) == 1 {
+		fmt.Fprintf(&b, "Escolhido ✅\n%s", textoTrecho(e.Trechos[0].Viagem))
+	} else {
+		b.WriteString("Escolhido ✅")
+		for i, t := range e.Trechos {
+			fmt.Fprintf(&b, "\nTrecho %d: %s", i+1, textoTrecho(t.Viagem))
+		}
+	}
+	b.WriteString("\n\n" + textoProximoPasso(e))
+	return b.String()
+}
+
+// textoConfirmarRegistro lista os passageiros registrados e segue.
+func textoConfirmarRegistro(e conversa.Estado) string {
+	return textoRegistrados(e) + "\n\nSe algo estiver errado, é só me falar. " + textoProximoPasso(e)
 }
 
 // marcadoresVazamento: pedacos de formato interno do modelo que nunca podem

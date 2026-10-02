@@ -77,6 +77,11 @@ type Rota struct {
 	// QuantidadeNaoInformada; vazio se nao perguntado (so sem passageiros).
 	Adultos, Criancas         string
 	ConfAdultos, ConfCriancas float64
+
+	// SoIsso e a probabilidade de a mensagem trazer so o passo do fluxo (rota,
+	// escolha, dados, quantidade), sem outra pergunta ou pedido: com ela alta o
+	// codigo responde por template, sem LLM.
+	SoIsso float64
 }
 
 // Respostas das perguntas de pagamento e quantidade.

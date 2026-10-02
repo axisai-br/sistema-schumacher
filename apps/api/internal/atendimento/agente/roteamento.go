@@ -144,18 +144,28 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		}
 	}
 	saida["pede_volta"] = rt.PedeVolta
+	saida["so_isso"] = rt.SoIsso
+	tc.rota = &rt
+	// direto: a mensagem so avanca o fluxo; passos obvios respondem por
+	// template, sem LLM.
+	direto := rt.SoIsso >= limiarSoIsso
 
 	// Escolha clara de uma das opcoes mostradas ("a primeira", "dia 8"): o
 	// codigo registra a escolha antes do LLM, que so confirma ao cliente.
 	if n, ok := a.opcaoClara(rt, tc.estado); ok {
 		if pre, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"opcao": n}); ok {
+			if direto {
+				finalizar("template_escolha")
+				return resultadoRota{resposta: textoEscolhido(tc.estado)}
+			}
 			finalizar("pre_escolha")
 			return resultadoRota{pre: pre}
 		}
 		saida["pre_escolha"] = "falhou"
 	}
 
-	if aplicarQuantidade(rt, &tc.estado) {
+	novaQuantidade := aplicarQuantidade(rt, &tc.estado)
+	if novaQuantidade {
 		saida["quantidade"] = map[string]int{"pessoas": tc.estado.PessoasInformadas, "criancas_ate_5": tc.estado.CriancasInformadas}
 	}
 
@@ -163,6 +173,10 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// codigo registra os passageiros e o LLM so confirma com o cliente.
 	if novos := passageirosDeFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc)); len(novos) > 0 {
 		if pre, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
+			if direto {
+				finalizar("template_registro")
+				return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
+			}
 			finalizar("pre_registro")
 			return resultadoRota{pre: pre}
 		}
@@ -184,6 +198,12 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		args, ok, decisao = map[string]string{"origem": d.Nome, "destino": o.Nome}, true, "pre_busca_volta"
 	}
 	if !ok {
+		// So a quantidade mudou ("somos 3, 1 criança") com viagem escolhida e
+		// sem passageiros: pede os dados de cada um por template.
+		if direto && novaQuantidade && len(tc.estado.Trechos) > 0 && len(tc.estado.Passageiros) == 0 {
+			finalizar("template_quantidade")
+			return resultadoRota{resposta: textoProximoPasso(tc.estado)}
+		}
 		finalizar("llm")
 		return resultadoRota{}
 	}
@@ -202,8 +222,59 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		finalizar("pre_busca_falhou")
 		return resultadoRota{}
 	}
+	// Busca limpa (opcoes, sem aviso da ferramenta) e mensagem so com a rota:
+	// a lista vai por template.
+	if direto {
+		if ops, limpa := opcoesSemAviso(tc.resultados); limpa {
+			finalizar("template_opcoes")
+			return resultadoRota{resposta: textoOpcoes(ops)}
+		}
+	}
 	finalizar(decisao)
 	return resultadoRota{pre: pre}
+}
+
+// escolhaPermitida diz se o cliente deu algum sinal de escolha neste turno
+// (opcao, intencao de escolher, dia exato). Sem Roteador nao ha como saber e
+// a escolha e liberada.
+func escolhaPermitida(tc *turno) bool {
+	rt := tc.rota
+	if rt == nil || tc.diaEspecifico {
+		return true
+	}
+	if rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= 0.7 {
+		return true
+	}
+	if rt.Opcao != "" && rt.Opcao != OpcaoNenhuma && rt.ConfOpcao >= 0.7 {
+		return true
+	}
+	return rt.PedeVolta >= limiarVolta
+}
+
+// limiarSoIsso: confianca minima de que a mensagem so avanca o fluxo para
+// responder por template.
+const limiarSoIsso = 0.85
+
+// opcoesSemAviso devolve as opcoes da ultima busca deste turno quando ela veio
+// sem "mensagem"/"sugestao" (nada que o LLM precise explicar).
+func opcoesSemAviso(resultados []string) ([]conversa.Opcao, bool) {
+	if len(resultados) == 0 {
+		return nil, false
+	}
+	var s struct {
+		OK    bool `json:"ok"`
+		Dados struct {
+			Opcoes   []conversa.Opcao `json:"opcoes"`
+			Mensagem string           `json:"mensagem"`
+			Sugestao string           `json:"sugestao"`
+			SemVaga  int              `json:"sem_vaga_para_pessoas_count"`
+		} `json:"dados"`
+	}
+	if json.Unmarshal([]byte(resultados[len(resultados)-1]), &s) != nil || !s.OK {
+		return nil, false
+	}
+	d := s.Dados
+	return d.Opcoes, len(d.Opcoes) > 0 && d.Mensagem == "" && d.Sugestao == "" && d.SemVaga == 0
 }
 
 // limiarOpcao: confianca minima (intencao e opcao) para o codigo escolher a

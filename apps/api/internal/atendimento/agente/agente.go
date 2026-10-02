@@ -129,6 +129,9 @@ type turno struct {
 	resultados []string // JSON das saidas de ferramenta deste turno
 	anteriores []string // JSON das saidas de ferramenta dos ultimos turnos
 	nPre       int      // ferramentas pre-executadas pelo codigo (ids pre_1, pre_2...)
+	rota       *Rota    // veredito do Roteador neste turno (nil sem roteador ou se falhou)
+	// diaEspecifico: o cliente citou um dia exato neste turno ("dia 8", "15/10").
+	diaEspecifico bool
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -228,6 +231,9 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	}
 
 	tc.anteriores = a.saidasAnteriores(ctx, c.ID)
+	if p, ok := ferramentas.ResolverQuando(strings.Join(textosCliente, " "), a.d.Agora().In(a.loc)); ok && p.De.Equal(p.Ate) {
+		tc.diaEspecifico = true
+	}
 
 	var pre []llm.Mensagem // chamada de ferramenta executada antes do LLM (pre-busca)
 	if a.d.Roteador != nil {
@@ -443,9 +449,17 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 		msgs = append(msgs, llm.Mensagem{Papel: llm.PapelAssistente, Texto: resp.Texto, Chamadas: resp.Chamadas})
 		for _, ch := range resp.Chamadas {
 			t1 := a.d.Agora()
-			saida := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{
-				Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora(),
-			}, ch.Nome, ch.Argumentos)
+			var saida ferramentas.Saida
+			if ch.Nome == "escolher_viagem" && !escolhaPermitida(tc) {
+				// Guarda: o modelo nao escolhe viagem pelo cliente.
+				saida = ferramentas.Saida{OK: false, Motivo: "cliente_nao_escolheu", Dados: map[string]any{
+					"mensagem": "O cliente ainda nao escolheu uma opcao nesta mensagem. Mostre as opcoes e espere ele escolher; nao escolha por ele.",
+				}}
+			} else {
+				saida = a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{
+					Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora(),
+				}, ch.Nome, ch.Argumentos)
+			}
 			js, err := json.Marshal(saida)
 			if err != nil {
 				js = []byte(`{"ok":false,"motivo":"saida_invalida"}`)
