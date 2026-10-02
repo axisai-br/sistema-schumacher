@@ -449,3 +449,17 @@ func TestTrechoMesmaRotaSubstitui(t *testing.T) {
 		t.Fatalf("a volta acrescenta trecho, veio %d", i)
 	}
 }
+
+func TestArgsPreBuscaCompletaUmLado(t *testing.T) {
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	est := conversa.Estado{
+		Origem:  &conversa.Parada{Nome: "Santa Inês"},
+		Destino: &conversa.Parada{Nome: "Videira"},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Santa Inês", Destino: "Videira"}},
+	}
+	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Origem: "Igarapé do Meio", ConfOrigem: 0.9, Destino: CidadeNaoInformada, ConfDestino: 0.9}
+	args, ok := a.argsPreBusca(rt, est, false)
+	if !ok || args["origem"] != "Igarapé do Meio" || args["destino"] != "Videira" {
+		t.Fatalf("origem nova com destino do estado: %v %v", args, ok)
+	}
+}

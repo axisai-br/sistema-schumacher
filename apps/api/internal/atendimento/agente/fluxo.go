@@ -226,10 +226,20 @@ func aplicarExtracaoPassageiros(lista []conversa.Passageiro, ex *Extracao) ([]co
 			mudou = true
 		}
 	}
+	// O extrator so ACRESCENTA gente nova: quem ja esta na lista (nome
+	// compativel ou mesmo documento) fica como esta; correcao so por Corrigir.
 	for _, p := range passageirosExtraidos(ex) {
-		var entrou bool
-		lista, entrou, _ = juntarPassageiro(lista, p)
-		mudou = mudou || entrou
+		existe := false
+		for _, a := range lista {
+			if nomesCompativeis(a.Nome, p.Nome) || (p.Documento != "" && normDoc(a.Documento) == normDoc(p.Documento)) {
+				existe = true
+				break
+			}
+		}
+		if !existe {
+			lista = append(lista, p)
+			mudou = true
+		}
 	}
 	for _, c := range ex.Corrigir {
 		if i := acharPassageiro(lista, primeiroNome(c.Nome)); i >= 0 {
@@ -260,7 +270,7 @@ func (a *Agente) passoSombra(ctx context.Context, est conversa.Estado, hist []co
 	}
 	p.Nome = "extrator_sombra"
 	if ex != nil {
-		rt, usados := enriquecerRota(Rota{}, ex, est, textoRecenteCliente(hist), nil)
+		rt, usados := enriquecerRota(Rota{}, ex, est, textoRecenteCliente(hist), nil, a.d.Agora().In(a.loc))
 		p.Saida = map[string]any{"extracao": ex, "rota_extrator": rt, "campos": usados, "assunto_palavra": assuntoDoTexto(textoRecenteCliente(hist))}
 	}
 	return p, true

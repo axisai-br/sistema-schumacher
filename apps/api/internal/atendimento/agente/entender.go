@@ -282,7 +282,7 @@ var (
 
 // enriquecerRota completa a Rota do Jev com o extrator, so onde o Jev nao
 // teve certeza e o texto do cliente sustenta a extracao.
-func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cidades []ferramentas.Cidade) (Rota, []string) {
+func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cidades []ferramentas.Cidade, hoje time.Time) (Rota, []string) {
 	if ex == nil {
 		ex = &Extracao{} // so as regras que nao dependem do extrator
 	}
@@ -292,8 +292,17 @@ func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cida
 		rt.Pagamento, rt.ConfPagamento = ex.Pagamento, 0.95
 		usados = append(usados, "pagamento")
 	}
+	jevEscolheu := rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.ConfOpcao >= limiarOpcao
+	// Escolha lida em codigo (ordinal, data, "a de quinta", "mais cedo"...).
+	if !jevEscolheu && rt.PedeVolta < 0.5 && !strings.Contains(texto, "[foto") {
+		if n, como := opcaoDoTexto(texto, e, hoje); n > 0 {
+			rt.Intencao, rt.ConfIntencao, rt.Opcao, rt.ConfOpcao = IntencaoEscolherOpcao, 0.95, fmt.Sprint(n), 0.95
+			usados = append(usados, "opcao_codigo:"+como)
+			jevEscolheu = true
+		}
+	}
 	// Escolha de opcao: numero existente + sinal de escolha no texto.
-	if ex.Opcao > 0 && rt.PedeVolta < 0.5 && !(rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.ConfOpcao >= limiarOpcao) && reSinalEscolha.MatchString(texto) {
+	if !jevEscolheu && ex.Opcao > 0 && rt.PedeVolta < 0.5 && !(rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.ConfOpcao >= limiarOpcao) && reSinalEscolha.MatchString(texto) {
 		for _, o := range e.Opcoes {
 			if o.Numero == ex.Opcao {
 				rt.Intencao, rt.ConfIntencao, rt.Opcao, rt.ConfOpcao = IntencaoEscolherOpcao, 0.95, fmt.Sprint(ex.Opcao), 0.95

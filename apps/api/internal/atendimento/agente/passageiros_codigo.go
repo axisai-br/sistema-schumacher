@@ -27,6 +27,13 @@ var reFotoDocumento = regexp.MustCompile(`\[foto de documento: ([^\]]+)\]`)
 // fora (o LLM pede o que faltar). avisos explica, para o cliente, certidoes
 // de quem tem mais de 5 anos e veio sem CPF/RG.
 func passageirosDeFotos(textos []string, hoje time.Time) (out []conversa.Passageiro, avisos []string) {
+	out, avisos, _ = lerFotos(textos, hoje)
+	return out, avisos
+}
+
+// lerFotos e passageirosDeFotos mais as pessoas que ficaram pendentes
+// (certidao de quem tem mais de 5 anos, sem CPF/RG).
+func lerFotos(textos []string, hoje time.Time) (out []conversa.Passageiro, avisos []string, pend []conversa.Passageiro) {
 	for _, t := range textos {
 		for _, m := range reFotoDocumento.FindAllStringSubmatch(t, -1) {
 			var p conversa.Passageiro
@@ -52,6 +59,7 @@ func passageirosDeFotos(textos []string, hoje time.Time) (out []conversa.Passage
 			}
 			if certidao && p.Nome != "" && p.Documento == "" && temIdade && anos > 5 {
 				avisos = append(avisos, fmt.Sprintf("Recebi a certidão de %s (%d anos). Acima de 5 anos a criança paga passagem e precisa de CPF ou RG: me manda o número?", p.Nome, anos))
+				pend = append(pend, p)
 				continue
 			}
 			if p.Nome == "" || (p.Documento == "" && !p.CriancaAte5) {
@@ -60,7 +68,7 @@ func passageirosDeFotos(textos []string, hoje time.Time) (out []conversa.Passage
 			out = append(out, p)
 		}
 	}
-	return out, avisos
+	return out, avisos, pend
 }
 
 // idade em anos completos a partir de "DD/MM/AAAA".
@@ -246,7 +254,7 @@ func extrairPassageirosTexto(texto string, criancasAte5 ...int) (ps []conversa.P
 			marcar(m[0], m[1])
 		}
 	}
-	ps, _ = mesclarPassageiros(nil, ps)
+	ps = semRepetidos(ps)
 	var resto strings.Builder
 	for i := range texto {
 		if !usado[i] {
@@ -343,4 +351,23 @@ func valorOuTipo(t string) string {
 		return "doc"
 	}
 	return t
+}
+
+// semRepetidos tira so a mesma pessoa achada duas vezes (nome compativel);
+// mesmo documento com nomes diferentes fica, para virar aviso de conflito.
+func semRepetidos(ps []conversa.Passageiro) []conversa.Passageiro {
+	var out []conversa.Passageiro
+	for _, p := range ps {
+		dup := false
+		for _, o := range out {
+			if nomesCompativeis(o.Nome, p.Nome) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, p)
+		}
+	}
+	return out
 }

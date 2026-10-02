@@ -3,6 +3,7 @@ package agente
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 )
@@ -52,7 +53,7 @@ func TestMudancaPassageiros(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			lista, mudou, _, avisos := mudancaPassageiros(c.atuais, c.texto, 0)
+			lista, mudou, _, avisos, _ := mudancaPassageiros(c.atuais, c.texto, 0, nil)
 			if mudou == c.naoMuda {
 				t.Errorf("mudou=%v", mudou)
 			}
@@ -113,5 +114,54 @@ func TestOpcaoClaraMesmoOnibusOutraRota(t *testing.T) {
 	rt := Rota{Intencao: IntencaoEscolherOpcao, ConfIntencao: 0.99, Opcao: "1", ConfOpcao: 0.99}
 	if n, ok := a.opcaoClara(rt, est); !ok || n != 1 {
 		t.Fatalf("mesmo onibus com outras paradas e outra viagem: n=%d ok=%v", n, ok)
+	}
+}
+
+func msgCli(t string) conversa.Mensagem {
+	return conversa.Mensagem{Autor: conversa.AutorCliente, Texto: t}
+}
+func msgBot(t string) conversa.Mensagem { return conversa.Mensagem{Autor: conversa.AutorBot, Texto: t} }
+
+func TestPendentesCompletadosDepois(t *testing.T) {
+	hoje := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	rita := conversa.Passageiro{Nome: "Rita Lima", Documento: "52998224725", TipoDocumento: "CPF"}
+	rogerio := conversa.Passageiro{Nome: "Rogerio Dias", Documento: "98765432100", TipoDocumento: "CPF"}
+	casos := []struct {
+		nome  string
+		hist  []conversa.Mensagem
+		lista []conversa.Passageiro
+		quer  string
+	}{
+		{"cpf invalido e depois o certo", []conversa.Mensagem{msgCli("lucia ferreira cpf 123.456.789-00"), msgBot("O CPF de Lucia..."), msgCli("desculpa, o certo é 529.982.247-25")},
+			nil, "Lucia Ferreira:52998224725"},
+		{"certidao de 8 anos e depois o cpf dele", []conversa.Mensagem{msgCli("[foto de documento: certidão de nascimento, nome JOAO LIMA, nascimento 10/05/2018]"), msgBot("Recebi a certidão..."), msgCli("o cpf dele é 111.444.777-35")},
+			[]conversa.Passageiro{rita}, "Rita Lima:52998224725|Joao Lima:11144477735"},
+		{"cpf repetido e depois o da sandra", []conversa.Mensagem{msgCli("rogerio dias cpf 98765432100 e sandra dias cpf 98765432100"), msgBot("O documento ..."), msgCli("foi mal, o da sandra é 39053344705")},
+			[]conversa.Passageiro{rogerio}, "Rogerio Dias:98765432100|Sandra Dias:39053344705"},
+		{"mae sem documento e depois o cpf dela", []conversa.Mensagem{msgCli("eu, marcia alves cpf 52998224725, meu filho de 4 anos, Pedro Alves, e minha mãe rosa alves"), msgBot("Falta o CPF..."), msgCli("rosa alves cpf 11144477735")},
+			[]conversa.Passageiro{{Nome: "Marcia Alves", Documento: "52998224725", TipoDocumento: "CPF"}, {Nome: "Pedro Alves", CriancaAte5: true}}, "Marcia Alves:52998224725|Pedro Alves:crianca|Rosa Alves:11144477735"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			pend := pendentesDoHistorico(c.hist, c.lista, hoje)
+			lista, mudou, _, avisos, _ := mudancaPassageiros(c.lista, c.hist[len(c.hist)-1].Texto, 0, pend)
+			if !mudou || nomesDocs(lista) != c.quer {
+				t.Fatalf("lista=%q mudou=%v avisos=%v pend=%v", nomesDocs(lista), mudou, avisos, pend)
+			}
+		})
+	}
+}
+
+func TestCitadosForaSeguramReserva(t *testing.T) {
+	_, _, _, avisos, fora := mudancaPassageiros(nil, "eu, marcia alves cpf 52998224725, meu filho de 4 anos, Pedro Alves, e minha mãe rosa alves", 0, nil)
+	if fora != 1 || len(avisos) != 1 || !strings.Contains(avisos[0], "Rosa Alves") {
+		t.Fatalf("fora=%d avisos=%v", fora, avisos)
+	}
+	lista, _, _, _, _ := mudancaPassageiros(nil, "eu, marcia alves cpf 52998224725, meu filho de 4 anos, Pedro Alves, e minha mãe rosa alves", 0, nil)
+	if nomesDocs(lista) != "Marcia Alves:52998224725|Pedro Alves:crianca" {
+		t.Fatalf("lista=%q", nomesDocs(lista))
+	}
+	if _, _, _, _, fora := mudancaPassageiros(nil, "rogerio dias cpf 98765432100 e sandra dias cpf 98765432100", 0, nil); fora != 1 {
+		t.Fatalf("cpf repetido: fora=%d", fora)
 	}
 }

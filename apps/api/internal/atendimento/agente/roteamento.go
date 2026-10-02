@@ -72,6 +72,13 @@ func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado, temQuando bool) (map
 	// Com rota ja no estado, uma busca de um lado so apagaria o outro lado, e a
 	// mesma rota com opcoes nao traz nada novo: fica para o LLM.
 	if est.Origem != nil || est.Destino != nil {
+		// Um lado novo com o outro ja no estado ("saindo de igarapé" depois de
+		// "pra videira"): completa com o lado do estado.
+		if _, temO := args["origem"]; !temO && est.Origem != nil && len(args) == 1 && chaveRota(est.Origem.Nome, "") != chaveRota(args["destino"], "") {
+			args["origem"] = est.Origem.Nome
+		} else if _, temD := args["destino"]; !temD && est.Destino != nil && len(args) == 1 && chaveRota(est.Destino.Nome, "") != chaveRota(args["origem"], "") {
+			args["destino"] = est.Destino.Nome
+		}
 		if len(args) < 2 {
 			return nil, false
 		}
@@ -142,7 +149,7 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 			rt, err = Rota{}, nil
 		}
 		var usados []string
-		rt, usados = enriquecerRota(rt, tc.ext, tc.estado, textoRecenteCliente(hist), cidades)
+		rt, usados = enriquecerRota(rt, tc.ext, tc.estado, textoRecenteCliente(hist), cidades, a.d.Agora().In(a.loc))
 		if tc.ext != nil && tc.ext.Humano && rt.PedeHumano >= 0.4 {
 			rt.PedeHumano = 1
 			usados = append(usados, "humano")
@@ -254,7 +261,11 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 
 	// Foto de documento: os dados ja vem estruturados da leitura de imagem; o
 	// codigo registra os passageiros e o LLM so confirma com o cliente.
-	novos, avisos := passageirosDeFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc))
+	novos, avisos, pendFoto := lerFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc))
+	// Certidao de quem paga sem documento: a pessoa conta, a reserva espera.
+	if n := len(tc.estado.Passageiros) + len(novos) + len(pendFoto); len(pendFoto) > 0 && n > tc.estado.PessoasInformadas {
+		tc.estado.PessoasInformadas = n
+	}
 	if len(novos) > 0 {
 		if pre, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
 			if len(avisos) > 0 {
@@ -281,7 +292,13 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// mais"), CPF repetido ou invalido: o codigo grava a lista inteira e o
 	// template mostra o resultado, entao o texto nunca afirma o que nao houve.
 	if !tc.estado.AlgumReservado() {
-		lista, mudou, completo, avisosT := mudancaPassageiros(tc.estado.Passageiros, textoRecenteCliente(hist), tc.estado.CriancasInformadas)
+		pend := pendentesDoHistorico(hist, tc.estado.Passageiros, a.d.Agora().In(a.loc))
+		lista, mudou, completo, avisosT, fora := mudancaPassageiros(tc.estado.Passageiros, textoRecenteCliente(hist), tc.estado.CriancasInformadas, pend)
+		// Quem foi citado e nao entrou (CPF invalido/repetido, sem documento)
+		// conta na quantidade: a reserva nao fecha sem essa pessoa.
+		if n := len(lista) + fora; fora > 0 && n > tc.estado.PessoasInformadas {
+			tc.estado.PessoasInformadas = n
+		}
 		if tc.ext != nil {
 			// O extrator completa o que os parsers nao pegaram (formatos livres).
 			l2, m2 := aplicarExtracaoPassageiros(lista, tc.ext)
