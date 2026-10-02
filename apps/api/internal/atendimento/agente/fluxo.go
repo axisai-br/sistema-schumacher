@@ -66,9 +66,22 @@ func (a *Agente) turnoComandos(ctx context.Context, tc *turno, hist []conversa.M
 			return "", tr
 		}
 	}
+	// Sem resposta especifica (so o "proximo passo" generico) ou repetindo a
+	// ultima resposta: o LLM responde a mensagem de verdade, sem ferramentas e
+	// com checagens; se reprovar, fica o texto em codigo.
+	if ato == "proximo_passo" || ato == "faq_outro" || ato == "pedir_correcao" || (resp != "" && resp == ultimaRespostaBot(hist)) {
+		if livre, ok := a.responderLivre(ctx, tc, hist, resp); ok {
+			resp, ato = livre, "llm_livre"
+		} else if resp == ultimaRespostaBot(hist) {
+			// LLM fora (limite, erro) e o texto em codigo repetiria a ultima
+			// resposta: ao menos reconhece que nao entendeu.
+			resp = "Desculpa, não entendi direito. " + resp
+		}
+	}
 	// Pergunta solta junto com o fluxo ("e aceita cartão?"): responde antes.
-	if ass := a.assuntoTurno(tc, texto); ass != "" && ato != "faq" {
-		resp = respostaFAQ(ass, tc.estado, a.cfg.SinalPorPagante) + "\n\n" + resp
+	// (A resposta livre do LLM ja trata a pergunta; nao repete o texto fixo.)
+	if ass := a.assuntoTurno(tc, texto); ass != "" && ato != "faq" && ato != "llm_livre" {
+		resp = a.respostaAssunto(ctx, ass, tc.estado) + "\n\n" + resp
 		ato += "+faq:" + ass
 	}
 	if reMidiaImagem.MatchString(baixo) && !reFotoDocumento.MatchString(texto) {
@@ -131,7 +144,7 @@ func (a *Agente) respostaSemTemplate(ctx context.Context, tc *turno, hist []conv
 	}
 	// Pergunta solta.
 	if ass := a.assuntoTurno(tc, texto); ass != "" {
-		return respostaFAQ(ass, tc.estado, a.cfg.SinalPorPagante) + "\n\n" + textoProximoPasso(tc.estado), "faq", nil
+		return a.respostaAssunto(ctx, ass, tc.estado) + "\n\n" + textoProximoPasso(tc.estado), "faq", nil
 	}
 	// Quem e voce / tentativa de mudar as regras.
 	if rePersonaPergunta.MatchString(baixo) || reInjecao.MatchString(baixo) {
@@ -185,7 +198,7 @@ func (a *Agente) respostaBusca(ctx context.Context, tc *turno) (string, bool) {
 	case len(d.Opcoes) > 0:
 		return textoSemExata + textoOpcoes(d.Opcoes), true
 	case d.RotaSem:
-		return a.textoCidadeNaoAtendida(ctx), true
+		return a.textoRotaInexistente(ctx, tc.estado), true
 	case d.Proxima != nil && tc.estado.Origem != nil && tc.estado.Destino != nil:
 		args := map[string]any{"origem": tc.estado.Origem.Nome, "destino": tc.estado.Destino.Nome}
 		if _, ok := a.preExecutar(ctx, tc, "buscar_viagens", args); ok {
@@ -274,4 +287,31 @@ func (a *Agente) passoSombra(ctx context.Context, est conversa.Estado, hist []co
 		p.Saida = map[string]any{"extracao": ex, "rota_extrator": rt, "campos": usados, "assunto_palavra": assuntoDoTexto(textoRecenteCliente(hist))}
 	}
 	return p, true
+}
+
+// textoRotaInexistente: as duas cidades sao atendidas, mas nao ha viagem
+// entre elas (ex.: Fraiburgo -> Videira, as duas em SC). Nao e "cidade nao
+// atendida": explica que as viagens ligam MA e SC e sugere o outro lado.
+func (a *Agente) textoRotaInexistente(ctx context.Context, e conversa.Estado) string {
+	if e.Origem == nil || e.Destino == nil {
+		return a.textoCidadeNaoAtendida(ctx)
+	}
+	t := fmt.Sprintf("Não temos viagem de %s para %s.", e.Origem.Nome, e.Destino.Nome)
+	if e.Origem.UF != "" && e.Origem.UF == e.Destino.UF {
+		t += " Nossas viagens ligam o Maranhão a Santa Catarina, então não fazemos trechos dentro do mesmo estado."
+	}
+	var cidades []ferramentas.Cidade
+	if a.d.Cidades != nil {
+		cidades, _ = a.d.Cidades.Cidades(ctx)
+	}
+	var outroLado []string
+	for _, c := range cidades {
+		if c.UF != "" && c.UF != e.Origem.UF {
+			outroLado = append(outroLado, c.Nome)
+		}
+	}
+	if len(outroLado) > 0 {
+		t += fmt.Sprintf("\n\nSaindo de %s, você pode ir para: %s. Pra qual delas?", e.Origem.Nome, strings.Join(outroLado, ", "))
+	}
+	return t
 }

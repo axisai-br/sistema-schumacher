@@ -52,12 +52,12 @@ func iniciarComandos(f *fx, textos ...string) {
 	f.ag = Novo(f.deps, Config{Modelo: "m-teste", Motor: MotorComandos})
 }
 
-// semTextoLivre: no motor por comandos todo pedido ao LLM e extracao JSON.
+// semTextoLivre: no motor por comandos o LLM nunca recebe ferramentas.
 func semTextoLivre(t *testing.T, f *fx) {
 	t.Helper()
 	for i, p := range f.modelo.pedidos {
-		if len(p.SaidaJSON) == 0 || len(p.Ferramentas) > 0 {
-			t.Fatalf("pedido %d nao e extracao (SaidaJSON=%d, ferramentas=%d)", i, len(p.SaidaJSON), len(p.Ferramentas))
+		if len(p.Ferramentas) > 0 {
+			t.Fatalf("pedido %d com ferramentas (%d): o LLM nao pode agir no motor por comandos", i, len(p.Ferramentas))
 		}
 	}
 }
@@ -291,5 +291,35 @@ func TestEnriquecerOrigemNovaComDestinoDoEstado(t *testing.T) {
 	a := &Agente{cfg: Config{LimiarRota: 0.8}}
 	if args, ok := a.argsPreBusca(got, e, false); !ok || args["origem"] != "Igarapé do Meio" || args["destino"] != "Videira" {
 		t.Fatalf("args=%v ok=%v", args, ok)
+	}
+}
+
+func TestComandosRespostaLivreForaDoFluxo(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{})
+	f.modelo.fila = []llm.Resposta{
+		texto(`{"pedido":"pergunta se tem onibus amanha cedo","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`),
+		texto("Nossas viagens ligam o Maranhão a Santa Catarina. Me diz de qual cidade você sai e pra onde vai que eu te mostro as datas."),
+	}
+	iniciarComandos(f, "vcs fazem viagem pra onde mesmo? to meio perdido")
+	processar(t, f)
+	semTextoLivre(t, f)
+	if e := f.canal.envios[0]; !strings.Contains(e, "Nossas viagens ligam") {
+		t.Fatalf("deveria usar a resposta do LLM: %q", e)
+	}
+	if p := passo(f.ultimoTurno(), "resposta_livre"); p == nil {
+		t.Fatal("sem passo resposta_livre")
+	}
+}
+
+func TestComandosRespostaLivreComAcaoInventadaVoltaProTemplate(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{})
+	f.modelo.fila = []llm.Resposta{
+		texto(`{"pedido":"quer viajar","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`),
+		texto("Pronto, reservei sua passagem! Reserva confirmada."),
+	}
+	iniciarComandos(f, "quero viajar semana que vem")
+	processar(t, f)
+	if e := f.canal.envios[0]; strings.Contains(strings.ToLower(e), "reservei") || e != TextoPedirRota {
+		t.Fatalf("resposta com acao inventada deve cair no template: %q", e)
 	}
 }

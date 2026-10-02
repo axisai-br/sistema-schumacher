@@ -40,9 +40,14 @@
 .EXAMPLE
   .\testar-comandos.ps1 -Agente
   A mesma conversa, mas com o motor antigo.
+
+.EXAMPLE
+  .\testar-comandos.ps1 -Rapido
+  Bateria rapida (17 roteiros, ~15-20 min) com placar SUCESSO x/17 no fim.
 #>
 [CmdletBinding()]
 param(
+    [switch]$Rapido,
     [switch]$Agente,
     [switch]$Sombra,
     [string]$Roteiro,
@@ -55,6 +60,7 @@ $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
 $envArq = Join-Path $raiz 'apps\api\.env.atendimento-local'
 
+if ($Rapido) { $Roteiro = 'rapido' }
 $motor = 'comandos'
 if ($Agente) { $motor = 'agente' }
 if ($Sombra) { $motor = 'sombra' }

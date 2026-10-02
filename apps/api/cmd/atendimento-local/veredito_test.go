@@ -65,3 +65,15 @@ func TestEsperaChaveDesconhecida(t *testing.T) {
 		t.Fatal("esperava erro de chave desconhecida")
 	}
 }
+
+func TestGrupoRapidoExiste(t *testing.T) {
+	nomes, ok := grupoRoteiros("rapido")
+	if !ok || len(nomes) < 10 {
+		t.Fatalf("grupo rapido: %v", nomes)
+	}
+	for _, n := range nomes {
+		if _, _, err := abrirRoteiro(n); err != nil {
+			t.Errorf("%s: %v", n, err)
+		}
+	}
+}

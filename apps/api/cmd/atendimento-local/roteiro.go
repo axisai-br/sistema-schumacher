@@ -106,6 +106,31 @@ func grupoRoteiros(ref string) ([]string, bool) {
 		return nomesStress(), true
 	case "tudo":
 		return append(nomesRoteiros(), nomesStress()...), true
+	case "rapido":
+		return append([]string(nil), roteirosRapidos...), true
 	}
 	return nil, false
+}
+
+// roteirosRapidos: amostra de ~15 min que cobre os casos que mais quebraram
+// (passageiros, pagamento, pos-reserva, troca de rota, fora do fluxo,
+// persona). Para conferir uma mudanca antes da rodada completa (-roteiro tudo).
+var roteirosRapidos = []string{
+	"certidao_crianca",
+	"correcao_cpf",
+	"ida_volta_mesma_mensagem",
+	"ja_paguei",
+	"troca_pagamento_apos_pix",
+	"troca_passageiro_apos_reserva",
+	"stress/a01_girias",
+	"stress/a07_tudo_junto",
+	"stress/b03_cpf_duplicado",
+	"stress/b08_somos3_dois_nomes",
+	"stress/b11_corrigir_cpf_maria",
+	"stress/c01_quanto_sinal",
+	"stress/c07_nao_fechar_desistir",
+	"stress/d04_perguntas_soltas",
+	"stress/d05_muda_rota",
+	"stress/d08_injecao",
+	"stress/e01_fora_do_fluxo",
 }

@@ -164,7 +164,7 @@ func cmdLista(stdout, stderr io.Writer) int {
 	for _, n := range append(nomesRoteiros(), nomesStress()...) {
 		fmt.Fprintf(stdout, "  %s\n", n)
 	}
-	fmt.Fprintln(stdout, "  (grupos: todos = raiz, stress, tudo = os dois)")
+	fmt.Fprintln(stdout, "  (grupos: todos = raiz, stress, tudo = os dois, rapido = amostra de ~15 min)")
 	return 0
 }
 
