@@ -286,6 +286,16 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	return resultadoRota{pre: pre}
 }
 
+// pagamentoEscolhido diz se o cliente ja escolheu integral/sinal (neste turno,
+// pelo Roteador, ou antes, no estado). Sem Roteador a escolha e liberada.
+func pagamentoEscolhido(tc *turno) bool {
+	if tc.rota == nil || tc.estado.Pagamento != "" {
+		return true
+	}
+	rt := tc.rota
+	return (rt.Pagamento == PagamentoIntegral || rt.Pagamento == PagamentoSinal) && rt.ConfPagamento >= 0.7
+}
+
 // rotaDoTurno: origem e destino ditos agora (Roteador com confianca) ou, na
 // falta, os do estado.
 func (a *Agente) rotaDoTurno(rt Rota, est conversa.Estado) (string, string) {
@@ -500,12 +510,37 @@ func ultimoBotPedeFechamento(hist []conversa.Mensagem) bool {
 // certo, o LLM recebe as chamadas e trata o PIX (ex.: pedir CPF do pagador).
 func (a *Agente) preFechar(ctx context.Context, tc *turno, rt Rota, hist []conversa.Mensagem) (resultadoRota, string, bool) {
 	est := tc.estado
-	if len(est.Trechos) == 0 || est.TodosReservados() || len(ferramentas.FaltaParaReserva(est)) > 0 {
+	if len(est.Trechos) == 0 || len(ferramentas.FaltaParaReserva(est)) > 0 {
+		return resultadoRota{}, "", false
+	}
+	semPix := false
+	for _, t := range est.Trechos {
+		if t.ReservaID != "" && t.PagamentoID == "" {
+			semPix = true
+		}
+	}
+	if est.TodosReservados() && !semPix {
 		return resultadoRota{}, "", false
 	}
 	pg := pagamentoDecidido(rt, est, hist)
 	if pg == "" {
 		return resultadoRota{}, "", false
+	}
+	if est.TodosReservados() {
+		// Reserva criada sem PIX (ex.: o modelo reservou e nao gerou): gera o
+		// PIX na forma escolhida; se mudou, troca antes (ajusta o sinal da reserva).
+		nome, args := "gerar_pix", map[string]any{}
+		if pg != est.Pagamento {
+			nome, args = "trocar_pagamento", map[string]any{"pagamento": pg}
+		}
+		pre, ok := a.preExecutar(ctx, tc, nome, args)
+		if !ok {
+			return resultadoRota{}, "pre_pix_falhou", true
+		}
+		if px := pixDoTurno(tc.resultados); len(px) > 0 {
+			return resultadoRota{resposta: textoFechamento(px, tc.resultados, pg)}, "pre_pix", true
+		}
+		return resultadoRota{pre: pre}, "pre_pix", true
 	}
 	pre, ok := a.preExecutar(ctx, tc, "criar_reserva", map[string]any{"pagamento": pg})
 	if !ok {

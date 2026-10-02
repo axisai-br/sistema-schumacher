@@ -456,6 +456,11 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 				saida = ferramentas.Saida{OK: false, Motivo: "cliente_nao_escolheu", Dados: map[string]any{
 					"mensagem": "O cliente ainda nao escolheu uma opcao nesta mensagem. Mostre as opcoes e espere ele escolher; nao escolha por ele.",
 				}}
+			} else if ch.Nome == "criar_reserva" && !pagamentoEscolhido(tc) {
+				// Guarda: o modelo nao escolhe a forma de pagamento pelo cliente.
+				saida = ferramentas.Saida{OK: false, Motivo: "cliente_nao_escolheu_pagamento", Dados: map[string]any{
+					"mensagem": "O cliente ainda nao escolheu entre integral e sinal. Pergunte e espere a resposta antes de criar a reserva.",
+				}}
 			} else {
 				saida = a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{
 					Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora(),

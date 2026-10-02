@@ -562,3 +562,40 @@ func TestRegistroPorTextoTemplate(t *testing.T) {
 		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
 	}
 }
+
+func TestGuardaCriarReservaSemPagamento(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoOutro, ConfIntencao: 0.8}, ferrsFechamento(&chamadas)...)
+	f.modelo.fila = []llm.Resposta{chamada("criar_reserva", `{"pagamento":"sinal"}`), texto("Você prefere integral ou sinal?")}
+	f.iniciar("posso pagar depois?")
+	comEstado(t, f, estadoPronto())
+	processar(t, f)
+	if len(chamadas) != 0 {
+		t.Fatalf("guarda deveria recusar criar_reserva: %v", chamadas)
+	}
+}
+
+func TestPixDepoisDeReservaSemPix(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{Pagamento: PagamentoSinal, ConfPagamento: 0.95}, ferrsFechamento(&chamadas)...)
+	f.iniciar("pode ser o sinal")
+	e := estadoPronto()
+	e.Trechos[0].ReservaID, e.Pagamento = "r1", "sinal"
+	comEstado(t, f, e)
+	processar(t, f)
+	if strings.Join(chamadas, ",") != "gerar_pix" || len(f.modelo.pedidos) != 0 || !strings.Contains(f.canal.envios[0], "000201PIXCODE") {
+		t.Fatalf("chamadas=%v envios=%q", chamadas, f.canal.envios)
+	}
+}
+
+func TestTextoOpcoesAgrupaPorRota(t *testing.T) {
+	ops := []conversa.Opcao{
+		{Numero: 1, Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-08", Horario: "16:30", Preco: 950},
+		{Numero: 2, Origem: "Fraiburgo", Destino: "Santa Inês", Data: "2026-10-08", Horario: "16:30", Preco: 950},
+		{Numero: 3, Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-15", Horario: "16:30", Preco: 950},
+	}
+	s := textoOpcoes(ops)
+	if strings.Count(s, "Opções de Fraiburgo → Monção") != 1 || strings.Index(s, "3. qui 15/10") > strings.Index(s, "Santa Inês") {
+		t.Fatalf("%s", s)
+	}
+}

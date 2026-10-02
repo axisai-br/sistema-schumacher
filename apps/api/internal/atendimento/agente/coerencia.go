@@ -143,9 +143,24 @@ func formatarReais(v float64) string {
 // textoOpcoes monta, em codigo, a lista de opcoes da ultima busca. E a resposta
 // de seguranca quando o LLM insiste em citar dados sem origem.
 func textoOpcoes(os []conversa.Opcao) string {
+	// Agrupa por rota (na ordem em que cada rota aparece), mantendo o numero
+	// de cada opcao, para nao repetir o cabecalho quando as rotas se alternam.
+	var rotas []string
+	porRota := map[string][]conversa.Opcao{}
+	for _, o := range os {
+		r := o.Origem + " → " + o.Destino
+		if _, ok := porRota[r]; !ok {
+			rotas = append(rotas, r)
+		}
+		porRota[r] = append(porRota[r], o)
+	}
+	var ordenadas []conversa.Opcao
+	for _, r := range rotas {
+		ordenadas = append(ordenadas, porRota[r]...)
+	}
 	var b strings.Builder
 	rota := ""
-	for _, o := range os {
+	for _, o := range ordenadas {
 		if r := o.Origem + " → " + o.Destino; r != rota {
 			if rota != "" {
 				b.WriteString("\n")
