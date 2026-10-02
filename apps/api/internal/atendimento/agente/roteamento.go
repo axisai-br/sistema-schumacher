@@ -50,7 +50,8 @@ func jaHouveResposta(hist []conversa.Mensagem) bool {
 }
 
 // argsPreBusca decide se da para executar buscar_viagens antes do LLM.
-func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado) (map[string]string, bool) {
+// temQuando: o cliente citou data/periodo (a mesma rota vale buscar de novo).
+func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado, temQuando bool) (map[string]string, bool) {
 	lim := a.cfg.LimiarRota
 	if rt.Intencao != IntencaoBuscarViagens || rt.ConfIntencao < lim {
 		return nil, false
@@ -74,7 +75,7 @@ func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado) (map[string]string, 
 		if len(args) < 2 {
 			return nil, false
 		}
-		if est.Origem != nil && est.Destino != nil && len(est.Opcoes) > 0 &&
+		if !temQuando && est.Origem != nil && est.Destino != nil && len(est.Opcoes) > 0 &&
 			chaveRota(est.Origem.Nome, est.Destino.Nome) == chaveRota(args["origem"], args["destino"]) {
 			return nil, false
 		}
@@ -158,6 +159,15 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		saida["quantidade"] = map[string]int{"pessoas": tc.estado.PessoasInformadas, "criancas_ate_5": tc.estado.CriancasInformadas}
 	}
 
+	// Foto de documento: os dados ja vem estruturados da leitura de imagem; o
+	// codigo registra os passageiros e o LLM so confirma com o cliente.
+	if novos := passageirosDeFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc)); len(novos) > 0 {
+		if pre, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
+			finalizar("pre_registro")
+			return resultadoRota{pre: pre}
+		}
+	}
+
 	// Pagamento claro (ou "sim" para fechar) com tudo pronto: o codigo cria a
 	// reserva e o PIX e responde sem o LLM.
 	if res, dec, ok := a.preFechar(ctx, tc, rt, hist); ok {
@@ -166,7 +176,8 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		return res
 	}
 
-	args, ok := a.argsPreBusca(rt, tc.estado)
+	quando, temQuando := ferramentas.ResolverQuando(textoRecenteCliente(hist), a.d.Agora().In(a.loc))
+	args, ok := a.argsPreBusca(rt, tc.estado, temQuando)
 	decisao := "pre_busca"
 	if o, d := tc.estado.Origem, tc.estado.Destino; rt.PedeVolta >= limiarVolta && o != nil && d != nil {
 		// Volta: busca o sentido oposto da rota ja buscada.
@@ -182,9 +193,9 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 	// Data/periodo citado pelo cliente ("daqui 15 dias", "mes que vem") entra na
 	// busca, interpretado em codigo.
-	if p, ok := ferramentas.ResolverQuando(textoRecenteCliente(hist), a.d.Agora().In(a.loc)); ok {
-		argsAny["quando"] = p.Expressao
-		saida["quando"] = p.Descricao
+	if temQuando {
+		argsAny["quando"] = quando.Expressao
+		saida["quando"] = quando.Descricao
 	}
 	pre, ok := a.preExecutar(ctx, tc, "buscar_viagens", argsAny)
 	if !ok {

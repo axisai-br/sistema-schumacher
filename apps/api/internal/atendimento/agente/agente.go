@@ -336,9 +336,18 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 			if err == nil && problemasForma(novo, tc, textosCliente) == "" && a.problemasResposta(tc, novo, catalogo, agora, textosCliente, cidades) == "" {
 				texto = novo
 			} else {
+				texto = ""
 				if px := pixDoTurno(tc.resultados); len(px) > 0 {
 					texto = textoPix(px)
-				} else {
+				} else if len(cpfsNaoRegistrados(textosCliente, tc.estado)) > 0 {
+					// O modelo nao registrou os dados que o cliente mandou: o
+					// codigo registra (fotos e "nome cpf ...") e segue.
+					novos := append(passageirosDeFotos(textosCliente, agora), passageirosDeTexto(textosCliente)...)
+					if _, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
+						texto = textoRegistrados(tc.estado) + "\n\n" + textoProximoPasso(tc.estado)
+					}
+				}
+				if texto == "" {
 					texto = textoProximoPasso(tc.estado)
 				}
 				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "forma", Saida: "persistiu apos reescrita; resposta montada em codigo"})

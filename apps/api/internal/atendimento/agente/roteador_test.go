@@ -374,7 +374,7 @@ func TestTimeoutPadraoDoRoteador(t *testing.T) {
 func TestArgsPreBuscaRespeitaRotaDoEstado(t *testing.T) {
 	a := &Agente{cfg: Config{LimiarRota: 0.8}}
 	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.99, Destino: "Monção", ConfDestino: 0.9, Origem: CidadeNaoInformada, ConfOrigem: 0.9}
-	if _, ok := a.argsPreBusca(rt, conversa.Estado{}); !ok {
+	if _, ok := a.argsPreBusca(rt, conversa.Estado{}, false); !ok {
 		t.Fatal("sem rota no estado, um lado basta")
 	}
 	est := conversa.Estado{
@@ -382,15 +382,18 @@ func TestArgsPreBuscaRespeitaRotaDoEstado(t *testing.T) {
 		Destino: &conversa.Parada{Nome: "Monção"},
 		Opcoes:  []conversa.Opcao{{Numero: 1}},
 	}
-	if _, ok := a.argsPreBusca(rt, est); ok {
+	if _, ok := a.argsPreBusca(rt, est, false); ok {
 		t.Fatal("um lado so nao pode apagar a rota do estado")
 	}
 	rt.Origem, rt.ConfOrigem = "Fraiburgo", 0.9
-	if _, ok := a.argsPreBusca(rt, est); ok {
+	if _, ok := a.argsPreBusca(rt, est, false); ok {
 		t.Fatal("mesma rota com opcoes nao deve rebuscar")
 	}
+	if _, ok := a.argsPreBusca(rt, est, true); !ok {
+		t.Fatal("mesma rota com novo periodo ('mes que vem') deve rebuscar")
+	}
 	rt.Origem, rt.Destino = "Monção", "Fraiburgo"
-	if args, ok := a.argsPreBusca(rt, est); !ok || args["origem"] != "Monção" {
+	if args, ok := a.argsPreBusca(rt, est, false); !ok || args["origem"] != "Monção" {
 		t.Fatalf("rota nova completa deve buscar: %v %v", args, ok)
 	}
 }

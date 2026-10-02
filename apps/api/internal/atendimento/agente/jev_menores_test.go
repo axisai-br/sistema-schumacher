@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 	"schumacher-tur/api/internal/atendimento/ferramentas"
@@ -242,5 +243,68 @@ func TestPerguntasJevCondicionais(t *testing.T) {
 	q = perguntasJev(EntradaRota{Estado: estadoPronto()})
 	if q["forma_pagamento"] == nil || q["confirma"] == nil || q["adultos"] != nil {
 		t.Fatalf("com viagem e passageiros: pagamento sim, quantidade nao; %v", q)
+	}
+}
+
+func TestPassageirosDeFotos(t *testing.T) {
+	hoje := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	ps := passageirosDeFotos([]string{
+		"[foto de documento: nome JOAO VITOR DA SOUZA, CPF 529.982.247-25]",
+		"[foto de documento: certidão de nascimento, nome ANA CLARA SOUZA, nascimento 03/04/2023] essa é minha filha",
+		"[foto de documento: certidão de nascimento, nome PEDRO SOUZA, nascimento 03/04/2015]",
+		"[imagem: uma paisagem]",
+	}, hoje)
+	if len(ps) != 2 {
+		t.Fatalf("ps=%+v", ps)
+	}
+	if ps[0].Nome != "Joao Vitor da Souza" || ps[0].Documento != "52998224725" || ps[0].TipoDocumento != "CPF" || ps[0].CriancaAte5 {
+		t.Errorf("titular: %+v", ps[0])
+	}
+	if ps[1].Nome != "Ana Clara Souza" || !ps[1].CriancaAte5 || ps[1].Documento != "" {
+		t.Errorf("crianca: %+v", ps[1])
+	}
+}
+
+func TestPassageirosDeTexto(t *testing.T) {
+	ps := passageirosDeTexto([]string{"paula reis cpf 52998224725, marcos reis cpf 111.444.777-35 e a bebe sofia reis de 2 anos"})
+	if len(ps) != 2 || ps[0].Nome != "Paula Reis" || ps[1].Nome != "Marcos Reis" || ps[1].Documento != "11144477735" {
+		t.Fatalf("ps=%+v", ps)
+	}
+	for _, s := range []string{"meu cpf é 52998224725", "o cpf 52998224725", "cpf: 52998224725"} {
+		if ps := passageirosDeTexto([]string{s}); len(ps) != 0 {
+			t.Errorf("%q nao tem nome: %+v", s, ps)
+		}
+	}
+}
+
+func TestPreRegistroPorFoto(t *testing.T) {
+	var recebido string
+	reg := ferrFake{nome: "registrar_passageiros", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Passageiros = []conversa.Passageiro{{Nome: "Joao Souza", Documento: "52998224725", TipoDocumento: "CPF"}}
+		recebido = "ok"
+		return ferramentas.Saida{OK: true}
+	}}
+	f, _ := fxRoteador(t, Rota{}, reg)
+	f.modelo.fila = []llm.Resposta{texto("Confere: Joao Souza, CPF final 725?")}
+	f.iniciar("[foto de documento: nome JOAO SOUZA, CPF 529.982.247-25]")
+	comEstado(t, f, conversa.Estado{Trechos: estadoPronto().Trechos})
+	processar(t, f)
+	if recebido != "ok" || decisao(t, f.ultimoTurno()) != "pre_registro" || len(f.conversa().Estado.Passageiros) != 1 {
+		t.Fatalf("decisao=%s estado=%+v", decisao(t, f.ultimoTurno()), f.conversa().Estado)
+	}
+}
+
+func TestFormaRegistraCPFEmCodigo(t *testing.T) {
+	reg := ferrFake{nome: "registrar_passageiros", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Passageiros = []conversa.Passageiro{{Nome: "Lucas Alves", Documento: "52998224725", TipoDocumento: "CPF"}}
+		return ferramentas.Saida{OK: true}
+	}}
+	f := novoFx(t, reg)
+	f.modelo.fila = []llm.Resposta{texto("Obrigado, Lucas!"), texto("Certo, Lucas.")}
+	f.iniciar("lucas alves cpf 52998224725")
+	comEstado(t, f, conversa.Estado{Trechos: estadoPronto().Trechos})
+	processar(t, f)
+	if len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "Lucas Alves") || !strings.Contains(f.canal.envios[0], "integral") {
+		t.Fatalf("envios=%q", f.canal.envios)
 	}
 }
