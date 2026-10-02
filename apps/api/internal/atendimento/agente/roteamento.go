@@ -150,6 +150,12 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// template, sem LLM.
 	direto := rt.SoIsso >= limiarSoIsso
 
+	if res, dec, ok := a.posReserva(ctx, tc, rt); ok {
+		saida["pos_reserva"], saida["conf_pos_reserva"] = rt.PosReserva, rt.ConfPosReserva
+		finalizar(dec)
+		return res
+	}
+
 	// Escolha clara de uma das opcoes mostradas ("a primeira", "dia 8"): o
 	// codigo registra a escolha antes do LLM, que so confirma ao cliente.
 	if n, ok := a.opcaoClara(rt, tc.estado); ok {

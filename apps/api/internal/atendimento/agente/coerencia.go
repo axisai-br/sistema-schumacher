@@ -233,13 +233,15 @@ func textoFechamento(px []map[string]any, resultados []string, pagamento string)
 				} `json:"trechos"`
 			} `json:"dados"`
 		}
-		if json.Unmarshal([]byte(r), &s) != nil || !s.OK || s.Dados.Trechos == nil {
+		if json.Unmarshal([]byte(r), &s) != nil || !s.OK {
 			continue
 		}
-		codigos = codigos[:0]
-		for _, t := range s.Dados.Trechos {
-			if t.Codigo != "" {
-				codigos = append(codigos, t.Codigo)
+		if s.Dados.Trechos != nil {
+			codigos = codigos[:0]
+			for _, t := range s.Dados.Trechos {
+				if t.Codigo != "" {
+					codigos = append(codigos, t.Codigo)
+				}
 			}
 		}
 		if s.Dados.Restante != nil {

@@ -38,6 +38,10 @@ type Pagamentos interface {
 	Create(ctx context.Context, in payments.CreatePaymentInput) (payments.Payment, json.RawMessage, error)
 	GetStatus(ctx context.Context, id string) (payments.PaymentStatusResponse, error)
 	List(ctx context.Context, f payments.PaymentListFilter) ([]payments.Payment, error)
+	// CancelarPendente cancela um PIX ainda nao pago (payments.ErrPagamentoJaPago se pago).
+	CancelarPendente(ctx context.Context, paymentID string) error
+	// DefinirSinalReserva ajusta o valor que confirma a reserva (sinal ou total).
+	DefinirSinalReserva(ctx context.Context, bookingID string, valor float64) error
 }
 
 // Config parametriza as ferramentas.
@@ -64,9 +68,10 @@ func (c Config) comPadroes() Config {
 	return c
 }
 
-// Padrao registra as 9 ferramentas do atendimento v2 na ordem canonica.
+// Padrao registra as ferramentas do atendimento v2 na ordem canonica.
 func Padrao(cat *Catalogo, b Buscador, q Cotador, r Reservas, p Pagamentos, cfg Config) *Registro {
 	cfg = cfg.comPadroes()
+	pix := &gerarPix{r: r, p: p, cfg: cfg}
 	return NovoRegistro(
 		&listarRotas{cat: cat},
 		&buscarViagens{cat: cat, b: b, fuso: cfg.Fuso},
@@ -75,7 +80,8 @@ func Padrao(cat *Catalogo, b Buscador, q Cotador, r Reservas, p Pagamentos, cfg 
 		&removerTrecho{},
 		&registrarPassageiros{},
 		&criarReserva{r: r, q: q, cfg: cfg},
-		&gerarPix{r: r, p: p, cfg: cfg},
+		pix,
+		&trocarPagamento{r: r, p: p, pix: pix, cfg: cfg},
 		&consultarReserva{r: r, p: p},
 		&transferirParaHumano{},
 	)

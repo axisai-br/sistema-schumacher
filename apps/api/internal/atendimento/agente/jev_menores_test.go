@@ -387,3 +387,75 @@ func TestGuardaEscolhaSemPedido(t *testing.T) {
 		t.Fatal("com dia exato a escolha deveria passar")
 	}
 }
+
+func estadoReservado() conversa.Estado {
+	e := estadoPronto()
+	e.Trechos[0].ReservaID, e.Trechos[0].PagamentoID, e.Pagamento = "r1", "p1", "integral"
+	return e
+}
+
+func TestPosReservaTrocaPagamentoSemLLM(t *testing.T) {
+	var args string
+	troca := ferrFake{nome: "trocar_pagamento", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		c.Estado.Pagamento = "sinal"
+		c.Estado.Trechos[0].PagamentoID = "p2"
+		args = "ok"
+		return ferramentas.Saida{OK: true, Dados: map[string]any{"pix": []map[string]any{
+			{"rota": "Monção para Fraiburgo", "data": "2026-10-05", "valor": 250.0, "pix_copia_e_cola": "000201NOVO"},
+		}, "restante_no_embarque_total": 700.0}}
+	}}
+	f, _ := fxRoteador(t, Rota{PosReserva: PosTrocarPagamento, ConfPosReserva: 0.95, Pagamento: PagamentoSinal, ConfPagamento: 0.9}, troca)
+	f.iniciar("ah, melhor pagar só o sinal")
+	comEstado(t, f, estadoReservado())
+	processar(t, f)
+	if args != "ok" || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 {
+		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
+	}
+	e := f.canal.envios[0]
+	for _, s := range []string{"troquei para sinal", "000201NOVO", "R$ 700"} {
+		if !strings.Contains(e, s) {
+			t.Errorf("faltou %q em %q", s, e)
+		}
+	}
+	if strings.Contains(e, "Reserva feita") {
+		t.Errorf("cabecalho de reserva nova: %q", e)
+	}
+}
+
+func TestPosReservaTrocaJaPagoTransfere(t *testing.T) {
+	troca := ferrFake{nome: "trocar_pagamento", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		return ferramentas.Saida{OK: false, Motivo: "ja_pago"}
+	}}
+	f, _ := fxRoteador(t, Rota{PosReserva: PosTrocarPagamento, ConfPosReserva: 0.95}, troca)
+	f.iniciar("quero pagar só o sinal")
+	comEstado(t, f, estadoReservado())
+	processar(t, f)
+	if f.conversa().Status != conversa.StatusHumano {
+		t.Fatalf("deveria transferir: %+v", f.conversa().Status)
+	}
+}
+
+func TestPosReservaJaPaguei(t *testing.T) {
+	for st, quer := range map[string]string{"PAID": "Pagamento confirmado", "PENDING": "Ainda não apareceu"} {
+		cons := ferrFake{nome: "consultar_reserva", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+			return ferramentas.Saida{OK: true, Dados: map[string]any{"reservas": []map[string]any{{"codigo_reserva": "ABC", "pagamento": map[string]any{"status": st}}}}}
+		}}
+		f, _ := fxRoteador(t, Rota{PosReserva: PosJaPaguei, ConfPosReserva: 0.9}, cons)
+		f.iniciar("já paguei")
+		comEstado(t, f, estadoReservado())
+		processar(t, f)
+		if len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], quer) {
+			t.Fatalf("%s: envios=%q", st, f.canal.envios)
+		}
+	}
+}
+
+func TestPosReservaTrocaViagemTransfere(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{PosReserva: PosTrocarViagem, ConfPosReserva: 0.9})
+	f.iniciar("consigo mudar pra dia 15?")
+	comEstado(t, f, estadoReservado())
+	processar(t, f)
+	if f.conversa().Status != conversa.StatusHumano || len(f.modelo.pedidos) != 0 {
+		t.Fatal("deveria transferir sem LLM")
+	}
+}

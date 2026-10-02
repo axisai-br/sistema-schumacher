@@ -205,6 +205,100 @@ func (s *Service) Sync(ctx context.Context, paymentID string) (PaymentSyncRespon
 	return PaymentSyncResponse{Payment: payment, BookingStatus: bookingStatus, Synced: true}, nil
 }
 
+var (
+	// ErrPagamentoJaPago: a cobranca ja foi paga; nada e cancelado.
+	ErrPagamentoJaPago = errors.New("pagamento ja pago")
+	// ErrPagamentoNaoCancelavel: a cobranca nao esta pendente no provedor.
+	ErrPagamentoNaoCancelavel = errors.New("pagamento nao esta pendente")
+)
+
+// CancelarPendente cancela um PIX ainda nao pago: confere o pedido na Pagar.me
+// e so cancela a cobranca se ela estiver pendente (cobranca paga nunca e
+// cancelada, porque viraria estorno). Se o provedor mostrar que foi paga,
+// registra o pagamento e devolve ErrPagamentoJaPago. Ja cancelado: nil.
+func (s *Service) CancelarPendente(ctx context.Context, paymentID string) error {
+	p, err := s.repo.Get(ctx, paymentID)
+	if err != nil {
+		return err
+	}
+	switch strings.ToUpper(strings.TrimSpace(p.Status)) {
+	case "PAID":
+		return ErrPagamentoJaPago
+	case "CANCELLED", "FAILED", "REFUNDED":
+		return nil
+	}
+	raw := json.RawMessage(`{}`)
+	if p.Provider != nil && strings.TrimSpace(*p.Provider) == "PAGARME" {
+		orderID := extractPagarmeOrderID(p.Metadata)
+		if orderID == "" {
+			return ErrPagamentoNaoCancelavel
+		}
+		order, oraw, err := s.client.GetOrderByID(ctx, orderID)
+		if err != nil {
+			return err
+		}
+		acao, cobranca := acaoCancelamento(order)
+		switch acao {
+		case cancelamentoPago:
+			ref := order.PrimaryChargeID()
+			if ref == "" && p.ProviderRef != nil {
+				ref = strings.TrimSpace(*p.ProviderRef)
+			}
+			if ref != "" {
+				if pago, novo, err := s.repo.MarkPaidAndConfirmBooking(ctx, ref, oraw); err == nil && novo {
+					s.notifyPaymentConfirmed(ctx, pago)
+				}
+			}
+			return ErrPagamentoJaPago
+		case cancelamentoJaCancelado:
+			raw = oraw
+		case cancelamentoCancelar:
+			if raw, err = s.client.CancelCharge(ctx, cobranca.ID); err != nil {
+				return err
+			}
+		default:
+			return ErrPagamentoNaoCancelavel
+		}
+	}
+	return s.repo.MarcarCancelado(ctx, p.ID, raw)
+}
+
+const (
+	cancelamentoPago          = "pago"
+	cancelamentoJaCancelado   = "ja_cancelado"
+	cancelamentoCancelar      = "cancelar"
+	cancelamentoNaoCancelavel = "nao_cancelavel"
+)
+
+// acaoCancelamento decide, pelo pedido na Pagar.me, o que fazer antes de
+// cancelar: pago (nunca cancela), ja cancelado, cancelar (cobranca pendente)
+// ou nao cancelavel (qualquer outro estado, ex.: processando).
+func acaoCancelamento(order OrderResponse) (string, OrderCharge) {
+	if isPaidOrderStatus(order) {
+		return cancelamentoPago, OrderCharge{}
+	}
+	var cobranca OrderCharge
+	for _, ch := range order.Charges {
+		if strings.TrimSpace(ch.ID) != "" {
+			cobranca = ch
+			break
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(cobranca.Status)) {
+	case "canceled", "cancelled", "failed":
+		return cancelamentoJaCancelado, cobranca
+	case "pending", "waiting_payment":
+		return cancelamentoCancelar, cobranca
+	}
+	return cancelamentoNaoCancelavel, cobranca
+}
+
+// DefinirSinalReserva ajusta o valor que confirma a reserva (sinal ou total),
+// enquanto nada foi pago. Usado quando o cliente troca integral/sinal.
+func (s *Service) DefinirSinalReserva(ctx context.Context, bookingID string, valor float64) error {
+	return s.repo.DefinirSinalReserva(ctx, bookingID, valor)
+}
+
 func parseProviderData(raw []byte) (interface{}, *string, *string) {
 	if len(raw) == 0 {
 		return nil, nil, nil

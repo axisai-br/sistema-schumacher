@@ -208,9 +208,26 @@ func perguntasJev(e EntradaRota) map[string]any {
 			"criteria":     crit,
 		}
 	}
+	// Depois da reserva: trocas, cancelamento, "ja paguei", PIX de novo.
+	if e.Estado.AlgumReservado() {
+		q["pos_reserva"] = map[string]any{
+			"type":         "choice",
+			"instructions": "The customer already has a booking (see `booking_summary`). What does the customer want in `latest_customer_message`? Choose 'nenhum' unless it is clearly one of the others.",
+			"criteria": map[string]any{
+				PosTrocarPagamento:  "Change how to pay: switch between paying in full and paying only the deposit ('sinal'), e.g. 'melhor pagar só o sinal', 'quero pagar tudo agora'.",
+				PosTrocarViagem:     "Change the date, time or trip already booked.",
+				PosTrocarPassageiro: "Change, add or remove a passenger of the booking.",
+				PosCancelar:         "Cancel the booking or give up the trip.",
+				PosJaPaguei:         "Says they already paid, sent the PIX, or asks whether the payment was confirmed.",
+				PosPixDeNovo:        "Asks for the PIX code again (lost it, expired, did not receive).",
+				PosNenhum:           "Anything else: thanks, questions about the trip, luggage, boarding, etc.",
+			},
+		}
+	}
 	// Fechamento: com viagem escolhida e reserva por criar, o codigo pode
-	// reservar e gerar o PIX sozinho quando o pagamento estiver claro.
-	if len(e.Estado.Trechos) > 0 && !e.Estado.TodosReservados() {
+	// reservar e gerar o PIX sozinho quando o pagamento estiver claro. Com
+	// reserva, a forma de pagamento serve para a troca.
+	if len(e.Estado.Trechos) > 0 {
 		q["forma_pagamento"] = map[string]any{
 			"type":         "choice",
 			"instructions": "In `latest_customer_message`, which payment option does the customer choose for the booking? Use the earlier `conversation` only to interpret short answers (e.g. the assistant asked 'integral ou sinal?' and the customer answered 'o sinal'). Choose 'nenhum' unless the choice is clear.",
@@ -316,6 +333,12 @@ func rotaDeRespostas(resp map[string]respostaJev, e EntradaRota) Rota {
 		switch a.Choice {
 		case PagamentoIntegral, PagamentoSinal, PagamentoNenhum:
 			rt.Pagamento, rt.ConfPagamento = a.Choice, conf(a)
+		}
+	}
+	if a, ok := resp["pos_reserva"]; ok {
+		switch a.Choice {
+		case PosTrocarPagamento, PosTrocarViagem, PosTrocarPassageiro, PosCancelar, PosJaPaguei, PosPixDeNovo, PosNenhum:
+			rt.PosReserva, rt.ConfPosReserva = a.Choice, conf(a)
 		}
 	}
 	if a, ok := resp["so_isso"]; ok && a.Noul != nil {

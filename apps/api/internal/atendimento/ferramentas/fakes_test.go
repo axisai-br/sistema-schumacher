@@ -172,10 +172,12 @@ func (r *reservasFake) List(_ context.Context, f bookings.ListFilter) ([]booking
 // ---- pagamentos ----
 
 type pagamentosFake struct {
-	criados   []payments.CreatePaymentInput
-	status    map[string]string
-	semPix    bool
-	errCreate error
+	criados    []payments.CreatePaymentInput
+	status     map[string]string
+	semPix     bool
+	errCreate  error
+	cancelados []string
+	sinais     map[string]float64
 }
 
 func (p *pagamentosFake) Create(_ context.Context, in payments.CreatePaymentInput) (payments.Payment, json.RawMessage, error) {
@@ -309,4 +311,21 @@ func item(m map[string]any, chave string, i int) map[string]any {
 	}
 	r, _ := l[i].(map[string]any)
 	return r
+}
+
+func (p *pagamentosFake) CancelarPendente(_ context.Context, id string) error {
+	if p.status[id] == "PAID" {
+		return payments.ErrPagamentoJaPago
+	}
+	p.cancelados = append(p.cancelados, id)
+	p.status[id] = "CANCELLED"
+	return nil
+}
+
+func (p *pagamentosFake) DefinirSinalReserva(_ context.Context, bookingID string, valor float64) error {
+	if p.sinais == nil {
+		p.sinais = map[string]float64{}
+	}
+	p.sinais[bookingID] = valor
+	return nil
 }

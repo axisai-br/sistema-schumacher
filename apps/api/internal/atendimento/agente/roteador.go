@@ -82,7 +82,23 @@ type Rota struct {
 	// escolha, dados, quantidade), sem outra pergunta ou pedido: com ela alta o
 	// codigo responde por template, sem LLM.
 	SoIsso float64
+
+	// PosReserva: o que o cliente quer depois da reserva criada (um dos Pos*);
+	// vazio se nao perguntado (so com reserva).
+	PosReserva     string
+	ConfPosReserva float64
 }
+
+// Respostas da pergunta "pos_reserva".
+const (
+	PosTrocarPagamento  = "trocar_pagamento"
+	PosTrocarViagem     = "trocar_data_ou_viagem"
+	PosTrocarPassageiro = "trocar_passageiro"
+	PosCancelar         = "cancelar"
+	PosJaPaguei         = "ja_paguei"
+	PosPixDeNovo        = "pedir_pix_de_novo"
+	PosNenhum           = "nenhum"
+)
 
 // Respostas das perguntas de pagamento e quantidade.
 const (
