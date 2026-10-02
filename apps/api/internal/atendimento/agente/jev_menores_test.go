@@ -599,3 +599,13 @@ func TestTextoOpcoesAgrupaPorRota(t *testing.T) {
 		t.Fatalf("%s", s)
 	}
 }
+
+func TestListaDeCriancas(t *testing.T) {
+	ps, completo := extrairPassageirosTexto("paula reis cpf 52998224725, as crianças são pedro reis e lara reis", 2)
+	if !completo || len(ps) != 3 || !ps[1].CriancaAte5 || ps[2].Nome != "Lara Reis" {
+		t.Fatalf("completo=%v ps=%+v", completo, ps)
+	}
+	if ps, completo := extrairPassageirosTexto("paula reis cpf 52998224725, as crianças são pedro reis e lara reis"); completo || len(ps) != 1 {
+		t.Fatalf("sem quantidade de criancas conhecida, fica para o LLM: %v %+v", completo, ps)
+	}
+}

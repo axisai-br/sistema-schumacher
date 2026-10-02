@@ -222,7 +222,7 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// Passageiros escritos ("ana souza cpf 529...", "bebê Sofia Reis"): o
 	// codigo registra; se a mensagem so tem isso, responde por template.
 	if !tc.estado.AlgumReservado() {
-		if novosT, completo := extrairPassageirosTexto(textoRecenteCliente(hist)); len(novosT) > 0 {
+		if novosT, completo := extrairPassageirosTexto(textoRecenteCliente(hist), tc.estado.CriancasInformadas); len(novosT) > 0 {
 			if pre, ok := a.registrarEmCodigo(ctx, tc, novosT); ok {
 				if completo {
 					finalizar("template_registro_texto")

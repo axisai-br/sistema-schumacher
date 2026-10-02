@@ -135,10 +135,18 @@ var palavrasVazias = map[string]bool{"e": true, "a": true, "o": true, "as": true
 	"eu": true, "sou": true, "meu": true, "minha": true, "nome": true, "é": true, "eh": true, "cpf": true, "dados": true, "passageiros": true,
 	"são": true, "sao": true, "segue": true, "seguem": true, "aqui": true, "vai": true, "vão": true, "vao": true, "criancas": true, "crianças": true}
 
+// reListaCriancas: "as crianças são Pedro Reis e Lara Reis", "crianças: Ana Lima, Bia Lima".
+var reListaCriancas = regexp.MustCompile(`(?i)crian[cç]as?\s*(?:s[aã]o|:)\s*([\p{L}\s,]+)`)
+
+// reSeparaNomes separa "Pedro Reis, Ana Lima e Lara Reis".
+var reSeparaNomes = regexp.MustCompile(`\s*,\s*|\s+e\s+`)
+
 // extrairPassageirosTexto acha passageiros escritos pelo cliente: "nome cpf",
 // "bebê Nome" e "Nome de N anos" (ate 5 anos vira crianca; acima fica para o
-// LLM, que pede documento). completo: a mensagem nao tem mais nada alem disso.
-func extrairPassageirosTexto(texto string) (ps []conversa.Passageiro, completo bool) {
+// LLM, que pede documento). criancasAte5 e quantas criancas ate 5 anos o
+// cliente ja disse que vao: com ela, "as crianças são X e Y" tambem entra.
+// completo: a mensagem nao tem mais nada alem disso.
+func extrairPassageirosTexto(texto string, criancasAte5 ...int) (ps []conversa.Passageiro, completo bool) {
 	usado := make([]bool, len(texto))
 	marcar := func(ini, fim int) {
 		for i := ini; i < fim; i++ {
@@ -165,6 +173,24 @@ func extrairPassageirosTexto(texto string) (ps []conversa.Passageiro, completo b
 		}
 		if anos <= 5 {
 			ps = append(ps, conversa.Passageiro{Nome: n, CriancaAte5: true})
+			marcar(m[0], m[1])
+		}
+	}
+	if len(criancasAte5) > 0 && criancasAte5[0] > 0 {
+		for _, m := range reListaCriancas.FindAllStringSubmatchIndex(texto, -1) {
+			var nomes []string
+			for _, parte := range reSeparaNomes.Split(texto[m[2]:m[3]], -1) {
+				if n := limparNome(parte); n != "" {
+					nomes = append(nomes, n)
+				}
+			}
+			// So quando a lista cabe na quantidade de criancas ja dita.
+			if len(nomes) == 0 || len(nomes) > criancasAte5[0] {
+				continue
+			}
+			for _, n := range nomes {
+				ps = append(ps, conversa.Passageiro{Nome: n, CriancaAte5: true})
+			}
 			marcar(m[0], m[1])
 		}
 	}
