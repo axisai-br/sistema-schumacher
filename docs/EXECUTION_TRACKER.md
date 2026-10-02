@@ -7188,9 +7188,20 @@ motor `comandos`, mesmo modelo e configuração: **SUCESSO 71/71 (100%)**,
 latência mediana por roteiro 4,4–4,7 s, máxima 4,8 s. Saídas em
 `C:\Users\axisai\.claude\jobs\eeb28958\tmp\med\v5\` (fora do repositório).
 
-**Próxima ação deste fio (não da fila canônica):** medir o motor atual
-(`agente`) com as correções da Fase 0, sozinho, para a comparação. Push e
-`ATENDIMENTO_V2_MOTOR=sombra` continuam decisão explícita.
+**Comparação com o motor atual (2026-10-02):** mesma configuração, motor
+`agente` (com as correções da Fase 0), rodado sozinho: **SUCESSO 38/71
+(54%)**, latência máxima 10,9 s. Em 39 dos 71 roteiros houve pelo menos uma
+"falha do modelo de linguagem" (erro do provedor NVIDIA, ~4,8 s, 0 tokens); o
+motor `agente` transfere nesses casos, o `comandos` segue só com Jev e
+parsers. Numa repetição sem erro do provedor (`a01_girias`), o `agente`
+ainda falhou: o LLM respondeu "Você escolheu…" sem chamar
+`escolher_viagem`, depois tentou escolher sozinho (barrado pela guarda) e
+inventou o valor do sinal. Saídas em
+`C:\Users\axisai\.claude\jobs\eeb28958\tmp\med\agente\`.
+
+**Próxima ação deste fio (não da fila canônica):** decidir a Fase 5: push da
+branch e `ATENDIMENTO_V2_MOTOR=sombra` em produção (ou `comandos` só para a
+allowlist). Decisão explícita do usuário.
 
 Próxima ação única: aguardar autorização explícita para a próxima mudança de
 estado do PR #84. Antes de qualquer primeiro deploy, executar separadamente o
