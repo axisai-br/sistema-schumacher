@@ -15,12 +15,20 @@ import (
 )
 
 type storePG struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	expira time.Duration
 }
 
-// NewStorePG cria o Store sobre PostgreSQL (tabelas atd_*, migracao 0023).
+// NewStorePG cria o Store sobre PostgreSQL (tabelas atd_*, migracao 0023),
+// com o estado expirando apos ExpiraEstadoPadrao sem mensagens.
 func NewStorePG(pool *pgxpool.Pool) Store {
-	return &storePG{pool: pool}
+	return &storePG{pool: pool, expira: ExpiraEstadoPadrao}
+}
+
+// NewStorePGExpira e NewStorePG com outro prazo de expiracao do estado
+// (0 desliga: o estado so zera quando a equipe encerra).
+func NewStorePGExpira(pool *pgxpool.Pool, expira time.Duration) Store {
+	return &storePG{pool: pool, expira: expira}
 }
 
 const colunasConversa = `
@@ -149,13 +157,18 @@ func (s *storePG) RegistrarEntrada(ctx context.Context, in NovaEntrada) (Convers
 				pendente_desde = coalesce(atd_conversas.pendente_desde, excluded.pendente_desde),
 				ultima_entrada_em = excluded.ultima_entrada_em,
 				status = case when atd_conversas.status = 'ENCERRADA' then 'BOT' else atd_conversas.status end,
-				estado = case when atd_conversas.status = 'ENCERRADA' then '{}'::jsonb else atd_conversas.estado end,
-				versao = case when atd_conversas.status = 'ENCERRADA' then atd_conversas.versao + 1 else atd_conversas.versao end,
+				-- Compra nova: atendimento encerrado, ou bot parado ha mais que o prazo ($5 s).
+				estado = case when atd_conversas.status = 'ENCERRADA'
+					or ($5::float8 > 0 and atd_conversas.status = 'BOT' and atd_conversas.ultima_entrada_em < now() - $5::float8 * interval '1 second')
+					then '{}'::jsonb else atd_conversas.estado end,
+				versao = case when atd_conversas.status = 'ENCERRADA'
+					or ($5::float8 > 0 and atd_conversas.status = 'BOT' and atd_conversas.ultima_entrada_em < now() - $5::float8 * interval '1 second')
+					then atd_conversas.versao + 1 else atd_conversas.versao end,
 				responsavel_id = case when atd_conversas.status = 'ENCERRADA' then null else atd_conversas.responsavel_id end,
 				humano_ate = case when atd_conversas.status = 'ENCERRADA' then null else atd_conversas.humano_ate end,
 				atualizado_em = now()
 			returning `+colunasConversa,
-			canal, in.Contato, in.Telefone, in.Nome))
+			canal, in.Contato, in.Telefone, in.Nome, s.expira.Seconds()))
 	case AutorHumano:
 		direcao = DirecaoSaida
 		c, err = scanConversa(tx.QueryRow(ctx, `

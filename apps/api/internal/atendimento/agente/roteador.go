@@ -87,6 +87,10 @@ type Rota struct {
 	// vazio se nao perguntado (so com reserva).
 	PosReserva     string
 	ConfPosReserva float64
+
+	// Nega: probabilidade de "nao" a pergunta do bot; CorrigePassageiro: de o
+	// cliente corrigir um dado ja dado (nome, CPF). So com viagem e sem reserva.
+	Nega, CorrigePassageiro float64
 }
 
 // Respostas da pergunta "pos_reserva".

@@ -110,7 +110,7 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 		return nil, nil, fmt.Errorf("atendimento v2: dominio incompleto, faltando %s", strings.Join(faltaDom, ", "))
 	}
 
-	store := conversa.NewStorePG(pool)
+	store := conversa.NewStorePGExpira(pool, time.Duration(cfg.AtendimentoV2EstadoExpiraH)*time.Hour)
 	canal := evolution.Novo(evolution.Config{BaseURL: cfg.EvolutionBaseURL, APIKey: cfg.EvolutionAPIKey, Instancia: cfg.EvolutionInstance})
 	lg.Printf("atendimento v2: llm = %s", pc.Descricao())
 	if r := pc.DescricaoReserva(); r != "" {

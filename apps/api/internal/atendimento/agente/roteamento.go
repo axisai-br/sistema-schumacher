@@ -155,6 +155,20 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		finalizar(dec)
 		return res
 	}
+	saida["nega"], saida["corrige_passageiro"] = rt.Nega, rt.CorrigePassageiro
+	if est := tc.estado; len(est.Trechos) > 0 && !est.TodosReservados() {
+		// Correcao de dado ja dado: nada de template nem fechamento; o LLM
+		// corrige com registrar_passageiros vendo a lista atual.
+		if rt.CorrigePassageiro >= 0.8 {
+			finalizar("llm_correcao")
+			return resultadoRota{}
+		}
+		// "Nao" ao pedido de fechamento: pergunta o que ajustar.
+		if rt.Nega >= limiarFechar && rt.Confirma < 0.5 && ultimoBotPedeFechamento(hist) {
+			finalizar("template_nao_fechar")
+			return resultadoRota{resposta: TextoNaoFechar}
+		}
+	}
 
 	// Escolha clara de uma das opcoes mostradas ("a primeira", "dia 8"): o
 	// codigo registra a escolha antes do LLM, que so confirma ao cliente.
@@ -184,8 +198,13 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 
 	// Foto de documento: os dados ja vem estruturados da leitura de imagem; o
 	// codigo registra os passageiros e o LLM so confirma com o cliente.
-	if novos := passageirosDeFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc)); len(novos) > 0 {
+	novos, avisos := passageirosDeFotos([]string{textoRecenteCliente(hist)}, a.d.Agora().In(a.loc))
+	if len(novos) > 0 {
 		if pre, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
+			if len(avisos) > 0 {
+				finalizar("template_registro")
+				return resultadoRota{resposta: textoRegistrados(tc.estado) + "\n\n" + strings.Join(avisos, "\n")}
+			}
 			if direto {
 				finalizar("template_registro")
 				return resultadoRota{resposta: textoConfirmarRegistro(tc.estado)}
@@ -193,6 +212,11 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 			finalizar("pre_registro")
 			return resultadoRota{pre: pre}
 		}
+	}
+	if len(avisos) > 0 {
+		// Certidao de crianca acima de 5 anos sem CPF/RG: pede o documento.
+		finalizar("template_certidao")
+		return resultadoRota{resposta: strings.Join(avisos, "\n")}
 	}
 
 	// Pagamento claro (ou "sim" para fechar) com tudo pronto: o codigo cria a
@@ -309,6 +333,9 @@ func escolhaPermitida(tc *turno) bool {
 	}
 	return rt.PedeVolta >= limiarVolta
 }
+
+// TextoNaoFechar responde a um "nao" ao pedido de fechar a compra.
+const TextoNaoFechar = "Sem problema! 😊 O que você quer ajustar: a viagem, os passageiros ou a forma de pagamento?"
 
 // limiarSoIsso: confianca minima de que a mensagem so avanca o fluxo para
 // responder por template.

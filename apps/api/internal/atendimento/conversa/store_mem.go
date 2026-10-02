@@ -21,6 +21,14 @@ type StoreMem struct {
 	mensagens []Mensagem
 	porProv   map[string]int // provedor_id -> indice em mensagens
 	turnos    []Turno
+	expira    time.Duration // prazo sem mensagens para zerar o estado (0 desliga)
+}
+
+// DefinirExpiracao muda o prazo sem mensagens para zerar o estado (0 desliga).
+func (s *StoreMem) DefinirExpiracao(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expira = d
 }
 
 type registroMem struct {
@@ -33,6 +41,7 @@ func NewStoreMem(agora func() time.Time) *StoreMem {
 		agora = time.Now
 	}
 	return &StoreMem{
+		expira:    ExpiraEstadoPadrao,
 		agora:     agora,
 		conversas: map[string]*registroMem{},
 		porChave:  map[string]string{},
@@ -127,6 +136,11 @@ func (s *StoreMem) RegistrarEntrada(_ context.Context, in NovaEntrada) (Conversa
 	direcao := DirecaoEntrada
 	switch autor {
 	case AutorCliente:
+		if s.expira > 0 && reg.c.Status == StatusBot && reg.c.UltimaEntradaEm != nil && recebida.Sub(*reg.c.UltimaEntradaEm) > s.expira {
+			// Bot parado ha mais que o prazo: compra nova.
+			reg.c.Estado = Estado{}
+			reg.c.Versao++
+		}
 		if reg.c.Status == StatusEncerrada {
 			// Nova mensagem reabre: novo atendimento, estado zerado.
 			reg.c.Status = StatusBot

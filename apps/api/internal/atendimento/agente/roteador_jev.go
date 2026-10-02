@@ -237,6 +237,24 @@ func perguntasJev(e EntradaRota) map[string]any {
 				PagamentoNenhum:   "Does not choose a payment option in this message.",
 			},
 		}
+		if !e.Estado.TodosReservados() {
+			q["nega"] = map[string]any{
+				"type":         "noul",
+				"instructions": "In `latest_customer_message`, is the customer saying NO to the question in the assistant's last message of the `conversation` (does not want to close or confirm yet)?",
+				"criteria": map[string]any{
+					"true":  "A clear no or 'wait' ('não', 'ainda não', 'pera', 'espera', 'não quero assim').",
+					"false": "Anything else, including a yes, a question or new data.",
+				},
+			}
+			q["corrige_passageiro"] = map[string]any{
+				"type":         "noul",
+				"instructions": "In `latest_customer_message`, is the customer CORRECTING passenger data given before (a wrong name, CPF, document or age), as opposed to giving it for the first time?",
+				"criteria": map[string]any{
+					"true":  "Corrects earlier data ('o CPF tá errado', 'o nome certo é…', 'na verdade ela tem 7 anos').",
+					"false": "Gives new data, or talks about something else.",
+				},
+			}
+		}
 		q["confirma"] = map[string]any{
 			"type":         "noul",
 			"instructions": "In `latest_customer_message`, is the customer clearly saying YES to the question in the assistant's last message of the `conversation` (e.g. confirming the trip, the passengers or that they can close the booking)?",
@@ -340,6 +358,12 @@ func rotaDeRespostas(resp map[string]respostaJev, e EntradaRota) Rota {
 		case PosTrocarPagamento, PosTrocarViagem, PosTrocarPassageiro, PosCancelar, PosJaPaguei, PosPixDeNovo, PosNenhum:
 			rt.PosReserva, rt.ConfPosReserva = a.Choice, conf(a)
 		}
+	}
+	if a, ok := resp["nega"]; ok && a.Noul != nil {
+		rt.Nega = limitar01(*a.Noul)
+	}
+	if a, ok := resp["corrige_passageiro"]; ok && a.Noul != nil {
+		rt.CorrigePassageiro = limitar01(*a.Noul)
 	}
 	if a, ok := resp["so_isso"]; ok && a.Noul != nil {
 		rt.SoIsso = limitar01(*a.Noul)

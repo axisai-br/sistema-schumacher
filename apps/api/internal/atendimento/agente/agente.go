@@ -348,7 +348,8 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 				} else if len(cpfsNaoRegistrados(textosCliente, tc.estado)) > 0 {
 					// O modelo nao registrou os dados que o cliente mandou: o
 					// codigo registra (fotos e "nome cpf ...") e segue.
-					novos := append(passageirosDeFotos(textosCliente, agora), passageirosDeTexto(textosCliente)...)
+					novos, _ := passageirosDeFotos(textosCliente, agora)
+					novos = append(novos, passageirosDeTexto(textosCliente)...)
 					if _, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
 						texto = textoRegistrados(tc.estado) + "\n\n" + textoProximoPasso(tc.estado)
 					}

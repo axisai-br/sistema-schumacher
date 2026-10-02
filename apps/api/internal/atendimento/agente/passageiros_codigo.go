@@ -21,9 +21,9 @@ var reFotoDocumento = regexp.MustCompile(`\[foto de documento: ([^\]]+)\]`)
 // passageirosDeFotos le os documentos fotografados nos textos do cliente.
 // Certidao sem CPF so entra se a data de nascimento indicar ate 5 anos (a
 // crianca nao precisa de documento); sem nome ou sem documento valido fica de
-// fora (o LLM pede o que faltar).
-func passageirosDeFotos(textos []string, hoje time.Time) []conversa.Passageiro {
-	var out []conversa.Passageiro
+// fora (o LLM pede o que faltar). avisos explica, para o cliente, certidoes
+// de quem tem mais de 5 anos e veio sem CPF/RG.
+func passageirosDeFotos(textos []string, hoje time.Time) (out []conversa.Passageiro, avisos []string) {
 	for _, t := range textos {
 		for _, m := range reFotoDocumento.FindAllStringSubmatch(t, -1) {
 			var p conversa.Passageiro
@@ -43,16 +43,21 @@ func passageirosDeFotos(textos []string, hoje time.Time) []conversa.Passageiro {
 					nasc = strings.TrimPrefix(c, "nascimento ")
 				}
 			}
-			if anos, ok := idade(nasc, hoje); ok && anos <= 5 {
+			anos, temIdade := idade(nasc, hoje)
+			if temIdade && anos <= 5 {
 				p.CriancaAte5 = true
 			}
-			if p.Nome == "" || (p.Documento == "" && !p.CriancaAte5) || (certidao && p.Documento == "" && !p.CriancaAte5) {
+			if certidao && p.Nome != "" && p.Documento == "" && temIdade && anos > 5 {
+				avisos = append(avisos, fmt.Sprintf("Recebi a certidão de %s (%d anos). Acima de 5 anos a criança paga passagem e precisa de CPF ou RG: me manda o número?", p.Nome, anos))
+				continue
+			}
+			if p.Nome == "" || (p.Documento == "" && !p.CriancaAte5) {
 				continue
 			}
 			out = append(out, p)
 		}
 	}
-	return out
+	return out, avisos
 }
 
 // idade em anos completos a partir de "DD/MM/AAAA".

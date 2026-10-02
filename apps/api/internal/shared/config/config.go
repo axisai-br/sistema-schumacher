@@ -69,6 +69,8 @@ type Config struct {
 	NvidiaBaseURL                      string
 	AtendimentoV2Concorrencia          int
 	AtendimentoV2DebounceMS            int
+	// AtendimentoV2EstadoExpiraH: horas sem mensagens para comecar compra nova (0 desliga).
+	AtendimentoV2EstadoExpiraH         int
 	AtendimentoV2SinalPorPagante       float64
 	AtendimentoV2Juiz                  string
 	TypesafeAPIKey                     string
@@ -146,6 +148,7 @@ func Load() (Config, error) {
 		NvidiaBaseURL:                      strings.TrimSpace(os.Getenv("NVIDIA_BASE_URL")),
 		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
 		AtendimentoV2DebounceMS:            positiveInt(getEnvAsInt("ATENDIMENTO_V2_DEBOUNCE_MS", 2000), 2000),
+		AtendimentoV2EstadoExpiraH:         max(getEnvAsInt("ATENDIMENTO_V2_ESTADO_EXPIRA_H", 72), 0),
 		AtendimentoV2SinalPorPagante:       getEnvAsFloat("ATENDIMENTO_V2_SINAL_POR_PAGANTE", 250),
 		AtendimentoV2Juiz:                  parseJuiz(os.Getenv("ATENDIMENTO_V2_JUIZ")),
 		TypesafeAPIKey:                     strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),

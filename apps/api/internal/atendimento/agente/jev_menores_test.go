@@ -249,7 +249,7 @@ func TestPerguntasJevCondicionais(t *testing.T) {
 
 func TestPassageirosDeFotos(t *testing.T) {
 	hoje := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	ps := passageirosDeFotos([]string{
+	ps, avisos := passageirosDeFotos([]string{
 		"[foto de documento: nome JOAO VITOR DA SOUZA, CPF 529.982.247-25]",
 		"[foto de documento: certidão de nascimento, nome ANA CLARA SOUZA, nascimento 03/04/2023] essa é minha filha",
 		"[foto de documento: certidão de nascimento, nome PEDRO SOUZA, nascimento 03/04/2015]",
@@ -260,6 +260,9 @@ func TestPassageirosDeFotos(t *testing.T) {
 	}
 	if ps[0].Nome != "Joao Vitor da Souza" || ps[0].Documento != "52998224725" || ps[0].TipoDocumento != "CPF" || ps[0].CriancaAte5 {
 		t.Errorf("titular: %+v", ps[0])
+	}
+	if len(avisos) != 1 || !strings.Contains(avisos[0], "Pedro Souza (11 anos)") {
+		t.Errorf("avisos=%v", avisos)
 	}
 	if ps[1].Nome != "Ana Clara Souza" || !ps[1].CriancaAte5 || ps[1].Documento != "" {
 		t.Errorf("crianca: %+v", ps[1])
@@ -484,5 +487,41 @@ func TestIdaEVoltaNumaMensagem(t *testing.T) {
 		if !strings.Contains(e, s) {
 			t.Errorf("faltou %q em %q", s, e)
 		}
+	}
+}
+
+func TestNaoAoFechamento(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{Nega: 0.95, Confirma: 0.05}, ferrsFechamento(&chamadas)...)
+	f.iniciar("oi")
+	f.botOut("Posso fechar a reserva e gerar o PIX?")
+	f.iniciar("não, pera")
+	e := estadoPronto()
+	e.Pagamento = "sinal"
+	comEstado(t, f, e)
+	processar(t, f)
+	if len(chamadas) != 0 || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || f.canal.envios[0] != TextoNaoFechar {
+		t.Fatalf("chamadas=%v envios=%q", chamadas, f.canal.envios)
+	}
+}
+
+func TestCorrecaoVaiAoLLMSemFechar(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{CorrigePassageiro: 0.9, Pagamento: PagamentoSinal, ConfPagamento: 0.95}, ferrsFechamento(&chamadas)...)
+	f.modelo.fila = []llm.Resposta{texto("Qual é o CPF certo?")}
+	f.iniciar("o cpf tá errado, é sinal mas corrige o cpf")
+	comEstado(t, f, estadoPronto())
+	processar(t, f)
+	if len(chamadas) != 0 || len(f.modelo.pedidos) != 1 || decisao(t, f.ultimoTurno()) != "llm_correcao" {
+		t.Fatalf("chamadas=%v pedidos=%d", chamadas, len(f.modelo.pedidos))
+	}
+}
+
+func TestCertidaoAcimaDe5Pede(t *testing.T) {
+	f, _ := fxRoteador(t, Rota{})
+	f.iniciar("[foto de documento: certidão de nascimento, nome PEDRO SOUZA, nascimento 03/04/2015]")
+	processar(t, f)
+	if len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "precisa de CPF ou RG") {
+		t.Fatalf("envios=%q", f.canal.envios)
 	}
 }
