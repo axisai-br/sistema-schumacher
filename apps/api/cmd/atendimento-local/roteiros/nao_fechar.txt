@@ -1,0 +1,9 @@
+# Cliente diz nao ao pedido de fechamento e depois troca a forma de pagamento.
+/nome Ana
+de monção pra videira
+a primeira
+ana souza cpf 52998224725
+posso pagar depois?
+não, pera
+pode ser o sinal
+/estado

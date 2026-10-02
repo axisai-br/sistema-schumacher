@@ -1,0 +1,9 @@
+# Rota, quantidade e nomes em mensagens seguidas (processadas juntas).
+/nome Paula
++oi
++quero ir de videira pra santa inês
+somos 2 adultos e 1 bebê
+a primeira
+paula reis cpf 52998224725, marcos reis cpf 11144477735, bebê sofia reis
+integral
+/estado

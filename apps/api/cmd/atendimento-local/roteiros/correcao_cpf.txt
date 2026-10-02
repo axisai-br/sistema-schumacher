@@ -1,0 +1,8 @@
+# Cliente corrige o CPF antes de fechar.
+/nome Bruno
+de chapecó pra igarapé do meio
+a primeira
+bruno lima cpf 11144477735
+opa, o cpf tá errado, o certo é 529.982.247-25
+sinal
+/estado

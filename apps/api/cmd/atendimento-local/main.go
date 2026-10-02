@@ -199,10 +199,30 @@ func encerrar(s *sessao, stdout io.Writer) int {
 // ---- modo roteiro ----
 
 func modoRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, dirSaida string, stdout, stderr io.Writer) int {
+	if ref == "todos" {
+		var ps []placar
+		cod := 0
+		for _, n := range nomesRoteiros() {
+			p, c := executarRoteiro(ctx, cfg, modelo, n, dirSaida, stdout, stderr)
+			ps = append(ps, p)
+			cod = max(cod, c)
+		}
+		imprimirPlacares(stdout, ps)
+		return cod
+	}
+	p, cod := executarRoteiro(ctx, cfg, modelo, ref, dirSaida, stdout, stderr)
+	if cod == 0 {
+		fmt.Fprintf(stdout, "PLACAR %s\n", p.linha())
+	}
+	return cod
+}
+
+// executarRoteiro executa um roteiro numa sessao nova e devolve o placar.
+func executarRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, dirSaida string, stdout, stderr io.Writer) (placar, int) {
 	linhas, nome, err := abrirRoteiro(ref)
 	if err != nil {
 		fmt.Fprintf(stderr, "erro: %v\n", err)
-		return 2
+		return placar{Roteiro: ref}, 2
 	}
 	s := novaSessao(cfg, modelo, stdout, nil, dirSaida)
 	s.cabecalho()
@@ -221,7 +241,15 @@ func modoRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, dirSai
 		}
 	}
 	fmt.Fprintln(stdout)
-	return encerrar(s, stdout)
+	p := s.placar
+	p.Roteiro = nome
+	p.Reservas = len(s.amb.Reservas.Reservas())
+	for _, pg := range s.amb.Pagamentos.Pagamentos() {
+		if pg.Status != "CANCELLED" {
+			p.Pix++
+		}
+	}
+	return p, encerrar(s, stdout)
 }
 
 // ---- modo caso ----

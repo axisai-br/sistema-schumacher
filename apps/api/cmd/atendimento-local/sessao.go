@@ -50,6 +50,7 @@ type sessao struct {
 	ultimo   *conversa.Turno
 	iniciada time.Time
 	salvo    string
+	placar   placar
 }
 
 func novaSessao(cfg config, modelo llm.Modelo, out io.Writer, agora func() time.Time, dirOut string) *sessao {
@@ -191,6 +192,7 @@ func (s *sessao) processar(ctx context.Context) {
 		s.nTurnos = len(turnos)
 		tn := turnos[len(turnos)-1]
 		s.ultimo = &tn
+		s.placar.registrar(tn, dur)
 		s.printf("  %s\n", infoTurno(tn, dur))
 	}
 	if atual, err := s.amb.Store.Obter(ctx, conv.ID); err == nil && atual.Status == conversa.StatusHumano {
@@ -198,6 +200,7 @@ func (s *sessao) processar(ctx context.Context) {
 		if motivo == "" {
 			motivo = "(não informado)"
 		}
+		s.placar.Transferiu = true
 		s.printf("*** conversa transferida para atendente humano — motivo: %s ***\n", motivo)
 		s.printf("    (novas mensagens serão registradas mas não processadas até você usar /bot)\n")
 		s.transc = append(s.transc, evals.Msg{Autor: "SISTEMA", Texto: "conversa transferida para atendente humano — motivo: " + motivo})
