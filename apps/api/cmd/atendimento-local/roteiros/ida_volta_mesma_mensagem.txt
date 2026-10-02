@@ -1,3 +1,4 @@
+# ESPERA: reservas=2 pix=2 trechos=2 passageiros=1 pagamento=sinal
 # Ida e volta pedidas numa mensagem so.
 /nome Henrique
 de fraiburgo pra monção, ida dia 8 e volta dia 12 de outubro

@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal estado=/CPF \*\*\*725/
 # Cliente corrige o CPF antes de fechar.
 /nome Bruno
 de chapecó pra igarapé do meio

@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 pagamento=sinal exige=/500/
+# Objetivo: ao perguntar "quanto fica o sinal?" com 2 pagantes (Santa Ines->Fraiburgo, R$950), informar sinal R$250 por pessoa = R$500 e restante R$1.400 no embarque, sem fechar sozinho; ao escolher sinal, criar 1 reserva e 1 PIX de R$500.
+/nome Paulo
+quero ir de santa inês pra fraiburgo
+a primeira
+paulo mendes cpf 52998224725 e rita mendes cpf 11144477735
+quanto fica o sinal?
+ok, vou pagar o sinal então
+/reservas

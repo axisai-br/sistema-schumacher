@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=2
+# Objetivo: bot percebe que dois passageiros tem o mesmo CPF e pede o CPF correto do segundo, sem reservar; apos a correcao, reserva+pix com 2 passageiros com CPFs distintos.
+/nome Rogerio
+quero ir de monção pra chapecó
+a primeira
+rogerio dias cpf 98765432100 e sandra dias cpf 98765432100
+sinal
+/reservas
+foi mal, o da sandra é 39053344705
+sinal
+/estado
+/reservas

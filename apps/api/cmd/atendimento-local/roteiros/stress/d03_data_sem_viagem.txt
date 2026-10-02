@@ -1,0 +1,5 @@
+# ESPERA: reservas=0 proibido=/0?3\/10 às/
+# Objetivo: "dia 3" (sábado 03/10) e "sábado" não têm viagem MA>SC; bot diz que não há e oferece a mais próxima (seg 05/10); não inventa viagem em sábado.
+/nome Ana
+quero ir de Monção para Videira dia 3
+e no sábado que vem?

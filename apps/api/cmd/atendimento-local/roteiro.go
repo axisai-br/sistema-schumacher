@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-//go:embed roteiros/*.txt
+//go:embed roteiros
 var roteirosFS embed.FS
 
 // tipoLinha classifica uma linha de roteiro.
@@ -66,22 +66,46 @@ func abrirRoteiro(ref string) ([]linhaRoteiro, string, error) {
 		l, err := parseRoteiro(strings.NewReader(string(b)))
 		return l, ref, err
 	}
-	nome := strings.TrimSuffix(filepath.Base(ref), ".txt")
-	if b, err := roteirosFS.ReadFile("roteiros/" + nome + ".txt"); err == nil {
-		l, err := parseRoteiro(strings.NewReader(string(b)))
-		return l, nome, err
+	for _, nome := range []string{
+		strings.TrimSuffix(filepath.ToSlash(ref), ".txt"), // "stress/a01_girias"
+		strings.TrimSuffix(filepath.Base(ref), ".txt"),
+	} {
+		if b, err := roteirosFS.ReadFile("roteiros/" + nome + ".txt"); err == nil {
+			l, err := parseRoteiro(strings.NewReader(string(b)))
+			return l, nome, err
+		}
 	}
 	return nil, "", fmt.Errorf("roteiro %q não encontrado (use um caminho de arquivo ou um nome de -lista)", ref)
 }
 
-func nomesRoteiros() []string {
-	ents, _ := roteirosFS.ReadDir("roteiros")
+// nomesRoteiros lista os roteiros da raiz (casos reais de producao).
+func nomesRoteiros() []string { return nomesEm("roteiros", "") }
+
+// nomesStress lista os roteiros do teste de estresse (roteiros/stress).
+func nomesStress() []string { return nomesEm("roteiros/stress", "stress/") }
+
+func nomesEm(dir, prefixo string) []string {
+	ents, _ := roteirosFS.ReadDir(dir)
 	var out []string
 	for _, e := range ents {
-		if n := e.Name(); strings.HasSuffix(n, ".txt") {
-			out = append(out, strings.TrimSuffix(n, ".txt"))
+		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".txt") {
+			out = append(out, prefixo+strings.TrimSuffix(n, ".txt"))
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// grupoRoteiros resolve os nomes especiais de -roteiro: todos (raiz), stress
+// e tudo (os dois).
+func grupoRoteiros(ref string) ([]string, bool) {
+	switch ref {
+	case "todos":
+		return nomesRoteiros(), true
+	case "stress":
+		return nomesStress(), true
+	case "tudo":
+		return append(nomesRoteiros(), nomesStress()...), true
+	}
+	return nil, false
 }

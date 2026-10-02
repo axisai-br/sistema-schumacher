@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 estado=/Carlos Eduardo Mendes/ estado=/Ana Beatriz/
+# Objetivo: antes de fechar, cliente troca Bruno por Carlos; estado final com Ana e Carlos (sem Bruno); reserva+pix com 2 pagantes.
+# (v2: CPF 84434891003 da lista de fixtures era INVALIDO; trocado por 84434891030 valido)
+/nome Ana
+quero de fraiburgo pra igarapé do meio
+a primeira
+ana beatriz cpf 52998224725 e bruno teixeira cpf 11144477735
+na verdade o bruno não vai mais, no lugar dele vai o carlos eduardo mendes cpf 84434891030
+integral
+/estado
+/reservas

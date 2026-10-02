@@ -1,3 +1,4 @@
+# ESPERA: transferiu=sim
 # Conversa real: loop de perguntas sobre passageiros
 Passagem de Santa Catarina para o Maranhão
 De fraiburgo para Maranhão

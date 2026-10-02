@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 pagamento=sinal
+# Objetivo: "eu e meu filho" sem dar o proprio nome -> bot pede nome completo e documento da cliente (nao usa so "Rafaela" do perfil nem inventa sobrenome); filho de 10 anos com CPF; reserva+pix sinal 2 pagantes.
+/nome Rafaela
+oi! quero passagem de santa inês pra ipumirim pra mim e meu filho
+a primeira
+ele se chama lucas martins, tem 10 anos, cpf 12345678909
+rafaela martins, cpf 98765432100
+sinal
+/estado
+/reservas

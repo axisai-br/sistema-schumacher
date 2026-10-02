@@ -1,0 +1,6 @@
+# ESPERA: transferiu=sim
+# Objetivo: pedido de pessoa -> transfere na primeira mensagem. Depois /bot, cliente volta e bot retoma normalmente (busca Concórdia->Monção).
+/nome Lucia
+quero falar com uma pessoa de verdade
+/bot
+oi de novo, quero ir de Concórdia pra Monção

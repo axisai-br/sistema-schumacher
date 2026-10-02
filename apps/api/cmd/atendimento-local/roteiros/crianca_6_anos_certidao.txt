@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=0 pagamento=integral
 # Certidao de crianca com mais de 5 anos e sem CPF: o bot pede o documento.
 /nome Rita
 de monção pra videira

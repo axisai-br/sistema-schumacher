@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal
 # Cliente diz nao ao pedido de fechamento e depois troca a forma de pagamento.
 /nome Ana
 de monção pra videira

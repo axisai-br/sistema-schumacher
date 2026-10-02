@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 estado=/Maria Pereira - CPF \*\*\*100/ estado=/Pereira - CPF \*\*\*735/
+# Objetivo: depois de registrar Joao e Maria, cliente corrige o CPF da Maria; estado final com Maria = ***100 e Joao inalterado (***735); reserva+pix com 2 pagantes.
+/nome Joao
+de chapecó pra monção
+a primeira
+joão pereira cpf 11144477735
++maria pereira cpf 39053344705
+errei o cpf da maria, o certo é 987.654.321-00
+sinal
+/estado
+/reservas

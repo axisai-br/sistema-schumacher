@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 pagamento=integral transferiu=nao
+# Objetivo: integral (R$950) -> sinal (R$250) -> integral (R$950) de novo. Cada troca cancela o PIX pendente e gera outro: /reservas com 2 PIX CANCELLED e 1 ativo de R$950; 1 reserva so. Nao transferir.
+/nome Diego
+de fraiburgo pra igarapé do meio
+a primeira
+diego ramos cpf 98765432100
+integral
+ah melhor só o sinal
+não, desculpa, vou pagar integral mesmo
+/reservas

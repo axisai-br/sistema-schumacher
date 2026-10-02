@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal transferiu=nao
 # Troca de integral para sinal depois do PIX gerado: cancela o PIX e gera outro.
 /nome Lucas
 quero ir de fraiburgo pra monção

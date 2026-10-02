@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 trechos=1 pagamento=integral
 # Troca de data e de pagamento ANTES da reserva (deve trocar sem atendente).
 /nome Joao
 fraiburgo pra moncao

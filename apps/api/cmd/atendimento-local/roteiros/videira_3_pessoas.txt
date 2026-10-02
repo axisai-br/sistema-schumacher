@@ -1,3 +1,4 @@
+# ESPERA: reservas=0
 # Conversa real: 3 pessoas, sendo 1 criança, saindo de Videira
 Oi quero passagem em outubro
 Sair de videira para monção são 3 pessoas sendo 1 criança

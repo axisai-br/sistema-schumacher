@@ -43,12 +43,19 @@ type config struct {
 	Juiz          string // llm | jev | off
 	TypesafeKey   string
 	Sinal         float64
-	Descricao     string // "provedor · modelo" (sem chave)
+	Orcamento     time.Duration // ATD_ORCAMENTO_S: orcamento do turno (0 = padrao do agente)
+	Descricao     string        // "provedor · modelo" (sem chave)
 }
 
 func lerConfig(get func(string) string) (config, error) {
 	prov := provedor.ConfigDoAmbiente(get)
 	c := config{Prov: prov, Modelo: prov.Modelo, Descricao: prov.Descricao()}
+	if n, err := strconv.Atoi(strings.TrimSpace(get("ATD_ORCAMENTO_S"))); err == nil && n > 0 {
+		c.Orcamento = time.Duration(n) * time.Second
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(get("LLM_TIMEOUT_S"))); err == nil && n > 0 {
+		c.Prov.Timeout = time.Duration(n) * time.Second
+	}
 	c.Juiz = strings.ToLower(strings.TrimSpace(get("ATENDIMENTO_V2_JUIZ")))
 	if c.Juiz == "" {
 		c.Juiz = "llm"
@@ -89,6 +96,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	k := fs.Int("k", 1, "repetições de cada caso (modo -caso)")
 	lista := fs.Bool("lista", false, "lista os casos e roteiros disponíveis")
 	saida := fs.String("saida", dirSaidaPadrao, "pasta das transcrições")
+	replay := fs.String("replay", "", "reenvia pedidos gravados por ATD_DUMP_DIR (arquivos .json separados por vírgula)")
+	nReplay := fs.Int("n", 5, "repetições de cada pedido (modo -replay)")
+	variante := fs.String("variante", "orig", "contexto do replay: orig ou v2")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -113,6 +123,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 2
 	}
 	modelo, err := criarModelo(cfg.Prov)
+	modelo = comDump(modelo, os.Getenv("ATD_DUMP_DIR"))
 	if err != nil {
 		fmt.Fprintf(stderr, "erro: %v\n", err)
 		fmt.Fprintf(stderr, "Coloque %s em apps/api/%s (copie de %s.example) ou exporte a variável no ambiente.\n",
@@ -124,6 +135,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 
 	switch {
+	case *replay != "":
+		return modoReplay(ctx, cfg, modelo, strings.Split(*replay, ","), *nReplay, *variante, stdout, stderr)
 	case *caso != "":
 		return modoCaso(ctx, cfg, modelo, *caso, *k, *saida, stdout, stderr)
 	case *roteiro != "":
@@ -144,9 +157,10 @@ func cmdLista(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  %-26s %s\n", c.Nome, c.Descricao)
 	}
 	fmt.Fprintln(stdout, "\nroteiros (-roteiro <nome ou caminho>):")
-	for _, n := range nomesRoteiros() {
+	for _, n := range append(nomesRoteiros(), nomesStress()...) {
 		fmt.Fprintf(stdout, "  %s\n", n)
 	}
+	fmt.Fprintln(stdout, "  (grupos: todos = raiz, stress, tudo = os dois)")
 	return 0
 }
 
@@ -199,10 +213,10 @@ func encerrar(s *sessao, stdout io.Writer) int {
 // ---- modo roteiro ----
 
 func modoRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, dirSaida string, stdout, stderr io.Writer) int {
-	if ref == "todos" {
+	if nomes, ok := grupoRoteiros(ref); ok {
 		var ps []placar
 		cod := 0
-		for _, n := range nomesRoteiros() {
+		for _, n := range nomes {
 			p, c := executarRoteiro(ctx, cfg, modelo, n, dirSaida, stdout, stderr)
 			ps = append(ps, p)
 			cod = max(cod, c)
@@ -213,6 +227,9 @@ func modoRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, dirSai
 	p, cod := executarRoteiro(ctx, cfg, modelo, ref, dirSaida, stdout, stderr)
 	if cod == 0 {
 		fmt.Fprintf(stdout, "PLACAR %s\n", p.linha())
+		if len(p.Falhas) > 0 {
+			fmt.Fprintf(stdout, "FALHAS: %s\n", strings.Join(p.Falhas, "; "))
+		}
 	}
 	return cod
 }
@@ -249,6 +266,17 @@ func executarRoteiro(ctx context.Context, cfg config, modelo llm.Modelo, ref, di
 			p.Pix++
 		}
 	}
+	esp, err := lerEspera(ref)
+	if err != nil {
+		fmt.Fprintf(stderr, "erro: %v\n", err)
+		return p, 2
+	}
+	r := resultadoRoteiro{Reservas: p.Reservas, Pix: p.Pix, Transferiu: p.Transferiu, Respostas: s.amb.Canal.Textos(0)}
+	if conv, err := s.amb.ConversaAtual(context.Background()); err == nil {
+		r.Estado = conv.Estado
+	}
+	p.ComEspera = !esp.vazia()
+	p.Falhas = esp.avaliar(r)
 	return p, encerrar(s, stdout)
 }
 

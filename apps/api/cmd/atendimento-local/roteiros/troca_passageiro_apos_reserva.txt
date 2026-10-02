@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 transferiu=sim
 # Troca de passageiro DEPOIS da reserva criada (deve transferir para atendente).
 /nome Ana
 de monção pra videira

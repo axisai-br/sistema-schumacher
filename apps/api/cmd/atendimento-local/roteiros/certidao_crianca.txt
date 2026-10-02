@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=1 pagamento=sinal
 # Caso real de producao (02/10): titular manda a CNH e logo depois a certidao
 # de nascimento de uma crianca junto com o "sim". A crianca nao pode sumir.
 /nome Messias

@@ -1,0 +1,7 @@
+# ESPERA: reservas=2 pix=2 trechos=2 origem="Santa Inês" destino="Campos Novos" pagamento=integral
+# Objetivo: ida Santa Inês->Campos Novos seg 12/10 e volta quinta 22/10 numa mensagem; dois trechos, preço 1000 cada, volta posterior à ida, 2 reservas e 2 PIX com total.
+/nome Davi
+quero ir de Santa Inês pra Campos Novos dia 12 e voltar dia 22 de outubro, só eu
+davi rocha cpf 98765432100
+integral
+/reservas

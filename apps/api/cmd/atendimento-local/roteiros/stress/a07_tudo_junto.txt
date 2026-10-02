@@ -1,0 +1,8 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 pagamento=sinal origem="Santa Inês" destino="Campos Novos" estado=/Antonia/ proibido=/esposa antonia/
+# Objetivo: reserva+pix, 2 passageiros, Santa Ines -> Campos Novos seg 12/10, R$1.000 cada, sinal R$500 (pode perguntar qual viagem se houver 2 no dia 12)
+/nome Francisco
+Boa noite! Quero 2 passagens de Santa Inês para Campos Novos no dia 12/10, eu Francisco Alves Lima CPF 39053344705 e minha esposa Antonia Lima CPF 71460238001, vou pagar só o sinal.
+isso mesmo
+pode
+/estado
+/reservas

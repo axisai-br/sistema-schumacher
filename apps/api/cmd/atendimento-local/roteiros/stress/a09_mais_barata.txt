@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=integral origem="Videira" destino="Santa Inês"
+# Objetivo: reserva+pix, 1 passageiro, Videira -> Santa Ines qui 08/10 (mais barata: Videira R$950 vs Campos Novos R$1.000), integral R$950
+/nome Valdir
+boa tarde. moro entre videira e campos novos, posso pegar o onibus em qualquer uma das duas pra ir pra santa ines. qual é a mais barata?
+entao a mais barata, quinta que vem
+valdir antunes cpf 71460238001
+pode
+integral
+/estado
+/reservas

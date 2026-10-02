@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal
+# Objetivo: cliente responde so "pix" a pergunta sinal/integral -> bot deve perguntar se e sinal (R$250) ou integral (R$1.100), sem assumir. Depois "o sinal" -> 1 reserva, 1 PIX R$250, restante R$850 (Chapeco->Santa Ines).
+/nome Marcos
+de chapecó pra santa inês
+a primeira
+marcos pereira cpf 98765432100
+pix
+o sinal
+/reservas

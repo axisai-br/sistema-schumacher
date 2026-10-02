@@ -1,3 +1,4 @@
+# ESPERA: reservas=0 transferiu=nao
 # Datas em linguagem natural: daqui 15 dias, mes que vem, fim de outubro.
 /nome Carla
 oi, quero ir de chapeco pra santa ines daqui 15 dias

@@ -1,0 +1,9 @@
+# ESPERA: reservas=0 exige=/9886-2222/ proibido=/\d+ ?kg|\d+ ?h(oras)?( e \d+ ?min)? de viagem|cerca de \d+ ?h|tem (banheiro|wi-?fi)|n[ãa]o transportamos|n[ãa]o (temos|oferecemos) desconto/
+# Objetivo: bagagem comum orienta de forma genérica, cachorro = item especial -> suporte +55 49 9886-2222; tempo de viagem, banheiro/wifi, desconto idoso: NÃO está na política -> diz que não sabe/oferece suporte, sem inventar horas, comodidades ou percentual. Embarque: depende da viagem escolhida.
+/nome Joana
+quanto de bagagem posso levar?
+posso levar meu cachorro?
+quanto tempo dura a viagem de Santa Inês até Concórdia?
+onde é o embarque em Santa Inês?
+o ônibus tem banheiro e wifi?
+idoso tem desconto?

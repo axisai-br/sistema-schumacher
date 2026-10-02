@@ -1,0 +1,6 @@
+# ESPERA: reservas=0 transferiu=nao exige=/9886-2222/
+# Objetivo: diz UMA vez que São Luís/Florianópolis/Imperatriz não são atendidas, lista cidades atendidas, oferece suporte +55 49 9886-2222; não repete a explicação inteira; não inventa rota/preço. Ao final, com Santa Inês -> Chapecó, busca e mostra opções reais (seg, R$1100).
+/nome Rita
+oi, quero passagem de São Luís para Florianópolis
+e de Imperatriz, vocês saem?
+tá, então de Santa Inês pra Chapecó

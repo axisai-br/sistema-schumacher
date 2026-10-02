@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 pagamento=integral origem="Santa Inês" destino="Chapecó"
+# Objetivo: reserva+pix, 2 passageiros, Santa Ines -> Chapeco seg 26/10, R$1.100 cada, integral R$2.200
+/nome Edivaldo
+vc tem passagem pra xapeco?
+saio d santa ines, dia 26
+eu e mais 1
+edivaldo sousa cpf 39053344705 e josiane sousa cpf 98765432100
+blz pode
+integral pfv
+/estado
+/reservas

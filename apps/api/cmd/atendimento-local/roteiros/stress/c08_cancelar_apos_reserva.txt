@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 transferiu=sim
+# Objetivo: depois da reserva+PIX, "quero cancelar" -> transferir para humano (pedido de cancelamento), sem cancelar sozinho nem prometer reembolso. transferiu=sim.
+/nome Bruno
+de santa inês pra chapecó
+a primeira
+bruno lima cpf 98765432100
+integral
+quero cancelar essa reserva
+/reservas

@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 pagamento=integral
+# Objetivo: cliente diz que sao 2 mas manda 3 passageiros; bot registra os 3 (ou confirma) sem perder nenhum; reserva+pix integral com 3 pagantes.
+/nome Priscila
+oi, de ituporanga pra monção, vamos em 2
+a primeira
+priscila nunes cpf 98765432100, andre nunes cpf 39053344705 e a lara nunes cpf 12345678909
+sim, a lara vai também, são 3
+integral
+/estado
+/reservas

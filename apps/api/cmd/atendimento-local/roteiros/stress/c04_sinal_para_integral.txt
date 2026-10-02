@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 pix=1 pagamento=integral transferiu=nao
+# Objetivo: sinal (PIX R$250) e depois "quero pagar tudo" -> trocar_pagamento: PIX de R$250 CANCELLED e novo PIX integral R$1.000 (Campos Novos->Moncao). Nao transferir. pix=1 ativo.
+/nome Renata
+de campos novos pra monção
+a primeira
+renata costa cpf 39053344705
+sinal
+pensando bem, quero pagar tudo de uma vez
+/reservas

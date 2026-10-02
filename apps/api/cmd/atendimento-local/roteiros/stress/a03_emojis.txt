@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal origem="Igarapé do Meio" destino="Videira"
+# Objetivo: reserva+pix, 1 passageiro (Joao Vitor Souza via foto), Igarape do Meio -> Videira, a 2a opcao da lista (seg 12/10), R$950, sinal R$250
+/nome Joao
+oii 😊🚌
+quero ir p videira 🙏🙏
+saindo de igarape do meio
+a segunda opção 👍
+[foto de documento: nome JOAO VITOR SOUZA, CPF 529.982.247-25]
+👍
+sinal 💰
+/estado
+/reservas

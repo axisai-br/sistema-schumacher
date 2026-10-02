@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 pagamento=sinal
+# Objetivo: cliente avisa que sao 3 e manda um passageiro por mensagem; bot acumula os 3 (nao substitui), pergunta pagamento so no fim; reserva+pix sinal com 3 pagantes (R$750).
+/nome Edson
+oi
+de igarapé do meio pra concórdia, somos 3
+a primeira
+edson moraes cpf 52998224725
+cleide moraes cpf 11144477735
+kauã moraes cpf 39053344705
+sinal
+/estado
+/reservas

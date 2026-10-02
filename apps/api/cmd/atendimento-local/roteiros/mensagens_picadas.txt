@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=1 pagamento=integral
 # Rota, quantidade e nomes em mensagens seguidas (processadas juntas).
 /nome Paula
 +oi

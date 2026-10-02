@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 pix=1 transferiu=sim
+# Objetivo: 2 passageiros, sinal (PIX R$500). Depois "da pra passar pra segunda seguinte?" -> remarcacao de reserva existente -> transferir para humano; nao criar nova reserva nem novo PIX. transferiu=sim, reservas=1.
+/nome Fabio
+de igarapé do meio pra seara
+a primeira
+fabio nunes cpf 12345678909 e lia nunes cpf 39053344705
+sinal
+dá pra passar pra segunda seguinte?
+/reservas

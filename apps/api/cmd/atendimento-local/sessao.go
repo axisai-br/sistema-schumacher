@@ -89,7 +89,7 @@ func criarRoteador(cfg config) agente.Roteador {
 func (s *sessao) novoAmbiente() {
 	juiz, _ := criarJuiz(s.cfg, s.modelo)
 	s.amb = evals.NovoAmbiente(s.modelo, evals.ConfigAmbiente{
-		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal,
+		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal, OrcamentoTurno: s.cfg.Orcamento,
 	})
 	s.amb.NomeCliente = s.nome
 	s.nTurnos = 0

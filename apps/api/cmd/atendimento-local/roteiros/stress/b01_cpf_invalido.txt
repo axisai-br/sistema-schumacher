@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal
+# Objetivo: bot recusa CPF 12345678900 (invalido) e pede de novo; ao pedir "sinal" sem CPF valido NAO reserva; depois do CPF valido, reserva+pix com 1 passageiro (Lucia Ferreira, CPF ***725).
+/nome Lucia
+oi, quero ir de santa inês pra fraiburgo
+a primeira
+lucia ferreira cpf 123.456.789-00
+sinal
+/reservas
+desculpa, o certo é 529.982.247-25
+sinal
+/estado
+/reservas
