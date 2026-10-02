@@ -284,7 +284,7 @@ var (
 // teve certeza e o texto do cliente sustenta a extracao.
 func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cidades []ferramentas.Cidade) (Rota, []string) {
 	if ex == nil {
-		return rt, nil
+		ex = &Extracao{} // so as regras que nao dependem do extrator
 	}
 	var usados []string
 	// Pagamento: so com a palavra da forma no texto.
@@ -321,6 +321,14 @@ func enriquecerRota(rt Rota, ex *Extracao, e conversa.Estado, texto string, cida
 			rt.Destino, rt.ConfDestino = c, 0.9
 			usados = append(usados, "destino")
 		}
+	}
+	// Rota completa e nova na mensagem ("sair de videira para monção, somos
+	// 3") e busca, mesmo que o Jev tenha classificado como quantidade.
+	if cidadeValida(rt.Origem) && cidadeValida(rt.Destino) && rt.ConfOrigem >= 0.8 && rt.ConfDestino >= 0.8 &&
+		rt.Intencao != IntencaoBuscarViagens && rt.Intencao != IntencaoEscolherOpcao && rt.Intencao != IntencaoFormaPagamento &&
+		!(e.Origem != nil && e.Destino != nil && chaveRota(e.Origem.Nome, e.Destino.Nome) == chaveRota(rt.Origem, rt.Destino)) {
+		rt.Intencao, rt.ConfIntencao = IntencaoBuscarViagens, 0.9
+		usados = append(usados, "intencao_busca")
 	}
 	if ex.Confirma == "sim" && rt.Confirma < 0.5 {
 		rt.Confirma = 0.9

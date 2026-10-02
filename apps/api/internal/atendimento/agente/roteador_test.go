@@ -435,3 +435,17 @@ func TestArgsPreBuscaRebuscaQuandoListaMisturaRotas(t *testing.T) {
 		t.Fatal("lista de uma busca por estado (varias cidades) deve rebuscar so a rota pedida")
 	}
 }
+
+func TestTrechoMesmaRotaSubstitui(t *testing.T) {
+	e := conversa.Estado{
+		Opcoes:  []conversa.Opcao{{Numero: 2, Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-15"}},
+		Trechos: []conversa.Trecho{{Viagem: conversa.Opcao{Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-08"}}},
+	}
+	if i := trechoMesmaRota(e, 2); i != 1 {
+		t.Fatalf("outra data na mesma rota troca o trecho 1, veio %d", i)
+	}
+	e.Opcoes[0].Origem, e.Opcoes[0].Destino = "Monção", "Fraiburgo"
+	if i := trechoMesmaRota(e, 2); i != 0 {
+		t.Fatalf("a volta acrescenta trecho, veio %d", i)
+	}
+}

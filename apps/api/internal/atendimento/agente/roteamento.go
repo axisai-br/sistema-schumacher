@@ -84,6 +84,22 @@ func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado, temQuando bool) (map
 	return args, true
 }
 
+// trechoMesmaRota devolve o numero (1..n) do trecho sem reserva com a mesma
+// origem e destino da opcao n; 0 se nao houver.
+func trechoMesmaRota(e conversa.Estado, n int) int {
+	for _, o := range e.Opcoes {
+		if o.Numero != n {
+			continue
+		}
+		for i, t := range e.Trechos {
+			if t.ReservaID == "" && chaveRota(t.Viagem.Origem, t.Viagem.Destino) == chaveRota(o.Origem, o.Destino) {
+				return i + 1
+			}
+		}
+	}
+	return 0
+}
+
 // opcoesSoDaRota: todas as opcoes atuais sao de origem -> destino (uma busca
 // por estado, "pro Maranhão", mistura varias cidades na lista).
 func opcoesSoDaRota(ops []conversa.Opcao, origem, destino string) bool {
@@ -203,7 +219,14 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// Escolha clara de uma das opcoes mostradas ("a primeira", "dia 8"): o
 	// codigo registra a escolha antes do LLM, que so confirma ao cliente.
 	if n, ok := a.opcaoClara(rt, tc.estado); ok {
-		if pre, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"opcao": n}); ok {
+		args := map[string]any{"opcao": n}
+		// Outra data na mesma rota e sentido de um trecho sem reserva ("pensando
+		// bem, prefiro dia 15"): troca o trecho em vez de acumular dois.
+		if i := trechoMesmaRota(tc.estado, n); i > 0 {
+			args["substituir_trecho"] = i
+			saida["substituir_trecho"] = i
+		}
+		if pre, ok := a.preExecutar(ctx, tc, "escolher_viagem", args); ok {
 			if direto {
 				finalizar("template_escolha")
 				return resultadoRota{resposta: textoEscolhido(tc.estado)}
