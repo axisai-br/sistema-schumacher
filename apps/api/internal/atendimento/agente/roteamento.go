@@ -98,9 +98,33 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	if len(ultimas) > 6 {
 		ultimas = ultimas[len(ultimas)-6:]
 	}
+	// Motor por comandos: o extrator roda em paralelo com o Jev.
+	var extCh chan *Extracao
+	if tc.comandos {
+		extCh = make(chan *Extracao, 1)
+		go func() { extCh <- a.extrair(ctx, tc, hist) }()
+	}
 	t0 := a.d.Agora()
 	rt, err := a.d.Roteador.Rotear(ctx, EntradaRota{Mensagens: ultimas, Estado: tc.estado, Cidades: cidades})
+	if extCh != nil {
+		tc.ext = <-extCh
+		if err != nil {
+			// Jev fora: segue so com extrator + parsers (Rota zerada).
+			a.d.Log.Printf("agente: roteador falhou (motor comandos segue): %v", err)
+			rt, err = Rota{}, nil
+		}
+		var usados []string
+		rt, usados = enriquecerRota(rt, tc.ext, tc.estado, textoRecenteCliente(hist), cidades)
+		if tc.ext != nil && tc.ext.Humano && rt.PedeHumano >= 0.4 {
+			rt.PedeHumano = 1
+			usados = append(usados, "humano")
+		}
+		tc.extUsados = usados
+	}
 	saida := map[string]any{"decisao": "llm"}
+	if len(tc.extUsados) > 0 {
+		saida["extrator_usado"] = tc.extUsados
+	}
 	p := conversa.Passo{Tipo: "checagem", Nome: "roteador", DuracaoMS: a.d.Agora().Sub(t0).Milliseconds()}
 	idx := len(tc.passos)
 	finalizar := func(decisao string) {
@@ -148,7 +172,7 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	tc.rota = &rt
 	// direto: a mensagem so avanca o fluxo; passos obvios respondem por
 	// template, sem LLM.
-	direto := rt.SoIsso >= limiarSoIsso
+	direto := rt.SoIsso >= limiarSoIsso || tc.comandos // no motor por comandos tudo e template
 
 	if res, dec, ok := a.posReserva(ctx, tc, rt); ok {
 		saida["pos_reserva"], saida["conf_pos_reserva"] = rt.PosReserva, rt.ConfPosReserva
@@ -223,6 +247,14 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	// template mostra o resultado, entao o texto nunca afirma o que nao houve.
 	if !tc.estado.AlgumReservado() {
 		lista, mudou, completo, avisosT := mudancaPassageiros(tc.estado.Passageiros, textoRecenteCliente(hist), tc.estado.CriancasInformadas)
+		if tc.ext != nil {
+			// O extrator completa o que os parsers nao pegaram (formatos livres).
+			l2, m2 := aplicarExtracaoPassageiros(lista, tc.ext)
+			lista, mudou = l2, mudou || m2
+			if m2 {
+				completo = true
+			}
+		}
 		if mudou {
 			if pre, ok := a.registrarLista(ctx, tc, lista); ok {
 				saida["passageiros_codigo"] = len(lista)

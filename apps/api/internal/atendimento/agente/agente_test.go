@@ -47,9 +47,12 @@ type modeloFake struct {
 	erro    error
 	antes   func(n int)
 	pedidos []llm.Pedido
+	mu      sync.Mutex // o motor por comandos chama o modelo em paralelo
 }
 
 func (m *modeloFake) Gerar(_ context.Context, p llm.Pedido) (llm.Resposta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.pedidos = append(m.pedidos, p)
 	if m.antes != nil {
 		m.antes(len(m.pedidos))

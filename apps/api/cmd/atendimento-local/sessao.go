@@ -90,6 +90,7 @@ func (s *sessao) novoAmbiente() {
 	juiz, _ := criarJuiz(s.cfg, s.modelo)
 	s.amb = evals.NovoAmbiente(s.modelo, evals.ConfigAmbiente{
 		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal, OrcamentoTurno: s.cfg.Orcamento,
+		Motor: s.cfg.Motor, ModeloExtratorReserva: s.cfg.ExtratorRes,
 	})
 	s.amb.NomeCliente = s.nome
 	s.nTurnos = 0
@@ -102,6 +103,9 @@ func (s *sessao) cabecalho() {
 	hoje := s.agora().In(fusoSP())
 	s.printf("Simulador local do atendimento v2 (agente real + LLM real; dados de teste em memória)\n")
 	s.printf("  LLM: %s · %s · hoje (fixtures): %s\n", s.cfg.Descricao, s.cfg.rotuloJuiz(), dataExtenso(hoje))
+	if s.cfg.Motor == "comandos" {
+		s.printf("  motor: comandos (LLM só extrai; o código decide e responde por template)\n")
+	}
 	if r := s.cfg.Prov.DescricaoReserva(); r != "" {
 		s.printf("  LLM reserva: %s\n", r)
 	}

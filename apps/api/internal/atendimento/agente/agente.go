@@ -74,6 +74,14 @@ type Config struct {
 	// SinalPorPagante vai no contexto do LLM (valores do sinal antes da
 	// reserva). Padrao 250, o mesmo das ferramentas.
 	SinalPorPagante float64
+	// Motor: MotorAgente (padrao, LLM com ferramentas) ou MotorComandos (LLM
+	// so extrai JSON; codigo decide e responde por template).
+	Motor string
+	// OrcamentoExtrator limita a extracao no motor por comandos (padrao 25s).
+	OrcamentoExtrator time.Duration
+	// ModeloExtratorReserva e tentado quando o extrator principal nao devolve
+	// JSON valido (vazio = sem cascata).
+	ModeloExtratorReserva string
 }
 
 type Agente struct {
@@ -100,6 +108,12 @@ func Novo(d Deps, cfg Config) *Agente {
 	}
 	if cfg.SinalPorPagante <= 0 {
 		cfg.SinalPorPagante = 250
+	}
+	if cfg.Motor == "" {
+		cfg.Motor = MotorAgente
+	}
+	if cfg.OrcamentoExtrator <= 0 {
+		cfg.OrcamentoExtrator = 25 * time.Second
 	}
 	if cfg.OrcamentoTurno <= 0 {
 		cfg.OrcamentoTurno = 50 * time.Second
@@ -138,6 +152,10 @@ type turno struct {
 	rota       *Rota    // veredito do Roteador neste turno (nil sem roteador ou se falhou)
 	// diaEspecifico: o cliente citou um dia exato neste turno ("dia 8", "15/10").
 	diaEspecifico bool
+	// Motor por comandos: extracao do LLM e o que dela foi usado na Rota.
+	comandos  bool
+	ext       *Extracao
+	extUsados []string
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -242,6 +260,13 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	}
 
 	var pre []llm.Mensagem // chamada de ferramenta executada antes do LLM (pre-busca)
+	if a.cfg.Motor == MotorComandos && a.d.Roteador != nil {
+		texto, tr := a.turnoComandos(ctx, tc, hist)
+		if tr != nil {
+			return tr
+		}
+		return a.concluirComResposta(ctx, tc, texto)
+	}
 	if a.d.Roteador != nil {
 		res := a.rotear(ctx, tc, hist)
 		if res.transf != nil {

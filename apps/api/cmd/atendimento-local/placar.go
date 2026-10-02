@@ -31,7 +31,7 @@ func (p *placar) registrar(t conversa.Turno, dur time.Duration) {
 	p.Duracoes = append(p.Duracoes, dur)
 	n := 0
 	for _, ps := range t.Passos {
-		if ps.Tipo == "llm" {
+		if ps.Tipo == "llm" || (ps.Tipo == "comandos" && ps.Nome == "extrator") {
 			n++
 		}
 	}

@@ -44,12 +44,16 @@ type config struct {
 	TypesafeKey   string
 	Sinal         float64
 	Orcamento     time.Duration // ATD_ORCAMENTO_S: orcamento do turno (0 = padrao do agente)
+	Motor         string        // ATENDIMENTO_V2_MOTOR: agente (padrao) ou comandos
+	ExtratorRes   string        // LLM_MODELO_EXTRATOR_RESERVA
 	Descricao     string        // "provedor · modelo" (sem chave)
 }
 
 func lerConfig(get func(string) string) (config, error) {
 	prov := provedor.ConfigDoAmbiente(get)
 	c := config{Prov: prov, Modelo: prov.Modelo, Descricao: prov.Descricao()}
+	c.Motor = strings.ToLower(strings.TrimSpace(get("ATENDIMENTO_V2_MOTOR")))
+	c.ExtratorRes = strings.TrimSpace(get("LLM_MODELO_EXTRATOR_RESERVA"))
 	if n, err := strconv.Atoi(strings.TrimSpace(get("ATD_ORCAMENTO_S"))); err == nil && n > 0 {
 		c.Orcamento = time.Duration(n) * time.Second
 	}
