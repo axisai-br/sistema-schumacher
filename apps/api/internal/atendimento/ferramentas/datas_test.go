@@ -94,3 +94,28 @@ func TestInterpretarData(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 }
+
+func TestResolverIdaVolta(t *testing.T) {
+	hoje := time.Date(2026, 9, 30, 15, 0, 0, 0, time.UTC)
+	casos := []struct{ texto, ida, volta string }{
+		{"quero a ida dia 8 e a volta dia 12 de outubro", "2026-10-08", "2026-10-12"},
+		{"vou dia 15/10 e volto... retorno dia 20/10", "2026-10-15", "2026-10-20"},
+		{"ida dia 28 e volta dia 3", "2026-10-28", "2026-11-03"},
+		{"ida amanhã, volta depois de amanhã", "2026-10-01", "2026-10-02"},
+		{"quero ida e volta", "", ""},
+		{"ida dia 8, a volta vejo depois", "", ""},
+		{"ida mes que vem e volta dia 20", "", ""},
+	}
+	for _, c := range casos {
+		ida, volta, ok := ResolverIdaVolta(c.texto, hoje)
+		if c.ida == "" {
+			if ok {
+				t.Errorf("%q: nao deveria reconhecer (%v %v)", c.texto, ida.De, volta.De)
+			}
+			continue
+		}
+		if !ok || ida.De.Format("2006-01-02") != c.ida || volta.De.Format("2006-01-02") != c.volta {
+			t.Errorf("%q: got %v %v ok=%v", c.texto, ida.De.Format("2006-01-02"), volta.De.Format("2006-01-02"), ok)
+		}
+	}
+}

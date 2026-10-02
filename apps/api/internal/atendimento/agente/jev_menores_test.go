@@ -2,6 +2,7 @@ package agente
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -457,5 +458,31 @@ func TestPosReservaTrocaViagemTransfere(t *testing.T) {
 	processar(t, f)
 	if f.conversa().Status != conversa.StatusHumano || len(f.modelo.pedidos) != 0 {
 		t.Fatal("deveria transferir sem LLM")
+	}
+}
+
+func TestIdaEVoltaNumaMensagem(t *testing.T) {
+	var datas []string
+	esc := ferrFake{nome: "escolher_viagem", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+		n := len(c.Estado.Trechos)
+		o := conversa.Opcao{TripID: fmt.Sprintf("t%d", n+1), Origem: "Monção", Destino: "Videira", Data: "2026-10-08", Horario: "08:40", Preco: 950}
+		if n == 1 {
+			o.Origem, o.Destino, o.Data = "Videira", "Monção", "2026-10-12"
+		}
+		c.Estado.Trechos = append(c.Estado.Trechos, conversa.Trecho{Viagem: o})
+		datas = append(datas, o.Data)
+		return ferramentas.Saida{OK: true}
+	}}
+	f, _ := fxRoteador(t, Rota{Origem: "Monção", ConfOrigem: 0.95, Destino: "Videira", ConfDestino: 0.95, SoIsso: 0.9}, esc)
+	f.iniciar("de monção pra videira, ida dia 8 e volta dia 12")
+	processar(t, f)
+	if len(datas) != 2 || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 {
+		t.Fatalf("datas=%v pedidos=%d envios=%q", datas, len(f.modelo.pedidos), f.canal.envios)
+	}
+	e := f.canal.envios[0]
+	for _, s := range []string{"Trecho 1: Monção → Videira", "Trecho 2: Videira → Monção", "12/10"} {
+		if !strings.Contains(e, s) {
+			t.Errorf("faltou %q em %q", s, e)
+		}
 	}
 }

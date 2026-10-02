@@ -170,6 +170,13 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		saida["pre_escolha"] = "falhou"
 	}
 
+	// "ida dia 8 e volta dia 12": o codigo escolhe os dois trechos pela rota e
+	// pelas datas.
+	if res, dec, ok := a.preIdaVolta(ctx, tc, rt, hist, direto); ok {
+		finalizar(dec)
+		return res
+	}
+
 	novaQuantidade := aplicarQuantidade(rt, &tc.estado)
 	if novaQuantidade {
 		saida["quantidade"] = map[string]int{"pessoas": tc.estado.PessoasInformadas, "criancas_ate_5": tc.estado.CriancasInformadas}
@@ -238,6 +245,52 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 	}
 	finalizar(decisao)
 	return resultadoRota{pre: pre}
+}
+
+// rotaDoTurno: origem e destino ditos agora (Roteador com confianca) ou, na
+// falta, os do estado.
+func (a *Agente) rotaDoTurno(rt Rota, est conversa.Estado) (string, string) {
+	o, d := "", ""
+	if cidadeValida(rt.Origem) && rt.ConfOrigem >= a.cfg.LimiarRota {
+		o = rt.Origem
+	} else if est.Origem != nil {
+		o = est.Origem.Nome
+	}
+	if cidadeValida(rt.Destino) && rt.ConfDestino >= a.cfg.LimiarRota {
+		d = rt.Destino
+	} else if est.Destino != nil {
+		d = est.Destino.Nome
+	}
+	return o, d
+}
+
+// preIdaVolta escolhe ida e volta numa mensagem so ("ida dia 8 e volta dia
+// 12"), quando a rota e conhecida e ainda nao ha trechos. Se a volta falhar,
+// a ida escolhida segue para o LLM.
+func (a *Agente) preIdaVolta(ctx context.Context, tc *turno, rt Rota, hist []conversa.Mensagem, direto bool) (resultadoRota, string, bool) {
+	if len(tc.estado.Trechos) > 0 {
+		return resultadoRota{}, "", false
+	}
+	ida, volta, ok := ferramentas.ResolverIdaVolta(textoRecenteCliente(hist), a.d.Agora().In(a.loc))
+	if !ok {
+		return resultadoRota{}, "", false
+	}
+	o, d := a.rotaDoTurno(rt, tc.estado)
+	if o == "" || d == "" || chaveRota(o, d) == chaveRota(d, o) {
+		return resultadoRota{}, "", false
+	}
+	pre, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"origem": o, "destino": d, "data": ida.De.Format("2006-01-02")})
+	if !ok {
+		return resultadoRota{}, "pre_ida_volta_falhou", true
+	}
+	pre2, ok := a.preExecutar(ctx, tc, "escolher_viagem", map[string]any{"origem": d, "destino": o, "data": volta.De.Format("2006-01-02")})
+	if !ok {
+		return resultadoRota{pre: pre}, "pre_ida", true
+	}
+	if direto {
+		return resultadoRota{resposta: textoEscolhido(tc.estado)}, "template_ida_volta", true
+	}
+	return resultadoRota{pre: append(pre, pre2...)}, "pre_ida_volta", true
 }
 
 // escolhaPermitida diz se o cliente deu algum sinal de escolha neste turno

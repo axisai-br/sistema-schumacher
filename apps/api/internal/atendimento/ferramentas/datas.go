@@ -284,3 +284,30 @@ func proximaSegunda(h time.Time) time.Time {
 	}
 	return seg
 }
+
+// rxMarcaVolta separa o pedido de volta ("e a volta dia 12", "retorno 15/10").
+var rxMarcaVolta = regexp.MustCompile(`\b(volta|voltar|voltando|retorno|retornar|regresso)\b`)
+
+// ResolverIdaVolta acha, numa mesma mensagem, o dia da ida e o dia da volta
+// ("ida dia 8 e volta dia 12"). So reconhece dias exatos e volta depois da ida;
+// "volta dia 3" depois de "ida dia 28" vira o dia 3 do mes seguinte.
+func ResolverIdaVolta(texto string, hoje time.Time) (ida, volta Periodo, ok bool) {
+	t := substAcentos.Replace(strings.ToLower(texto))
+	loc := rxMarcaVolta.FindStringIndex(t)
+	if loc == nil {
+		return Periodo{}, Periodo{}, false
+	}
+	ida, ok1 := ResolverQuando(t[:loc[0]], hoje)
+	volta, ok2 := ResolverQuando(t[loc[0]:], hoje)
+	if !ok1 || !ok2 || !ida.De.Equal(ida.Ate) || !volta.De.Equal(volta.Ate) {
+		return Periodo{}, Periodo{}, false
+	}
+	if volta.De.Before(ida.De) {
+		if !strings.HasPrefix(volta.Expressao, "dia ") {
+			return Periodo{}, Periodo{}, false
+		}
+		d := volta.De.AddDate(0, 1, 0)
+		volta.De, volta.Ate = d, d
+	}
+	return ida, volta, true
+}
