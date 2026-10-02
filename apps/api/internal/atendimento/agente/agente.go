@@ -128,6 +128,7 @@ type turno struct {
 	modelo     string
 	resultados []string // JSON das saidas de ferramenta deste turno
 	anteriores []string // JSON das saidas de ferramenta dos ultimos turnos
+	nPre       int      // ferramentas pre-executadas pelo codigo (ids pre_1, pre_2...)
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -313,6 +314,34 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 			} else {
 				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "fatos", Saida: "sem origem apos reescrita: " + prob})
 				return &transf{motivo: "resposta com dados sem origem nas ferramentas: " + prob}
+			}
+		}
+	}
+
+	// Checagem de forma (modelos menores): texto quebrado, acao afirmada sem a
+	// ferramenta ou CPF do cliente ignorado. Uma reescrita; se insistir, a
+	// resposta e montada em codigo a partir das pendencias.
+	if !seguro {
+		if prob := problemasForma(texto, tc, textosCliente); prob != "" {
+			tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "forma", Saida: prob})
+			msgs = append(msgs,
+				llm.Mensagem{Papel: llm.PapelAssistente, Texto: texto},
+				llm.Mensagem{Papel: llm.PapelUsuario, Texto: "Problema na sua resposta: " + prob + ". Corrija agora: chame a ferramenta necessária ANTES de dizer que algo foi feito (por exemplo, registrar_passageiros com os nomes e documentos que o cliente mandou), ou não afirme que foi feito. Responda em português simples, sem marcações internas."},
+			)
+			novo, _, err := a.gerar(ctxG, tc, instr, msgs)
+			var t *transf
+			if err != nil && errors.As(err, &t) && !t.tecnico {
+				return err
+			}
+			if err == nil && problemasForma(novo, tc, textosCliente) == "" && a.problemasResposta(tc, novo, catalogo, agora, textosCliente, cidades) == "" {
+				texto = novo
+			} else {
+				if px := pixDoTurno(tc.resultados); len(px) > 0 {
+					texto = textoPix(px)
+				} else {
+					texto = textoProximoPasso(tc.estado)
+				}
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "forma", Saida: "persistiu apos reescrita; resposta montada em codigo"})
 			}
 		}
 	}

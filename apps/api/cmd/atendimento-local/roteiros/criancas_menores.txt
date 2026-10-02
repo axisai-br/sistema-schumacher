@@ -1,0 +1,9 @@
+# Caso real de producao (print de 02/10): quantidade em texto livre com
+# criancas de colo. Nao pode transferir para humano.
+/nome Paula
+quero ir de monção pra campos novos, eu mais 2 crianças
+a primeira
+são menores de 5
+paula reis cpf 52998224725, as crianças são pedro reis e lara reis
+integral
+/estado

@@ -146,3 +146,19 @@ func TestEstadoJSONFormatoAntigo(t *testing.T) {
 		t.Fatalf("ida e volta do JSON: %v\n%+v\n%+v", err, novo, volta)
 	}
 }
+
+func TestPendenciasCriancaSemDocumento(t *testing.T) {
+	e := Estado{Passageiros: []Passageiro{
+		{Nome: "Ana Souza", Documento: "52998224725", TipoDocumento: "CPF"},
+		{Nome: "Lia Souza", CriancaAte5: true},
+	}}
+	for _, p := range e.Pendencias() {
+		if strings.HasPrefix(p, "completar dados") {
+			t.Fatalf("crianca ate 5 sem documento nao e pendencia: %v", e.Pendencias())
+		}
+	}
+	e.Passageiros[1].CriancaAte5 = false
+	if !strings.Contains(strings.Join(e.Pendencias(), ";"), "completar dados de 1") {
+		t.Fatalf("adulto sem documento e pendencia: %v", e.Pendencias())
+	}
+}

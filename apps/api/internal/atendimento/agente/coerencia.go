@@ -10,6 +10,7 @@ import (
 	"schumacher-tur/api/internal/atendimento/ferramentas"
 	"strings"
 	"time"
+	"unicode"
 
 	"schumacher-tur/api/internal/atendimento/conversa"
 )
@@ -213,6 +214,202 @@ func textoPix(itens []map[string]any) string {
 		fmt.Fprintf(&b, "\nTotal a pagar agora: %s.", formatarReais(total))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// textoFechamento monta a resposta quando o codigo fechou a compra (reserva +
+// PIX) sem o LLM: os PIX, o codigo da reserva e, no sinal, o restante.
+func textoFechamento(px []map[string]any, resultados []string, pagamento string) string {
+	var b strings.Builder
+	b.WriteString(textoPix(px))
+	var codigos []string
+	restante := 0.0
+	for _, r := range resultados {
+		var s struct {
+			OK    bool `json:"ok"`
+			Dados struct {
+				Restante *float64 `json:"restante_no_embarque_total"`
+				Trechos  []struct {
+					Codigo string `json:"codigo_reserva"`
+				} `json:"trechos"`
+			} `json:"dados"`
+		}
+		if json.Unmarshal([]byte(r), &s) != nil || !s.OK || s.Dados.Trechos == nil {
+			continue
+		}
+		codigos = codigos[:0]
+		for _, t := range s.Dados.Trechos {
+			if t.Codigo != "" {
+				codigos = append(codigos, t.Codigo)
+			}
+		}
+		if s.Dados.Restante != nil {
+			restante = *s.Dados.Restante
+		}
+	}
+	if len(codigos) == 1 {
+		fmt.Fprintf(&b, "\n\nCódigo da reserva: %s", codigos[0])
+	} else if len(codigos) > 1 {
+		fmt.Fprintf(&b, "\n\nCódigos das reservas: %s", strings.Join(codigos, ", "))
+	}
+	if pagamento == PagamentoSinal && restante > 0 {
+		fmt.Fprintf(&b, "\n\nO restante (%s) você paga no embarque.", formatarReais(restante))
+	}
+	b.WriteString("\n\nO PIX expira em alguns minutos. Depois de pagar, me avisa que eu confirmo pra você. 😊")
+	return b.String()
+}
+
+// textoProximoPasso e a resposta montada em codigo a partir da primeira
+// pendencia do estado: ultimo recurso quando o LLM insiste em uma resposta com
+// problema (texto quebrado ou acao afirmada sem ferramenta).
+func textoProximoPasso(e conversa.Estado) string {
+	pend := ferramentas.FaltaParaReserva(e)
+	if len(pend) == 0 {
+		pend = e.Pendencias()
+	}
+	if len(pend) == 0 {
+		return "Sua compra está completa ✅ Posso ajudar em mais alguma coisa?"
+	}
+	p := pend[0]
+	switch {
+	case strings.HasPrefix(p, "escolher viagem"):
+		if len(e.Opcoes) > 0 {
+			return textoOpcoes(e.Opcoes)
+		}
+		return TextoPedirRota
+	case strings.HasPrefix(p, "informar passageiros"), strings.HasPrefix(p, "completar dados"), strings.HasPrefix(p, "incluir ao menos"):
+		return "Pra seguir com a reserva, me manda o nome completo e o CPF (ou RG/CNH) de cada passageiro. Criança de até 5 anos precisa só do nome. 😊"
+	case strings.HasPrefix(p, "escolher pagamento"):
+		return "Você prefere pagar o valor integral agora no PIX, ou só o sinal agora e o restante no embarque?"
+	}
+	return "Posso fechar a reserva e te mandar o PIX? 😊"
+}
+
+// marcadoresVazamento: pedacos de formato interno do modelo que nunca podem
+// chegar ao cliente.
+var marcadoresVazamento = []string{"<tool_call", "</tool_call", "<think", "</think", "<|", "|>", "<function", "[TOOL_CALLS]", `{"name":`}
+
+// textoQuebrado diz se a resposta tem formato interno vazado ou repeticao
+// degenerada (ex.: "ellsellsellsells").
+func textoQuebrado(texto string) string {
+	for _, m := range marcadoresVazamento {
+		if strings.Contains(texto, m) {
+			return "formato interno vazado (" + m + ")"
+		}
+	}
+	r := []rune(strings.ToLower(texto))
+	for i := range r {
+		for l := 2; l <= 6 && i+l <= len(r); l++ {
+			seg := r[i : i+l]
+			letras := 0
+			for _, c := range seg {
+				if unicode.IsLetter(c) {
+					letras++
+				}
+			}
+			if letras < 2 {
+				continue
+			}
+			rep := 1
+			for j := i + l; j+l <= len(r) && string(r[j:j+l]) == string(seg); j += l {
+				rep++
+			}
+			if rep >= 5 {
+				return "texto repetido (" + strings.Repeat(string(seg), 2) + "...)"
+			}
+		}
+	}
+	return ""
+}
+
+// afirmacao: frase que diz que uma acao foi feita, e como conferir no estado.
+type afirmacao struct {
+	re    *regexp.Regexp
+	acao  string
+	feito func(e conversa.Estado) bool
+}
+
+var afirmacoes = []afirmacao{
+	{regexp.MustCompile(`\b(registrei|cadastrei|passageir[oa]s? (ja )?(estao |foram )?registrad|dados (ja )?(estao |foram )?registrad|anotei (seu|o|os|a|as) (cpf|documento|dados|nome))`), "registrou os passageiros (registrar_passageiros)",
+		func(e conversa.Estado) bool { return len(e.Passageiros) > 0 }},
+	{regexp.MustCompile(`\b(adicionei|selecionei|foi adicionad[oa]|esta escolhid[oa]|ficou escolhid[oa]|escolhi a (viagem|opcao)|trecho adicionado)`), "escolheu a viagem (escolher_viagem)",
+		func(e conversa.Estado) bool { return len(e.Trechos) > 0 }},
+	{regexp.MustCompile(`\b(reservei|reserva (feita|criada|confirmada|realizada|efetuada)|(sua )?reserva (esta|ta|foi) (feita|criada|confirmada))`), "criou a reserva (criar_reserva)",
+		func(e conversa.Estado) bool { return e.AlgumReservado() }},
+	{regexp.MustCompile(`\b(segue[m]? o[s]? pix|pix (gerado|copia e cola)|aqui esta o pix|gerei o pix)`), "gerou o PIX (gerar_pix)",
+		func(e conversa.Estado) bool {
+			for _, t := range e.Trechos {
+				if t.PagamentoID != "" {
+					return true
+				}
+			}
+			return false
+		}},
+}
+
+// afirmacoesSemAcao lista acoes que a resposta diz ter feito mas que o estado
+// nao mostra (o modelo afirmou sem chamar a ferramenta).
+func afirmacoesSemAcao(texto string, e conversa.Estado) []string {
+	t := semAcento(strings.ToLower(texto))
+	var out []string
+	for _, af := range afirmacoes {
+		if af.re.MatchString(t) && !af.feito(e) {
+			out = append(out, af.acao)
+		}
+	}
+	return out
+}
+
+// reCPF acha CPFs (com ou sem pontuacao) no texto do cliente.
+var reCPF = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b`)
+
+// cpfsNaoRegistrados devolve CPFs validos que o cliente mandou neste turno e
+// que nao estao nos passageiros, enquanto ainda faltam dados de passageiros e
+// nao ha reserva (depois disso um CPF pode ser so do pagador).
+func cpfsNaoRegistrados(cliente []string, e conversa.Estado) []string {
+	if e.AlgumReservado() || len(ferramentas.FaltaParaReserva(e)) == 0 && len(e.Passageiros) > 0 {
+		return nil
+	}
+	tem := map[string]bool{}
+	for _, p := range e.Passageiros {
+		tem[soDigitos(p.Documento)] = true
+	}
+	var out []string
+	for _, t := range cliente {
+		for _, m := range reCPF.FindAllString(t, -1) {
+			d := soDigitos(m)
+			if !tem[d] && ferramentas.ValidarCPF(d) {
+				tem[d] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+func soDigitos(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// problemasForma junta os problemas de forma da resposta (texto quebrado,
+// acao afirmada sem ferramenta, CPF do cliente ignorado); vazio se ok.
+func problemasForma(texto string, tc *turno, cliente []string) string {
+	var p []string
+	if q := textoQuebrado(texto); q != "" {
+		p = append(p, q)
+	}
+	if as := afirmacoesSemAcao(texto, tc.estado); len(as) > 0 {
+		p = append(p, "a resposta diz que "+strings.Join(as, " e ")+", mas a ferramenta nao foi chamada")
+	}
+	if cs := cpfsNaoRegistrados(cliente, tc.estado); len(cs) > 0 {
+		p = append(p, "o cliente enviou o(s) CPF(s) "+strings.Join(cs, ", ")+" e registrar_passageiros nao foi chamada")
+	}
+	return strings.Join(p, "; ")
 }
 
 // TextoPedirRota e a resposta segura quando ainda nao ha rota para buscar.

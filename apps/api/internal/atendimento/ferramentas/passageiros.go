@@ -136,6 +136,11 @@ func pendenciasParaReserva(e conversa.Estado) []string {
 	return out
 }
 
+// FaltaParaReserva lista o que ainda impede criar a reserva (viagem,
+// passageiros completos, adulto pagante), sem contar pagamento, reserva e PIX.
+// Vazio = da para reservar assim que o pagamento for escolhido.
+func FaltaParaReserva(e conversa.Estado) []string { return pendenciasParaReserva(e) }
+
 // mesmaListaPassageiros compara duas listas (nome sem diferenciar caixa,
 // documento, tipo e crianca), na mesma ordem.
 func mesmaListaPassageiros(a, b []conversa.Passageiro) bool {

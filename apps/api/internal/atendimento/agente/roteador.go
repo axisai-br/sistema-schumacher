@@ -63,7 +63,29 @@ type Rota struct {
 	// PedeVolta e a probabilidade de o cliente perguntar pela volta (sentido
 	// oposto da rota ja buscada). So e perguntado quando o estado tem a rota.
 	PedeVolta float64
+
+	// Pagamento: PagamentoIntegral, PagamentoSinal ou PagamentoNenhum; vazio se
+	// a pergunta nao foi feita (so com viagem escolhida e sem reserva).
+	Pagamento     string
+	ConfPagamento float64
+
+	// Confirma e a probabilidade de o cliente dizer "sim" ao que o bot acabou
+	// de perguntar (mesma condicao de Pagamento).
+	Confirma float64
+
+	// Adultos ("1".."6") e Criancas ("0".."4") ditos pelo cliente, ou
+	// QuantidadeNaoInformada; vazio se nao perguntado (so sem passageiros).
+	Adultos, Criancas         string
+	ConfAdultos, ConfCriancas float64
 }
+
+// Respostas das perguntas de pagamento e quantidade.
+const (
+	PagamentoIntegral      = "integral"
+	PagamentoSinal         = "sinal"
+	PagamentoNenhum        = "nenhum"
+	QuantidadeNaoInformada = "nao_informado"
+)
 
 // Roteador classifica a ultima mensagem do cliente (intencao, cidades,
 // humano/irritacao) para o codigo decidir o caminho do turno.

@@ -200,6 +200,48 @@ func perguntasJev(e EntradaRota) map[string]any {
 			"criteria":     crit,
 		}
 	}
+	// Fechamento: com viagem escolhida e reserva por criar, o codigo pode
+	// reservar e gerar o PIX sozinho quando o pagamento estiver claro.
+	if len(e.Estado.Trechos) > 0 && !e.Estado.TodosReservados() {
+		q["forma_pagamento"] = map[string]any{
+			"type":         "choice",
+			"instructions": "In `latest_customer_message`, which payment option does the customer choose for the booking? Use the earlier `conversation` only to interpret short answers (e.g. the assistant asked 'integral ou sinal?' and the customer answered 'o sinal'). Choose 'nenhum' unless the choice is clear.",
+			"criteria": map[string]any{
+				PagamentoIntegral: "Pays the full price now ('integral', 'valor total', 'tudo agora', 'à vista').",
+				PagamentoSinal:    "Pays only the deposit now and the rest at boarding ('sinal', 'entrada', 'só o sinal', 'restante no embarque').",
+				PagamentoNenhum:   "Does not choose a payment option in this message.",
+			},
+		}
+		q["confirma"] = map[string]any{
+			"type":         "noul",
+			"instructions": "In `latest_customer_message`, is the customer clearly saying YES to the question in the assistant's last message of the `conversation` (e.g. confirming the trip, the passengers or that they can close the booking)?",
+			"criteria": map[string]any{
+				"true":  "A clear yes or agreement ('sim', 'isso', 'pode', 'pode fechar', 'confirmo', 'ok, pode ser').",
+				"false": "A no, a doubt, a change, a new question, or anything that is not a clear yes.",
+			},
+		}
+	}
+	// Quantidade: so antes de ter passageiros registrados.
+	if len(e.Estado.Passageiros) == 0 {
+		adultos := map[string]any{QuantidadeNaoInformada: "The customer has not said how many people older than 5 are traveling."}
+		for i := 1; i <= 6; i++ {
+			adultos[strconv.Itoa(i)] = fmt.Sprintf("%d traveler(s) older than 5 (adults or children over 5), counting the customer if they travel.", i)
+		}
+		criancas := map[string]any{QuantidadeNaoInformada: "The customer has not said whether children up to 5 years old are traveling."}
+		for i := 0; i <= 4; i++ {
+			criancas[strconv.Itoa(i)] = fmt.Sprintf("%d child(ren) aged 5 or younger.", i)
+		}
+		q["adultos"] = map[string]any{
+			"type":         "choice",
+			"instructions": "Across the customer messages in the `conversation`, how many travelers OLDER than 5 years did the customer say will travel? 'eu mais 2 crianças' means 1 (the customer) plus children; 'somos 3' with no children means 3. Choose 'nao_informado' if the number was not said.",
+			"criteria":     adultos,
+		}
+		q["criancas_ate_5"] = map[string]any{
+			"type":         "choice",
+			"instructions": "Across the customer messages in the `conversation`, how many children aged 5 or YOUNGER did the customer say will travel? Children with unknown age do not count yet. 'são menores de 5' after mentioning 2 children means 2. 'sem criança' or 'só eu' means 0. Choose 'nao_informado' if it is not clear.",
+			"criteria":     criancas,
+		}
+	}
 	return q
 }
 
@@ -261,6 +303,21 @@ func rotaDeRespostas(resp map[string]respostaJev, e EntradaRota) Rota {
 	}
 	if a, ok := resp["opcao_escolhida"]; ok {
 		rt.Opcao, rt.ConfOpcao = a.Choice, conf(a)
+	}
+	if a, ok := resp["forma_pagamento"]; ok {
+		switch a.Choice {
+		case PagamentoIntegral, PagamentoSinal, PagamentoNenhum:
+			rt.Pagamento, rt.ConfPagamento = a.Choice, conf(a)
+		}
+	}
+	if a, ok := resp["confirma"]; ok && a.Noul != nil {
+		rt.Confirma = limitar01(*a.Noul)
+	}
+	if a, ok := resp["adultos"]; ok && a.Choice != "" {
+		rt.Adultos, rt.ConfAdultos = a.Choice, conf(a)
+	}
+	if a, ok := resp["criancas_ate_5"]; ok && a.Choice != "" {
+		rt.Criancas, rt.ConfCriancas = a.Choice, conf(a)
 	}
 	return rt
 }

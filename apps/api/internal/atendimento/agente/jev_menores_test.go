@@ -1,0 +1,246 @@
+package agente
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"schumacher-tur/api/internal/atendimento/conversa"
+	"schumacher-tur/api/internal/atendimento/ferramentas"
+	"schumacher-tur/api/internal/atendimento/llm"
+)
+
+// estadoPronto: viagem escolhida e um adulto com CPF; falta pagamento.
+func estadoPronto() conversa.Estado {
+	return conversa.Estado{
+		Trechos: []conversa.Trecho{{Viagem: conversa.Opcao{Numero: 1, TripID: "t1", Origem: "Monção", Destino: "Fraiburgo", Data: "2026-10-05", Horario: "08:40", Preco: 950, Vagas: 40}}},
+		Passageiros: []conversa.Passageiro{
+			{Nome: "Ana Souza", Documento: "52998224725", TipoDocumento: "CPF"},
+			{Nome: "Lia Souza", CriancaAte5: true},
+		},
+	}
+}
+
+func ferrsFechamento(chamadas *[]string) []ferramentas.Ferramenta {
+	return []ferramentas.Ferramenta{
+		ferrFake{nome: "criar_reserva", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+			*chamadas = append(*chamadas, "criar_reserva")
+			c.Estado.Trechos[0].ReservaID = "r1"
+			c.Estado.Pagamento = "sinal"
+			return ferramentas.Saida{OK: true, Dados: map[string]any{
+				"pagamento": "sinal", "total_geral": 950.0, "valor_a_pagar_agora": 250.0, "restante_no_embarque_total": 700.0,
+				"trechos": []map[string]any{{"ok": true, "codigo_reserva": "ABC123"}},
+			}}
+		}},
+		ferrFake{nome: "gerar_pix", fn: func(c *ferramentas.Contexto) ferramentas.Saida {
+			*chamadas = append(*chamadas, "gerar_pix")
+			c.Estado.Trechos[0].PagamentoID = "p1"
+			return ferramentas.Saida{OK: true, Dados: map[string]any{"pix": []map[string]any{
+				{"rota": "Monção para Fraiburgo", "data": "2026-10-05", "valor": 250.0, "pix_copia_e_cola": "000201PIXCODE"},
+			}}}
+		}},
+	}
+}
+
+func comEstado(t *testing.T, f *fx, e conversa.Estado) {
+	t.Helper()
+	if _, err := f.store.SalvarEstado(context.Background(), f.c.ID, e, f.c.Versao); err != nil {
+		t.Fatal(err)
+	}
+	f.c = f.conversa()
+}
+
+func TestPreFechamentoSemLLM(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{Intencao: IntencaoFormaPagamento, ConfIntencao: 0.95, Pagamento: PagamentoSinal, ConfPagamento: 0.95}, ferrsFechamento(&chamadas)...)
+	f.iniciar("o sinal")
+	comEstado(t, f, estadoPronto())
+	processar(t, f)
+	if len(f.modelo.pedidos) != 0 {
+		t.Fatalf("nao deveria chamar o LLM, pedidos=%d", len(f.modelo.pedidos))
+	}
+	if strings.Join(chamadas, ",") != "criar_reserva,gerar_pix" {
+		t.Fatalf("chamadas=%v", chamadas)
+	}
+	if len(f.canal.envios) != 1 {
+		t.Fatalf("envios=%q", f.canal.envios)
+	}
+	e := f.canal.envios[0]
+	for _, s := range []string{"000201PIXCODE", "ABC123", "R$ 700", "embarque"} {
+		if !strings.Contains(e, s) {
+			t.Errorf("faltou %q em %q", s, e)
+		}
+	}
+	if d := decisao(t, f.ultimoTurno()); d != "pre_fechamento" {
+		t.Errorf("decisao=%s", d)
+	}
+	if c := f.conversa(); c.Estado.Trechos[0].PagamentoID != "p1" {
+		t.Errorf("estado nao salvo: %+v", c.Estado)
+	}
+}
+
+func TestPreFechamentoFaltandoPassageiroVaiAoLLM(t *testing.T) {
+	var chamadas []string
+	f, _ := fxRoteador(t, Rota{Pagamento: PagamentoIntegral, ConfPagamento: 0.95}, ferrsFechamento(&chamadas)...)
+	f.modelo.fila = []llm.Resposta{texto("Antes preciso do CPF da Ana.")}
+	f.iniciar("integral")
+	e := estadoPronto()
+	e.Passageiros[0].Documento = ""
+	comEstado(t, f, e)
+	processar(t, f)
+	if len(chamadas) != 0 || len(f.modelo.pedidos) != 1 {
+		t.Fatalf("chamadas=%v pedidos=%d", chamadas, len(f.modelo.pedidos))
+	}
+}
+
+func TestPreFechamentoPorConfirmacao(t *testing.T) {
+	for nome, c := range map[string]struct {
+		bot    string
+		fechar bool
+	}{
+		"pedido de fechamento": {"Posso fechar a reserva e gerar o PIX?", true},
+		"outra pergunta":       {"Quer ver outras datas também?", false},
+	} {
+		t.Run(nome, func(t *testing.T) {
+			var chamadas []string
+			f, _ := fxRoteador(t, Rota{Confirma: 0.97, Pagamento: PagamentoNenhum, ConfPagamento: 0.9}, ferrsFechamento(&chamadas)...)
+			f.modelo.fila = []llm.Resposta{texto("Certo!")}
+			f.iniciar("oi")
+			f.botOut(c.bot)
+			f.iniciar("sim")
+			e := estadoPronto()
+			e.Pagamento = "sinal"
+			comEstado(t, f, e)
+			processar(t, f)
+			if got := len(chamadas) == 2; got != c.fechar {
+				t.Fatalf("fechou=%v chamadas=%v", got, chamadas)
+			}
+		})
+	}
+}
+
+func TestAplicarQuantidade(t *testing.T) {
+	var e conversa.Estado
+	if !aplicarQuantidade(Rota{Adultos: "1", ConfAdultos: 0.95, Criancas: "2", ConfCriancas: 0.9}, &e) || e.PessoasInformadas != 3 || e.CriancasInformadas != 2 {
+		t.Fatalf("%+v", e)
+	}
+	for _, rt := range []Rota{
+		{Adultos: "1", ConfAdultos: 0.95, Criancas: QuantidadeNaoInformada, ConfCriancas: 0.9},
+		{Adultos: "2", ConfAdultos: 0.5, Criancas: "0", ConfCriancas: 0.9},
+	} {
+		var e2 conversa.Estado
+		if aplicarQuantidade(rt, &e2) {
+			t.Errorf("nao deveria aplicar %+v", rt)
+		}
+	}
+	comPax := conversa.Estado{Passageiros: []conversa.Passageiro{{Nome: "A B"}}}
+	if aplicarQuantidade(Rota{Adultos: "3", ConfAdultos: 1, Criancas: "0", ConfCriancas: 1}, &comPax) {
+		t.Error("com passageiros nao muda")
+	}
+}
+
+func TestTextoQuebrado(t *testing.T) {
+	for _, s := range []string{
+		"<tool_call>\n{\"name\":\"buscar\"}",
+		"Perellsellsellsellsellsellsells deep",
+		"ok </think> resposta",
+	} {
+		if textoQuebrado(s) == "" {
+			t.Errorf("deveria detectar: %q", s)
+		}
+	}
+	for _, s := range []string{
+		"Legal! Escolhi a viagem de 05/10 às 08:40, R$ 950.",
+		"PIX:\n00020101021226820014br.gov.bcb.pix2560pix.stone.com.br",
+		"Hahaha, claro! 😊",
+	} {
+		if q := textoQuebrado(s); q != "" {
+			t.Errorf("falso positivo %q: %s", s, q)
+		}
+	}
+}
+
+func TestAfirmacoesSemAcao(t *testing.T) {
+	vazio := conversa.Estado{}
+	if as := afirmacoesSemAcao("Pronto, registrei os passageiros e sua reserva está confirmada!", vazio); len(as) != 2 {
+		t.Fatalf("as=%v", as)
+	}
+	if as := afirmacoesSemAcao("Anotei seu CPF: 529.982.247-25.", vazio); len(as) != 1 {
+		t.Fatalf("anotei: %v", as)
+	}
+	feito := estadoPronto()
+	if as := afirmacoesSemAcao("Registrei os passageiros e adicionei a viagem.", feito); len(as) != 0 {
+		t.Fatalf("estado ja tem: %v", as)
+	}
+	if as := afirmacoesSemAcao("Me manda o nome e o CPF de cada passageiro?", vazio); len(as) != 0 {
+		t.Fatalf("pergunta nao e afirmacao: %v", as)
+	}
+}
+
+func TestCpfsNaoRegistrados(t *testing.T) {
+	e := conversa.Estado{Trechos: estadoPronto().Trechos}
+	if cs := cpfsNaoRegistrados([]string{"joao souza cpf 529.982.247-25"}, e); len(cs) != 1 {
+		t.Fatalf("cs=%v", cs)
+	}
+	if cs := cpfsNaoRegistrados([]string{"cpf 111.111.111-11"}, e); len(cs) != 0 {
+		t.Fatalf("cpf invalido: %v", cs)
+	}
+	if cs := cpfsNaoRegistrados([]string{"cpf 52998224725"}, estadoPronto()); len(cs) != 0 {
+		t.Fatalf("ja registrado: %v", cs)
+	}
+}
+
+func TestFormaReescreveDepoisRespondeEmCodigo(t *testing.T) {
+	f := novoFx(t)
+	f.modelo.fila = []llm.Resposta{texto("Perfeito, registrei os passageiros!"), texto("Prontinho, registrei tudo.")}
+	f.iniciar("ana souza cpf 52998224725")
+	comEstado(t, f, conversa.Estado{Trechos: estadoPronto().Trechos})
+	processar(t, f)
+	if len(f.modelo.pedidos) != 2 {
+		t.Fatalf("esperava 1 reescrita, pedidos=%d", len(f.modelo.pedidos))
+	}
+	if len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "nome completo e o CPF") {
+		t.Fatalf("envios=%q", f.canal.envios)
+	}
+	if p := passo(f.ultimoTurno(), "forma"); p == nil {
+		t.Error("sem passo forma")
+	}
+}
+
+func TestFormaReescritaBoaEAceita(t *testing.T) {
+	f := novoFx(t)
+	f.modelo.fila = []llm.Resposta{texto("<tool_call>registrar"), texto("Qual a data de nascimento da criança?")}
+	f.iniciar("vai minha filha junto")
+	processar(t, f)
+	if len(f.canal.envios) != 1 || f.canal.envios[0] != "Qual a data de nascimento da criança?" {
+		t.Fatalf("envios=%q", f.canal.envios)
+	}
+}
+
+func TestRotaDeRespostasNovasPerguntas(t *testing.T) {
+	c := func(v float64) *float64 { return &v }
+	rt := rotaDeRespostas(map[string]respostaJev{
+		"forma_pagamento": {Choice: "sinal", Confidence: c(0.93)},
+		"confirma":        {Noul: c(0.8)},
+		"adultos":         {Choice: "1", Confidence: c(0.9)},
+		"criancas_ate_5":  {Choice: "2", Confidence: c(0.88)},
+	}, EntradaRota{})
+	if rt.Pagamento != PagamentoSinal || rt.ConfPagamento != 0.93 || rt.Confirma != 0.8 ||
+		rt.Adultos != "1" || rt.Criancas != "2" || rt.ConfCriancas != 0.88 {
+		t.Fatalf("%+v", rt)
+	}
+	if rt := rotaDeRespostas(map[string]respostaJev{"forma_pagamento": {Choice: "boleto", Confidence: c(1)}}, EntradaRota{}); rt.Pagamento != "" {
+		t.Fatalf("opcao fora da lista: %+v", rt)
+	}
+}
+
+func TestPerguntasJevCondicionais(t *testing.T) {
+	q := perguntasJev(EntradaRota{})
+	if q["forma_pagamento"] != nil || q["adultos"] == nil {
+		t.Fatalf("sem viagem: so quantidade; %v", q)
+	}
+	q = perguntasJev(EntradaRota{Estado: estadoPronto()})
+	if q["forma_pagamento"] == nil || q["confirma"] == nil || q["adultos"] != nil {
+		t.Fatalf("com viagem e passageiros: pagamento sim, quantidade nao; %v", q)
+	}
+}

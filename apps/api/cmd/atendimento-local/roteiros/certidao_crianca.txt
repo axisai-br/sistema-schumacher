@@ -1,0 +1,12 @@
+# Caso real de producao (02/10): titular manda a CNH e logo depois a certidao
+# de nascimento de uma crianca junto com o "sim". A crianca nao pode sumir.
+/nome Messias
+oi
+quero de monção para fraiburgo
+a primeira
+[foto de documento: nome JOAO VITOR SOUZA, CPF 529.982.247-25]
++[foto de documento: certidão de nascimento, nome ANA CLARA SOUZA, nascimento 03/04/2023]
+sim
+sim, ela vai junto
+sinal
+/estado

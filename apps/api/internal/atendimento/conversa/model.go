@@ -114,12 +114,14 @@ type Estado struct {
 	// RotasBuscadas: rotas completas ja buscadas, em ordem (a 1a costuma ser a
 	// ida), com dias da semana e horarios. Ajuda o modelo a nao inverter ida e
 	// volta.
-	RotasBuscadas     []string     `json:"rotas_buscadas,omitempty"`
-	PessoasInformadas int          `json:"pessoas_informadas,omitempty"` // quantidade dita pelo cliente antes dos nomes
-	Passageiros       []Passageiro `json:"passageiros,omitempty"`        // os mesmos para todos os trechos
-	Pagamento         string       `json:"pagamento,omitempty"`          // "integral" | "sinal"; vale para todos os trechos
-	Falhas            int          `json:"falhas"`
-	MotivoHumano      string       `json:"motivo_humano,omitempty"`
+	RotasBuscadas     []string `json:"rotas_buscadas,omitempty"`
+	PessoasInformadas int      `json:"pessoas_informadas,omitempty"` // quantidade dita pelo cliente antes dos nomes
+	// CriancasInformadas: quantas das PessoasInformadas sao criancas ate 5 anos.
+	CriancasInformadas int          `json:"criancas_informadas,omitempty"`
+	Passageiros        []Passageiro `json:"passageiros,omitempty"` // os mesmos para todos os trechos
+	Pagamento          string       `json:"pagamento,omitempty"`   // "integral" | "sinal"; vale para todos os trechos
+	Falhas             int          `json:"falhas"`
+	MotivoHumano       string       `json:"motivo_humano,omitempty"`
 }
 
 // UnmarshalJSON le tambem o formato antigo (uma unica viagem em "viagem",
@@ -200,7 +202,8 @@ func (e Estado) Pendencias() []string {
 	} else {
 		faltam := 0
 		for _, pax := range e.Passageiros {
-			if strings.TrimSpace(pax.Nome) == "" || strings.TrimSpace(pax.Documento) == "" {
+			// Crianca ate 5 anos pode ficar sem documento.
+			if strings.TrimSpace(pax.Nome) == "" || (!pax.CriancaAte5 && strings.TrimSpace(pax.Documento) == "") {
 				faltam++
 			}
 		}
@@ -280,7 +283,11 @@ func (e Estado) Resumo() string {
 			b.WriteString("\n")
 		}
 	} else if e.PessoasInformadas > 0 {
-		fmt.Fprintf(&b, "Passageiros: %d informado(s), sem dados ainda\n", e.PessoasInformadas)
+		cri := ""
+		if e.CriancasInformadas > 0 {
+			cri = fmt.Sprintf(" (%d crianca(s) ate 5 anos)", e.CriancasInformadas)
+		}
+		fmt.Fprintf(&b, "Passageiros: %d informado(s)%s, sem dados ainda\n", e.PessoasInformadas, cri)
 	} else {
 		b.WriteString("Passageiros: nenhum informado\n")
 	}

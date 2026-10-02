@@ -3,6 +3,7 @@ package agente
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -153,6 +154,18 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		saida["pre_escolha"] = "falhou"
 	}
 
+	if aplicarQuantidade(rt, &tc.estado) {
+		saida["quantidade"] = map[string]int{"pessoas": tc.estado.PessoasInformadas, "criancas_ate_5": tc.estado.CriancasInformadas}
+	}
+
+	// Pagamento claro (ou "sim" para fechar) com tudo pronto: o codigo cria a
+	// reserva e o PIX e responde sem o LLM.
+	if res, dec, ok := a.preFechar(ctx, tc, rt, hist); ok {
+		saida["pagamento"], saida["conf_pagamento"], saida["confirma"] = rt.Pagamento, rt.ConfPagamento, rt.Confirma
+		finalizar(dec)
+		return res
+	}
+
 	args, ok := a.argsPreBusca(rt, tc.estado)
 	decisao := "pre_busca"
 	if o, d := tc.estado.Origem, tc.estado.Destino; rt.PedeVolta >= limiarVolta && o != nil && d != nil {
@@ -229,10 +242,100 @@ func (a *Agente) preExecutar(ctx context.Context, tc *turno, nome string, args m
 	}
 	tc.estado = est
 	tc.resultados = append(tc.resultados, string(js))
+	tc.nPre++
+	id := idPreBusca
+	if tc.nPre > 1 {
+		id = fmt.Sprintf("pre_%d", tc.nPre)
+	}
 	return []llm.Mensagem{
-		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: idPreBusca, Nome: nome, Argumentos: argsJSON}}},
-		{Papel: llm.PapelFerramenta, ChamadaID: idPreBusca, Texto: string(js)},
+		{Papel: llm.PapelAssistente, Chamadas: []llm.ChamadaFerramenta{{ID: id, Nome: nome, Argumentos: argsJSON}}},
+		{Papel: llm.PapelFerramenta, ChamadaID: id, Texto: string(js)},
 	}, true
+}
+
+// limiarQuantidade: confianca minima para gravar a quantidade de pessoas dita
+// pelo cliente (so orienta as pendencias; os nomes continuam com o LLM).
+const limiarQuantidade = 0.85
+
+// aplicarQuantidade grava no estado quantas pessoas (e criancas ate 5 anos) o
+// cliente disse que vao, quando o Roteador tem certeza dos dois numeros e ainda
+// nao ha passageiros. Devolve se mudou o estado.
+func aplicarQuantidade(rt Rota, est *conversa.Estado) bool {
+	if len(est.Passageiros) > 0 || rt.ConfAdultos < limiarQuantidade || rt.ConfCriancas < limiarQuantidade {
+		return false
+	}
+	ad, err1 := strconv.Atoi(rt.Adultos)
+	cr, err2 := strconv.Atoi(rt.Criancas)
+	if err1 != nil || err2 != nil || ad < 1 || cr < 0 {
+		return false
+	}
+	if est.PessoasInformadas == ad+cr && est.CriancasInformadas == cr {
+		return false
+	}
+	est.PessoasInformadas, est.CriancasInformadas = ad+cr, cr
+	return true
+}
+
+// limiarFechar: confianca minima para o codigo criar reserva e PIX sozinho.
+const limiarFechar = 0.9
+
+// pagamentoDecidido devolve a forma de pagamento quando o cliente acabou de
+// escolher (com certeza) ou disse "sim" a um pedido de fechamento com o
+// pagamento ja escolhido antes.
+func pagamentoDecidido(rt Rota, est conversa.Estado, hist []conversa.Mensagem) string {
+	if (rt.Pagamento == PagamentoIntegral || rt.Pagamento == PagamentoSinal) && rt.ConfPagamento >= limiarFechar {
+		return rt.Pagamento
+	}
+	if est.Pagamento != "" && rt.Confirma >= limiarFechar && ultimoBotPedeFechamento(hist) {
+		return est.Pagamento
+	}
+	return ""
+}
+
+// ultimoBotPedeFechamento diz se a ultima mensagem do bot fala em reserva, PIX
+// ou fechar/confirmar (um "sim" depois dela e para fechar a compra).
+func ultimoBotPedeFechamento(hist []conversa.Mensagem) bool {
+	for i := len(hist) - 1; i >= 0; i-- {
+		m := hist[i]
+		if m.Autor == conversa.AutorCliente || envioFalhou(m) {
+			continue
+		}
+		t := semAcento(strings.ToLower(m.Texto))
+		for _, k := range []string{"reserva", "pix", "fechar", "confirm"} {
+			if strings.Contains(t, k) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// preFechar cria a reserva e o PIX antes do LLM quando a viagem e os
+// passageiros estao completos e o pagamento ficou claro. ok=false: nada a fazer
+// aqui. Com PIX gerado a resposta e montada em codigo; se so a reserva deu
+// certo, o LLM recebe as chamadas e trata o PIX (ex.: pedir CPF do pagador).
+func (a *Agente) preFechar(ctx context.Context, tc *turno, rt Rota, hist []conversa.Mensagem) (resultadoRota, string, bool) {
+	est := tc.estado
+	if len(est.Trechos) == 0 || est.TodosReservados() || len(ferramentas.FaltaParaReserva(est)) > 0 {
+		return resultadoRota{}, "", false
+	}
+	pg := pagamentoDecidido(rt, est, hist)
+	if pg == "" {
+		return resultadoRota{}, "", false
+	}
+	pre, ok := a.preExecutar(ctx, tc, "criar_reserva", map[string]any{"pagamento": pg})
+	if !ok {
+		return resultadoRota{}, "pre_fechamento_falhou", true
+	}
+	pix, ok := a.preExecutar(ctx, tc, "gerar_pix", map[string]any{})
+	if !ok {
+		return resultadoRota{pre: pre}, "pre_reserva", true
+	}
+	if px := pixDoTurno(tc.resultados); len(px) > 0 {
+		return resultadoRota{resposta: textoFechamento(px, tc.resultados, pg)}, "pre_fechamento", true
+	}
+	return resultadoRota{pre: append(pre, pix...)}, "pre_reserva", true
 }
 
 // textoRecenteCliente junta as mensagens do cliente desde a ultima resposta.
