@@ -152,3 +152,16 @@ func TestComandosVotacaoPassageiros(t *testing.T) {
 		t.Errorf("votacao: %q", e)
 	}
 }
+
+func TestSombraRegistraExtracaoSemMudarResposta(t *testing.T) {
+	f := fxComandos(t, Rota{Intencao: IntencaoSaudacao, ConfIntencao: 0.95}, `{"pedido":"cumprimenta","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`)
+	f.iniciar("oi")
+	f.ag = Novo(f.deps, Config{Modelo: "m-teste", Motor: MotorSombra})
+	processar(t, f)
+	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoSaudacao {
+		t.Fatalf("a resposta continua sendo a do motor atual: %q", f.canal.envios)
+	}
+	if p := passo(f.ultimoTurno(), "extrator_sombra"); p == nil {
+		t.Fatal("sem passo extrator_sombra")
+	}
+}

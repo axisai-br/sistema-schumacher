@@ -76,11 +76,23 @@ func (a *Agente) argsPreBusca(rt Rota, est conversa.Estado, temQuando bool) (map
 			return nil, false
 		}
 		if !temQuando && est.Origem != nil && est.Destino != nil && len(est.Opcoes) > 0 &&
-			chaveRota(est.Origem.Nome, est.Destino.Nome) == chaveRota(args["origem"], args["destino"]) {
+			chaveRota(est.Origem.Nome, est.Destino.Nome) == chaveRota(args["origem"], args["destino"]) &&
+			opcoesSoDaRota(est.Opcoes, args["origem"], args["destino"]) {
 			return nil, false
 		}
 	}
 	return args, true
+}
+
+// opcoesSoDaRota: todas as opcoes atuais sao de origem -> destino (uma busca
+// por estado, "pro Maranhão", mistura varias cidades na lista).
+func opcoesSoDaRota(ops []conversa.Opcao, origem, destino string) bool {
+	for _, o := range ops {
+		if chaveRota(o.Origem, o.Destino) != chaveRota(origem, destino) {
+			return false
+		}
+	}
+	return true
 }
 
 // rotear consulta o Roteador (falha ou timeout: ignora e segue no LLM) e decide:

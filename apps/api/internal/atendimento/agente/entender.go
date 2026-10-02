@@ -106,14 +106,24 @@ Cliente: "o bruno não vai mais, vai o carlos lima cpf 84434891030" -> {"pedido"
 // extrair chama o extrator (votacao com 3 chamadas quando a mensagem traz
 // passageiros) e devolve nil se nada valido voltou no prazo.
 func (a *Agente) extrair(ctx context.Context, tc *turno, hist []conversa.Mensagem) *Extracao {
+	ex, p, ok := a.extrairDe(ctx, tc.estado, hist)
+	if ok {
+		tc.passos = append(tc.passos, p)
+	}
+	return ex
+}
+
+// extrairDe faz a extracao sem tocar no turno (usado tambem no modo sombra,
+// em paralelo com o motor atual). ok=false quando nao havia texto.
+func (a *Agente) extrairDe(ctx context.Context, est conversa.Estado, hist []conversa.Mensagem) (*Extracao, conversa.Passo, bool) {
 	texto := textoRecenteCliente(hist)
 	if strings.TrimSpace(texto) == "" {
-		return nil
+		return nil, conversa.Passo{}, false
 	}
 	ped := llm.Pedido{
 		Modelo:     a.cfg.Modelo,
 		Instrucoes: instrucoesExtrator,
-		Mensagens:  []llm.Mensagem{{Papel: llm.PapelUsuario, Texto: contextoExtrator(tc.estado, hist)}},
+		Mensagens:  []llm.Mensagem{{Papel: llm.PapelUsuario, Texto: contextoExtrator(est, hist)}},
 		SaidaJSON:  esquemaExtracao(),
 		MaxTokens:  700,
 	}
@@ -135,9 +145,8 @@ func (a *Agente) extrair(ctx context.Context, tc *turno, hist []conversa.Mensage
 	if len(res) > 0 {
 		ex = votar(res)
 	}
-	tc.passos = append(tc.passos, conversa.Passo{Tipo: "comandos", Nome: "extrator", Saida: map[string]any{"chamadas": n, "validas": len(res), "extracao": ex},
-		DuracaoMS: a.d.Agora().Sub(t0).Milliseconds()})
-	return ex
+	return ex, conversa.Passo{Tipo: "comandos", Nome: "extrator", Saida: map[string]any{"chamadas": n, "validas": len(res), "extracao": ex},
+		DuracaoMS: a.d.Agora().Sub(t0).Milliseconds()}, true
 }
 
 var reVariosNomes = regexp.MustCompile(`(?i)\b(rg|cnh|anos|beb[eê]|filh[oa]|esposa|marido)\b`)

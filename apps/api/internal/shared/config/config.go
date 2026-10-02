@@ -344,9 +344,9 @@ func optBool(key string) *bool {
 	return &b
 }
 
-// parseMotor aceita "agente" ou "comandos"; qualquer outro valor vira "agente".
+// parseMotor aceita "agente", "comandos" ou "sombra"; outro valor vira "agente".
 func parseMotor(val string) string {
-	if v := strings.ToLower(strings.TrimSpace(val)); v == "comandos" {
+	if v := strings.ToLower(strings.TrimSpace(val)); v == "comandos" || v == "sombra" {
 		return v
 	}
 	return "agente"

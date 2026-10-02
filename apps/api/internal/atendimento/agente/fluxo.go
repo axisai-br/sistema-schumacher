@@ -75,10 +75,12 @@ func (a *Agente) turnoComandos(ctx context.Context, tc *turno, hist []conversa.M
 		resp = textoImagem + "\n\n" + resp
 	}
 
-	// "Nao entendi" repetido: a mesma resposta duas vezes sem a compra andar.
+	// "Nao entendi" repetido: a mesma resposta de recurso (proximo passo, sem
+	// intencao clara) duas vezes sem a compra andar.
+	entendeu := tc.rota != nil && tc.rota.ConfIntencao >= a.cfg.LimiarRota && tc.rota.Intencao != ""
 	if mudouNoTurno(tc) {
 		tc.estado.Falhas = 0
-	} else if resp == ultimaRespostaBot(hist) {
+	} else if ato == "proximo_passo" && !entendeu && resp == ultimaRespostaBot(hist) {
 		tc.estado.Falhas++
 		if tc.estado.Falhas >= limiteNaoEntendi {
 			return "", &transf{motivo: "nao entendeu o cliente duas vezes (motor comandos)"}
@@ -116,6 +118,10 @@ func (a *Agente) respostaSemTemplate(ctx context.Context, tc *turno, hist []conv
 	}
 	// Cidade nao atendida.
 	if (rt.Origem == CidadeNaoAtendida && rt.ConfOrigem >= 0.8) || (rt.Destino == CidadeNaoAtendida && rt.ConfDestino >= 0.8) {
+		// A politica manda explicar UMA vez; na repeticao, so o suporte.
+		if strings.Contains(ultimaRespostaBot(hist), "a gente não atende") {
+			return "Essa cidade continua fora das nossas rotas. Para ela, o suporte pode ajudar: +55 49 9886-2222.", "cidade_nao_atendida_repetida", nil
+		}
 		return a.textoCidadeNaoAtendida(ctx), "cidade_nao_atendida", nil
 	}
 	// Busca feita neste turno com aviso (sem viagem na data, sem vaga, rota
@@ -239,4 +245,23 @@ func primeiroNome(s string) string {
 		return f[0]
 	}
 	return ""
+}
+
+// MotorSombra: responde com o motor atual e roda a extracao em paralelo, so
+// para registrar nos passos (comparar antes de ligar o motor por comandos).
+const MotorSombra = "sombra"
+
+// passoSombra extrai sem afetar o turno e devolve o passo "extrator_sombra"
+// (Nome vazio = nada a registrar).
+func (a *Agente) passoSombra(ctx context.Context, est conversa.Estado, hist []conversa.Mensagem) (conversa.Passo, bool) {
+	ex, p, ok := a.extrairDe(ctx, est, hist)
+	if !ok {
+		return conversa.Passo{}, false
+	}
+	p.Nome = "extrator_sombra"
+	if ex != nil {
+		rt, usados := enriquecerRota(Rota{}, ex, est, textoRecenteCliente(hist), nil)
+		p.Saida = map[string]any{"extracao": ex, "rota_extrator": rt, "campos": usados, "assunto_palavra": assuntoDoTexto(textoRecenteCliente(hist))}
+	}
+	return p, true
 }

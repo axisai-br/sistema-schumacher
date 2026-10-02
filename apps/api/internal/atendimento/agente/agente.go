@@ -156,6 +156,9 @@ type turno struct {
 	comandos  bool
 	ext       *Extracao
 	extUsados []string
+	// sombra: extracao rodando em paralelo com o motor atual (MotorSombra);
+	// o resultado so vai para os passos do turno, para comparacao.
+	sombra chan conversa.Passo
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -255,6 +258,14 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	}
 
 	tc.anteriores = a.saidasAnteriores(ctx, c.ID)
+	if a.cfg.Motor == MotorSombra {
+		tc.sombra = make(chan conversa.Passo, 1)
+		est := clonarEstado(tc.estado)
+		go func() {
+			p, _ := a.passoSombra(ctx, est, hist)
+			tc.sombra <- p
+		}()
+	}
 	if p, ok := ferramentas.ResolverQuando(strings.Join(textosCliente, " "), a.d.Agora().In(a.loc)); ok && p.De.Equal(p.Ate) {
 		tc.diaEspecifico = true
 	}
@@ -726,6 +737,16 @@ func (a *Agente) registrarErro(ctx context.Context, tc *turno, cause error) {
 }
 
 func (a *Agente) registrarTurno(ctx context.Context, tc *turno, resultado, resposta, erro string) {
+	if tc.sombra != nil {
+		select {
+		case p := <-tc.sombra:
+			if p.Nome != "" {
+				tc.passos = append(tc.passos, p)
+			}
+		case <-time.After(a.cfg.OrcamentoExtrator + 5*time.Second):
+		}
+		tc.sombra = nil
+	}
 	modelo := tc.modelo
 	if modelo == "" {
 		modelo = a.cfg.Modelo

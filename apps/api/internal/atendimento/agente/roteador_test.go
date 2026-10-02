@@ -380,7 +380,7 @@ func TestArgsPreBuscaRespeitaRotaDoEstado(t *testing.T) {
 	est := conversa.Estado{
 		Origem:  &conversa.Parada{Nome: "Fraiburgo"},
 		Destino: &conversa.Parada{Nome: "Monção"},
-		Opcoes:  []conversa.Opcao{{Numero: 1}},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Fraiburgo", Destino: "Monção"}},
 	}
 	if _, ok := a.argsPreBusca(rt, est, false); ok {
 		t.Fatal("um lado so nao pode apagar a rota do estado")
@@ -420,5 +420,18 @@ func TestOpcaoClara(t *testing.T) {
 		if _, ok := a.opcaoClara(c.rt, c.est); ok {
 			t.Errorf("%s: nao deveria escolher", nome)
 		}
+	}
+}
+
+func TestArgsPreBuscaRebuscaQuandoListaMisturaRotas(t *testing.T) {
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.99, Origem: "Fraiburgo", ConfOrigem: 0.9, Destino: "Monção", ConfDestino: 0.9}
+	est := conversa.Estado{
+		Origem:  &conversa.Parada{Nome: "Fraiburgo"},
+		Destino: &conversa.Parada{Nome: "Monção"},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Fraiburgo", Destino: "Igarapé do Meio"}, {Numero: 2, Origem: "Fraiburgo", Destino: "Monção"}},
+	}
+	if _, ok := a.argsPreBusca(rt, est, false); !ok {
+		t.Fatal("lista de uma busca por estado (varias cidades) deve rebuscar so a rota pedida")
 	}
 }
