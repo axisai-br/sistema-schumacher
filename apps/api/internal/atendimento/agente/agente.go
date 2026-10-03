@@ -683,21 +683,25 @@ func (a *Agente) transferir(ctx context.Context, tc *turno, motivo string, tecni
 
 // enviar grava a saida ANTES de chamar o canal (o eco fromMe do webhook pode
 // chegar antes de Enviar retornar) e depois confirma o resultado do envio.
+// O texto sai no formato do WhatsApp e cada codigo PIX vai numa mensagem
+// propria; cada parte e gravada como foi enviada, para o eco ser reconhecido.
 func (a *Agente) enviar(ctx context.Context, tc *turno, texto string) error {
 	c := tc.c
-	msg, err := a.d.Store.RegistrarSaida(ctx, c.ID, conversa.AutorBot, texto, "", tc.id)
-	if err != nil {
-		return fmt.Errorf("registrar saida: %w", err)
-	}
-	provID, err := a.d.Canal.Enviar(ctx, c.Contato, texto)
-	if err != nil {
-		if e2 := a.d.Store.ConfirmarEnvio(ctx, msg.ID, "", err.Error()); e2 != nil {
-			a.d.Log.Printf("agente: confirmar envio (falha): %v", e2)
+	for _, parte := range canal.PartesWhatsApp(texto) {
+		msg, err := a.d.Store.RegistrarSaida(ctx, c.ID, conversa.AutorBot, parte, "", tc.id)
+		if err != nil {
+			return fmt.Errorf("registrar saida: %w", err)
 		}
-		return fmt.Errorf("enviar: %w", err)
-	}
-	if err := a.d.Store.ConfirmarEnvio(ctx, msg.ID, provID, ""); err != nil {
-		a.d.Log.Printf("agente: confirmar envio: %v", err)
+		provID, err := a.d.Canal.Enviar(ctx, c.Contato, parte)
+		if err != nil {
+			if e2 := a.d.Store.ConfirmarEnvio(ctx, msg.ID, "", err.Error()); e2 != nil {
+				a.d.Log.Printf("agente: confirmar envio (falha): %v", e2)
+			}
+			return fmt.Errorf("enviar: %w", err)
+		}
+		if err := a.d.Store.ConfirmarEnvio(ctx, msg.ID, provID, ""); err != nil {
+			a.d.Log.Printf("agente: confirmar envio: %v", err)
+		}
 	}
 	return nil
 }

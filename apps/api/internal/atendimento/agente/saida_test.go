@@ -15,7 +15,6 @@ func TestFiltrarSaida(t *testing.T) {
 		{"degenerado", "Legal! Escolha uma das opções (núWhich +) 000000000go -0-0-0-0-0-0-0-0-0-0", TextoPedirRota, "-0-0"},
 		{"persona", "Sou um modelo de linguagem treinado por pesquisadores da NVIDIA.", TextoPersona, "NVIDIA"},
 		{"ferramenta", "Uso criar_reserva e gerar_pix para isso.", TextoPersona, "criar_reserva"},
-		{"markdown", "Prefere **integral** ou __sinal__?", "Prefere integral ou sinal?", "**"},
 		{"cpf", "Maria Pereira (CPF 987.654.321-00)", "***100", "987.654"},
 		{"exemplo sem digitos", "Por exemplo: o CPF da Maria Pereira.", "o CPF da Maria Pereira.", "***"},
 		{"pix intacto", "Código:\n00020126580014br.gov.bcb.pix0136eval-pay-15204000053039865802BR", "000201265800", "***"},

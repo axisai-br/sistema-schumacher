@@ -8,7 +8,8 @@ import (
 )
 
 // Filtro de saida: ultima barreira antes do WhatsApp, vale para todo texto
-// (LLM ou template). Corrige o que da para corrigir (markdown, CPF completo) e
+// (LLM ou template). Corrige o que da para corrigir (CPF completo; o markdown
+// vira formato do WhatsApp em canal.PartesWhatsApp, no envio) e
 // troca o que nao da (texto degenerado, vazamento de persona ou de ferramenta)
 // por uma resposta montada em codigo.
 
@@ -17,8 +18,6 @@ const TextoPersona = "Sou o Shabas, atendente virtual da Schumacher Tur. 😊"
 
 var (
 	rePersona       = regexp.MustCompile(`(?i)nvidia|nemotron|modelo de linguagem|language model|\bLLM\b|\bGPT\b|openai|intelig[eê]ncia artificial treinad|prompt( de sistema)?\b|minhas instru[cç][oõ]es`)
-	reMarkdownNeg   = regexp.MustCompile(`\*\*([^*\n]+)\*\*|__([^_\n]+)__`)
-	reTituloMD      = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 	reCPFSaida      = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b`)
 	nomesFerramenta = []string{"buscar_viagens", "escolher_viagem", "registrar_passageiros", "criar_reserva", "gerar_pix",
 		"trocar_pagamento", "consultar_reserva", "transferir_para_humano", "remover_trecho", "interpretar_data", "listar_rotas"}
@@ -42,12 +41,6 @@ func filtrarSaida(texto string, est conversa.Estado) (string, []string) {
 	}
 	if m := rePersona.FindString(texto); m != "" {
 		return TextoPersona + "\n\n" + textoProximoPasso(est), []string{"persona: " + m}
-	}
-	if novo := reMarkdownNeg.ReplaceAllString(texto, "$1$2"); novo != texto {
-		texto, motivos = novo, append(motivos, "markdown")
-	}
-	if novo := reTituloMD.ReplaceAllString(texto, ""); novo != texto {
-		texto, motivos = novo, append(motivos, "markdown")
 	}
 	// CPF completo nunca sai; o copia-e-cola do PIX (linha 000201...) fica.
 	linhas := strings.Split(texto, "\n")

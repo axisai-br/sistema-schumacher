@@ -64,10 +64,10 @@ func TestPreFechamentoSemLLM(t *testing.T) {
 	if strings.Join(chamadas, ",") != "criar_reserva,gerar_pix" {
 		t.Fatalf("chamadas=%v", chamadas)
 	}
-	if len(f.canal.envios) != 1 {
+	if len(f.canal.envios) != 3 || f.canal.envios[1] != "000201PIXCODE" {
 		t.Fatalf("envios=%q", f.canal.envios)
 	}
-	e := f.canal.envios[0]
+	e := f.canal.tudo()
 	for _, s := range []string{"000201PIXCODE", "ABC123", "R$ 700", "embarque"} {
 		if !strings.Contains(e, s) {
 			t.Errorf("faltou %q em %q", s, e)
@@ -412,10 +412,10 @@ func TestPosReservaTrocaPagamentoSemLLM(t *testing.T) {
 	f.iniciar("ah, melhor pagar só o sinal")
 	comEstado(t, f, estadoReservado())
 	processar(t, f)
-	if args != "ok" || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 1 {
+	if args != "ok" || len(f.modelo.pedidos) != 0 || len(f.canal.envios) != 3 || f.canal.envios[1] != "000201NOVO" {
 		t.Fatalf("pedidos=%d envios=%q", len(f.modelo.pedidos), f.canal.envios)
 	}
-	e := f.canal.envios[0]
+	e := f.canal.tudo()
 	for _, s := range []string{"troquei para sinal", "000201NOVO", "R$ 700"} {
 		if !strings.Contains(e, s) {
 			t.Errorf("faltou %q em %q", s, e)
@@ -583,7 +583,7 @@ func TestPixDepoisDeReservaSemPix(t *testing.T) {
 	e.Trechos[0].ReservaID, e.Pagamento = "r1", "sinal"
 	comEstado(t, f, e)
 	processar(t, f)
-	if strings.Join(chamadas, ",") != "gerar_pix" || len(f.modelo.pedidos) != 0 || !strings.Contains(f.canal.envios[0], "000201PIXCODE") {
+	if strings.Join(chamadas, ",") != "gerar_pix" || len(f.modelo.pedidos) != 0 || !strings.Contains(f.canal.tudo(), "000201PIXCODE") {
 		t.Fatalf("chamadas=%v envios=%q", chamadas, f.canal.envios)
 	}
 }

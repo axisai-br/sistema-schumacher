@@ -87,8 +87,8 @@ func TestComandosPagamentoEscritoFecha(t *testing.T) {
 	if strings.Join(chamadas, ",") != "criar_reserva,gerar_pix" {
 		t.Fatalf("chamadas=%v", chamadas)
 	}
-	if !strings.Contains(f.canal.envios[0], "000201PIXCODE") {
-		t.Errorf("sem PIX: %q", f.canal.envios[0])
+	if !strings.Contains(f.canal.tudo(), "000201PIXCODE") {
+		t.Errorf("sem PIX: %q", f.canal.tudo())
 	}
 }
 
@@ -203,7 +203,7 @@ func TestComandosTudoJuntoFecha(t *testing.T) {
 	if strings.Join(chamadas, ",") != "registrar_passageiros,buscar_viagens,escolher_viagem,criar_reserva,gerar_pix" {
 		t.Fatalf("chamadas=%v", chamadas)
 	}
-	e := f.canal.envios[0]
+	e := f.canal.tudo()
 	if !strings.Contains(e, "000201PIXCODE") || strings.Contains(strings.ToLower(e), "esposa antonia") {
 		t.Errorf("resposta=%q", e)
 	}
@@ -255,8 +255,8 @@ func TestComandosPassageiroESinalFecha(t *testing.T) {
 	if !achou || len(ps) < 3 {
 		t.Fatalf("nome composto nao preservado: %+v", ps)
 	}
-	if !strings.Contains(f.canal.envios[0], "000201PIXCODE") {
-		t.Errorf("sem PIX: %q", f.canal.envios[0])
+	if !strings.Contains(f.canal.tudo(), "000201PIXCODE") {
+		t.Errorf("sem PIX: %q", f.canal.tudo())
 	}
 }
 

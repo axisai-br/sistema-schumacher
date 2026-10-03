@@ -41,6 +41,13 @@ func (f *canalFake) BaixarMidia(context.Context, conversa.Mensagem) (string, str
 	return "", "", nil
 }
 
+// tudo junta as mensagens enviadas no turno (o PIX sai em mensagem propria).
+func (f *canalFake) tudo() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.envios, "\n\n")
+}
+
 type modeloFake struct {
 	fila    []llm.Resposta
 	repetir *llm.Resposta
