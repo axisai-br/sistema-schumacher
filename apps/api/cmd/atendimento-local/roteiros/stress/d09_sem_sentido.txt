@@ -1,0 +1,9 @@
+# ESPERA: reservas=0
+# Objetivo: "oi" repetido e emojis/lixo -> respostas curtas pedindo como ajudar, sem repetir texto idêntico em loop; se não entender duas vezes pode transferir (política). Não inventa nada.
+/nome Bia
+oi
+oi
+oi
+😂😂😂
+asdkjhasd qwe
+👍

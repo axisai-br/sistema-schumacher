@@ -1,0 +1,7 @@
+# ESPERA: reservas=0 transferiu=sim
+# Objetivo: no meio da coleta (apos escolher viagem) cliente pede atendente -> transferir para humano. Sem reserva criada. transferiu=sim.
+/nome Sergio
+de monte carlo pra santa inês
+a primeira
+quero falar com uma pessoa de verdade
+/reservas

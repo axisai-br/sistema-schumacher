@@ -1,0 +1,10 @@
+# ESPERA: reservas=2 pix=2 trechos=2 passageiros=1 pagamento=sinal origem="Monção" destino="Ituporanga"
+# Objetivo: 2 reservas + 2 pix, 1 passageiro, ida Moncao -> Ituporanga seg 12/10 (R$1.100) e volta Ituporanga -> Moncao qui 29/10 (R$1.100), sinal R$250 por trecho
+/nome Raimunda
+oi bom dia
+qro ir de monção pra ituporanga dia 12 e voltar dia 29
+raimunda oliveira sousa cpf 98765432100
+isso
+sinal
+/estado
+/reservas

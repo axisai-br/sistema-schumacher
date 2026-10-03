@@ -46,6 +46,10 @@ prioridade sobre o arquivo. Sem a chave, o simulador diz onde colocá-la e sai c
 | `LLM_SEM_RACIOCINIO` | `true` só no reserva | envia `chat_template_kwargs {"enable_thinking":false}`; se definida, vale para principal e reserva |
 | `ATENDIMENTO_V2_JUIZ` | `llm` | `llm`, `jev` ou `off`. Com `jev` e `TYPESAFE_API_KEY`, o **roteador Jev** (1 requisição por turno: humano, irritação, intenção, origem/destino, opção) substitui o juiz e responde saudação e "quais cidades" sem LLM, além de pré-executar `buscar_viagens` |
 | `TYPESAFE_API_KEY` | vazio | só se o juiz/roteador for `jev` |
+| `ATENDIMENTO_V2_MOTOR` | `agente` | `agente` (LLM com ferramentas), `comandos` (LLM só extrai JSON; o código decide e responde por template; exige o roteador Jev) ou `sombra` (responde com `agente` e registra a extração no passo `extrator_sombra`) |
+| `LLM_MODELO_EXTRATOR_RESERVA` | vazio | modelo tentado quando o extrator do motor `comandos` não devolve JSON válido |
+| `ATD_DUMP_DIR` | vazio | grava cada pedido ao LLM (e a resposta) em `NNNN.json` nessa pasta; serve ao `-replay` |
+| `ATD_ORCAMENTO_S` / `LLM_TIMEOUT_S` | padrão do agente / 25 | orçamento do turno e timeout por chamada, em segundos |
 | `ATENDIMENTO_V2_SINAL_POR_PAGANTE` | `250` | sinal por passageiro pagante (R$) |
 | `EVAL_MODELO_CLIENTE` | igual ao do agente | modelo do cliente simulado (modo `-caso`) |
 
@@ -90,7 +94,28 @@ transcrição é salva em `internal/atendimento/evals/saida/local-<AAAAMMDD-HHMM
 `-roteiro` executa, sem interação, as linhas de um arquivo de texto (o que o cliente digitaria; aceita `+`,
 comandos como `/estado` e linhas `#` de comentário), imprime a conversa e salva a transcrição. Roteiros prontos,
 tirados de conversas reais de produção, em `cmd/atendimento-local/roteiros/`: `loop_passageiros`, `sao_paulo`,
-`videira_3_pessoas`, `ida_e_volta` e `doces`.
+`videira_3_pessoas`, `ida_e_volta` e `doces`. Os 51 do teste de estresse ficam em `roteiros/stress/`
+(`-roteiro stress/a01_girias`).
+
+**Veredito automático.** A linha `# ESPERA:` do roteiro diz o resultado esperado e o simulador confere no fim:
+
+```
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=1 pagamento=sinal origem="Monção" transferiu=nao exige=/9886-2222/ proibido=/garantid/ estado=/Maria - CPF \*\*\*100/
+```
+
+Números: `reservas`, `pix` (não cancelados), `trechos`, `passageiros`, `criancas`. Texto: `transferiu` (sim|nao),
+`pagamento` (integral|sinal|nenhum), `origem`/`destino` (do 1º trecho). Regex (repetíveis): `proibido` (nenhuma
+resposta pode casar), `exige` (alguma resposta casa), `estado` (casa com o resumo do estado final). Sempre valem
+as regras globais: nada de persona/modelo, nome de ferramenta, markdown (`**`) ou CPF completo.
+
+`-roteiro todos` (raiz), `-roteiro stress` ou `-roteiro tudo` (os 71) imprimem a tabela com `OK`/`FALHA`, as
+falhas de cada roteiro e `SUCESSO x/N`.
+
+### Modo replay
+
+Com `ATD_DUMP_DIR` ligado, cada pedido ao LLM fica gravado. `-replay a.json,b.json -n 5 -variante orig|v2`
+reenvia o mesmo pedido N vezes (com o contexto original ou o reestruturado) e imprime as respostas, para separar
+erro de contexto de erro de capacidade do modelo.
 
 ### Modo caso
 

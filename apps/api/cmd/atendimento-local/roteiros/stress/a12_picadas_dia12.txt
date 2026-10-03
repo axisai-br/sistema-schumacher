@@ -1,0 +1,13 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal origem="Igarapé do Meio" destino="Ipumirim"
+# Objetivo: reserva+pix, 1 passageiro (Joao Vitor Souza via foto), Igarape do Meio -> Ipumirim, viagem do dia 12/10, R$1.100, sinal R$250
+/nome Edileusa
++oi
++bom dia
++queria saber das passagem
+pra ipumirim saindo de igarapé
+essa do dia 12
+[foto de documento: nome JOAO VITOR SOUZA, CPF 529.982.247-25]
+isso mesmo
+sinal
+/estado
+/reservas

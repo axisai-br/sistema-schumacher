@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=1 pagamento=sinal
+# Objetivo: Marcia com CPF, Pedro (4 anos) como crianca sem documento, Rosa sem documento -> bot pede documento da Rosa (sem reservar); apos doc, reserva+pix sinal 2 pagantes (R$500) + 1 crianca.
+/nome Marcia
+quero ir de santa inês pra petrolândia
+a primeira
+eu, marcia alves cpf 52998224725, meu filho de 4 anos, Pedro Alves, e minha mãe rosa alves
+sinal
+/reservas
+rosa alves cpf 11144477735
+sinal
+/estado
+/reservas

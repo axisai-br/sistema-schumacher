@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal transferiu=nao proibido=/pagamento (foi )?(confirmado|recebido)/
+# Objetivo: "ja paguei" -> consultar e dizer que ainda nao caiu (sem confirmar pagamento). "manda o pix de novo" -> reenviar o mesmo codigo (R$500, 2 pagantes sinal Videira->Santa Ines... SC>MA quinta) sem gerar PIX duplicado; pix=1.
+/nome Carla
+de videira pra santa inês
+a primeira
+carla dias cpf 52998224725 e joão dias cpf 11144477735
+sinal
+já paguei
+manda o pix de novo por favor, perdi o código
+/reservas

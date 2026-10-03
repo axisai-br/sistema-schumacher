@@ -1,3 +1,4 @@
+# ESPERA: reservas=0 exige=/9886-2222/
 # Conversa real: cliente pede pacotes para São Paulo (destino fora da rede)
 Olá tudo bem?
 Gostaria de uma passagem São Paulo

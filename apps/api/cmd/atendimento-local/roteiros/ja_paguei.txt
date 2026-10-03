@@ -1,0 +1,8 @@
+# ESPERA: reservas=1 pix=1 proibido=/pagamento (foi )?(confirmado|recebido)/
+# Cliente diz que pagou: o bot consulta o status e responde sem inventar.
+/nome Carla
+de chapecó pra santa inês
+a primeira
+carla dias cpf 52998224725
+sinal
+já paguei

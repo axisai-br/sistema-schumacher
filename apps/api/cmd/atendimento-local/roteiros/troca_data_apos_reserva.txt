@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 transferiu=sim
 # Troca de data DEPOIS da reserva e do PIX (remarcacao: deve transferir).
 /nome Bruno
 chapeco para igarape do meio

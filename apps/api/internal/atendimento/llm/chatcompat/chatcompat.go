@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"schumacher-tur/api/internal/atendimento/llm"
@@ -57,6 +58,9 @@ type Cliente struct {
 	extra   map[string]any
 	http    *http.Client
 	backoff []time.Duration
+	// soPrompt: modelos que recusaram o JSON estruturado (guided_json /
+	// response_format); a partir dai o schema vai no prompt.
+	soPrompt sync.Map
 }
 
 var _ llm.Modelo = (*Cliente)(nil)
@@ -109,8 +113,23 @@ func (e *erroHTTP) Error() string { return fmt.Sprintf("chatcompat: status %d: %
 func (e *erroHTTP) retentavel() bool { return e.status == 429 || e.status >= 500 }
 
 func (c *Cliente) usaPrompt(p llm.Pedido) bool {
-	return len(p.SaidaJSON) > 0 && len(p.Ferramentas) == 0 && c.modo == ModoPrompt
+	if len(p.SaidaJSON) == 0 || len(p.Ferramentas) > 0 {
+		return false
+	}
+	_, recusou := c.soPrompt.Load(c.modeloDe(p))
+	return c.modo == ModoPrompt || recusou
 }
+
+func (c *Cliente) modeloDe(p llm.Pedido) string {
+	if m := strings.TrimSpace(p.Modelo); m != "" {
+		return m
+	}
+	return c.modelo
+}
+
+// reRecusaSchema: o provedor nao aceita o campo de JSON estruturado para este
+// modelo (ex.: NVIDIA "unknown field guided_json").
+var reRecusaSchema = regexp.MustCompile(`(?i)guided_json|response_format|json_schema|nvext`)
 
 func (c *Cliente) montarPayload(p llm.Pedido) map[string]any {
 	modelo := strings.TrimSpace(p.Modelo)
@@ -199,7 +218,7 @@ func (c *Cliente) montarPayload(p llm.Pedido) map[string]any {
 		}
 		payload["tools"] = tools
 		payload["tool_choice"] = "auto"
-	} else if len(p.SaidaJSON) > 0 {
+	} else if len(p.SaidaJSON) > 0 && !c.usaPrompt(p) {
 		switch c.modo {
 		case ModoNvext:
 			payload["nvext"] = map[string]any{"guided_json": p.SaidaJSON}
@@ -242,6 +261,18 @@ type respostaAPI struct {
 }
 
 func (c *Cliente) Gerar(ctx context.Context, p llm.Pedido) (llm.Resposta, error) {
+	resp, err := c.gerar(ctx, p)
+	// Modelo que recusa o JSON estruturado: refaz uma vez com o schema no
+	// prompt e lembra disso para os proximos pedidos.
+	var eh *erroHTTP
+	if err != nil && errors.As(err, &eh) && eh.status == 400 && reRecusaSchema.MatchString(eh.corpo) && !c.usaPrompt(p) && len(p.SaidaJSON) > 0 && len(p.Ferramentas) == 0 {
+		c.soPrompt.Store(c.modeloDe(p), true)
+		return c.gerar(ctx, p)
+	}
+	return resp, err
+}
+
+func (c *Cliente) gerar(ctx context.Context, p llm.Pedido) (llm.Resposta, error) {
 	if c.apiKey == "" {
 		return llm.Resposta{}, errors.New("chatcompat: chave de API nao configurada")
 	}

@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=1 pagamento=sinal origem="Fraiburgo" destino="Santa Inês"
+# Objetivo: reserva+pix, 1 pagante + 1 crianca de 3 anos (so nome), Fraiburgo -> Santa Ines qui 08/10, R$950, sinal R$250
+/nome Jessica
+fraiburgo sc pra santa ines ma semana que vem tem?
+a de quinta
+eu e meu filho de 3 anos
+jessica fernandes rocha cpf 12345678909 e o menino é davi fernandes rocha
+isso mesmo
+sinal
+/estado
+/reservas

@@ -7118,6 +7118,91 @@ Stacks, secrets, env, banco, sudoers, serviço Swarm e
 `docs/SESSION_HANDOFF.md` permaneceram inalterados. H-B2/H-B3/3.6F-D e
 Segurança/Supabase/RLS continuam fora deste trabalho.
 
+---
+
+## 12. Motor por comandos — mensagem com tudo junto (2026-10-02)
+
+Este registro **não altera** a fila canônica da seção 5 nem a próxima ação
+de H-B2. O trabalho está na branch local `motor-comandos` (base `5f4d101`),
+retomado da sessão Claude `eeb28958-36c9-49ef-b1bd-98dba2759ffb`.
+
+**Status:** patch local do item 1 (mensagem com rota, data, passageiros e
+pagamento no mesmo turno) medido de novo. Sem commit, push, deploy ou smoke.
+Review independente não executado. Placar do motor `comandos` com o modelo
+pequeno: 68/71 (96%), acima dos 56/71 da rodada interrompida.
+
+**Antes:** no motor `comandos`, registrar passageiros encerrava o turno.
+`a07` não buscava nem fechava; `b13` registrava o segundo passageiro junto
+com "sinal" e não gerava reserva/PIX. "minha esposa Antonia" entrava na
+lista como "Esposa Antonia".
+
+**Depois:** se a mesma mensagem ainda pede busca ou já tem viagem e forma
+de pagamento, o turno segue. Data exata com uma única opção naquele dia
+escolhe a viagem mesmo com CPF na mensagem. Duas opções no mesmo dia
+perguntam qual. Parentesco no início do nome ("esposa", "marido") sai do
+nome registrado.
+
+**Arquivos:** `apps/api/internal/atendimento/agente/roteamento.go`,
+`entender.go`, `escolha.go`, `passageiros_codigo.go`, `fluxo.go` (exemplo de
+correção sem dígitos de CPF), testes `comandos_test.go`, `escolha_test.go`,
+`saida_test.go`, e o `# ESPERA` de
+`apps/api/cmd/atendimento-local/roteiros/stress/d10_audio_imagem.txt`.
+
+**Testes:** `go test -count=1 ./internal/atendimento/agente/` — ok antes da
+rodada. Rodada completa `-roteiro tudo` (71 roteiros), motor `comandos`,
+modelo `nvidia/nemotron-3.5-lightning-30b-a3b`, roteador jev, hedge desligado.
+Log: `stress-comandos-71.log`. Resultado: `SUCESSO 68/71 (96%)`.
+`turnos=358 sem_llm=6 (2%) lat_mediana=4.4s lat_max=4.6s`. Os 20 roteiros
+raiz passaram. Também passaram `a07_tudo_junto`, `b13_nomes_compostos`,
+`b11_corrigir_cpf_maria` e `d10_audio_imagem`.
+
+Falhas que ficaram sem patch:
+
+- `stress/a01_girias`: "saio d sta ines" e "segunda q vem" não refazem a
+  busca multi-origem; "pdc, manda o sinal" não escolhe viagem.
+  reservas=0 pix=0 origem="" destino="".
+- `stress/a03_emojis`: "saindo de igarape do meio" não filtra a lista;
+  "a segunda opção" vira Monção, não a segunda de Igarapé do Meio.
+  Reserva e PIX acontecem com origem errada.
+- `stress/b08_somos3_dois_nomes`: "o terceiro é o caio costa cpf ..." não
+  registra o terceiro passageiro. passageiros=2, reservas=0, pix=0.
+
+**Produção:** não testar e não ativar. A branch continua só local.
+
+**Correção das três falhas (2026-10-02, mesma branch):**
+
+- `b08`: `limparNome` descartava "o terceiro é o caio costa" inteiro por
+  causa do "é"; agora o nome é o que vem depois da última palavra que não é
+  de nome.
+- `a01`/`a03`: cidade de origem dita depois do destino ("saio d sta ines",
+  "saindo de igarape do meio") não refazia a busca quando a lista misturava
+  origens. `enriquecerRota` completa o lado que falta com o estado
+  (`rotaPedida`) e só respeita a intenção do Jev quando ele está confiante
+  (busca ≥ 0,8; escolha ≥ 0,9 com opção de fato; forma de pagamento ≥ 0,8).
+  O Jev dava "escolher_opcao" 0,78 sem opção e "buscar_viagens" 0,45; isso
+  também explica a oscilação do `a07` entre rodadas.
+
+Testes unitários novos em `comandos_test.go` e `passageiros_mudanca_test.go`.
+Rodada completa `-roteiro` por roteiro (retomável, um placar por arquivo),
+motor `comandos`, mesmo modelo e configuração: **SUCESSO 71/71 (100%)**,
+latência mediana por roteiro 4,4–4,7 s, máxima 4,8 s. Saídas em
+`C:\Users\axisai\.claude\jobs\eeb28958\tmp\med\v5\` (fora do repositório).
+
+**Comparação com o motor atual (2026-10-02):** mesma configuração, motor
+`agente` (com as correções da Fase 0), rodado sozinho: **SUCESSO 38/71
+(54%)**, latência máxima 10,9 s. Em 39 dos 71 roteiros houve pelo menos uma
+"falha do modelo de linguagem" (erro do provedor NVIDIA, ~4,8 s, 0 tokens); o
+motor `agente` transfere nesses casos, o `comandos` segue só com Jev e
+parsers. Numa repetição sem erro do provedor (`a01_girias`), o `agente`
+ainda falhou: o LLM respondeu "Você escolheu…" sem chamar
+`escolher_viagem`, depois tentou escolher sozinho (barrado pela guarda) e
+inventou o valor do sinal. Saídas em
+`C:\Users\axisai\.claude\jobs\eeb28958\tmp\med\agente\`.
+
+**Próxima ação deste fio (não da fila canônica):** decidir a Fase 5: push da
+branch e `ATENDIMENTO_V2_MOTOR=sombra` em produção (ou `comandos` só para a
+allowlist). Decisão explícita do usuário.
+
 Próxima ação única: aguardar autorização explícita para a próxima mudança de
 estado do PR #84. Antes de qualquer primeiro deploy, executar separadamente o
 gate de bootstrap/reconciliação do journal classe B; esta sincronização dos

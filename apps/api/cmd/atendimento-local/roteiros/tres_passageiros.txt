@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=1 pagamento=integral
 # Tres passageiros numa mensagem so, com crianca de colo.
 /nome Paula
 quero ir de videira pra santa ines na quinta que vem

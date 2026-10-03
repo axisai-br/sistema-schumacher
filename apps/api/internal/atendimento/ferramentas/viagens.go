@@ -81,7 +81,9 @@ func opcaoDeResultado(r availability.SearchResult) conversa.Opcao {
 	}
 }
 
-func mesmaViagem(a, b conversa.Opcao) bool {
+// MesmaViagem diz se duas opcoes sao a mesma viagem com o mesmo embarque e
+// desembarque (o mesmo onibus atende varias rotas, com paradas diferentes).
+func MesmaViagem(a, b conversa.Opcao) bool {
 	return a.TripID == b.TripID && a.BoardStopID == b.BoardStopID && a.AlightStopID == b.AlightStopID
 }
 
@@ -463,7 +465,7 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 		})
 	}
 	for i, tr := range e.Trechos {
-		if i != subst && mesmaViagem(tr.Viagem, *op) {
+		if i != subst && MesmaViagem(tr.Viagem, *op) {
 			return falhaDados("trecho_duplicado", map[string]any{
 				"trecho":   i + 1,
 				"mensagem": "Essa viagem ja esta na compra. Se o cliente quer outra, mostre as opcoes; se e a volta, busque com origem e destino invertidos.",
@@ -490,7 +492,7 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 	var atual *conversa.Opcao
 	for _, r := range res {
 		o := opcaoDeResultado(r)
-		if mesmaViagem(o, *op) {
+		if MesmaViagem(o, *op) {
 			o.Numero = op.Numero
 			atual = &o
 			break
@@ -533,7 +535,7 @@ func (t *escolherViagem) Executar(ctx context.Context, c *Contexto, raw json.Raw
 		return a.Data+a.Horario < b.Data+b.Horario
 	})
 	for i, tr := range e.Trechos {
-		if mesmaViagem(tr.Viagem, escolhida) {
+		if MesmaViagem(tr.Viagem, escolhida) {
 			n = i + 1
 		}
 	}

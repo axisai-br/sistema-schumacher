@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 trechos=1 origem="Igarapé do Meio" destino="Ituporanga"
+# Objetivo: começa Santa Inês->Videira, escolhe; muda para Igarapé do Meio->Ituporanga antes da reserva; bot substitui trecho (não acumula 2 trechos), mostra preço 1100; reserva só a nova rota.
+/nome Marcos
+quero ir de Santa Inês pra Videira
+a primeira
+pensando bem, quero sair de Igarapé do Meio e ir pra Ituporanga
+a primeira
+marcos lima cpf 11144477735
+integral
+/reservas

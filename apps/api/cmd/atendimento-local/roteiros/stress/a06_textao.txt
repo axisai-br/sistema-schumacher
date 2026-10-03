@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=0 pagamento=sinal origem="Santa Inês" destino="Petrolândia"
+# Objetivo: reserva+pix, 2 passageiros (Maria do Socorro + neta de 8 anos pagante), Santa Ines -> Petrolandia seg 26/10, R$1.100 cada, sinal R$500
+/nome Socorro
+Bom dia, tudo bem com o senhor? Espero que esteja bem e com saúde, graças a Deus. Meu nome é Maria do Socorro, eu moro aqui em Santa Inês e estou precisando ir para Petrolândia em Santa Catarina, porque minha filha mora lá e vai ter neném agora no fim do mês, então eu queria ir mais ou menos lá pelo dia 26 de outubro se for possível, e vou levar minha netinha de 8 anos comigo. Desde já agradeço muito pela atenção, que Deus abençoe.
+Pode ser essa sim, muito obrigada, Deus lhe pague
+Os dados são: Maria do Socorro Araújo Lima, CPF 52998224725, e a minha neta Ana Beatriz Lima Santos, CPF 11144477735. Ela tem 8 anos.
+Isso mesmo, está tudo certinho, obrigada
+Eu prefiro pagar só o sinal agora e o restante eu pago lá no embarque, pode ser assim?
+/estado
+/reservas

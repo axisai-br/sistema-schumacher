@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=0 pagamento=sinal origem="Santa Inês" destino="Concórdia"
+# Objetivo: reserva+pix, 3 passageiros pagantes (filho de 10 anos paga), Santa Ines -> Concordia seg 19/10, R$1.100 cada, sinal 3x250 = R$750
+/nome Antonio
+boa tarde, tem onibus de santa ines pra concordia no 19/10?
+essa mesmo
+3 pessoas, eu minha mulher e meu filho de 10 anos
+antonio carlos pereira cpf 98765432100, rosilene pereira cpf 39053344705, lucas pereira cpf 71460238001
+isso mesmo
+sinal
+/estado
+/reservas

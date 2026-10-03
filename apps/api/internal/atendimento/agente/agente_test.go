@@ -41,15 +41,25 @@ func (f *canalFake) BaixarMidia(context.Context, conversa.Mensagem) (string, str
 	return "", "", nil
 }
 
+// tudo junta as mensagens enviadas no turno (o PIX sai em mensagem propria).
+func (f *canalFake) tudo() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.envios, "\n\n")
+}
+
 type modeloFake struct {
 	fila    []llm.Resposta
 	repetir *llm.Resposta
 	erro    error
 	antes   func(n int)
 	pedidos []llm.Pedido
+	mu      sync.Mutex // o motor por comandos chama o modelo em paralelo
 }
 
 func (m *modeloFake) Gerar(_ context.Context, p llm.Pedido) (llm.Resposta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.pedidos = append(m.pedidos, p)
 	if m.antes != nil {
 		m.antes(len(m.pedidos))
@@ -228,7 +238,7 @@ func TestRespostaSimplesEnviada(t *testing.T) {
 		t.Fatalf("historico %+v", h)
 	}
 	ins := f.modelo.pedidos[0].Instrucoes
-	for _, s := range []string{"Shabas", "# CATÁLOGO", "R$ 950,00", "# ESTADO DA RESERVA", "Pendências:", "Nome do cliente: Ana", "30/09/2026 12:00"} {
+	for _, s := range []string{"Shabas", "# CATÁLOGO", "R$ 950,00", "# SITUAÇÃO DA COMPRA AGORA", "Próximo passo:", "# REGRAS QUE VALEM SEMPRE", "Nome do cliente: Ana", "30/09/2026 12:00"} {
 		if !contem(ins, s) {
 			t.Errorf("instrucoes sem %q", s)
 		}
@@ -466,16 +476,34 @@ func TestMaxPassosComBuscaRespondeOpcoes(t *testing.T) {
 	}
 }
 
-// Limite de passos sem nada aproveitavel: transferencia tecnica.
-func TestSemTextoAposMaxPassosTransfere(t *testing.T) {
+// Limite de passos sem nada aproveitavel e sem rota: pede a rota (nao
+// transfere por falha do modelo).
+func TestSemNadaAposMaxPassosPedeRota(t *testing.T) {
 	f := novoFx(t, transferirFerr())
 	f.modelo.repetir = ptr(chamada("ferramenta_inexistente", `{}`))
 	f.iniciar("oi")
 	if err := f.ag.Processar(context.Background(), f.c); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoTecnico {
+	if len(f.canal.envios) != 1 || f.canal.envios[0] != TextoPedirRota || f.conversa().Status != conversa.StatusBot {
 		t.Fatalf("pedidos=%d envios=%v", len(f.modelo.pedidos), f.canal.envios)
+	}
+}
+
+// Modelo sem texto com viagem escolhida: segue do proximo passo.
+func TestSemTextoSegueProximoPasso(t *testing.T) {
+	f := novoFx(t)
+	f.modelo.fila = []llm.Resposta{texto("")}
+	f.iniciar("integral")
+	if _, err := f.store.SalvarEstado(context.Background(), f.c.ID, conversa.Estado{Trechos: []conversa.Trecho{{Viagem: conversa.Opcao{TripID: "t1"}}}}, f.c.Versao); err != nil {
+		t.Fatal(err)
+	}
+	f.c = f.conversa()
+	if err := f.ag.Processar(context.Background(), f.c); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.canal.envios) != 1 || !strings.Contains(f.canal.envios[0], "nome completo") || f.conversa().Status != conversa.StatusBot {
+		t.Fatalf("envios=%v status=%s", f.canal.envios, f.conversa().Status)
 	}
 }
 

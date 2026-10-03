@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=1
+# Objetivo: foto ilegivel -> bot pede os dados por escrito (nao inventa); cliente digita; reserva+pix com 1 passageiro.
+/nome Marcos
+quero passagem de seara pra monção
+a primeira
+[foto de documento: ilegível]
+marcos antonio silva, cpf 390.533.447-05
+integral
+/estado
+/reservas

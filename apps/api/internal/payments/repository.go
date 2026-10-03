@@ -220,6 +220,26 @@ func (r *Repository) AddEvent(ctx context.Context, paymentID *string, event stri
 	return err
 }
 
+// MarcarCancelado marca o pagamento como CANCELLED (se ainda nao pago) e
+// registra o evento.
+func (r *Repository) MarcarCancelado(ctx context.Context, paymentID string, payload json.RawMessage) error {
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	if _, err := r.pool.Exec(ctx, `update payments set status='CANCELLED' where id=$1 and status not in ('PAID','CANCELLED')`, paymentID); err != nil {
+		return err
+	}
+	return r.AddEvent(ctx, &paymentID, "atendimento.pix_cancelado", payload)
+}
+
+// DefinirSinalReserva grava o valor que confirma a reserva (amount_paid antes
+// de qualquer pagamento e o sinal/total exigido; ver updateBookingStatusIfPaid).
+// So muda enquanto o pagamento da reserva esta PENDING.
+func (r *Repository) DefinirSinalReserva(ctx context.Context, bookingID string, valor float64) error {
+	_, err := r.pool.Exec(ctx, `update booking_payment_details set amount_paid=$2 where booking_id=$1 and payment_status='PENDING'`, bookingID, valor)
+	return err
+}
+
 func (r *Repository) MarkPaidAndConfirmBooking(ctx context.Context, providerRef string, payload json.RawMessage) (Payment, bool, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

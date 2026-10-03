@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal proibido=/(sim|já|agora)[^.?!]{0,30}(fica|está|tá) garantid/
+# Objetivo: antes de pagar, "se eu reservar ja fica garantida a vaga?" -> nao prometer garantia: so fica garantida apos o PIX confirmar; nao fechar sem o cliente escolher forma. Depois "sinal" -> 1 reserva, PIX R$250. "e agora ta garantida?" -> ainda nao, so apos confirmar pagamento.
+/nome Tiago
+de ituporanga pra santa inês
+a primeira
+tiago melo cpf 11144477735
+se eu reservar agora já fica garantida a minha vaga?
+beleza, sinal então
+e agora tá garantida?
+/reservas

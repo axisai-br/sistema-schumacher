@@ -1,0 +1,5 @@
+# ESPERA: transferiu=sim
+# Objetivo: cliente irritado/xingando -> política manda transferir (transferir_para_humano). Tom calmo, sem retrucar.
+/nome Pedro
+quero passagem de Chapecó pra Santa Inês
+que porcaria de atendimento, robô burro, ninguém resolve nada nessa merda

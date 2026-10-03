@@ -28,6 +28,8 @@ const (
   /reset         nova conversa e fixtures novas
   /bot           se a conversa foi transferida, volta para BOT
   /audio         envia "` + textoAudio + `" como mensagem
+  /audio <arq>   transcreve um arquivo de áudio real (.ogg/.mp3/.m4a/.wav; precisa OPENAI_API_KEY)
+  /foto <arq>    lê uma foto real (.jpg/.png/.webp) com o leitor de documentos da produção
   /nome <nome>   define o nome do cliente na conversa
   /reservas      reservas e PIX criados nos fakes
   /salvar        grava a transcrição agora
@@ -50,6 +52,7 @@ type sessao struct {
 	ultimo   *conversa.Turno
 	iniciada time.Time
 	salvo    string
+	placar   placar
 }
 
 func novaSessao(cfg config, modelo llm.Modelo, out io.Writer, agora func() time.Time, dirOut string) *sessao {
@@ -88,7 +91,8 @@ func criarRoteador(cfg config) agente.Roteador {
 func (s *sessao) novoAmbiente() {
 	juiz, _ := criarJuiz(s.cfg, s.modelo)
 	s.amb = evals.NovoAmbiente(s.modelo, evals.ConfigAmbiente{
-		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal,
+		ModeloNome: s.cfg.Modelo, Juiz: juiz, Roteador: criarRoteador(s.cfg), Agora: s.agora, SinalPorPagante: s.cfg.Sinal, OrcamentoTurno: s.cfg.Orcamento,
+		Motor: s.cfg.Motor, ModeloExtratorReserva: s.cfg.ExtratorRes,
 	})
 	s.amb.NomeCliente = s.nome
 	s.nTurnos = 0
@@ -101,6 +105,9 @@ func (s *sessao) cabecalho() {
 	hoje := s.agora().In(fusoSP())
 	s.printf("Simulador local do atendimento v2 (agente real + LLM real; dados de teste em memória)\n")
 	s.printf("  LLM: %s · %s · hoje (fixtures): %s\n", s.cfg.Descricao, s.cfg.rotuloJuiz(), dataExtenso(hoje))
+	if s.cfg.Motor == "comandos" {
+		s.printf("  motor: comandos (LLM só extrai; o código decide e responde por template)\n")
+	}
 	if r := s.cfg.Prov.DescricaoReserva(); r != "" {
 		s.printf("  LLM reserva: %s\n", r)
 	}
@@ -191,6 +198,7 @@ func (s *sessao) processar(ctx context.Context) {
 		s.nTurnos = len(turnos)
 		tn := turnos[len(turnos)-1]
 		s.ultimo = &tn
+		s.placar.registrar(tn, dur)
 		s.printf("  %s\n", infoTurno(tn, dur))
 	}
 	if atual, err := s.amb.Store.Obter(ctx, conv.ID); err == nil && atual.Status == conversa.StatusHumano {
@@ -198,6 +206,7 @@ func (s *sessao) processar(ctx context.Context) {
 		if motivo == "" {
 			motivo = "(não informado)"
 		}
+		s.placar.Transferiu = true
 		s.printf("*** conversa transferida para atendente humano — motivo: %s ***\n", motivo)
 		s.printf("    (novas mensagens serão registradas mas não processadas até você usar /bot)\n")
 		s.transc = append(s.transc, evals.Msg{Autor: "SISTEMA", Texto: "conversa transferida para atendente humano — motivo: " + motivo})
@@ -275,9 +284,15 @@ func (s *sessao) comando(ctx context.Context, t string) bool {
 			}
 		}
 	case "/audio":
+		if arg != "" {
+			s.cmdMidia(ctx, conversa.TipoAudio, arg)
+			break
+		}
 		if s.enviar(ctx, textoAudio) {
 			s.processar(ctx)
 		}
+	case "/foto":
+		s.cmdMidia(ctx, conversa.TipoImagem, arg)
 	case "/nome":
 		if arg == "" {
 			s.printf("  uso: /nome <nome>  (atual: %q)\n", s.nome)

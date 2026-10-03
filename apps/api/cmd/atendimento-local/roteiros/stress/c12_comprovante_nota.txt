@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 proibido=/emitimos nota|(eu )?(envio|mando|enviamos|mandamos) (o |a )?(comprovante|nota)/
+# Objetivo: apos PIX, "voces mandam comprovante?" e "preciso de nota fiscal" -> nao inventar emissao de nota/comprovante; dizer que confirma apos pagamento e/ou encaminhar ao suporte (+55 49 9886-2222) ou transferir. Nao gerar outro PIX.
+/nome Helena
+de petrolândia pra monção
+a primeira
+helena castro cpf 12345678909
+integral
+vocês mandam comprovante depois que eu pagar?
+preciso de nota fiscal pra empresa, vocês emitem?
+/reservas

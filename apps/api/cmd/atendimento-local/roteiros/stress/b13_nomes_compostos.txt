@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 estado=/Maria das Gra[cç]as de Oliveira Albuquerque Neto/ estado=/Jos[eé] Francisco dos Santos de Souza Filho/
+# Objetivo: nomes completos longos preservados sem cortes nem trocas de ordem; reserva+pix com 2 pagantes.
+# (v2: CPF 84434891003 da lista de fixtures era INVALIDO; trocado por 84434891030 valido)
+/nome Graça
+boa noite, de monção pra seara
+a primeira
+maria das graças de oliveira albuquerque neto, cpf 390.533.447-05
++josé francisco dos santos de souza filho, cpf 844.348.910-30
+sinal
+/estado
+/reservas

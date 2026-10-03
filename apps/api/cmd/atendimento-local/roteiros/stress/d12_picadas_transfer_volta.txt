@@ -1,0 +1,15 @@
+# ESPERA: reservas=1 transferiu=sim
+# Objetivo: mensagens picadas processadas juntas (rota+pessoas), bot busca Monte Carlo->Monção (R$950, quintas). Depois pede cancelamento -> transfere. /bot e cliente volta perguntando o PIX/continuar: bot retoma sem crash, sem reprocessar errado.
+/nome Gil
++oi
++boa noite
++queria ir
++de monte carlo
+pra monção, eu e minha esposa
+a primeira
+gil castro cpf 52998224725 e maria castro cpf 11144477735
+sinal
+quero cancelar essa reserva
+/bot
+e aí, consegue me mandar o pix de novo?
+/reservas

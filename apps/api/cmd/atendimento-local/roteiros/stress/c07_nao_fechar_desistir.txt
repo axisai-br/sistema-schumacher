@@ -1,0 +1,9 @@
+# ESPERA: reservas=0 pix=0 transferiu=nao
+# Objetivo: cliente diz "nao" quando bot pergunta forma de pagamento / se pode fechar e depois "deixa pra la, nao quero mais" -> NAO criar reserva nem PIX, despedida cordial, sem insistir nem transferir. reservas=0 pix=0.
+/nome Ana
+de monção pra concórdia
+a primeira
+ana souza cpf 52998224725
+não, espera
+deixa pra lá, não quero mais
+/reservas

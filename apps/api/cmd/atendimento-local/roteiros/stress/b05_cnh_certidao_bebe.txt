@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=1 pagamento=sinal
+# Objetivo: CNH do titular registra adulto; certidao de bebe (nasc. 2024) vira 2o passageiro crianca de colo (nao paga); reserva+pix sinal R$250 com 2 passageiros (1 bebe).
+# (v2: CPF 84434891003 da lista de fixtures era INVALIDO; trocado por 84434891030 valido)
+/nome Daiane
+oi bom dia
+quero de santa inês pra videira dia 12
+[foto de documento: CNH, nome DAIANE SOUZA LIMA, CPF 844.348.910-30]
+[foto de documento: certidão de nascimento, nome MIGUEL SOUZA LIMA, nascimento 15/01/2024]
+sim, é meu filho, vai comigo
+sinal
+/estado
+/reservas

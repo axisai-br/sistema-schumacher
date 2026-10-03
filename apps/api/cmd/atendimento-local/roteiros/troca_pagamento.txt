@@ -1,3 +1,4 @@
+# ESPERA: reservas=1 pix=1 pagamento=sinal transferiu=nao
 # Troca integral/sinal: antes do PIX troca; depois do PIX mantem e explica.
 /nome Lucas
 fraiburgo pra moncao dia 8

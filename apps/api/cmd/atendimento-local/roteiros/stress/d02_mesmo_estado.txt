@@ -1,0 +1,4 @@
+# ESPERA: reservas=0 transferiu=nao
+# Objetivo: Fraiburgo->Chapecó (ambas SC) não existe; bot deve dizer que não há essa rota (após buscar), sem inventar; oferecer rotas existentes (SC<->MA) ou suporte. Não transfere sem pedido.
+/nome Carlos
+boa tarde, tem ônibus de Fraiburgo pra Chapecó amanhã?

@@ -14,6 +14,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -287,6 +288,12 @@ func (p *Preparador) imagem(ctx context.Context, m conversa.Mensagem) (string, m
 		log.Printf("atendimento_midia_imagem_falhou conversa=%s etapa=visao erro=%v", m.ConversaID, err)
 		return padrao, map[string]any{"visao_status": "FALHOU", "visao_erro": err.Error()}
 	}
+	// Modelo de visao fraco: descreve "cartão de identidade (RG) do titular..."
+	// mas marca e_documento=false. Descricao ou campos de documento valem como
+	// documento (sem dados, o bot pede por escrito em vez de dizer que nao e).
+	if !l.EDocumento && (reDescricaoDocumento.MatchString(l.Descricao) || strings.TrimSpace(l.CPF) != "" || strings.TrimSpace(l.RG) != "") {
+		l.EDocumento = true
+	}
 	extra := map[string]any{"visao_status": "OK", "visao_modelo": p.modeloVisaoUsado(), "e_documento": l.EDocumento}
 	if l.EDocumento {
 		var partes []string
@@ -457,3 +464,6 @@ func resumir(s string, n int) string {
 	}
 	return s
 }
+
+// reDescricaoDocumento: descricao da imagem que indica documento pessoal.
+var reDescricaoDocumento = regexp.MustCompile(`(?i)\b(rg|cnh|cpf|identidade|habilita[cç][aã]o|certid[aã]o|documento (pessoal|de identifica))`)

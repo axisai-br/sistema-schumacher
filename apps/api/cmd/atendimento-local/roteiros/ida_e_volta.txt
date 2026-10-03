@@ -1,3 +1,4 @@
+# ESPERA: reservas=2 pix=2 trechos=2 passageiros=1 pagamento=sinal
 # Conversa real: ida e volta (Fraiburgo e Monção) na mesma compra
 oi
 saindo de fraiburgo para monção

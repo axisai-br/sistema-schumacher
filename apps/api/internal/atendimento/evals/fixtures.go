@@ -683,3 +683,22 @@ func semAcentos(s string) string {
 		"ç", "c", "ñ", "n",
 	).Replace(strings.ToLower(s))
 }
+
+// CancelarPendente marca o PIX como cancelado (pago nao cancela).
+func (p *PagamentosFake) CancelarPendente(_ context.Context, id string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.pags {
+		if p.pags[i].ID == id {
+			if p.pags[i].Status == "PAID" {
+				return payments.ErrPagamentoJaPago
+			}
+			p.pags[i].Status = "CANCELLED"
+			return nil
+		}
+	}
+	return errors.New("pagamento nao encontrado")
+}
+
+// DefinirSinalReserva nao tem efeito nos fakes (o valor do PIX vem do estado).
+func (p *PagamentosFake) DefinirSinalReserva(context.Context, string, float64) error { return nil }

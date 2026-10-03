@@ -1,0 +1,11 @@
+# ESPERA: reservas=1 pix=1 pagamento=integral
+# Objetivo: "posso pagar metade?", "aceita cartao?", "parcela?" -> nao inventar formas: so PIX, integral ou sinal (R$250) com restante no embarque; outras formas -> suporte. Nao criar reserva ate o cliente escolher. Depois "integral" -> 1 reserva, 1 PIX R$950 (Moncao->Videira).
+/nome Joana
+de monção pra videira
+a primeira
+joana prado cpf 12345678909
+posso pagar metade agora e metade depois?
+aceita cartão de crédito?
+dá pra parcelar em 3x?
+ta bom, pago integral no pix
+/reservas

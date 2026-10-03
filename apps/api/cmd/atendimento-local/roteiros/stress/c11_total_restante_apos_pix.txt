@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 criancas=1 pagamento=sinal exige=/1\.?400/ proibido=/3\.?800/
+# Objetivo: 2 adultos + crianca de 4 anos (nao paga), Santa Ines->Videira R$950. Sinal = 2x250 = R$500. Total = R$1.900; restante no embarque = R$1.400. Perguntas apos o PIX devem responder esses valores sem gerar outro PIX.
+/nome Kelly
+de santa inês pra videira
+a primeira
+kelly souza cpf 52998224725, marcos souza cpf 11144477735 e a pequena ana souza de 4 anos
+sinal
+quanto fica o total da viagem?
+e quanto vou pagar no embarque?
+/reservas

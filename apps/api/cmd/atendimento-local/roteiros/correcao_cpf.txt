@@ -1,0 +1,9 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal estado=/CPF \*\*\*725/
+# Cliente corrige o CPF antes de fechar.
+/nome Bruno
+de chapecó pra igarapé do meio
+a primeira
+bruno lima cpf 11144477735
+opa, o cpf tá errado, o certo é 529.982.247-25
+sinal
+/estado

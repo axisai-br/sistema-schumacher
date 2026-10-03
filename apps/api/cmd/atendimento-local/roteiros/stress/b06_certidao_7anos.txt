@@ -1,0 +1,14 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=0
+# Objetivo: certidao de crianca de 7 anos (nasc. 2019) sem CPF -> bot avisa que precisa CPF ou RG (paga passagem) e nao reserva; apos CPF, reserva+pix com 2 pagantes.
+/nome Fabiana
+quero ir de monte carlo pra santa inês
+a primeira
+fabiana rocha cpf 12345678909
+[foto de documento: certidão de nascimento, nome GABRIEL ROCHA, nascimento 10/05/2019]
+sim ele vai junto
+sinal
+/reservas
+o cpf do gabriel é 98765432100
+sinal
+/estado
+/reservas

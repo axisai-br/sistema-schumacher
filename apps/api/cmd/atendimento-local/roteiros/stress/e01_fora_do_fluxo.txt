@@ -1,0 +1,8 @@
+# ESPERA: reservas=0 transferiu=nao proibido=/a gente não atende/ exige=/Maranhão/
+# Objetivo: conversa real de teste (02/10): perguntas fora do fluxo ("quais as disponibilidades", "tem entre fraiburgo e videira?") e rota inexistente dentro de SC. O bot responde de verdade, não repete "me diz de onde sai" e nunca diz que Fraiburgo não é atendida.
+oi
+quais são as disponibilidades?
+quais são as opções de saida?
+tem entre fraiburgo e videira?
+não entendi, tem entre fraiburgo e videira?
+saido de fraiburgo?

@@ -140,10 +140,14 @@ func (c Caso) Validar() error {
 
 // ConfigAmbiente parametriza o Ambiente.
 type ConfigAmbiente struct {
-	ModeloNome string // nome do modelo do agente (vai no pedido ao llm.Modelo)
-	Juiz       agente.Juiz
-	Roteador   agente.Roteador  // opcional; substitui o Juiz
-	Agora      func() time.Time // padrao time.Now
+	ModeloNome     string        // nome do modelo do agente (vai no pedido ao llm.Modelo)
+	OrcamentoTurno time.Duration // 0 usa o padrao do agente
+	// Motor e ModeloExtratorReserva: ver agente.Config.
+	Motor                 string
+	ModeloExtratorReserva string
+	Juiz                  agente.Juiz
+	Roteador              agente.Roteador  // opcional; substitui o Juiz
+	Agora                 func() time.Time // padrao time.Now
 	// SinalPorPagante e o valor do sinal por pagante (padrao das ferramentas: 250).
 	SinalPorPagante float64
 }
@@ -191,7 +195,8 @@ func NovoAmbiente(modelo llm.Modelo, cfg ConfigAmbiente) *Ambiente {
 	ag := agente.Novo(agente.Deps{
 		Store: store, Canal: canalFake, Modelo: modelo, Ferramentas: reg,
 		Catalogo: cat, Juiz: cfg.Juiz, Roteador: cfg.Roteador, Cidades: cat, Agora: agora,
-	}, agente.Config{Modelo: nome})
+	}, agente.Config{Modelo: nome, OrcamentoTurno: cfg.OrcamentoTurno, SinalPorPagante: cfg.SinalPorPagante,
+		Motor: cfg.Motor, ModeloExtratorReserva: cfg.ModeloExtratorReserva})
 	return &Ambiente{
 		Fx: fx, Store: store, Canal: canalFake, Reservas: reservas, Pagamentos: pagamentos,
 		Catalogo: cat, Agente: ag, Agora: agora,

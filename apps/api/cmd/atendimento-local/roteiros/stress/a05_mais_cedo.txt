@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=integral origem="Monção" destino="Seara"
+# Objetivo: reserva+pix, 1 passageiro, Moncao -> Seara seg 05/10 (mais cedo possivel), R$1.100, integral R$1.100
+/nome Francisca
+preciso ir pra seara o mais cedo possivel, to em moncao
+pode ser essa
+só eu
+francisca das chagas moura, cpf 123.456.789-09
+manda ver no pix, o valor todo
+/estado
+/reservas

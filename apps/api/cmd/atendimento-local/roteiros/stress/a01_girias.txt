@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=1 pagamento=sinal origem="Santa Inês" destino="Chapecó"
+# Objetivo: reserva+pix, 1 passageiro (Raimundo, CPF 529...), Santa Ines -> Chapeco seg 05/10 (segunda que vem), R$1.100, sinal R$250
+/nome Raimundo
+opa blz
+qro ir pra chapeco
+saio d sta ines
+segunda q vem
+so eu
+raimundo nonato silva cpf 529.982.247-25
+pdc, manda o sinal
+/estado
+/reservas

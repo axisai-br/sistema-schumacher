@@ -69,8 +69,16 @@ type Config struct {
 	NvidiaBaseURL                      string
 	AtendimentoV2Concorrencia          int
 	AtendimentoV2DebounceMS            int
-	AtendimentoV2SinalPorPagante       float64
-	AtendimentoV2Juiz                  string
+	// AtendimentoV2EstadoExpiraH: horas sem mensagens para comecar compra nova (0 desliga).
+	AtendimentoV2EstadoExpiraH   int
+	AtendimentoV2SinalPorPagante float64
+	AtendimentoV2Juiz            string
+	// AtendimentoV2Motor: "agente" (LLM com ferramentas) ou "comandos" (LLM so
+	// extrai JSON; o codigo decide e responde por template).
+	AtendimentoV2Motor string
+	// LLMModeloExtratorReserva: modelo tentado quando o extrator nao devolve
+	// JSON valido (motor comandos); vazio desliga.
+	LLMModeloExtratorReserva           string
 	TypesafeAPIKey                     string
 	AtendimentoV2AlertaWebhookURL      string
 	ChatDebounceWindowMS               int
@@ -146,8 +154,11 @@ func Load() (Config, error) {
 		NvidiaBaseURL:                      strings.TrimSpace(os.Getenv("NVIDIA_BASE_URL")),
 		AtendimentoV2Concorrencia:          positiveInt(getEnvAsInt("ATENDIMENTO_V2_CONCORRENCIA", 4), 4),
 		AtendimentoV2DebounceMS:            positiveInt(getEnvAsInt("ATENDIMENTO_V2_DEBOUNCE_MS", 2000), 2000),
+		AtendimentoV2EstadoExpiraH:         max(getEnvAsInt("ATENDIMENTO_V2_ESTADO_EXPIRA_H", 72), 0),
 		AtendimentoV2SinalPorPagante:       getEnvAsFloat("ATENDIMENTO_V2_SINAL_POR_PAGANTE", 250),
 		AtendimentoV2Juiz:                  parseJuiz(os.Getenv("ATENDIMENTO_V2_JUIZ")),
+		AtendimentoV2Motor:                 parseMotor(os.Getenv("ATENDIMENTO_V2_MOTOR")),
+		LLMModeloExtratorReserva:           strings.TrimSpace(os.Getenv("LLM_MODELO_EXTRATOR_RESERVA")),
 		TypesafeAPIKey:                     strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),
 		AtendimentoV2AlertaWebhookURL:      firstNonEmpty(os.Getenv("ATENDIMENTO_V2_ALERTA_WEBHOOK_URL"), os.Getenv("CHAT_REVIEW_ALERT_WEBHOOK_URL")),
 		ChatDebounceWindowMS:               getEnvAsInt("CHAT_DEBOUNCE_WINDOW_MS", 1500),
@@ -331,6 +342,14 @@ func optBool(key string) *bool {
 	}
 	b := parseBool(os.Getenv(key))
 	return &b
+}
+
+// parseMotor aceita "agente", "comandos" ou "sombra"; outro valor vira "agente".
+func parseMotor(val string) string {
+	if v := strings.ToLower(strings.TrimSpace(val)); v == "comandos" || v == "sombra" {
+		return v
+	}
+	return "agente"
 }
 
 // parseJuiz aceita "llm", "jev" ou "off"; qualquer outro valor vira "llm".

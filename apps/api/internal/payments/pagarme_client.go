@@ -157,6 +157,33 @@ func (c *Client) CreateOrder(ctx context.Context, req OrderRequest) (OrderRespon
 	return order, raw, nil
 }
 
+// CancelCharge cancela uma cobranca (DELETE /charges/{id}). Use so em cobranca
+// pendente: em cobranca paga a Pagar.me faz estorno.
+func (c *Client) CancelCharge(ctx context.Context, chargeID string) (json.RawMessage, error) {
+	chargeID = strings.TrimSpace(chargeID)
+	if chargeID == "" {
+		return nil, errors.New("charge id is required")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/charges/"+chargeID, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.SetBasicAuth(c.apiKey, "")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return raw, fmt.Errorf("pagarme error: %s", strings.TrimSpace(string(raw)))
+	}
+	return raw, nil
+}
+
 func (c *Client) GetOrderByID(ctx context.Context, orderID string) (OrderResponse, json.RawMessage, error) {
 	orderID = strings.TrimSpace(orderID)
 	if orderID == "" {

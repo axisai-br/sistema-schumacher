@@ -1,0 +1,13 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 pagamento=sinal
+# Objetivo: cliente diz "somos 3" e manda so 2; bot pergunta pelo 3o (sem reservar); depois do 3o, reserva+pix sinal com 3 pagantes.
+# (v2: CPF 84434891003 da lista de fixtures era INVALIDO; trocado por 84434891030 valido)
+/nome Valdir
+de campos novos pra santa inês, somos 3
+a primeira
+valdir costa 52998224725 e neusa costa 11144477735
+sinal
+/reservas
+o terceiro é o caio costa cpf 84434891030
+sinal
+/estado
+/reservas

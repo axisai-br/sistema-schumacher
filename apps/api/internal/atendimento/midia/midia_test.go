@@ -275,3 +275,36 @@ func TestImagemNvidiaComumFallbacksESemChave(t *testing.T) {
 		t.Fatalf("sem json: %q %v", s, extra)
 	}
 }
+
+// Modelo da NVIDIA que nao aceita guided_json: a visao reenvia sem o campo
+// (o prompt ja pede o JSON) e le o documento.
+func TestImagemNvidiaSemGuidedJSON(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), `"nvext"`) {
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"error":{"message":"unknown field ` + "`guided_json`" + `"}}`))
+			return
+		}
+		txt := `{"e_documento":true,"tipo":"RG","nome":"JOAO VITOR SOUZA","cpf":"529.982.247-25","rg":"","nascimento":"","descricao":"rg"}`
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": txt}}}})
+	}))
+	defer srv.Close()
+	p := Novo(&canalFake{dataURL: "data:image/png;base64,AAAA"}, Config{Visao: VisaoConfig{Provedor: "nvidia", APIKey: "k", BaseURL: srv.URL, Modelo: "m"}})
+	s, extra, _ := p.Preparar(context.Background(), conversa.Mensagem{Tipo: conversa.TipoImagem})
+	if s != "[foto de documento: nome JOAO VITOR SOUZA, CPF 529.982.247-25]" || extra["visao_status"] != "OK" || n != 2 {
+		t.Fatalf("s=%q extra=%v chamadas=%d", s, extra, n)
+	}
+}
+
+func TestImagemDescricaoDeDocumentoViraDocumento(t *testing.T) {
+	srv := servidorVisao(t, `{"e_documento":false,"nome":"","cpf":"","rg":"","descricao":"Cartão de Identidade (RG) do titular Joao Vitor Souza"}`, nil)
+	defer srv.Close()
+	p := Novo(&canalFake{dataURL: "data:image/jpeg;base64,AAAA"}, Config{OpenAIAPIKey: "k", OpenAIBaseURL: srv.URL, ModeloVisao: "m"})
+	s, _, _ := p.Preparar(context.Background(), conversa.Mensagem{Tipo: conversa.TipoImagem})
+	if s != "[foto de documento]" {
+		t.Fatalf("s=%q", s)
+	}
+}

@@ -71,6 +71,17 @@ type Config struct {
 	// OrcamentoTurno limita o tempo das chamadas ao LLM no turno (padrao 50s):
 	// estourou, o turno responde com dados ja obtidos em vez de esperar.
 	OrcamentoTurno time.Duration
+	// SinalPorPagante vai no contexto do LLM (valores do sinal antes da
+	// reserva). Padrao 250, o mesmo das ferramentas.
+	SinalPorPagante float64
+	// Motor: MotorAgente (padrao, LLM com ferramentas) ou MotorComandos (LLM
+	// so extrai JSON; codigo decide e responde por template).
+	Motor string
+	// OrcamentoExtrator limita a extracao no motor por comandos (padrao 25s).
+	OrcamentoExtrator time.Duration
+	// ModeloExtratorReserva e tentado quando o extrator principal nao devolve
+	// JSON valido (vazio = sem cascata).
+	ModeloExtratorReserva string
 }
 
 type Agente struct {
@@ -94,6 +105,15 @@ func Novo(d Deps, cfg Config) *Agente {
 	}
 	if cfg.LimiarRota <= 0 {
 		cfg.LimiarRota = 0.8
+	}
+	if cfg.SinalPorPagante <= 0 {
+		cfg.SinalPorPagante = 250
+	}
+	if cfg.Motor == "" {
+		cfg.Motor = MotorAgente
+	}
+	if cfg.OrcamentoExtrator <= 0 {
+		cfg.OrcamentoExtrator = 25 * time.Second
 	}
 	if cfg.OrcamentoTurno <= 0 {
 		cfg.OrcamentoTurno = 50 * time.Second
@@ -128,6 +148,17 @@ type turno struct {
 	modelo     string
 	resultados []string // JSON das saidas de ferramenta deste turno
 	anteriores []string // JSON das saidas de ferramenta dos ultimos turnos
+	nPre       int      // ferramentas pre-executadas pelo codigo (ids pre_1, pre_2...)
+	rota       *Rota    // veredito do Roteador neste turno (nil sem roteador ou se falhou)
+	// diaEspecifico: o cliente citou um dia exato neste turno ("dia 8", "15/10").
+	diaEspecifico bool
+	// Motor por comandos: extracao do LLM e o que dela foi usado na Rota.
+	comandos  bool
+	ext       *Extracao
+	extUsados []string
+	// sombra: extracao rodando em paralelo com o motor atual (MotorSombra);
+	// o resultado so vai para os passos do turno, para comparacao.
+	sombra chan conversa.Passo
 }
 
 // transf e o pedido interno de transferencia para humano.
@@ -227,8 +258,26 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 	}
 
 	tc.anteriores = a.saidasAnteriores(ctx, c.ID)
+	if a.cfg.Motor == MotorSombra {
+		tc.sombra = make(chan conversa.Passo, 1)
+		est := clonarEstado(tc.estado)
+		go func() {
+			p, _ := a.passoSombra(ctx, est, hist)
+			tc.sombra <- p
+		}()
+	}
+	if p, ok := ferramentas.ResolverQuando(strings.Join(textosCliente, " "), a.d.Agora().In(a.loc)); ok && p.De.Equal(p.Ate) {
+		tc.diaEspecifico = true
+	}
 
 	var pre []llm.Mensagem // chamada de ferramenta executada antes do LLM (pre-busca)
+	if a.cfg.Motor == MotorComandos && a.d.Roteador != nil {
+		texto, tr := a.turnoComandos(ctx, tc, hist)
+		if tr != nil {
+			return tr
+		}
+		return a.concluirComResposta(ctx, tc, texto)
+	}
 	if a.d.Roteador != nil {
 		res := a.rotear(ctx, tc, hist)
 		if res.transf != nil {
@@ -317,6 +366,44 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 		}
 	}
 
+	// Checagem de forma (modelos menores): texto quebrado, acao afirmada sem a
+	// ferramenta ou CPF do cliente ignorado. Uma reescrita; se insistir, a
+	// resposta e montada em codigo a partir das pendencias.
+	if !seguro {
+		if prob := problemasForma(texto, tc, textosCliente); prob != "" {
+			tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "forma", Saida: prob})
+			msgs = append(msgs,
+				llm.Mensagem{Papel: llm.PapelAssistente, Texto: texto},
+				llm.Mensagem{Papel: llm.PapelUsuario, Texto: "Problema na sua resposta: " + prob + ". Corrija agora: chame a ferramenta necessária ANTES de dizer que algo foi feito (por exemplo, registrar_passageiros com os nomes e documentos que o cliente mandou), ou não afirme que foi feito. Responda em português simples, sem marcações internas."},
+			)
+			novo, _, err := a.gerar(ctxG, tc, instr, msgs)
+			var t *transf
+			if err != nil && errors.As(err, &t) && !t.tecnico {
+				return err
+			}
+			if err == nil && problemasForma(novo, tc, textosCliente) == "" && a.problemasResposta(tc, novo, catalogo, agora, textosCliente, cidades) == "" {
+				texto = novo
+			} else {
+				texto = ""
+				if px := pixDoTurno(tc.resultados); len(px) > 0 {
+					texto = textoPix(px)
+				} else if len(cpfsNaoRegistrados(textosCliente, tc.estado)) > 0 {
+					// O modelo nao registrou os dados que o cliente mandou: o
+					// codigo registra (fotos e "nome cpf ...") e segue.
+					novos, _ := passageirosDeFotos(textosCliente, agora)
+					novos = append(novos, passageirosDeTexto(textosCliente)...)
+					if _, ok := a.registrarEmCodigo(ctx, tc, novos); ok {
+						texto = textoRegistrados(tc.estado) + "\n\n" + textoProximoPasso(tc.estado)
+					}
+				}
+				if texto == "" {
+					texto = textoProximoPasso(tc.estado)
+				}
+				tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "forma", Saida: "persistiu apos reescrita; resposta montada em codigo"})
+			}
+		}
+	}
+
 	// Checagem de loop: mesma resposta que a ultima do bot.
 	ultimoBot := ""
 	for i := len(hist) - 1; i >= 0; i-- {
@@ -343,6 +430,12 @@ func (a *Agente) executar(ctx context.Context, tc *turno) error {
 // conclui a pendencia.
 func (a *Agente) concluirComResposta(ctx context.Context, tc *turno, texto string) error {
 	c := tc.c
+	// Ultima barreira: persona, ferramentas, texto degenerado, markdown, CPF.
+	if novo, motivos := filtrarSaida(texto, tc.estado); len(motivos) > 0 {
+		tc.passos = append(tc.passos, conversa.Passo{Tipo: "checagem", Nome: "saida",
+			Saida: map[string]any{"motivos": motivos, "original": texto}})
+		texto = novo
+	}
 	// Mensagem nova durante o turno: descarta e mantem a pendencia.
 	chegou, err := a.d.Store.ChegouEntradaDepois(ctx, c.ID, *c.UltimaEntradaEm)
 	if err != nil {
@@ -398,16 +491,29 @@ func (a *Agente) gerar(ctx context.Context, tc *turno, instr string, msgs []llm.
 		if len(resp.Chamadas) == 0 {
 			texto := strings.TrimSpace(resp.Texto)
 			if texto == "" {
-				return "", msgs, &transf{motivo: "modelo respondeu sem texto", tecnico: true}
+				return "", msgs, &transf{motivo: motivoSemTexto, tecnico: true}
 			}
 			return texto, msgs, nil
 		}
 		msgs = append(msgs, llm.Mensagem{Papel: llm.PapelAssistente, Texto: resp.Texto, Chamadas: resp.Chamadas})
 		for _, ch := range resp.Chamadas {
 			t1 := a.d.Agora()
-			saida := a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{
-				Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora(),
-			}, ch.Nome, ch.Argumentos)
+			var saida ferramentas.Saida
+			if ch.Nome == "escolher_viagem" && !escolhaPermitida(tc) {
+				// Guarda: o modelo nao escolhe viagem pelo cliente.
+				saida = ferramentas.Saida{OK: false, Motivo: "cliente_nao_escolheu", Dados: map[string]any{
+					"mensagem": "O cliente ainda nao escolheu uma opcao nesta mensagem. Mostre as opcoes e espere ele escolher; nao escolha por ele.",
+				}}
+			} else if ch.Nome == "criar_reserva" && !pagamentoEscolhido(tc) {
+				// Guarda: o modelo nao escolhe a forma de pagamento pelo cliente.
+				saida = ferramentas.Saida{OK: false, Motivo: "cliente_nao_escolheu_pagamento", Dados: map[string]any{
+					"mensagem": "O cliente ainda nao escolheu entre integral e sinal. Pergunte e espere a resposta antes de criar a reserva.",
+				}}
+			} else {
+				saida = a.d.Ferramentas.Executar(ctx, &ferramentas.Contexto{
+					Conversa: tc.c, Estado: &tc.estado, Agora: a.d.Agora(),
+				}, ch.Nome, ch.Argumentos)
+			}
 			js, err := json.Marshal(saida)
 			if err != nil {
 				js = []byte(`{"ok":false,"motivo":"saida_invalida"}`)
@@ -470,7 +576,7 @@ func (a *Agente) fontes(tc *turno, catalogo string, agora time.Time) []string {
 	antes, _ := json.Marshal(tc.antes)
 	f := []string{catalogo, string(est), string(antes), agora.Format("02/01/2006")}
 	f = append(f, tc.anteriores...)
-	f = append(f, valoresDerivados(tc))
+	f = append(f, valoresDerivados(tc), TextoSituacao(tc.estado, a.cfg.SinalPorPagante), TextoSituacao(tc.antes, a.cfg.SinalPorPagante))
 	return append(f, tc.resultados...)
 }
 
@@ -577,21 +683,25 @@ func (a *Agente) transferir(ctx context.Context, tc *turno, motivo string, tecni
 
 // enviar grava a saida ANTES de chamar o canal (o eco fromMe do webhook pode
 // chegar antes de Enviar retornar) e depois confirma o resultado do envio.
+// O texto sai no formato do WhatsApp e cada codigo PIX vai numa mensagem
+// propria; cada parte e gravada como foi enviada, para o eco ser reconhecido.
 func (a *Agente) enviar(ctx context.Context, tc *turno, texto string) error {
 	c := tc.c
-	msg, err := a.d.Store.RegistrarSaida(ctx, c.ID, conversa.AutorBot, texto, "", tc.id)
-	if err != nil {
-		return fmt.Errorf("registrar saida: %w", err)
-	}
-	provID, err := a.d.Canal.Enviar(ctx, c.Contato, texto)
-	if err != nil {
-		if e2 := a.d.Store.ConfirmarEnvio(ctx, msg.ID, "", err.Error()); e2 != nil {
-			a.d.Log.Printf("agente: confirmar envio (falha): %v", e2)
+	for _, parte := range canal.PartesWhatsApp(texto) {
+		msg, err := a.d.Store.RegistrarSaida(ctx, c.ID, conversa.AutorBot, parte, "", tc.id)
+		if err != nil {
+			return fmt.Errorf("registrar saida: %w", err)
 		}
-		return fmt.Errorf("enviar: %w", err)
-	}
-	if err := a.d.Store.ConfirmarEnvio(ctx, msg.ID, provID, ""); err != nil {
-		a.d.Log.Printf("agente: confirmar envio: %v", err)
+		provID, err := a.d.Canal.Enviar(ctx, c.Contato, parte)
+		if err != nil {
+			if e2 := a.d.Store.ConfirmarEnvio(ctx, msg.ID, "", err.Error()); e2 != nil {
+				a.d.Log.Printf("agente: confirmar envio (falha): %v", e2)
+			}
+			return fmt.Errorf("enviar: %w", err)
+		}
+		if err := a.d.Store.ConfirmarEnvio(ctx, msg.ID, provID, ""); err != nil {
+			a.d.Log.Printf("agente: confirmar envio: %v", err)
+		}
 	}
 	return nil
 }
@@ -631,6 +741,16 @@ func (a *Agente) registrarErro(ctx context.Context, tc *turno, cause error) {
 }
 
 func (a *Agente) registrarTurno(ctx context.Context, tc *turno, resultado, resposta, erro string) {
+	if tc.sombra != nil {
+		select {
+		case p := <-tc.sombra:
+			if p.Nome != "" {
+				tc.passos = append(tc.passos, p)
+			}
+		case <-time.After(a.cfg.OrcamentoExtrator + 5*time.Second):
+		}
+		tc.sombra = nil
+	}
 	modelo := tc.modelo
 	if modelo == "" {
 		modelo = a.cfg.Modelo

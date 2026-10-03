@@ -15,6 +15,10 @@ var (
 // pelo celular da empresa.
 const PausaHumanoPadrao = 12 * time.Hour
 
+// ExpiraEstadoPadrao: sem mensagens do cliente por mais que isso, com a conversa
+// no bot, a proxima mensagem comeca uma compra nova (estado zerado).
+const ExpiraEstadoPadrao = 72 * time.Hour
+
 // LeaseDuracao e por quanto tempo uma conversa reivindicada fica reservada ao
 // worker. Se o worker morrer, o lease expira e outra goroutine assume.
 //

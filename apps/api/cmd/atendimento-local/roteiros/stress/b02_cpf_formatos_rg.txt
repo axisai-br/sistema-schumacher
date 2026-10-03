@@ -1,0 +1,12 @@
+# ESPERA: reservas=1 pix=1 passageiros=3 pagamento=integral
+# Objetivo: 3 passageiros aceitos: um com CPF pontuado, um com CPF so digitos, um com RG; reserva+pix integral com 3 pagantes.
+/nome Joana
+boa tarde, preciso de passagem de videira pra monção
+pode ser a primeira
+joana prado cpf 111.444.777-35
++tiago prado 12345678909
++e a sogra, helena prado, RG 4.512.887 SSP/SC
+pronto, são esses 3
+integral
+/estado
+/reservas

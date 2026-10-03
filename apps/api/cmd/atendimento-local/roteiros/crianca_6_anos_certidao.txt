@@ -1,0 +1,10 @@
+# ESPERA: reservas=1 pix=1 passageiros=2 criancas=0 pagamento=integral
+# Certidao de crianca com mais de 5 anos e sem CPF: o bot pede o documento.
+/nome Rita
+de monção pra videira
+a primeira
+[foto de documento: nome RITA LIMA, CPF 529.982.247-25]
+[foto de documento: certidão de nascimento, nome JOAO LIMA, nascimento 10/05/2018]
+o cpf dele é 111.444.777-35
+integral
+/estado

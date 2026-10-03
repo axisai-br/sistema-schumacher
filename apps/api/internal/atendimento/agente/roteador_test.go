@@ -374,23 +374,26 @@ func TestTimeoutPadraoDoRoteador(t *testing.T) {
 func TestArgsPreBuscaRespeitaRotaDoEstado(t *testing.T) {
 	a := &Agente{cfg: Config{LimiarRota: 0.8}}
 	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.99, Destino: "Monção", ConfDestino: 0.9, Origem: CidadeNaoInformada, ConfOrigem: 0.9}
-	if _, ok := a.argsPreBusca(rt, conversa.Estado{}); !ok {
+	if _, ok := a.argsPreBusca(rt, conversa.Estado{}, false); !ok {
 		t.Fatal("sem rota no estado, um lado basta")
 	}
 	est := conversa.Estado{
 		Origem:  &conversa.Parada{Nome: "Fraiburgo"},
 		Destino: &conversa.Parada{Nome: "Monção"},
-		Opcoes:  []conversa.Opcao{{Numero: 1}},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Fraiburgo", Destino: "Monção"}},
 	}
-	if _, ok := a.argsPreBusca(rt, est); ok {
+	if _, ok := a.argsPreBusca(rt, est, false); ok {
 		t.Fatal("um lado so nao pode apagar a rota do estado")
 	}
 	rt.Origem, rt.ConfOrigem = "Fraiburgo", 0.9
-	if _, ok := a.argsPreBusca(rt, est); ok {
+	if _, ok := a.argsPreBusca(rt, est, false); ok {
 		t.Fatal("mesma rota com opcoes nao deve rebuscar")
 	}
+	if _, ok := a.argsPreBusca(rt, est, true); !ok {
+		t.Fatal("mesma rota com novo periodo ('mes que vem') deve rebuscar")
+	}
 	rt.Origem, rt.Destino = "Monção", "Fraiburgo"
-	if args, ok := a.argsPreBusca(rt, est); !ok || args["origem"] != "Monção" {
+	if args, ok := a.argsPreBusca(rt, est, false); !ok || args["origem"] != "Monção" {
 		t.Fatalf("rota nova completa deve buscar: %v %v", args, ok)
 	}
 }
@@ -417,5 +420,46 @@ func TestOpcaoClara(t *testing.T) {
 		if _, ok := a.opcaoClara(c.rt, c.est); ok {
 			t.Errorf("%s: nao deveria escolher", nome)
 		}
+	}
+}
+
+func TestArgsPreBuscaRebuscaQuandoListaMisturaRotas(t *testing.T) {
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.99, Origem: "Fraiburgo", ConfOrigem: 0.9, Destino: "Monção", ConfDestino: 0.9}
+	est := conversa.Estado{
+		Origem:  &conversa.Parada{Nome: "Fraiburgo"},
+		Destino: &conversa.Parada{Nome: "Monção"},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Fraiburgo", Destino: "Igarapé do Meio"}, {Numero: 2, Origem: "Fraiburgo", Destino: "Monção"}},
+	}
+	if _, ok := a.argsPreBusca(rt, est, false); !ok {
+		t.Fatal("lista de uma busca por estado (varias cidades) deve rebuscar so a rota pedida")
+	}
+}
+
+func TestTrechoMesmaRotaSubstitui(t *testing.T) {
+	e := conversa.Estado{
+		Opcoes:  []conversa.Opcao{{Numero: 2, Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-15"}},
+		Trechos: []conversa.Trecho{{Viagem: conversa.Opcao{Origem: "Fraiburgo", Destino: "Monção", Data: "2026-10-08"}}},
+	}
+	if i := trechoMesmaRota(e, 2); i != 1 {
+		t.Fatalf("outra data na mesma rota troca o trecho 1, veio %d", i)
+	}
+	e.Opcoes[0].Origem, e.Opcoes[0].Destino = "Monção", "Fraiburgo"
+	if i := trechoMesmaRota(e, 2); i != 0 {
+		t.Fatalf("a volta acrescenta trecho, veio %d", i)
+	}
+}
+
+func TestArgsPreBuscaCompletaUmLado(t *testing.T) {
+	a := &Agente{cfg: Config{LimiarRota: 0.8}}
+	est := conversa.Estado{
+		Origem:  &conversa.Parada{Nome: "Santa Inês"},
+		Destino: &conversa.Parada{Nome: "Videira"},
+		Opcoes:  []conversa.Opcao{{Numero: 1, Origem: "Santa Inês", Destino: "Videira"}},
+	}
+	rt := Rota{Intencao: IntencaoBuscarViagens, ConfIntencao: 0.95, Origem: "Igarapé do Meio", ConfOrigem: 0.9, Destino: CidadeNaoInformada, ConfDestino: 0.9}
+	args, ok := a.argsPreBusca(rt, est, false)
+	if !ok || args["origem"] != "Igarapé do Meio" || args["destino"] != "Videira" {
+		t.Fatalf("origem nova com destino do estado: %v %v", args, ok)
 	}
 }
