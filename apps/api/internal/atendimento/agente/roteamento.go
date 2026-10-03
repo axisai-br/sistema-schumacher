@@ -134,15 +134,42 @@ func (a *Agente) rotear(ctx context.Context, tc *turno, hist []conversa.Mensagem
 		ultimas = ultimas[len(ultimas)-6:]
 	}
 	// Motor por comandos: o extrator roda em paralelo com o Jev.
-	var extCh chan *Extracao
-	if tc.comandos {
-		extCh = make(chan *Extracao, 1)
-		go func() { extCh <- a.extrair(ctx, tc, hist) }()
+	type resultadoExt struct {
+		ex *Extracao
+		p  conversa.Passo
+		ok bool
 	}
+	var extCh chan resultadoExt
+	cancelExt := func() {}
+	if tc.comandos {
+		ctxExt, c := context.WithCancel(ctx)
+		cancelExt = c
+		extCh = make(chan resultadoExt, 1)
+		est := tc.estado
+		go func() {
+			ex, p, ok := a.extrairDe(ctxExt, est, hist)
+			extCh <- resultadoExt{ex, p, ok}
+		}()
+	}
+	defer cancelExt()
 	t0 := a.d.Agora()
 	rt, err := a.d.Roteador.Rotear(ctx, EntradaRota{Mensagens: ultimas, Estado: tc.estado, Cidades: cidades})
 	if extCh != nil {
-		tc.ext = <-extCh
+		// Jev decidiu com seguranca numa mensagem curta e sem documento: nao
+		// espera o extrator (economiza ~4 s e uma chamada ao LLM).
+		dispensou := err == nil && dispensaExtrator(rt, textoRecenteCliente(hist))
+		if dispensou {
+			cancelExt()
+		}
+		r := <-extCh
+		if !dispensou {
+			tc.ext = r.ex
+			if r.ok {
+				tc.passos = append(tc.passos, r.p)
+			}
+		} else {
+			tc.passos = append(tc.passos, conversa.Passo{Tipo: "comandos", Nome: "extrator_dispensado"})
+		}
 		if err != nil {
 			// Jev fora: segue so com extrator + parsers (Rota zerada).
 			a.d.Log.Printf("agente: roteador falhou (motor comandos segue): %v", err)
@@ -772,4 +799,26 @@ func textoRecenteCliente(hist []conversa.Mensagem) string {
 		partes = append([]string{hist[i].Texto}, partes...)
 	}
 	return strings.Join(partes, " ")
+}
+
+// dispensaExtrator: o Jev ja decidiu com seguranca e a mensagem e curta, sem
+// documento nem midia; os parsers em codigo bastam.
+func dispensaExtrator(rt Rota, texto string) bool {
+	t := strings.TrimSpace(texto)
+	if len([]rune(t)) > 40 || reCPF.MatchString(t) || strings.Contains(t, "[") {
+		return false
+	}
+	switch {
+	case rt.PedeHumano >= 0.7 || rt.Irritacao >= 0.75:
+		return true
+	case rt.ConfIntencao >= 0.9 && (rt.Intencao == IntencaoSaudacao || rt.Intencao == IntencaoCidadesAtendidas):
+		return true
+	case rt.Intencao == IntencaoEscolherOpcao && rt.ConfIntencao >= limiarOpcao && rt.ConfOpcao >= limiarOpcao && rt.Opcao != "" && rt.Opcao != OpcaoNenhuma:
+		return true
+	case rt.ConfPagamento >= limiarFechar && (rt.Pagamento == PagamentoIntegral || rt.Pagamento == PagamentoSinal):
+		return true
+	case rt.ConfPosReserva >= 0.85 && rt.PosReserva != "" && rt.PosReserva != PosNenhum:
+		return true
+	}
+	return false
 }

@@ -323,3 +323,43 @@ func TestComandosRespostaLivreComAcaoInventadaVoltaProTemplate(t *testing.T) {
 		t.Fatalf("resposta com acao inventada deve cair no template: %q", e)
 	}
 }
+
+func TestComandosMidia(t *testing.T) {
+	casos := map[string]string{
+		"[áudio não compreendido]":                  textoAudio,
+		"[imagem recebida]":                         textoImagemNaoLida,
+		"[foto de documento]":                       textoDocSemDados,
+		"[imagem: paisagem de praia]":               textoImagem,
+		"[documento recebido: rg.pdf]":              textoArquivo,
+		"[mensagem de um tipo que não consigo ler]": textoIlegivel,
+	}
+	for entrada, quer := range casos {
+		t.Run(entrada, func(t *testing.T) {
+			f := fxComandos(t, Rota{}, `{"pedido":"midia","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`)
+			iniciarComandos(f, entrada)
+			processar(t, f)
+			if e := f.canal.envios[0]; e != quer {
+				t.Fatalf("%q -> %q", entrada, e)
+			}
+		})
+	}
+}
+
+func TestComandosDispensaExtratorQuandoJevDecide(t *testing.T) {
+	f := fxComandos(t, Rota{Intencao: IntencaoSaudacao, ConfIntencao: 0.97}, `{"pedido":"oi","pagamento":"nenhum","confirma":"nenhum","assunto":"nenhum"}`)
+	f.modelo.antes = func(int) { time.Sleep(50 * time.Millisecond) }
+	iniciarComandos(f, "oi, boa tarde")
+	processar(t, f)
+	if f.canal.envios[0] != TextoSaudacao {
+		t.Fatalf("resposta=%q", f.canal.envios[0])
+	}
+	if passo(f.ultimoTurno(), "extrator_dispensado") == nil {
+		t.Fatal("saudacao clara deveria dispensar o extrator")
+	}
+	if !dispensaExtrator(Rota{Intencao: IntencaoSaudacao, ConfIntencao: 0.97}, "oi") {
+		t.Fatal("dispensa")
+	}
+	if dispensaExtrator(Rota{Intencao: IntencaoSaudacao, ConfIntencao: 0.97}, "oi, sou ana lima cpf 529.982.247-25") {
+		t.Fatal("mensagem com documento nunca dispensa")
+	}
+}

@@ -125,13 +125,24 @@ func Montar(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, dom Domi
 		ModeloTranscricao: cfg.OpenAITranscriptionModel,
 		ModeloVisao:       cfg.OpenAIVisionModel,
 	}
-	if pc.Provedor == provedor.Nvidia {
+	visaoOpenAI := strings.TrimSpace(cfg.OpenAIAPIKey) != "" && strings.TrimSpace(cfg.OpenAIVisionModel) != ""
+	if pc.Provedor == provedor.Nvidia && visaoOpenAI {
+		// LLM na NVIDIA, mas visao na OpenAI quando configurada: os modelos de
+		// visao gratuitos da NVIDIA leem documento de forma instavel.
+		lg.Printf("atendimento v2: visao (fotos de documento) = openai %s", cfg.OpenAIVisionModel)
+	} else if pc.Provedor == provedor.Nvidia {
 		// Visao pela NVIDIA (Chat Completions com image_url); transcricao segue na OpenAI.
 		mc.ModeloVisao = ""
 		mc.Visao = midia.VisaoConfig{
 			Provedor: provedor.Nvidia, APIKey: pc.APIKey, BaseURL: pc.BaseURL,
 			Modelo:            firstNonEmpty(cfg.AtendimentoV2ModeloVisao, modelo),
 			EsforcoRaciocinio: pc.EsforcoRaciocinio,
+		}
+		// Sem ATENDIMENTO_V2_MODELO_VISAO a leitura de foto usa o modelo de texto;
+		// se ele nao for multimodal, toda foto vira "[imagem recebida]".
+		lg.Printf("atendimento v2: visao (fotos de documento) = %s", mc.Visao.Modelo)
+		if strings.TrimSpace(cfg.AtendimentoV2ModeloVisao) == "" {
+			lg.Printf("atendimento v2: ATENDIMENTO_V2_MODELO_VISAO vazio; a visao usa o modelo do agente (%s), que precisa aceitar imagem", modelo)
 		}
 	}
 	cat := ferramentas.NovoCatalogo(ferramentas.NovaFontePG(pool), time.Now)

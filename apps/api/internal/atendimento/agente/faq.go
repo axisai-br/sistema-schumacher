@@ -50,7 +50,7 @@ var (
 	reMidiaAudio      = regexp.MustCompile(`\[audio nao compreendido\]`)
 	reMidiaImagem     = regexp.MustCompile(`\[(foto|imagem)(:| )`)
 	// reMidiaGeral tira marcadores de midia do texto original (com acento).
-	reMidiaGeral = regexp.MustCompile(`\[(?:[áa]udio n[ãa]o compreendido|foto[^\]]*|imagem[^\]]*)\]`)
+	reMidiaGeral = regexp.MustCompile(`\[(?:[áa]udio n[ãa]o compreendido|foto[^\]]*|imagem[^\]]*|documento recebido[^\]]*|mensagem de um tipo que n[ãa]o consigo ler)\]`)
 )
 
 // assuntoDoTexto devolve a chave do assunto perguntado ("" = nenhum).

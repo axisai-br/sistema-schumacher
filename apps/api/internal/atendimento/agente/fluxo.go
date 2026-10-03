@@ -39,13 +39,12 @@ func (a *Agente) turnoComandos(ctx context.Context, tc *turno, hist []conversa.M
 	baixo := semAcento(strings.ToLower(texto))
 	semMidia := strings.TrimSpace(reMarcadorMidia.ReplaceAllString(texto, ""))
 
-	// Midia sem texto: audio nao entendido ou imagem que nao e documento.
+	// Midia sem texto que o codigo nao aproveita (audio nao entendido,
+	// imagem nao lida ou que nao e documento, PDF, figurinha): responde o que
+	// aconteceu de verdade.
 	if semMidia == "" && !reFotoDocumento.MatchString(texto) {
-		switch {
-		case reMidiaAudio.MatchString(baixo):
-			return a.registrarAto(tc, "audio", textoAudio), nil
-		case reMidiaImagem.MatchString(baixo):
-			return a.registrarAto(tc, "imagem", textoImagem), nil
+		if m, ato := textoMidia(baixo); m != "" {
+			return a.registrarAto(tc, ato, m), nil
 		}
 	}
 	// Desistencia antes de reservar: encerra sem insistir.
@@ -84,8 +83,10 @@ func (a *Agente) turnoComandos(ctx context.Context, tc *turno, hist []conversa.M
 		resp = a.respostaAssunto(ctx, ass, tc.estado) + "\n\n" + resp
 		ato += "+faq:" + ass
 	}
-	if reMidiaImagem.MatchString(baixo) && !reFotoDocumento.MatchString(texto) {
-		resp = textoImagem + "\n\n" + resp
+	if !reFotoDocumento.MatchString(texto) {
+		if m, _ := textoMidia(baixo); m != "" && m != textoAudio {
+			resp = m + "\n\n" + resp
+		}
 	}
 
 	// "Nao entendi" repetido: a mesma resposta de recurso (proximo passo, sem
@@ -314,4 +315,31 @@ func (a *Agente) textoRotaInexistente(ctx context.Context, e conversa.Estado) st
 		t += fmt.Sprintf("\n\nSaindo de %s, você pode ir para: %s. Pra qual delas?", e.Origem.Nome, strings.Join(outroLado, ", "))
 	}
 	return t
+}
+
+const (
+	textoImagemNaoLida = "Não consegui abrir essa imagem. 🙏 Se for documento de passageiro, manda de novo uma foto nítida ou escreve o nome completo e o CPF."
+	textoDocSemDados   = "Recebi a foto do documento, mas não deu pra ler os dados. Pode me mandar o nome completo e o CPF por escrito?"
+	textoArquivo       = "Recebi o arquivo, mas por aqui eu só consigo ler fotos. Se for documento de passageiro, manda uma foto ou escreve o nome completo e o CPF."
+	textoIlegivel      = "Não consegui ver essa mensagem. Pode me escrever?"
+)
+
+// textoMidia: resposta para o marcador de midia no texto (sem acento,
+// minusculo). Foto de documento com dados nao entra aqui (vira passageiro).
+func textoMidia(baixo string) (string, string) {
+	switch {
+	case reMidiaAudio.MatchString(baixo):
+		return textoAudio, "audio"
+	case strings.Contains(baixo, "[foto de documento]"):
+		return textoDocSemDados, "documento_sem_dados"
+	case strings.Contains(baixo, "[imagem recebida]"):
+		return textoImagemNaoLida, "imagem_nao_lida"
+	case reMidiaImagem.MatchString(baixo):
+		return textoImagem, "imagem"
+	case strings.Contains(baixo, "[documento recebido"):
+		return textoArquivo, "arquivo"
+	case strings.Contains(baixo, "[mensagem de um tipo que nao consigo ler]"):
+		return textoIlegivel, "ilegivel"
+	}
+	return "", ""
 }

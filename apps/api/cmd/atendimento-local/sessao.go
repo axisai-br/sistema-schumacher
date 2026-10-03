@@ -28,6 +28,8 @@ const (
   /reset         nova conversa e fixtures novas
   /bot           se a conversa foi transferida, volta para BOT
   /audio         envia "` + textoAudio + `" como mensagem
+  /audio <arq>   transcreve um arquivo de áudio real (.ogg/.mp3/.m4a/.wav; precisa OPENAI_API_KEY)
+  /foto <arq>    lê uma foto real (.jpg/.png/.webp) com o leitor de documentos da produção
   /nome <nome>   define o nome do cliente na conversa
   /reservas      reservas e PIX criados nos fakes
   /salvar        grava a transcrição agora
@@ -282,9 +284,15 @@ func (s *sessao) comando(ctx context.Context, t string) bool {
 			}
 		}
 	case "/audio":
+		if arg != "" {
+			s.cmdMidia(ctx, conversa.TipoAudio, arg)
+			break
+		}
 		if s.enviar(ctx, textoAudio) {
 			s.processar(ctx)
 		}
+	case "/foto":
+		s.cmdMidia(ctx, conversa.TipoImagem, arg)
 	case "/nome":
 		if arg == "" {
 			s.printf("  uso: /nome <nome>  (atual: %q)\n", s.nome)

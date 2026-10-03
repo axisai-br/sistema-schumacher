@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"schumacher-tur/api/internal/atendimento/llm/chatcompat"
@@ -56,18 +57,12 @@ func (p *Preparador) lerImagemChat(ctx context.Context, dataURL string) (leitura
 		payload["reasoning_effort"] = strings.ToLower(e)
 		payload["max_tokens"] = 4096
 	}
-	corpo, err := json.Marshal(payload)
-	if err != nil {
-		return leituraImagem{}, err
+	raw, status, err := p.postarVisao(ctx, payload)
+	if err == nil && status == 400 && reRecusaGuided.MatchString(string(raw)) {
+		// Modelo que nao aceita guided_json: o prompt ja pede o JSON; reenvia sem.
+		delete(payload, "nvext")
+		raw, status, err = p.postarVisao(ctx, payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.visao.BaseURL+"/chat/completions", bytes.NewReader(corpo))
-	if err != nil {
-		return leituraImagem{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+p.visao.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	raw, status, err := p.do(req)
 	if err != nil {
 		return leituraImagem{}, errors.New("visao: " + p.redigir(err.Error()))
 	}
@@ -104,4 +99,22 @@ func (p *Preparador) redigir(s string) string {
 		s = strings.ReplaceAll(s, p.visao.APIKey, "[redigido]")
 	}
 	return s
+}
+
+// reRecusaGuided: o provedor recusou o campo de JSON estruturado.
+var reRecusaGuided = regexp.MustCompile(`(?i)guided_json|nvext`)
+
+func (p *Preparador) postarVisao(ctx context.Context, payload map[string]any) ([]byte, int, error) {
+	corpo, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.visao.BaseURL+"/chat/completions", bytes.NewReader(corpo))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.visao.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	return p.do(req)
 }
