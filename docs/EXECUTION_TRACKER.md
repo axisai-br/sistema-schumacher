@@ -7323,3 +7323,52 @@ infraestrutura e produção não foram alterados nesta reconciliação documenta
 Próxima ação única: aguardar autorização explícita do usuário para commit e
 push da atualização documental do tracker. Não executar merge, deploy ou
 smoke.
+
+## 13. Hotfix Evolution API v2.3.7 — `messages.update` (2026-10-04)
+
+**Status:** correção local implementada; suíte Go completa PASS; review
+independente pendente. Não integrada nem implantada.
+
+Base confirmada antes da alteração: branch
+`fix/evolution-v237-webhook-ingress`, HEAD
+`f6c876e161c460b5224b12bc462a2b713a5ff5c2`, working tree e índice limpos.
+
+`HandleEvolutionStatus` lia somente `data.key.id`, ausente no shape confirmado
+da Evolution 2.3.7 (`data.keyId`), causando `ErrMissingEvolutionMessageID` e
+HTTP 400. O modelo agora decodifica `keyId`; o serviço prioriza `key.id` e usa
+`keyId` somente se o ID legado estiver ausente ou vazio. `data.messageId` da
+Evolution não é usado como provider ID. `messages.update` continua no fluxo de
+status e não cria mensagem inbound.
+
+Arquivos alterados:
+
+```text
+apps/api/internal/automation/model.go
+apps/api/internal/automation/service.go
+apps/api/internal/automation/handler_test.go
+docs/EXECUTION_TRACKER.md
+```
+
+RED pré-patch: os shapes diretos `DELIVERY_ACK` e encapsulado `ERROR`
+retornaram HTTP 400 `missing evolution message id`; as verificações de
+precedência do `key.id` e rejeição de `messageId` interno passaram. Após o
+patch, os casos de `keyId`, `key.id` legado, fallback de `key.id` vazio e
+rejeição do ID interno passaram.
+
+```text
+gofmt nos três arquivos Go (container golang:1.23) -> PASS
+go test -count=1 ./internal/automation (RED focado pós-patch) -> PASS
+go test -count=1 ./... (apps/api, golang:1.23) -> PASS
+git diff --check -> PASS antes desta atualização
+```
+
+A causa das duas mensagens inbound ausentes permanece indeterminada. Este
+hotfix não muda `messages.upsert`, normalização de JID/LID, allowlist,
+Atendimento V2, migrations ou banco. Não houve consulta a banco de produção,
+smoke, commit, push, PR ou deploy. Como a mudança altera o handler runtime,
+teste operacional permanece necessário em etapa própria e autorizada.
+
+O diff local foi inspecionado; o `/review` independente obrigatório ainda não
+foi executado. Próxima ação única: executar `/review` deste hotfix. A coleta
+read-only para localizar as duas mensagens continua pendente e deve preservar
+os cinco limites registrados no plano do hotfix.

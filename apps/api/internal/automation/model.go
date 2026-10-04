@@ -291,6 +291,7 @@ type EvolutionWebhookPayload struct {
 type EvolutionMessageData struct {
 	Key                    EvolutionMessageKey     `json:"key"`
 	ID                     string                  `json:"id"`
+	KeyID                  string                  `json:"keyId"`
 	PushName               string                  `json:"pushName"`
 	Status                 string                  `json:"status"`
 	Presences              map[string]interface{}  `json:"presences"`
