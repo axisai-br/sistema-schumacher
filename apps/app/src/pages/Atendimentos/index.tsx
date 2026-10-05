@@ -7,7 +7,7 @@ import SearchToolbar from "../../components/input/SearchToolbar";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import useDebouncedValue from "../../hooks/useDebouncedValue";
 import useToast from "../../hooks/useToast";
-import { apiGet, apiPost, apiPostForm } from "../../services/api";
+import { APIRequestError, apiGet, apiPost, apiPostForm } from "../../services/api";
 import { buildListQuery } from "../../hooks/buildListQuery";
 import { isSessionInTab, sortByLastMessageDesc, type AtendimentoTab } from "./sessionFilters";
 import AtendimentosRail from "./AtendimentosRail";
@@ -391,9 +391,39 @@ function LegacyAtendimentosPage() {
   );
 }
 
+// VITE_ATENDIMENTO_V2: "true" forca o v2, "false" forca o legado; vazio ou
+// "auto" pergunta a API. O v2 so existe na API com ATENDIMENTO_V2_ENABLED=true
+// (sem ele, /atendimento/conversas da 404), entao o build nao precisa saber.
+function modoAtendimento(): "v2" | "legado" | "auto" {
+  const v = (import.meta.env.VITE_ATENDIMENTO_V2 ?? "").trim().toLowerCase();
+  if (v === "true") return "v2";
+  if (v === "false") return "legado";
+  return "auto";
+}
 
-
+function AtendimentosAuto() {
+  const deteccao = useQuery({
+    queryKey: ["atendimento-v2", "disponivel"],
+    queryFn: async () => {
+      try {
+        await apiGet("/atendimento/conversas?limite=1");
+        return true;
+      } catch (error) {
+        if (error instanceof APIRequestError && error.status === 404) return false;
+        // Outro erro (rede, 401...): fica no v2, que mostra o erro na propria tela.
+        return true;
+      }
+    },
+    retry: false,
+    staleTime: Infinity,
+  });
+  if (deteccao.isPending) return <LoadingState label="Carregando atendimentos..." />;
+  return deteccao.data ? <AtendimentosV2 /> : <LegacyAtendimentosPage />;
+}
 
 export default function AtendimentosPage() {
-  return import.meta.env.VITE_ATENDIMENTO_V2 === "true" ? <AtendimentosV2 /> : <LegacyAtendimentosPage />;
+  const modo = modoAtendimento();
+  if (modo === "v2") return <AtendimentosV2 />;
+  if (modo === "legado") return <LegacyAtendimentosPage />;
+  return <AtendimentosAuto />;
 }

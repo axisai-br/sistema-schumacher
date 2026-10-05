@@ -270,7 +270,7 @@ func corsMiddleware(cfg config.Config) func(http.Handler) http.Handler {
 				if allowAll || originAllowed(origin, origins) {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					w.Header().Set("Vary", "Origin")
-					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+					w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Debug-User-Id")
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}

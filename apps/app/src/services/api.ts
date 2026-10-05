@@ -15,13 +15,18 @@ type FormRequestOptions = {
 };
 
 export class APIRequestError extends Error {
+  status?: number;
   code?: string;
   details?: unknown;
   requirementsMissing?: string[];
 
-  constructor(message: string, options: { code?: string; details?: unknown; requirementsMissing?: string[] } = {}) {
+  constructor(
+    message: string,
+    options: { status?: number; code?: string; details?: unknown; requirementsMissing?: string[] } = {}
+  ) {
     super(message);
     this.name = "APIRequestError";
+    this.status = options.status;
     this.code = options.code;
     this.details = options.details;
     this.requirementsMissing = options.requirementsMissing;
@@ -71,6 +76,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (!res.ok) {
     const message = data?.message || data?.error || res.statusText;
     throw new APIRequestError(message, {
+      status: res.status,
       code: data?.code,
       details: data?.details,
       requirementsMissing: data?.requirements_missing ?? data?.details?.requirements_missing,
@@ -104,6 +110,7 @@ async function requestForm<T>(path: string, options: FormRequestOptions): Promis
   if (!res.ok) {
     const message = data?.message || data?.error || res.statusText;
     throw new APIRequestError(message, {
+      status: res.status,
       code: data?.code,
       details: data?.details,
       requirementsMissing: data?.requirements_missing ?? data?.details?.requirements_missing,
