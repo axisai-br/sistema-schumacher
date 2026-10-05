@@ -701,7 +701,7 @@ func (s *Service) HandleEvolutionStatus(ctx context.Context, body []byte) (Evolu
 		return EvolutionStatusWebhookResult{}, err
 	}
 
-	providerMessageID := strings.TrimSpace(payload.Data.Key.ID)
+	providerMessageID := firstNonEmptyString(payload.Data.Key.ID, payload.Data.KeyID)
 	if providerMessageID == "" {
 		return EvolutionStatusWebhookResult{}, ErrMissingEvolutionMessageID
 	}

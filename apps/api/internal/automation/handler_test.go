@@ -2595,6 +2595,87 @@ func TestHandleEvolutionStatusAcceptsDirectPayload(t *testing.T) {
 	}
 }
 
+func TestHandleEvolutionStatusAcceptsV237KeyID(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		providerID string
+		status     string
+	}{
+		{
+			name:       "delivery ack direct payload",
+			path:       "/webhooks/evolution/messages",
+			body:       `{"event":"messages.update","data":{"keyId":"WA-PROVIDER-001","remoteJid":"10000000000001@lid","status":"DELIVERY_ACK","messageId":"EVOLUTION-INTERNAL-001"}}`,
+			providerID: "WA-PROVIDER-001",
+			status:     "DELIVERY_ACK",
+		},
+		{
+			name:       "error envelope",
+			path:       "/webhooks/evolution/messages-update",
+			body:       `{"body":{"event":"messages.update","data":{"keyId":"WA-PROVIDER-002","remoteJid":"10000000000001@lid","status":"ERROR","messageId":"EVOLUTION-INTERNAL-002"}}}`,
+			providerID: "WA-PROVIDER-002",
+			status:     "ERROR",
+		},
+		{
+			name:       "blank legacy id uses keyId fallback",
+			path:       "/webhooks/evolution/messages-update",
+			body:       `{"event":"messages.update","data":{"key":{"id":"  "},"keyId":"WA-PROVIDER-003","remoteJid":"10000000000001@lid","status":"DELIVERY_ACK","messageId":"EVOLUTION-INTERNAL-003"}}`,
+			providerID: "WA-PROVIDER-003",
+			status:     "DELIVERY_ACK",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAutomationStore{}
+			chatSvc := &fakeChatIngestor{}
+			handler := NewHandler(NewService(store, chatSvc, config.Config{}))
+			r := chi.NewRouter()
+			handler.RegisterWebhooks(r)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)))
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("expected status %d, got %d body=%s", http.StatusAccepted, rec.Code, rec.Body.String())
+			}
+			if store.lastStatus.ProviderMessageID != tc.providerID {
+				t.Fatalf("provider message id=%q, want %q", store.lastStatus.ProviderMessageID, tc.providerID)
+			}
+			if store.lastStatus.ProviderStatus != tc.status {
+				t.Fatalf("provider status=%q, want %q", store.lastStatus.ProviderStatus, tc.status)
+			}
+			if chatSvc.calls != 0 {
+				t.Fatalf("status webhook must not ingest inbound messages, calls=%d", chatSvc.calls)
+			}
+		})
+	}
+}
+
+func TestHandleEvolutionStatusPrefersKeyIDOverV237Fallback(t *testing.T) {
+	store := &fakeAutomationStore{}
+	handler := NewHandler(NewService(store, &fakeChatIngestor{}, config.Config{}))
+	rec := postEvolutionV2(t, handler, `{"event":"messages.update","data":{"key":{"id":"WA-LEGACY-001"},"keyId":"WA-PROVIDER-001","status":"DELIVERY_ACK","messageId":"EVOLUTION-INTERNAL-001"}}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+	if store.lastStatus.ProviderMessageID != "WA-LEGACY-001" {
+		t.Fatalf("provider message id=%q, want the legacy key.id", store.lastStatus.ProviderMessageID)
+	}
+}
+
+func TestHandleEvolutionStatusDoesNotUseEvolutionInternalID(t *testing.T) {
+	store := &fakeAutomationStore{}
+	handler := NewHandler(NewService(store, &fakeChatIngestor{}, config.Config{}))
+	rec := postEvolutionV2(t, handler, `{"event":"messages.update","data":{"remoteJid":"10000000000001@lid","status":"DELIVERY_ACK","messageId":"EVOLUTION-INTERNAL-001"}}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid provider id to fail with %d, got %d body=%s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if store.lastStatus.ProviderMessageID != "" {
+		t.Fatalf("invalid status event reached the store with provider id %q", store.lastStatus.ProviderMessageID)
+	}
+}
+
 func TestHandleEvolutionStatusAcceptsN8NEnvelope(t *testing.T) {
 	store := &fakeAutomationStore{
 		result: RecordEvolutionStatusResult{MatchedChatMessages: 0, MatchedOutboundMessages: 1},

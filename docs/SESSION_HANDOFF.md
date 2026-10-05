@@ -38,6 +38,29 @@ Este bloco e os checkpoints vigentes abaixo definem o estado atual de IA. Todos 
 status e próximas ações nas seções cronológicas abaixo são históricos e estão
 **SUPERADOS** pelos checkpoints vigentes.
 
+## Hotfix Evolution API v2.3.7 — checkpoint pós-merge (2026-10-04)
+
+**Estado: `REVIEW_CLOSED + MERGED + DEPLOY_PENDING`.** O review independente
+concluiu “review sem P0/P1/P2”. O hotfix foi commitado como
+`19dd5115d3df9d8d603403e7ad28e4200d26cc32` e integrado pelo PR #101 no merge
+`df5a19bb6ba258e451e9cfe04d728795021c4653`, que é a referência de `main`.
+
+A correção torna `messages.update` compatível com `data.keyId`, mantém
+`data.key.id` como primeira escolha e não usa `data.messageId` interno da
+Evolution como provider ID. Ela preserva o evento no fluxo de status.
+
+Deploy **não executado**; smoke **não executado**; runtime ainda não validado.
+Próxima ação operacional deste hotfix: deploy somente após autorização
+explícita do usuário. Depois de eventual deploy, smoke obrigatório antes de
+encerrar o gate operacional. Este checkpoint não autoriza essas ações.
+
+O hotfix não resolve nem fecha o finding das mensagens inbound
+“quero a primeira opcao” e “quero a opcao 1”, não localizadas em
+`atd_mensagens` nem `chat_messages`. A fronteira da perda continua
+indeterminada; a coleta read-only segue separada e não foi iniciada aqui.
+Este checkpoint não altera os estados de Travel Semantic/H-B ou do track
+Segurança/Supabase/RLS.
+
 ## Fechamento operacional vigente de H-2026-07-27A
 
 A correção `2784b731` está integrada no merge `c8f4e453`, que é ancestral da
@@ -62,8 +85,10 @@ Assim, a seleção foi materializada e não reapareceram `NONE` nem
 
 Esse fechamento não mistura sintomas de outros owners: as frases de composição
 com crianças continuam casos futuros de H-B2/H-B3; o lifecycle shadow e
-`empty_idempotency_key` continuam em H-2026-07-16A/Travel V2 shadow; webhook
-HTTP 400 continua com owner/cause `UNKNOWN`.
+`empty_idempotency_key` continuam em H-2026-07-16A/Travel V2 shadow.
+O finding histórico de webhook HTTP 400 registrado naquele checkpoint mantém
+owner/cause `UNKNOWN`; ele permanece separado do `messages.update` Evolution
+2.3.7 reconciliado acima.
 
 ## Incidente H-2026-07-27A
 

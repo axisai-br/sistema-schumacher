@@ -4842,7 +4842,9 @@ Separação de ownership preservada:
   completion_completed` pertence ao lifecycle shadow de H-2026-07-16A;
 - `empty_idempotency_key` pertence ao scheduler Travel V2 shadow e mantém
   correlação exata `UNKNOWN`;
-- webhook HTTP 400 mantém owner/cause `UNKNOWN`.
+- o finding histórico de webhook HTTP 400 deste checkpoint mantém owner/cause
+  `UNKNOWN` e permanece separado do `messages.update` Evolution 2.3.7
+  reconciliado na seção 13.
 
 Arquivos alterados nesta reconciliação documental:
 
@@ -7323,3 +7325,56 @@ infraestrutura e produção não foram alterados nesta reconciliação documenta
 Próxima ação única: aguardar autorização explícita do usuário para commit e
 push da atualização documental do tracker. Não executar merge, deploy ou
 smoke.
+
+## 13. Hotfix Evolution API v2.3.7 — `messages.update` (2026-10-04)
+
+**Status operacional: `REVIEW_CLOSED + MERGED + DEPLOY_PENDING`.** O review
+independente concluiu “review sem P0/P1/P2”. O hotfix foi commitado como
+`19dd5115d3df9d8d603403e7ad28e4200d26cc32` e integrado pelo PR #101 no merge
+`df5a19bb6ba258e451e9cfe04d728795021c4653`, referência de `main`.
+
+O merge tem como pais a base `f6c876e161c460b5224b12bc462a2b713a5ff5c2` e o
+commit do hotfix. Confirmação local e remota nesta reconciliação:
+
+```text
+branch desta reconciliação: docs/evolution-v237-post-merge-reconcile
+base / origin/main: df5a19bb6ba258e451e9cfe04d728795021c4653
+commit do hotfix: 19dd5115d3df9d8d603403e7ad28e4200d26cc32
+PR #101: MERGED
+```
+
+O patch adiciona compatibilidade com `data.keyId` em `messages.update`,
+priorizando `data.key.id` quando informado e preservando a rejeição de
+`data.messageId` interno como provider ID. O evento continua no fluxo de status.
+Os REDs específicos e as regressões legadas passaram antes da integração. O
+hotfix registrou como PASS em Go 1.23:
+
+```text
+go test -count=1 ./internal/automation
+go test -count=1 ./...
+gofmt
+git diff --check
+```
+
+**Deploy: NÃO EXECUTADO. Smoke: NÃO EXECUTADO. Runtime: ainda não validado.**
+Próxima ação operacional deste hotfix: executar deploy somente após autorização
+explícita do usuário. Depois de eventual deploy, o smoke é obrigatório antes do
+fechamento operacional. Este checkpoint não autoriza deploy ou smoke.
+
+Este hotfix não localiza nem resolve o desaparecimento das mensagens inbound
+“quero a primeira opcao” e “quero a opcao 1”, ausentes de `atd_mensagens` e
+`chat_messages`. A fronteira da perda continua indeterminada. A coleta
+read-only permanece separada e não foi iniciada nesta reconciliação.
+
+Arquivos desta reconciliação documental:
+
+```text
+docs/EXECUTION_TRACKER.md
+docs/SESSION_HANDOFF.md
+```
+
+Nenhum status de Travel Semantic/H-B ou Segurança/Supabase/RLS foi alterado.
+Nenhum teste de aplicação ou consulta a produção foi executado nesta atualização
+documental. O working tree inicial estava limpo na branch esperada, baseada em
+`origin/main` no SHA acima. Deploy e smoke permanecem pendentes; a investigação
+inbound continua aberta, sem novo finding.
